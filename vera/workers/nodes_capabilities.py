@@ -2122,7 +2122,7 @@ except Exception as e:
                 "celsius} (each logical cpu with its physical core's reading), "
                 "virt,temps_from,host_temps?,host_drives?,host_health?,"
                 "host_core_temps?,host_cpu_temps?,"
-                "updated_at,error}], count}.",
+                "updated_at,error}], count}.", contract={"presentation": {'kind': 'table', 'form': 'temps', 'map': {'values': 'hosts', 'name': 'label', 'value': 'max_c'}}}
 )
 async def cap_node_temps(trace_id=None) -> Dict:
     return {"hosts": list(_TEMP_CACHE.values()), "count": len(_TEMP_CACHE)}

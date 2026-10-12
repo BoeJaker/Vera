@@ -92,6 +92,9 @@
     const rec = (form, data, extra) => { const r = Object.assign({ id: (cap || 'result').replace(/[^a-z0-9]+/gi, '-') + '-' + form + (out.length ? '-' + out.length : ''),
       form, title: (extra && extra.title) || title, source: cap, read: { args: o.args || {}, map: (extra && extra.map) || {} }, frame: { size: o.size || 'l' }, data, why,
       presentation: P }, extra && extra.draw ? { draw: extra.draw } : {}); out.push(r); return r; };
+    /* a declaration that names its widget form (DA-01d): the form draws the answer through the map in its own words,
+       with its drawing options - what a widget hint held */
+    if (typeof P.form === 'string' && P.form) { rec(P.form, c, { map: m, draw: isObj(P.draw) ? P.draw : undefined }); return { records: out.slice(0, 1) }; }
     const at = (k) => (m[k] ? pick(c, m[k]) : undefined);
     const content = (K.content || []).map((k) => at(k)).find((v) => v !== undefined);
     if (K.content.length && empty(content)) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' };
@@ -135,7 +138,7 @@
     const P0 = isObj(o.presentation) ? o.presentation : presentationOf(cap);
     const P = P0 && KINDS[P0.kind] && P0.status !== 'invalid' ? P0 : null;
     const K = P ? KINDS[P.kind] : null;
-    const c = open(result, P && isObj(P.map) ? (K.content || []).map((k) => P.map[k]).find(Boolean) : '');
+    const c = open(result, P && !P.form && isObj(P.map) ? (K.content || []).map((k) => P.map[k]).find(Boolean) : '');
     const base = (kind, why) => ({ element: KINDS[kind] ? KINDS[kind].element : 'widget', kind, map: P ? Object.assign({}, P.map || {}) : {},
       views: (P && Array.isArray(P.views) && P.views.length ? P.views : (KINDS[kind] ? KINDS[kind].views : [])).slice(),
       title: o.title || (P && P.title ? fill(P.title, o.args) : '') || cap || 'result', detail: P && P.detail ? P.detail : null, why, declared: !!P });

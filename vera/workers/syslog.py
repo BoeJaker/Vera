@@ -744,7 +744,7 @@ async def syslog_query(
 @capability(
     "syslog.errors", memory="off",
     http_method="GET", http_path="/syslog/errors", http_tags=["syslog"],
-    description="Recent errors and warnings with source code context for LLM analysis.",
+    description="Recent errors and warnings with source code context for LLM analysis.", contract={"presentation": {'kind': 'log', 'form': 'log', 'map': {'events': 'warnings', 't': 'ts', 'kind': 'cap_group', 'text': 'message'}}}
 )
 async def syslog_errors(
     limit:         int  = 20,

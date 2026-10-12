@@ -648,7 +648,7 @@ async def _run_local(argv: List[str], stdin_data: str = "",
                 "(network scans like nmap, package installs, builds, big greps) — don't let a slow "
                 "-but-healthy command trip the timeout. "
                 "Output: {ok, rc, stdout, stderr, elapsed_ms, command, note?}. `command` echoes what was run so a failure can be identified; `note` appears when the result would otherwise be ambiguous - rc=0 with no output (the check passed, do not re-run it) or rc!=0 with no output (grep/test/diff report NO MATCH that way, so it may be your answer). "
-                "Use exec.bash.stream for live streaming output of long-running commands.",
+                "Use exec.bash.stream for live streaming output of long-running commands.", contract={"presentation": {'kind': 'terminal', 'form': 'terminal'}}
 )
 async def cap_bash_run(command: str, timeout: int = _EXEC_DEFAULT_TIMEOUT,
                        cwd: str = "", session_id: str = "", trace_id=None) -> Dict:

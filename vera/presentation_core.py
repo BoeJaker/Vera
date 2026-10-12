@@ -25,7 +25,7 @@ from typing import Any
 
 from .capability_contract_core import PRESENTATION_KINDS
 
-_OPTIONS = ("views", "title", "empty", "refresh", "live", "detail")
+_OPTIONS = ("views", "title", "empty", "refresh", "live", "detail", "form", "draw")   # form + draw: DA-01d
 # the key the first argument fills, where it is not the kind's first map key
 _CONTENT = {"terminal": "stdout", "media": "url", "entities": "entities", "receipt": "ok"}
 

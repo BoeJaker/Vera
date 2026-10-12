@@ -2396,7 +2396,7 @@ if _CAP_AVAILABLE:
                     "the FORWARDING SERVERS nodes actually reach Vera through — detected by "
                     "comparing a node's self-reported ip with the peer address its traffic arrived "
                     "from, so a relay appears even though nothing is configured to describe it. "
-                    "Output: {nodes, edges, forwarders}.",
+                    "Output: {nodes, edges, forwarders}.", contract={"presentation": {'kind': 'graph', 'form': 'vgraph'}}
     )
     async def cap_mesh_topology(wireless: bool = True, trace_id=None) -> dict:
         await _ensure_tables()

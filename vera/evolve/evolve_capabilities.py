@@ -3664,7 +3664,7 @@ async def evolve_board(limit: int = 20, trace_id=None):
             http_method="GET", http_path="/evolve/activity", http_tags=["evolve"],
             description="Commit-chart data: hourly buckets of Loop Lab activity — "
                         "runs (pass/fail) + edit-queue actions — over the last "
-                        "`hours`. Output: {buckets:[{hour,pass,fail,edits}]}.")
+                        "`hours`. Output: {buckets:[{hour,pass,fail,edits}]}.", contract={"presentation": {'kind': 'series', 'form': 'area', 'map': {'series': 'buckets', 'split': ['pass', 'fail'], 't': 'hour'}}})
 async def evolve_activity(hours: int = 72, trace_id=None):
     import datetime as _dt
     from datetime import timezone
@@ -6259,7 +6259,7 @@ async def evolve_pipeline_begin(title: str = "", branch: str = "", spawn: bool =
 @capability("evolve.pipeline.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/pipeline/list", http_tags=["evolve"],
             description="Recent CI/CD pipeline runs (compact, newest first). "
-                        "Query: limit.")
+                        "Query: limit.", contract={"presentation": {'kind': 'status', 'form': 'status-matrix'}})
 async def evolve_pipeline_list(limit: int = 30, trace_id=None):
     r = _redis()
     out = []
@@ -6281,7 +6281,7 @@ async def evolve_pipeline_list(limit: int = 30, trace_id=None):
 @capability("evolve.pipeline.get", memory="off", silent=True,
             http_method="GET", http_path="/evolve/pipeline/get", http_tags=["evolve"],
             description="Full record of one pipeline run (stages, scores, gate, "
-                        "decision). Input: id (str!).")
+                        "decision). Input: id (str!).", contract={"presentation": {'kind': 'progress', 'form': 'run-track'}})
 async def evolve_pipeline_get(id: str = "", trace_id=None):
     r = _redis()
     if not r or not id:
@@ -8994,7 +8994,7 @@ async def _get_unittest_history(limit: int = 200) -> List[Dict[str, Any]]:
                         "failing tests' node ids + descriptions) and its controller. "
                         "Query: limit (int=200, up to the kept 5000), branch "
                         "(str filter), markers (str filter, e.g. 'critical'), lanes "
-                        "(int=40 cells; 0 = one per run returned).")
+                        "(int=40 cells; 0 = one per run returned).", contract={"presentation": {'kind': 'status', 'form': 'race-green'}})
 async def evolve_unittest_history(limit: int = 200, branch: str = "",
                                   markers: str = "", lanes: int = 40,
                                   trace_id=None):
@@ -10266,7 +10266,7 @@ async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
                         "spawned per-branch container — each with branch, container "
                         "name, host port, Redis DB, whether it is running, and its URL. "
                         "The unified view for the Loop Lab sandbox selector. Output: "
-                        "{sandboxes:[{role,branch,name,port,redis_db,running,url}], count}.")
+                        "{sandboxes:[{role,branch,name,port,redis_db,running,url}], count}.", contract={"presentation": {'kind': 'table', 'form': 'sandboxes', 'map': {'rows': 'sandboxes', 'name': 'name', 'status': 'running'}}})
 async def evolve_sandbox_list(detail: bool = False, trace_id=None):
     ps = await _sh(["docker", "ps", "--format", "{{.Names}}"])
     running = {n.strip() for n in (ps.get("out", "") or "").splitlines() if n.strip()}
@@ -11317,7 +11317,7 @@ async def _worktree_diff(wt: str, base: str = "main", file: str = "",
                         "default 'main'), file (str — scope to one path), context "
                         "(int=3), max_bytes (int=200000), name (str), branch (str). "
                         "Output: {ok, branch, base, files: [{path, status, adds, "
-                        "dels}], untracked, diff, truncated}.")
+                        "dels}], untracked, diff, truncated}.", contract={"presentation": {'kind': 'diff', 'form': 'diff'}})
 async def evolve_sandbox_diff(base: str = "main", file: str = "",
                               context: int = 3, max_bytes: int = 200000,
                               name: str = "", branch: str = "", trace_id=None):
@@ -11351,7 +11351,7 @@ async def evolve_sandbox_diff(base: str = "main", file: str = "",
                         "not just Vera's dev sandbox. Inputs: id (str!), file (str "
                         "— scope to one path), context (int=3), max_bytes "
                         "(int=200000). Output: {ok, repo, branch, base, files, "
-                        "untracked, diff, truncated}.")
+                        "untracked, diff, truncated}.", contract={"presentation": {'kind': 'diff', 'form': 'diff'}})
 async def evolve_pipeline_diff(id: str = "", file: str = "", context: int = 3,
                                max_bytes: int = 200000, trace_id=None):
     got = await evolve_pipeline_get(id=id)

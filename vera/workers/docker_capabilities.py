@@ -560,7 +560,7 @@ async def _parse_engine_json(body: bytes, default):
     memory="off",
     description="List containers on a host (Engine /containers/json). "
                 "Input: host_id (str), all (bool=true), slim (bool=false - only Id/Names/Image/State/Status/Created/project per "
-                "container: a dashboard's reading, not the full Engine record). Output: {containers: [...], count}.",
+                "container: a dashboard's reading, not the full Engine record). Output: {containers: [...], count}.", contract={"presentation": {'kind': 'table', 'form': 'containers', 'map': {'rows': 'containers', 'name': 'Names', 'status': 'State', 'host': 'host_id'}}}
 )
 async def cap_docker_ps(host_id: str = "", all: bool = True, slim: bool = False, trace_id=None) -> Dict:
     rec = _get_host(host_id)

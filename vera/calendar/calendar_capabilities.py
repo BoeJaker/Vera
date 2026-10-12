@@ -380,7 +380,7 @@ async def _hash_delete(key: str, rid: str) -> bool:
                 "include_dreams (bool — overlay projected scheduled dream fires as "
                 "read-only events), include_loop_lab (bool — overlay the Loop Lab "
                 "schedules' windows and the runs they started, read-only). "
-                "Output: {events:[{id,title,start,end,all_day,location,source,color}]}.",
+                "Output: {events:[{id,title,start,end,all_day,location,source,color}]}.", contract={"presentation": {'kind': 'calendar', 'form': 'schedule'}}
 )
 async def cap_events_list(start: str = "week", end: str = "",
                           source: str = "", include_dreams: bool = False,

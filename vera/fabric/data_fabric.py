@@ -2366,7 +2366,7 @@ async def fabric_graphs_list(trace_id=None) -> Dict:
                 "label_filter (str — comma-sep labels to include, or '' for default), "
                 "dataset_id (str — if set, scope to FabricRecords inside this dataset "
                 "and the dataset itself). "
-                "Output: {graph, nodes:[{id,label,name,...}], edges:[{from,to,rel,props}]}.",
+                "Output: {graph, nodes:[{id,label,name,...}], edges:[{from,to,rel,props}]}.", contract={"presentation": {'kind': 'graph', 'form': 'vgraph'}}
 )
 async def fabric_graphs_snapshot(graph: str = "fabric", limit: int = 200,
                                    label_filter: str = "",

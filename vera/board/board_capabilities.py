@@ -228,7 +228,7 @@ if True:  # capability registration (mirrors the guard style of the other module
         http_tags=["board"], memory="off", silent=True,
         description="List work-plane items (compact), newest storage order. Filter with "
                     "lane, label, agent, mentions, text. Output: {ok, items:[{id,title,lane,"
-                    "labels,agent,branch,pipeline,session,comment_count,...}], count}.",
+                    "labels,agent,branch,pipeline,session,comment_count,...}], count}.", contract={"presentation": {'kind': 'status', 'form': 'ci-board'}}
     )
     async def cap_board_items(lane: str = "", label: str = "", agent: str = "",
                               repo: str = "", project: str = "",

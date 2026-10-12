@@ -4032,7 +4032,7 @@ async def cap_entity_graph_record_entities(
                 "limit (int default 200), "
                 "include_datasets (bool default False), "
                 "include_records (bool default False). "
-                "Output: {nodes, edges, node_count, edge_count}.",
+                "Output: {nodes, edges, node_count, edge_count}.", contract={"presentation": {'kind': 'graph', 'form': 'vgraph'}}
 )
 async def cap_entity_graph_snapshot(
     dataset_id:        str  = "",

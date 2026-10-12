@@ -216,3 +216,49 @@ def test_gate_can_require_a_presentation_for_a_migration_set():
     res = gate_contracts([declared, missing], required_dimensions=("presentation",))
     assert res["ok"] is False
     assert [(i["name"], i["code"]) for i in res["issues"]] == [("m.plain", "gate.declaration_missing")]
+
+
+# ── DA-01d: the widget hints are declarations on their capabilities ──────────────────────────────────────────
+
+def test_the_former_hints_are_declared_on_their_capabilities():
+    import os
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    from presentation_declarations import declared_in_source, load_fixture
+    source = declared_in_source()
+    assert len(source) >= 51
+    # the fixture the widget tests feed the page is what the code declares
+    assert source == load_fixture()
+    for cap, pres in source.items():
+        got = project_presentation({"presentation": pres})
+        assert got["status"] == "declared", (cap, got.get("problems"))
+        assert pres.get("form"), cap
+
+
+def test_the_hint_tables_are_empty():
+    import os
+    root = os.path.join(os.path.dirname(__file__), "..")
+    py = open(os.path.join(root, "vera", "widgets", "widget_cap_output.py"), encoding="utf-8").read()
+    js = open(os.path.join(root, "vera", "widgets", "widget_element.js"), encoding="utf-8").read()
+    assert "CAP_HINTS: Dict[str, Dict[str, Any]] = {\n}" in py
+    assert "  const CAP_HINTS = {};" in js
+
+
+def test_a_form_declaration_validates_its_own_parts():
+    assert presentation_problems({"kind": "status", "form": "status-matrix"}) == []
+    assert presentation_problems({"kind": "series", "form": "candles", "map": {"bars": "bars"}}) == []
+    assert presentation_problems({"kind": "table", "form": "table", "map": {"rows": "guests"}, "draw": {"columns": ["a"]}}) == []
+    assert "presentation.form_invalid" in _codes(presentation_problems({"kind": "status", "form": "Not A Form"}))
+    assert "presentation.draw_invalid" in _codes(presentation_problems({"kind": "status", "form": "status", "draw": "x"}))
+    assert "presentation.draw_without_form" in _codes(presentation_problems({"kind": "table", "map": {"rows": "r"}, "draw": {}}))
+    assert "presentation.form_composite" in _codes(presentation_problems({"kind": "composite", "form": "table", "parts": [P.metric("v")]}))
+
+
+def test_a_contract_that_only_says_how_it_is_drawn_is_not_a_declared_contract():
+    from vera.capability_policy_core import evaluate_policy_shadow
+    only = project_contract("x.drawn", {"description": "d", "contract": {"presentation": P.status("ok", form="status")}})
+    assert only["declaration"]["status"] == "legacy_projected"
+    assert only["presentation"]["status"] == "declared"
+    plain = evaluate_policy_shadow("x", {})
+    drawn = evaluate_policy_shadow("x", {"presentation": {"kind": "status", "form": "status"}})
+    assert plain == drawn
