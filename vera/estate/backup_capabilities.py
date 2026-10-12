@@ -188,7 +188,7 @@ async def _ensure(refresh: bool = False) -> Dict[str, Any]:
                 "counts, recent replication lines; and findings in plain language, "
                 "errors first. Read-only; cached 120 s. Inputs: refresh (bool). "
                 "Output: {guests, schedules, storages, snapshots, replication, host, "
-                "findings, counts, checked_at, elapsed_ms, cached}.",
+                "findings, counts, checked_at, elapsed_ms, cached}.", contract={"presentation": {'kind': 'table', 'form': 'table', 'map': {'rows': 'guests'}, 'draw': {'columns': ['name', 'status', 'state', 'backups']}}}
 )
 async def cap_backup_status(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
     return _public(await _ensure(_flag(refresh)))

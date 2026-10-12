@@ -274,7 +274,7 @@ async def _certificates() -> Dict[str, Any]:
                 "counts:{error,warn,info}, findings:[{severity, section, subject, message, "
                 "detail}], sections:{state_store, containers, guests, backups, storage, "
                 "services, certificates: {label, facts, elapsed_ms, error, findings}}, "
-                "checked_at, cached}.",
+                "checked_at, cached}.", contract={"presentation": {'kind': 'status', 'form': 'status'}}
 )
 async def cap_estate_health(refresh: bool = False, trace_id=None) -> Dict[str, Any]:
     if not refresh and _CACHE["result"] and time.monotonic() - _CACHE["at"] < CACHE_TTL_S:

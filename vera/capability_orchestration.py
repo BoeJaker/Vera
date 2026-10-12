@@ -9595,7 +9595,7 @@ def _health_files() -> Dict[str, Any]:
                         "action=yield and wait for acked, resume after). `activity` "
                         "{busy, summary, loops, gates, declared} is everything else in "
                         "flight: agent loops, gates, and tests/probes declared with "
-                        "sys.activity.declare.")
+                        "sys.activity.declare.", contract={"presentation": {'kind': 'status', 'form': 'status'}})
 async def obs_health(trace_id=None):
     return {"redis":await _backend_answers("redis"),
             "postgres":await _backend_answers("postgres"),"chroma":bool(CHROMA),
@@ -9812,7 +9812,7 @@ async def obs_scheduler(trace_id=None):
 
 @capability("obs.events", memory="off", silent=True,
             http_method="GET", http_path="/events", http_tags=["obs"],
-            description="Recent events from Redis event stream.")
+            description="Recent events from Redis event stream.", contract={"presentation": {'kind': 'log', 'form': 'log', 'map': {'events': '$', 't': 'ts', 'kind': 'type', 'text': 'name'}}})
 async def obs_events(limit: int = 100, trace_id=None):
     if not REDIS: return []
     data=await REDIS.xrevrange(EVENT_STREAM,count=min(limit,500))
@@ -9906,7 +9906,7 @@ async def obs_diagnostics(trace_id=None):
 
 @capability("obs.modules", memory="off", silent=True,
             http_method="GET", http_path="/modules", http_tags=["obs"],
-            description="List all capability modules loaded at startup — name, path, caps added, status.")
+            description="List all capability modules loaded at startup — name, path, caps added, status.", contract={"presentation": {'kind': 'table', 'form': 'treemap', 'map': {'parts': 'modules', 'name': 'name', 'value': 'caps_added'}}})
 async def obs_modules(trace_id=None):
     return {"modules": LOADED_MODULES, "count": len(LOADED_MODULES)}
 
@@ -10006,7 +10006,7 @@ def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
                         "(proxmox, docker, ollama, mesh, loop_lab, sandboxes, "
                         "mimic, fabric, redis) for the main-dashboard health "
                         "strip. Fans out via _gather_subsystem_snapshot(), "
-                        "never raises.")
+                        "never raises.", contract={"presentation": {'kind': 'status', 'form': 'pills', 'map': {'values': '$', 'entries': 'status'}}})
 async def dash_health_summary(trace_id=None) -> Dict:
     snap = await _gather_subsystem_snapshot()
     sysmon = snap["sysmon"] if isinstance(snap["sysmon"], dict) else {}
@@ -10144,7 +10144,7 @@ def _node_leaf_status(backends: List[str], temp_entry: Optional[Dict]) -> str:
                         "today, and this map doesn't fake a layer off data "
                         "that doesn't exist. "
                         "Output: {nodes:[{id,label,kind,status,detail,temp_c}], "
-                        "edges:[{from,to,kind}], ts}.")
+                        "edges:[{from,to,kind}], ts}.", contract={"presentation": {'kind': 'graph', 'form': 'vgraph'}})
 async def topology_snapshot(trace_id=None) -> Dict:
     snap = await _gather_subsystem_snapshot()
     nodes_out: List[Dict] = [{"id": "hub", "label": "Vera", "kind": "hub", "status": "ok", "detail": ""}]
@@ -11021,7 +11021,7 @@ async def cap_media_ping(id: str, trace_id=None):
                         "EMA elapsed seconds, output tokens, tokens/sec and prompt size — "
                         "the data the router uses to gauge how long a request will take. "
                         "Query: model (str, filter), instance (str, filter), "
-                        "estimate_prompt_chars (int — include a per-key duration estimate).")
+                        "estimate_prompt_chars (int — include a per-key duration estimate).", contract={"presentation": {'kind': 'table', 'form': 'ranked', 'map': {'values': 'stats', 'count': 'model', 'sum': 'n'}}})
 async def cap_ollama_route_stats(model: str = "", instance: str = "",
                                  estimate_prompt_chars: int = 0, trace_id=None):
     out = []
@@ -11065,7 +11065,7 @@ async def cap_ollama_pull(model: str, instance_id: str, trace_id=None):
             description="Return the recent Ollama request log (in-process ring buffer). "
                         "Shows caller, model, instance, timing, and status for every "
                         "ollama_generate call. Query: limit (int, default 50), "
-                        "caller_file (str, filter), status (str, filter).")
+                        "caller_file (str, filter), status (str, filter).", contract={"presentation": {'kind': 'log', 'form': 'log', 'map': {'events': 'entries', 't': 'ts', 'kind': 'instance', 'text': 'model'}}})
 async def cap_ollama_request_log(limit: int = 50, caller_file: str = "",
                                   status: str = "", trace_id=None):
     # Sanitise again on read so a hot-upgraded process or a legacy/direct caller

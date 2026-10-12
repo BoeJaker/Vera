@@ -15975,7 +15975,7 @@ async def dream_config_set(
     "dream.history", memory="off", silent=True,
     http_method="GET", http_path="/dream/history", http_tags=["dream"],
     description="Recent dream cycle records (newest first). Supports filtering by "
-                "trigger name, keyword search in report/title/themes, and pagination.",
+                "trigger name, keyword search in report/title/themes, and pagination.", contract={"presentation": {'kind': 'table', 'form': 'table', 'map': {'rows': 'history'}, 'draw': {'columns': ['label', 'title', 'started_at', 'signal']}}}
 )
 async def dream_history(
     limit: int = 50,

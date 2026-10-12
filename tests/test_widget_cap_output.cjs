@@ -10,6 +10,9 @@ const defined = {};
 const ctx = { window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } }, document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {}, style: {} }), head: { appendChild() {} }, getElementById: () => null }, setTimeout, clearTimeout, requestAnimationFrame: (f) => setTimeout(f, 0), localStorage: { getItem: () => null, setItem() {} } };
 ctx.window.customElements = ctx.customElements; ctx.window.document = ctx.document; ctx.window.localStorage = ctx.localStorage;
 vm.runInNewContext(fs.readFileSync(path.join(R, 'vera', 'ui', 'iso.js'), 'utf8'), ctx); vm.runInNewContext(WE, ctx); const W = ctx.window.VeraWidget;
+// the capabilities' declared drawings (DA-01d - their former widget hints) reach the page with /mcp/tools: present.js keeps them
+vm.runInNewContext(fs.readFileSync(path.join(R, 'vera', 'widgets', 'present.js'), 'utf8'), ctx);
+W.presentations(Object.entries(JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures', 'presentation_declared.json'), 'utf8'))).map(([name, p]) => ({ name, presentation: Object.assign({ status: 'declared' }, p) })));
 const text = (h) => h.replace(/<style[\s\S]*?<\/style>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 const bad = (h) => /wempty|vw-nodata|data-sample/.test(h);
 

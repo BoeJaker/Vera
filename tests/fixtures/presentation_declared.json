@@ -1,0 +1,304 @@
+{
+ "backup.status": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "state",
+    "backups"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "guests"
+  }
+ },
+ "board.items": {
+  "form": "ci-board",
+  "kind": "status"
+ },
+ "cal.events.list": {
+  "form": "schedule",
+  "kind": "calendar"
+ },
+ "census.live": {
+  "form": "census-live",
+  "kind": "status"
+ },
+ "ci.board": {
+  "form": "ci-board",
+  "kind": "status"
+ },
+ "ci.census": {
+  "form": "census-commits",
+  "kind": "status"
+ },
+ "ci.compare": {
+  "form": "run-compare",
+  "kind": "table"
+ },
+ "ci.fleet": {
+  "form": "ci-fleet",
+  "kind": "status"
+ },
+ "ci.matrix": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "ci.pulse": {
+  "form": "ci-pulse",
+  "kind": "status"
+ },
+ "ci.race": {
+  "form": "race-green",
+  "kind": "status"
+ },
+ "ci.run": {
+  "form": "ci-run",
+  "kind": "progress"
+ },
+ "ci.tests": {
+  "form": "test-grid",
+  "kind": "status"
+ },
+ "ci.track": {
+  "form": "run-track",
+  "kind": "progress"
+ },
+ "code.diff": {
+  "form": "diff",
+  "kind": "diff"
+ },
+ "code.read": {
+  "form": "code",
+  "kind": "code"
+ },
+ "dash.health.summary": {
+  "form": "pills",
+  "kind": "status",
+  "map": {
+   "entries": "status",
+   "values": "$"
+  }
+ },
+ "docker.ps": {
+  "form": "containers",
+  "kind": "table",
+  "map": {
+   "host": "host_id",
+   "name": "Names",
+   "rows": "containers",
+   "status": "State"
+  }
+ },
+ "dream.history": {
+  "draw": {
+   "columns": [
+    "label",
+    "title",
+    "started_at",
+    "signal"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "history"
+  }
+ },
+ "estate.health": {
+  "form": "status",
+  "kind": "status"
+ },
+ "evolve.activity": {
+  "form": "area",
+  "kind": "series",
+  "map": {
+   "series": "buckets",
+   "split": [
+    "pass",
+    "fail"
+   ],
+   "t": "hour"
+  }
+ },
+ "evolve.pipeline.diff": {
+  "form": "diff",
+  "kind": "diff"
+ },
+ "evolve.pipeline.get": {
+  "form": "run-track",
+  "kind": "progress"
+ },
+ "evolve.pipeline.list": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "evolve.sandbox.diff": {
+  "form": "diff",
+  "kind": "diff"
+ },
+ "evolve.sandbox.list": {
+  "form": "sandboxes",
+  "kind": "table",
+  "map": {
+   "name": "name",
+   "rows": "sandboxes",
+   "status": "running"
+  }
+ },
+ "evolve.tasks.overview": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "evolve.unittest.history": {
+  "form": "race-green",
+  "kind": "status"
+ },
+ "exec.bash.run": {
+  "form": "terminal",
+  "kind": "terminal"
+ },
+ "fabric.entity_graph.snapshot": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "fabric.graphs.snapshot": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "loop.ci.board": {
+  "form": "ci-board",
+  "kind": "status"
+ },
+ "loop.ci.matrix": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "loop.ci.perf": {
+  "form": "loop-perf",
+  "kind": "series"
+ },
+ "loop.ci.race": {
+  "form": "race-green",
+  "kind": "status"
+ },
+ "markets.chart": {
+  "form": "candles",
+  "kind": "series",
+  "map": {
+   "bars": "bars"
+  }
+ },
+ "memory.graph_full": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "mesh.topology": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "obs.events": {
+  "form": "log",
+  "kind": "log",
+  "map": {
+   "events": "$",
+   "kind": "type",
+   "t": "ts",
+   "text": "name"
+  }
+ },
+ "obs.health": {
+  "form": "status",
+  "kind": "status"
+ },
+ "obs.modules": {
+  "form": "treemap",
+  "kind": "table",
+  "map": {
+   "name": "name",
+   "parts": "modules",
+   "value": "caps_added"
+  }
+ },
+ "obs.node_temps": {
+  "form": "temps",
+  "kind": "table",
+  "map": {
+   "name": "label",
+   "value": "max_c",
+   "values": "hosts"
+  }
+ },
+ "ollama.request_log": {
+  "form": "log",
+  "kind": "log",
+  "map": {
+   "events": "entries",
+   "kind": "instance",
+   "t": "ts",
+   "text": "model"
+  }
+ },
+ "ollama.route_stats": {
+  "form": "ranked",
+  "kind": "table",
+  "map": {
+   "count": "model",
+   "sum": "n",
+   "values": "stats"
+  }
+ },
+ "perf.scan": {
+  "form": "status",
+  "kind": "status"
+ },
+ "perf.stalls": {
+  "form": "column",
+  "kind": "series",
+  "map": {
+   "reverse": true,
+   "value": "stalled_ms",
+   "values": "events"
+  }
+ },
+ "syslog.errors": {
+  "form": "log",
+  "kind": "log",
+  "map": {
+   "events": "warnings",
+   "kind": "cap_group",
+   "t": "ts",
+   "text": "message"
+  }
+ },
+ "sysmon.history": {
+  "form": "trace",
+  "kind": "series",
+  "map": {
+   "series": "samples",
+   "v": "cpu"
+  }
+ },
+ "sysmon.status": {
+  "form": "numbers",
+  "kind": "kv",
+  "map": {
+   "pick": {
+    "containers": "docker.running",
+    "cpu": "resources.cpu",
+    "guests": "proxmox.running",
+    "memory": "resources.mem"
+   }
+  }
+ },
+ "topology.snapshot": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "workshop.agent_loop.trace": {
+  "form": "status-matrix",
+  "kind": "status"
+ }
+}

@@ -71,7 +71,12 @@ _PRESENTATION_NEEDS = {"table": ("rows",), "records": ("rows",), "reading": ("ro
                        "log": ("events",), "progress": ("steps",), "terminal": ("stdout",), "media": ("url", "b64"),
                        "code": ("code",), "diff": ("diff",), "kv": ("fields",), "calendar": ("events",),
                        "entities": ("groups", "entities"), "job": ("job_id",)}
-_PRESENTATION_FIELDS = ("kind", "map", "views", "title", "refresh", "live", "detail", "empty", "parts")
+_PRESENTATION_FIELDS = ("kind", "map", "views", "title", "refresh", "live", "detail", "empty", "parts", "form", "draw")
+# A declaration may name the widget FORM that draws its kind (DA-01d - the Loop Lab pictures, candles, temps, pills ...):
+# then its map is in that form's own words (VeraWidget.applyMap: rows, series, values, pick, count, split ...) and is
+# handed to the form as it is, and `draw` is the form's drawing options. The kind still says what the answer IS - its
+# desk element and the views a person may switch to.
+_FORM_NAME = re.compile(r"^[a-z][a-z0-9-]*(@iso)?$")
 
 
 def _schema_at(schema: Any, path: str) -> Any:
@@ -107,14 +112,27 @@ def presentation_problems(presentation: Any, output_schema: Any = None) -> list[
     if not isinstance(mapping, Mapping):
         out.append(("presentation.map_invalid", "error", "presentation.map", "map must be an object of paths"))
         mapping = {}
-    for key in sorted(set(str(k) for k in mapping) - set(spec["keys"])):
+    if "form" in presentation:
+        form = presentation.get("form")
+        if not isinstance(form, str) or not _FORM_NAME.match(form):
+            out.append(("presentation.form_invalid", "error", "presentation.form", "form is a widget form name"))
+        draw = presentation.get("draw")
+        if draw is not None and not isinstance(draw, Mapping):
+            out.append(("presentation.draw_invalid", "error", "presentation.draw", "draw is an object of drawing options"))
+        if kind == "composite":
+            out.append(("presentation.form_composite", "error", "presentation.form", "a composite names its parts, not a form"))
+        # the map is the form's own (its words are checked by the form), so the kind's map keys are not asked for
+        mapping = None
+    elif presentation.get("draw") is not None:
+        out.append(("presentation.draw_without_form", "error", "presentation.draw", "draw goes with a form"))
+    for key in (sorted(set(str(k) for k in mapping) - set(spec["keys"])) if mapping is not None else []):
         out.append(("presentation.map_key_unknown", "error", f"presentation.map.{key}",
                     f"kind '{kind}' does not read '{key}' (it reads {', '.join(spec['keys'])})"))
-    for key, path in sorted(mapping.items()):
+    for key, path in sorted((mapping or {}).items()):
         if not isinstance(path, str) or not path.strip():
             out.append(("presentation.map_path_invalid", "error", f"presentation.map.{key}", "a map value is a path string"))
     needs = _PRESENTATION_NEEDS.get(kind, ())
-    if needs and not any(k in mapping for k in needs) and kind != "composite":
+    if mapping is not None and needs and not any(k in mapping for k in needs) and kind != "composite":
         out.append(("presentation.map_missing", "error", "presentation.map",
                     f"kind '{kind}' needs map.{' or map.'.join(needs)}"))
     if kind == "composite":
@@ -154,7 +172,7 @@ def presentation_problems(presentation: Any, output_schema: Any = None) -> list[
         if presentation.get(key) is not None and not isinstance(presentation.get(key), str):
             out.append((f"presentation.{key}_invalid", "error", f"presentation.{key}", f"{key} is a string template"))
     # the paths against the declared answer: the content key from the root, a row key inside the rows it names
-    if isinstance(output_schema, Mapping) and output_schema.get("properties") and isinstance(mapping, Mapping):
+    if isinstance(output_schema, Mapping) and output_schema.get("properties") and isinstance(mapping, Mapping) and mapping:
         content = next((k for k in spec["keys"] if k in mapping), None)
         content_node = _schema_at(output_schema, mapping[content]) if content and isinstance(mapping.get(content), str) else None
         for key, path in sorted(mapping.items()):
@@ -282,7 +300,9 @@ def project_contract(name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
             "reason": _text(declared.get("deprecation_reason")),
         },
         "declaration": {
-            "status": "declared" if declared else "legacy_projected",
+            # a contract that only says how its answer is drawn is not a declared contract (DA-01d moved the widget
+            # hints onto capabilities that had none)
+            "status": "declared" if any(k != "presentation" for k in declared) else "legacy_projected",
             "fields": sorted(str(key) for key in declared),
         },
         "schemas": {

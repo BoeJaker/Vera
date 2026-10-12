@@ -2126,7 +2126,7 @@
        3 media      image_b64 · an image/video/audio url · {images:[...]}         → media
        4 diff       {diff} · {patch} · a string that is a unified diff           → diff
        5 code       {code} · {content, path}                                       → code
-       6 hint       the capability's own hint (CAP_HINTS: the dashboard's reads)  → its form and map
+       6 hint       the capability's declared form (Contract v2 presentation, DA-01d) → its form and map
        7 progress   {steps|stages:[{name, status}]} · rows of step + state        → progress
        8 events     rows with a time and a line of text                           → log
        9 series     rows with a time and numbers · {history|samples:[...]}        → trace (one number) · area (several)
@@ -2141,25 +2141,14 @@
       18 json       anything else with structure                                  → json
       19 string     a short text                                                  → string
      The python catalogue mirrors it (widget_cap_output.py, widget.from_result) so an agent can ask for the same answer. */
-  const CAP_HINTS = {
-    'markets.chart': { form: 'candles', map: { bars: 'bars' } },   /* a symbol's candles (canvas enrichment, slice 5) */
-    'sysmon.history': { form: 'trace', map: { series: 'samples', v: 'cpu' } }, 'sysmon.status': { form: 'numbers', map: { pick: { cpu: 'resources.cpu', memory: 'resources.mem', guests: 'proxmox.running', containers: 'docker.running' } } },
-    'obs.events': { form: 'log', map: { events: '$', t: 'ts', kind: 'type', text: 'name' } }, 'ollama.request_log': { form: 'log', map: { events: 'entries', t: 'ts', kind: 'instance', text: 'model' } },
-    'ollama.route_stats': { form: 'ranked', map: { values: 'stats', count: 'model', sum: 'n' } }, 'obs.node_temps': { form: 'temps', map: { values: 'hosts', name: 'label', value: 'max_c' } },
-    'evolve.activity': { form: 'area', map: { series: 'buckets', split: ['pass', 'fail'], t: 'hour' } }, 'evolve.pipeline.list': { form: 'status-matrix' },
-    'evolve.unittest.history': { form: 'race-green' }, 'perf.stalls': { form: 'column', map: { values: 'events', value: 'stalled_ms', reverse: true } },
-    'syslog.errors': { form: 'log', map: { events: 'warnings', t: 'ts', kind: 'cap_group', text: 'message' } }, 'dash.health.summary': { form: 'pills', map: { values: '$', entries: 'status' } },
-    'obs.modules': { form: 'treemap', map: { parts: 'modules', name: 'name', value: 'caps_added' } }, 'estate.health': { form: 'status' }, 'perf.scan': { form: 'status' },
-    'obs.health': { form: 'status' }, 'backup.status': { form: 'table', map: { rows: 'guests' }, draw: { columns: ['name', 'status', 'state', 'backups'] } }, 'docker.ps': { form: 'containers', map: { rows: 'containers', name: 'Names', status: 'State', host: 'host_id' } },
-    'evolve.sandbox.list': { form: 'sandboxes', map: { rows: 'sandboxes', name: 'name', status: 'running' } }, 'dream.history': { form: 'table', map: { rows: 'history' }, draw: { columns: ['label', 'title', 'started_at', 'signal'] } },
-    'fabric.graphs.snapshot': { form: 'vgraph' }, 'fabric.entity_graph.snapshot': { form: 'vgraph' }, 'memory.graph_full': { form: 'vgraph' }, 'topology.snapshot': { form: 'vgraph' }, 'mesh.topology': { form: 'vgraph' },
-    'cal.events.list': { form: 'schedule' }, 'exec.bash.run': { form: 'terminal' }, 'code.read': { form: 'code' }, 'code.diff': { form: 'diff' }, 'evolve.pipeline.diff': { form: 'diff' }, 'evolve.sandbox.diff': { form: 'diff' },
-    // the Loop Lab's pictures: ci.* (code work), loop.ci.* (the agentic loop), and the Loop Lab's own capabilities
-    'ci.matrix': { form: 'status-matrix' }, 'ci.race': { form: 'race-green' }, 'ci.tests': { form: 'test-grid' }, 'ci.board': { form: 'ci-board' }, 'ci.track': { form: 'run-track' },
-    'ci.compare': { form: 'run-compare' }, 'ci.pulse': { form: 'ci-pulse' }, 'ci.fleet': { form: 'ci-fleet' }, 'ci.run': { form: 'ci-run' }, 'ci.census': { form: 'census-commits' }, 'loop.ci.perf': { form: 'loop-perf' }, 'census.live': { form: 'census-live' },
-    'loop.ci.matrix': { form: 'status-matrix' }, 'loop.ci.race': { form: 'race-green' }, 'loop.ci.board': { form: 'ci-board' },
-    'evolve.pipeline.get': { form: 'run-track' }, 'evolve.tasks.overview': { form: 'status-matrix' }, 'workshop.agent_loop.trace': { form: 'status-matrix' }, 'board.items': { form: 'ci-board' } };
-  const hintOf = (cap) => { const n = String(cap || ''); if (CAP_HINTS[n]) return CAP_HINTS[n]; if (/\.(diff|patch)$/.test(n)) return { form: 'diff' }; if (/\.(health|healthz)$/.test(n)) return { form: 'status' }; return null; };
+  /* the capabilities' widget hints are declarations on them now (DA-01d: Contract v2 presentation {kind, form, map, draw},
+     read by hintOf below through VeraWidget.presentations); this table is for what no capability declares - empty today */
+  const CAP_HINTS = {};
+  /* the capability's declared form first (DA-01d: the hints are declarations on their capabilities now - Contract v2
+     presentation {kind, form, map, draw}, carried by /mcp/tools into VeraWidget.presentations); CAP_HINTS is left for
+     what no capability declares */
+  const hintOf = (cap) => { const n = String(cap || ''); const D = (window.VeraWidget && typeof window.VeraWidget.presentationOf === 'function') ? window.VeraWidget.presentationOf(n) : null;
+    if (D && typeof D.form === 'string' && D.form) return Object.assign({ form: D.form, map: D.map || {} }, D.draw ? { draw: D.draw } : {}); if (CAP_HINTS[n]) return CAP_HINTS[n]; if (/\.(diff|patch)$/.test(n)) return { form: 'diff' }; if (/\.(health|healthz)$/.test(n)) return { form: 'status' }; return null; };
   const rowsOfAny = (c) => { if (Array.isArray(c)) return c; if (!isObj(c)) return null; const ok = (v) => Array.isArray(v) && v.length && isObj(v[0]);
     for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (ok(c[k])) return c[k]; for (const k of Object.keys(c)) if (ok(c[k])) return c[k]; return null; };
   const rowsKey = (c) => { if (!isObj(c)) return '$'; for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (Array.isArray(c[k]) && c[k].length && isObj(c[k][0])) return k; for (const k of Object.keys(c)) if (Array.isArray(c[k]) && c[k].length && isObj(c[k][0])) return k; return '$'; };

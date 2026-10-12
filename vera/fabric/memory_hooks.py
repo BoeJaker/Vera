@@ -35,7 +35,7 @@ Memory routing — three modes per capability
 
 The mode is set in the @capability decorator:
   @capability("llm.generate", memory="on", ...)
-  @capability("obs.health",   memory="off", ...)
+  @capability("obs.health",   memory="off", ..., contract={"presentation": {'kind': 'status', 'form': 'status'}})
 
 Memory injection for agents
 ───────────────────────────
@@ -2133,7 +2133,7 @@ async def memory_all_edges(limit: int = 1000, trace_id=None):
     "memory.graph_full",
     http_method="GET", http_path="/memory/graph/full", http_tags=["memory"],
     memory="off",
-    description="Return nodes + edges in one call. Use mode=session (+session_id), mode=recent, or mode=all.",
+    description="Return nodes + edges in one call. Use mode=session (+session_id), mode=recent, or mode=all.", contract={"presentation": {'kind': 'graph', 'form': 'vgraph'}}
 )
 async def memory_graph_full(session_id:  str = "",
                              limit_nodes: int = 300,

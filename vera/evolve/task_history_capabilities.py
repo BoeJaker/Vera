@@ -564,7 +564,7 @@ async def cap_evolve_task_history(id: str = "", include_excluded: bool = False,
         "(oldest first) for a sparkline. Tasks come from the task store (filter by "
         "tag / template); results from every driver. Inputs: tag (str), template "
         "(str), include_excluded (bool=false), limit (int=500). "
-        "Output: {tasks[], count}."),
+        "Output: {tasks[], count}."), contract={"presentation": {'kind': 'status', 'form': 'status-matrix'}}
 )
 async def cap_evolve_tasks_overview(tag: str = "", template: str = "", include_excluded: bool = False,
                                     limit: int = 500, trace_id=None) -> Dict[str, Any]:

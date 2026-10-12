@@ -23,38 +23,9 @@ CAP_FORMS = ("kv", "table", "list", "json", "log", "terminal", "diff", "code", "
              "column", "status", "files", "media", "error", "markdown", "reading")
 
 # the capability's own hint: what the dashboard already reads each of these as (kept in step with CAP_HINTS in the element)
+# The capabilities' own widget hints are declarations on them now (DA-01d): Contract v2 presentation {kind, form, map,
+# draw}, read first by present(). This table is for an answer no capability declares a drawing for - empty today.
 CAP_HINTS: Dict[str, Dict[str, Any]] = {
-    "markets.chart": {"form": "candles", "map": {"bars": "bars"}},   # a symbol's candles (canvas enrichment, slice 5)
-    "sysmon.history": {"form": "trace", "map": {"series": "samples", "v": "cpu"}},
-    "sysmon.status": {"form": "numbers", "map": {"pick": {"cpu": "resources.cpu", "memory": "resources.mem", "guests": "proxmox.running", "containers": "docker.running"}}},
-    "obs.events": {"form": "log", "map": {"events": "$", "t": "ts", "kind": "type", "text": "name"}},
-    "ollama.request_log": {"form": "log", "map": {"events": "entries", "t": "ts", "kind": "instance", "text": "model"}},
-    "ollama.route_stats": {"form": "ranked", "map": {"values": "stats", "count": "model", "sum": "n"}},
-    "obs.node_temps": {"form": "temps", "map": {"values": "hosts", "name": "label", "value": "max_c"}},
-    "evolve.activity": {"form": "area", "map": {"series": "buckets", "split": ["pass", "fail"], "t": "hour"}},
-    "evolve.pipeline.list": {"form": "status-matrix"},
-    "evolve.unittest.history": {"form": "race-green"},
-    "perf.stalls": {"form": "column", "map": {"values": "events", "value": "stalled_ms", "reverse": True}},
-    "syslog.errors": {"form": "log", "map": {"events": "warnings", "t": "ts", "kind": "cap_group", "text": "message"}},
-    "dash.health.summary": {"form": "pills", "map": {"values": "$", "entries": "status"}},
-    "obs.modules": {"form": "treemap", "map": {"parts": "modules", "name": "name", "value": "caps_added"}},
-    "estate.health": {"form": "status"}, "perf.scan": {"form": "status"}, "obs.health": {"form": "status"},
-    "backup.status": {"form": "table", "map": {"rows": "guests"}, "draw": {"columns": ["name", "status", "state", "backups"]}},
-    "docker.ps": {"form": "containers", "map": {"rows": "containers", "name": "Names", "status": "State", "host": "host_id"}},
-    "evolve.sandbox.list": {"form": "sandboxes", "map": {"rows": "sandboxes", "name": "name", "status": "running"}},
-    "dream.history": {"form": "table", "map": {"rows": "history"}, "draw": {"columns": ["label", "title", "started_at", "signal"]}},
-    "fabric.graphs.snapshot": {"form": "vgraph"}, "fabric.entity_graph.snapshot": {"form": "vgraph"}, "memory.graph_full": {"form": "vgraph"},
-    "topology.snapshot": {"form": "vgraph"}, "mesh.topology": {"form": "vgraph"}, "cal.events.list": {"form": "schedule"},
-    "exec.bash.run": {"form": "terminal"}, "code.read": {"form": "code"}, "code.diff": {"form": "diff"},
-    "evolve.pipeline.diff": {"form": "diff"}, "evolve.sandbox.diff": {"form": "diff"},
-    # the Loop Lab's pictures: ci.* (code work), loop.ci.* (the agentic loop), and the Loop Lab's own capabilities
-    "ci.matrix": {"form": "status-matrix"}, "ci.race": {"form": "race-green"}, "ci.tests": {"form": "test-grid"},
-    "ci.board": {"form": "ci-board"}, "ci.track": {"form": "run-track"}, "ci.compare": {"form": "run-compare"},
-    "ci.pulse": {"form": "ci-pulse"}, "ci.fleet": {"form": "ci-fleet"}, "ci.run": {"form": "ci-run"},
-    "ci.census": {"form": "census-commits"}, "loop.ci.perf": {"form": "loop-perf"}, "census.live": {"form": "census-live"},
-    "loop.ci.matrix": {"form": "status-matrix"}, "loop.ci.race": {"form": "race-green"}, "loop.ci.board": {"form": "ci-board"},
-    "evolve.pipeline.get": {"form": "run-track"}, "evolve.tasks.overview": {"form": "status-matrix"},
-    "workshop.agent_loop.trace": {"form": "status-matrix"}, "board.items": {"form": "ci-board"},
 }
 #: the CI forms draw their answer whole (ci_view_core's payload): no rows companion beside them
 CI_FORMS = ("status-matrix", "race-green", "test-grid", "ci-board", "run-track", "run-compare", "ci-pulse", "ci-fleet", "ci-run",
@@ -80,7 +51,13 @@ def _num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def _hint(cap: str) -> Optional[Dict[str, Any]]:
+def _hint(cap: str, presentation: Optional[dict] = None) -> Optional[Dict[str, Any]]:
+    # the capability's declared form first (DA-01d: the hints are Contract v2 presentation declarations now)
+    if isinstance(presentation, dict) and isinstance(presentation.get("form"), str) and presentation.get("form"):
+        h = {"form": presentation["form"], "map": dict(presentation.get("map") or {})}
+        if isinstance(presentation.get("draw"), dict):
+            h["draw"] = presentation["draw"]
+        return h
     if cap in CAP_HINTS:
         return CAP_HINTS[cap]
     if re.search(r"\.(diff|patch)$", cap):
@@ -157,7 +134,7 @@ def _checks(d: Any) -> List[dict]:
 
 
 def from_cap_result(cap: str, result: Any, args: Optional[dict] = None, title: str = "", size: str = "l",
-                    max_records: int = 3) -> List[Dict[str, Any]]:
+                    max_records: int = 3, presentation: Optional[dict] = None) -> List[Dict[str, Any]]:
     """The widget record(s) that draw a capability's answer, best first (the mirror of VeraWidget.fromCapResult)."""
     c = result
     if _is_obj(c) and c.get("type") == "tool_result" and "content" in c:
@@ -218,7 +195,7 @@ def from_cap_result(cap: str, result: Any, args: Optional[dict] = None, title: s
         mk("code", c, "source: code, or a file's content")
         return done()
     # 6 the capability's hint
-    h = _hint(cap)
+    h = _hint(cap, presentation)
     if h:
         r = mk(h["form"], c, "the " + cap + " hint", h.get("map"), h.get("draw"))
         if h["form"] not in CI_FORMS:
@@ -458,13 +435,20 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
     out: List[Dict[str, Any]] = []
     why = "declared: " + P["kind"]
 
-    def rec(form, data, map_=None, t=None):
+    def rec(form, data, map_=None, t=None, draw=None):
         r = {"id": re.sub(r"[^a-z0-9]+", "-", (cap or "result"), flags=re.I) + "-" + form + ("-" + str(len(out)) if out else ""),
              "form": form, "title": t or ttl, "source": cap,
              "read": {"args": dict(args or {}), "map": {k: v for k, v in (map_ or {}).items() if v is not None}},
              "frame": {"size": size}, "data": data, "why": why, "presentation": P}
+        if draw:
+            r["draw"] = draw
         out.append(r)
         return r
+
+    # a declaration that names its widget form (DA-01d): the form draws the answer through the map in its own words
+    if isinstance(P.get("form"), str) and P.get("form"):
+        rec(P["form"], c, dict(m), draw=P.get("draw") if _is_obj(P.get("draw")) else None)
+        return {"records": out[:1]}
 
     def at(k):
         return pick(c, m[k]) if m.get(k) else _MISSING
@@ -576,7 +560,7 @@ def present(cap: str, result: Any, args: Optional[dict] = None, title: str = "",
     P = presentation if (_is_obj(presentation) and presentation.get("kind") in PRESENT_KINDS
                          and presentation.get("status") != "invalid") else None
     K = PRESENT_KINDS[P["kind"]] if P else None
-    path = next((P["map"][k] for k in K["content"] if _is_obj(P.get("map")) and P["map"].get(k)), "") if P else ""
+    path = next((P["map"][k] for k in K["content"] if _is_obj(P.get("map")) and P["map"].get(k)), "") if P and not P.get("form") else ""
     c = _open(result, path)
 
     def base(kind, why):

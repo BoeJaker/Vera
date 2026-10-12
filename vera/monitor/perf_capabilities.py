@@ -135,7 +135,7 @@ def _finding(fid, severity, area, title, detail, *,
     description="Event-loop stall/hang events captured by the watchdog. Each: "
                 "{kind:'stall'|'hang'|'note', ts, stalled_ms, where, stack}. "
                 "'hang' rows carry the exact blocking call's stack. "
-                "Input: limit (int, default 100). Output: {events:[...], count}.",
+                "Input: limit (int, default 100). Output: {events:[...], count}.", contract={"presentation": {'kind': 'series', 'form': 'column', 'map': {'values': 'events', 'value': 'stalled_ms', 'reverse': True}}}
 )
 async def perf_stalls(limit: int = 100, trace_id=None) -> Dict:
     evs = list(getattr(_orch, "PERF_EVENTS", []))
@@ -436,7 +436,7 @@ async def _check_resources() -> List[Dict]:
                 "severity + concrete remediation. Covers: event-loop stalls, "
                 "stale Redis consumers, zombie ollama jobs, Ollama node health / "
                 "saturation, host CPU/RAM. Some findings are auto-remediable via "
-                "perf.remediate. Output: {findings:[...], summary:{crit,warn,info,ok}}.",
+                "perf.remediate. Output: {findings:[...], summary:{crit,warn,info,ok}}.", contract={"presentation": {'kind': 'status', 'form': 'status'}}
 )
 async def perf_scan(trace_id=None) -> Dict:
     findings: List[Dict] = []
