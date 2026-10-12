@@ -51,7 +51,7 @@ def _imports():
     from Vera.vera.minds import judge_core as JC
     from Vera.vera.models.ml_workshop_runtime_bridge import (
         MLWorkshopCapabilityBridge, MLWorkshopONNXOutputBinding, MLWorkshopONNXPublisher)
-    from Vera.vera.models.ml_workshop_training_adapter import MLWorkshopTrainingBinding
+    from Vera.vera.models.ml_workshop_training_adapter import MLWorkshopTrainingBinding, MLWorkshopTrainingRuntime
     from Vera.vera.models.model_package_store import SQLiteModelPackageRegistry
     from Vera.vera.models.training_contracts import (
         EvaluationReport, EvaluationRequest, MetricResult, TrainingRequest)
@@ -176,10 +176,6 @@ async def _record(rec: Dict[str, Any]) -> None:
         pass
 
 
-_DONE = ("complete", "completed", "done", "succeeded")
-_FAILED = ("error", "failed", "stopped", "cancelled")
-
-
 async def _cross_validate(q: str, mod: Dict[str, Any], X: List[List[float]], y: List[List[float]],
                           folds: List[List[int]], avoid: List[str]) -> Tuple[List[float], List[str]]:
     """Out-of-fold p(positive) for every row: one temporary head per fold,
@@ -188,6 +184,8 @@ async def _cross_validate(q: str, mod: Dict[str, Any], X: List[List[float]], y: 
     oof: List[float] = [0.0] * len(X)
     ran_on: List[str] = []
     mt = _mod("ml_training", "Vera.vera.machine learning.ml_training")
+    # the same job-status reading as the W2-07 runtime (early_stopped is a success)
+    native = _imports()["MLWorkshopTrainingRuntime"]._NATIVE_STATUS
     for k, held in enumerate(folds):
         fid = f"{core.module_id(q)}-cv{k}"
         hs = set(held)
@@ -212,12 +210,13 @@ async def _cross_validate(q: str, mod: Dict[str, Any], X: List[List[float]], y: 
             t0 = time.time()
             while True:
                 st = await _cap("ml.train.status")(job_id=job["job_id"]) or {}
-                s = str(st.get("status") or "")
-                if s in _DONE:
+                raw = str(st.get("status") or "").strip().lower()
+                s = native.get(raw)
+                if s == "succeeded":
                     ran_on.append(str(st.get("trained_on") or ""))
                     break
-                if s in _FAILED:
-                    raise RuntimeError(f"CV fold {k}: {st.get('error') or s}")
+                if s not in ("queued", "running"):       # failed, cancelled or unknown: stop now
+                    raise RuntimeError(f"CV fold {k}: {st.get('error') or raw or 'no status'}")
                 if time.time() - t0 > TRAIN_TIMEOUT_S:
                     await _cap("ml.train.stop")(job_id=job["job_id"])
                     raise RuntimeError(f"CV fold {k} did not finish within the timeout")
