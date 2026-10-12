@@ -65,8 +65,15 @@ def _candidates(every: int) -> List[Dict[str, Any]]:
     return [{"id": r[0], "dataset_id": r[1], "text": r[2]} for r in rows]
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "retrieval.known_items.build", http_method="POST", http_path="/retrieval/known_items/build",
+    contract=_MC.contract("retrieval.eval.known_items.build", effects=["read", "filesystem"], idempotency="non_idempotent", filesystem="state_dir"),
     http_tags=["fabric", "memory", "eval"], memory="off",
     description="Build and freeze a known-item eval set for memory.seek (four-minds FM-7.0c): n real fabric records, "
                 "a block sample of the fabric's Postgres records (what seek searches), stratified by collector family "
@@ -95,6 +102,7 @@ async def cap_known_items_build(n: int = 200, name: str = KI.VERSION, every: int
 
 @capability(
     "retrieval.known_items.run", http_method="POST", http_path="/retrieval/known_items/run",
+    contract=_MC.contract("retrieval.eval.known_items.run", effects=["read", "model", "filesystem"], idempotency="at_least_once", filesystem="state_dir"),
     http_tags=["fabric", "memory", "eval"], memory="off",
     description="Score memory.seek on a frozen known-item set: each query searched (fabric only, the result cache "
                 "off), the record's rank turned into MRR, nDCG@10, hit@1/5/10 and latency p50/p95. Inputs: name "

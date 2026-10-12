@@ -261,8 +261,15 @@ def _rows_arg(rows: Any) -> List[Dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "decide.record", http_method="POST", http_path="/decide/record", http_tags=["minds"],
+    contract=_MC.contract("decision.record", effects=["write"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Record one Decision v0 or Outcome v0 row in the decision ledger (four-minds FM-0.2). "
                 "The row is checked against the frozen v0 shape (ROADMAP §5.1) and appended to a Redis "
@@ -290,6 +297,7 @@ def _training_state():
 
 @capability(
     "decide.ledger.import", http_method="POST", http_path="/decide/ledger/import", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.import", effects=["write"], idempotency="idempotent"),
     memory="off",
     description="Import Decision v0 / Outcome v0 rows kept by an early emitter (intel's own store) into "
                 "the decision ledger, unchanged. Input: rows (list, JSON array, or JSONL), dry_run "
@@ -322,6 +330,7 @@ async def cap_decide_ledger_import(rows: Any = None, dry_run: bool = True, trace
 
 @capability(
     "decide.ledger", http_method="GET", http_path="/decide/ledger", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.read", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Read the decision ledger (four-minds FM-0.2): the latest decisions, newest first, each "
                 "with its outcomes and the strongest one. Input: question_id, surface, run_id, "
@@ -370,6 +379,7 @@ async def cap_decide_ledger(question_id: str = "", surface: str = "", run_id: st
 
 @capability(
     "decide.ledger.stats", http_method="GET", http_path="/decide/ledger/stats", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.stats", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Decision ledger health (four-minds FM-0.2): this process's append/refuse/drop/drain "
                 "counters, the stream's length and undrained rows, and decisions per question with "

@@ -101,8 +101,15 @@ _SERVES_FRAME = _bind(
     limits="understanding meaning beyond domains and patterns (it routes, it does not answer).")
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "sense.frame", serves=_SERVES_FRAME, http_method="POST", http_path="/sense/frame", http_tags=["minds"],
+    contract=_MC.contract("sense.frame", effects=["read", "model"], idempotency="idempotent"),
     memory="off", silent=True,
     description="One Frame per text (four-minds FM-1.1): regex patterns (urls, paths, tickers, nodes, "
                 "sessions, capability names), the nearest domains by the decision-space vector (MiniLM "
@@ -181,6 +188,7 @@ async def cap_sense_frame(text: str = "", kind: str = "chat", ner: bool = False,
 
 @capability(
     "sense.stats", http_method="GET", http_path="/sense/stats", http_tags=["minds"],
+    contract=_MC.contract("sense.stats", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="sense.frame counters in this process (calls, cached, degraded) and the domain cards in use. "
                 "Output: {stats, cards: {domain: text}, cards_version, cards_embedded}.",

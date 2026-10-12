@@ -28,8 +28,15 @@ def _json(v: Any) -> Any:
     return json.loads(v) if isinstance(v, str) else v
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "decide.label.queue", http_method="GET", http_path="/decide/label/queue", http_tags=["minds"],
+    contract=_MC.contract("decision.label.queue", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Decisions waiting for a person's label (four-minds FM-7.0 labelling view): ones whose "
                 "inputs are in the training store and that have no human label yet, those where a shadow "

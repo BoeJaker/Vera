@@ -104,6 +104,12 @@ _SERVES_KNN = _bind(
          "(MiniLM on an NLP node) - milliseconds, no LLM, a shadow judge.",
     limits="questions with few stored decisions; situations unlike any seen before.")
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "decide.shadow.score", serves=_SERVES_SCORE, http_method="POST", http_path="/decide/shadow/score", http_tags=["minds"],
     memory="off",
@@ -184,6 +190,7 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
 
 @capability(
     "decide.shadow.report", http_method="GET", http_path="/decide/shadow/report", http_tags=["minds"],
+    contract=_MC.contract("decision.shadow.report", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="How a shadow judge compares with the live decisions it shadows (four-minds FM-2): agreement "
                 "rate and the AUC of its probability against the live answer, per implementation, and both "
