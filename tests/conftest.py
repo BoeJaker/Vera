@@ -31,6 +31,7 @@ _CRITICAL_MODULES = {
     "test_node_compute",  # model training ran on the Vera host, not the nodes (2026-10-02)
     "test_node_scheduling_and_test_pool",  # node jobs ignored node load; gates ran one at a time on the host (2026-10-04)
     "test_node_parity_evidence",  # node workers ran 91 of 2,700 caps; parity needs evidence per cap (2026-10-04)
+    "test_student_training",  # System 1 students: the W2 training path end to end, night-only guard rails (2026-10-12)
     "test_node_compute_slots",  # a node worker ran one compute job at a time; a sweep ran in waves of three (2026-10-11)
     "test_ml_workshop_pool",  # ML trials ran one at a time; data re-sent per job; jobs used 4 threads on 1 reserved core (2026-10-11)
     "test_ml_inference_on_nodes",  # ML inference ran in the host process; only training epochs used the nodes (2026-10-11)

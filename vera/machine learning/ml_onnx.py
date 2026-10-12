@@ -586,8 +586,38 @@ def model_uses(module_id: str, t: Optional[Dict[str, Any]]) -> str:
     if t.get("best_val_loss") is not None:
         det.append(f"best validation loss {float(t['best_val_loss']):.4g}" +
                    (f" ({t['loss']})" if t.get("loss") else ""))
+    if t.get("student"):
+        q = ", ".join(t.get("questions") or [])
+        held = []
+        if t.get("auc") is not None:
+            held.append(f"held-out AUC {float(t['auc']):.3g}")
+        if t.get("accuracy") is not None:
+            held.append(f"accuracy {float(t['accuracy']):.3g}")
+        return (f"System 1 student for {q} (shadow only): p(positive answer) from a decision's "
+                f"MiniLM-384 state vector" + (" (" + ", ".join(held) + ")" if held else "") + ".")
     return what + (" (" + ", ".join(det) + ")" if det else "") + \
         ": give it feature rows (X, a JSON list), get its outputs back."
+
+
+def bind_student(slug: str, module_id: str, trained: Dict[str, Any]) -> Optional[str]:
+    """A System 1 student (student_training, MW-6): record what it is for in
+    the artifact manifest (so a restart re-binds it the same way) and (re)bind
+    its ml.onnx.model.<slug> capability with questions + tier."""
+    try:
+        _, meta_path = _paths(slug)
+        meta = {}
+        if os.path.exists(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        meta.update({"trained": trained, "cap_name": f"ml.onnx.model.{slug}", "slug": slug,
+                     "module_id": module_id})
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=1, default=str)
+    except Exception as e:
+        log.warning("ml_onnx: student manifest for %s: %s", slug, e)
+    cap_name = f"ml.onnx.model.{slug}"
+    CAPABILITY_REGISTRY.pop(cap_name, None)           # re-bind with the new record
+    return _register_model_cap(slug, module_id, live_mount=True, trained=trained)
 
 
 def _register_model_cap(slug: str, module_id: str, live_mount: bool = False,
@@ -610,6 +640,8 @@ def _register_model_cap(slug: str, module_id: str, live_mount: bool = False,
             serves=_bind((trained or {}).get("task") or "predict", "onnx", io_in="vectors",
                          io_out="labels" if "class" in str((trained or {}).get("task") or "") else "scores",
                          placement="any", uses=model_uses(module_id, trained),
+                         questions=(trained or {}).get("questions") or (),
+                         tier=int((trained or {}).get("tier") or 0),
                          limits="inputs with a different feature layout than it was trained on"
                                 + (f" (it takes {trained['n_features']})" if (trained or {}).get("n_features") else "")
                                 + "."),
