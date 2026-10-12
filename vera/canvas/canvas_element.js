@@ -4383,6 +4383,10 @@
         const t = ev.target; if (!t || !t.closest) return;
         if (t.closest('textarea')) return;
         /* a card minimised to a pill (its ⋯ / pill control) opens again where the arrangement puts it, on a click */
+        const wc = t.closest('.stage .it[data-key]');
+        if (wc && this.deskAlign() && body.contains(wc) && !this._pillGet()[wc.dataset.key] && !(this._wins && this._wins.has(wc.dataset.key))
+            && (wc.classList.contains('desk-chip') || wc.classList.contains('pill-open')) && !t.closest('[data-act]:not(.it-hd):not(.t)')) {
+          const was = wc.classList.contains('desk-chip'); this._winOpen(wc); if (was) { ev.stopPropagation(); return; } }   /* WSU-55 */
         const pc = t.closest('.stage .it.desk-chip[data-key]');
         if (pc && body.contains(pc) && this._pillGet()[pc.dataset.key] && !t.closest('[data-act]:not(.it-hd):not(.t)')) { ev.stopPropagation(); this._pillSet(pc.dataset.key, false); this._html = null; if (this._doc) this.render(this._doc); return; }
         const act = t.closest('[data-act]');
@@ -4608,6 +4612,10 @@
           const nq = body.querySelector('[data-rec-q="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]'); if (nq) { nq.focus(); try { nq.setSelectionRange(pos, pos); } catch (_) {} } }, 220); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.classList || !q.classList.contains('pk-q')) return; const s = String(q.value || '').toLowerCase().trim(); const list = q.closest('.pk') && q.closest('.pk').querySelector('.pk-list'); if (!list) return;
         let grp = null, any = false; [...list.children].forEach((n) => { if (n.classList.contains('grp')) { if (grp) grp.hidden = !any; grp = n; any = false; return; } const on = !s || (n.dataset.q || '').includes(s); n.hidden = !on; any = any || on; }); if (grp) grp.hidden = !any; });
+      body.addEventListener('mousedown', (ev) => { if (!this.deskAlign()) return; const t = ev.target; const c = t && t.closest ? t.closest('.stage .it[data-key]') : null;
+        if (c && c.classList.contains('desk-chip')) return; this._focusSet(c || null); }, true);   /* desktop focus (WSU-55) */
+      if (!this._winBound) { this._winBound = true; this.addEventListener('vera:canvas:placed', () => { try { this._winRestore(); } catch (e) { /* optional */ } });
+        (this.ownerDocument || document).addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && this._focusKey && this._wins && this._wins.has(this._focusKey)) this._winClose(this._focusKey); }); }
       body.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && this._editKey) { this._editKey = null; this._editFocused = false; if (this._doc) this.render(this._doc); } });
     }
     /* a folded item opens in the layout under the pointer — every folded item in the Hover tier, an aged one in any
@@ -4628,9 +4636,71 @@
        read what they are, could expand to display the entire title on mouse over"): a chip or an icon on the desk widens
        in place to its whole title, over its neighbours and with a ground, toward the desk if it would run off its edge;
        it goes back when the pointer leaves. Nothing else moves; if the desk was placed meanwhile it is placed again. */
+    /* a pill opened as a card - about 460 x 340, its content, over its neighbours, kept on the desk (the hover peek, WSU-50;
+       a window, WSU-55). A window sits at its pill's place in the stacking order (closeness to the chat) unless it has focus */
+    _pillCard(it) {
+      if (!it || !it.isConnected) return false;
+      if (it._cpw && it._cpw.open) return true;
+      /* the title widening ran first: undone, the card opens in its place */
+      if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
+      if (!it.classList.contains('desk-chip')) return false;
+      const st = it.parentElement; const W = (st && st.clientWidth) || 1000, H = (st && st.clientHeight) || 800;
+      const s = { w: it.style.getPropertyValue('width'), h: it.style.getPropertyValue('height'), l: it.style.left, t: it.style.top, z: it.style.zIndex,
+        icon: it.classList.contains('desk-icon'), face: it.dataset.deskFace, seq: this._placeSeq, open: true };
+      it._cpw = s; it.style.transition = 'none';
+      it.classList.remove('desk-chip', 'desk-icon'); it.classList.add('chip-peek', 'pill-open'); it.dataset.deskFace = 'card';
+      const w = Math.min(W - 8, 460), h = Math.min(H - 8, 340);
+      let left = parseFloat(s.l) || 0, top = parseFloat(s.t) || 0;
+      if (left + w > W - 4) left = Math.max(4, W - 4 - w); if (top + h > H - 4) top = Math.max(4, H - 4 - h);
+      it.style.setProperty('width', w + 'px', 'important'); it.style.setProperty('height', h + 'px', 'important');
+      const win = !!(this._wins && this._wins.has(it.dataset.key));
+      /* windows from one border column would open exactly over each other: each lands 28 px down and in from one already there */
+      if (win) { const others = [...(st ? st.querySelectorAll('.it.desk-win') : [])].filter((x) => x !== it).map((x) => [parseFloat(x.style.left) || 0, parseFloat(x.style.top) || 0]);
+        for (let n = 0; n < 8 && others.some(([x, y]) => Math.abs(x - left) < 20 && Math.abs(y - top) < 20); n++) { left = Math.max(4, Math.min(W - 4 - w, left - 28)); top = Math.max(4, Math.min(H - 4 - h, top + 28)); } }
+      it.classList.toggle('desk-win', win);
+      it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = win && this._focusKey !== it.dataset.key ? String(s.z || 10) : '210';
+      try { this._liveLayout(); } catch (e) { /* optional */ }
+      return true;
+    }
+    /* WINDOW MODE (WSU-55, owner 2026-10-11: "an item that has no room still opens, overlapping others (z by closeness to the
+       chat); the last clicked rises (desktop focus) and goes back to its stack place when it loses focus"). A pill the desk
+       had no room for opens, on a click, as a window over the others and stays open; pressing a card brings it to the top,
+       pressing another (or the desk) sends it back to its place in the stacking order. Esc, or its pill control, closes it. */
+    _winOpen(it) {
+      if (!it || !this.deskAlign()) return; const key = it.dataset.key; (this._wins = this._wins || new Set()).add(key);
+      this._pillCard(it); this._focusSet(it);
+    }
+    _winClose(key) {
+      if (!this._wins || !this._wins.delete(key)) return false;
+      const st = this.shadowRoot.getElementById('stage'); const it = st && [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
+      if (this._focusKey === key) this._focusSet(null);
+      if (it) { it.classList.remove('desk-win'); this._chipPeek(it, false); }
+      return true;
+    }
+    _focusSet(it) {
+      const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st) return;
+      const prev = this._focusKey ? [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === this._focusKey) : null;
+      const key = it ? it.dataset.key : null;
+      if (prev && prev !== it) { prev.classList.remove('desk-focus'); if (prev.dataset.zRest != null) { prev.style.zIndex = prev.dataset.zRest; delete prev.dataset.zRest; } }
+      this._focusKey = key;
+      if (it && this.deskAlign() && !it.classList.contains('desk-dragging')) {
+        if (it.dataset.zRest == null) it.dataset.zRest = (it._cpw && it._cpw.open && this._wins && this._wins.has(key)) ? String(it._cpw.z || 10) : (it.style.zIndex || '');
+        it.classList.add('desk-focus'); it.style.zIndex = '230'; }
+    }
+    /* a placing pass restyles every card: the windows open again where they were, the focused one stays on top */
+    _winRestore() {
+      if (!this._wins || !this._wins.size || !this.deskAlign()) return;
+      const st = this.shadowRoot.getElementById('stage'); if (!st) return;
+      [...this._wins].forEach((key) => { const it = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
+        if (!it) { this._wins.delete(key); return; }
+        if (it.classList.contains('desk-chip')) { it._cpw = null; this._pillCard(it); } });
+      const f = this._focusKey && [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === this._focusKey);
+      if (f) { delete f.dataset.zRest; this._focusKey = null; this._focusSet(f); }
+    }
     _chipPeek(it, on) {
       if (!it || !this.deskAlign()) return;
-      if (!on) { clearTimeout(this._pillT); const s = it._cpw; if (!s) return; it._cpw = null; it.classList.remove('chip-peek', 'pill-open'); if (s.icon) it.classList.add('desk-icon');
+      if (!on) { clearTimeout(this._pillT); const s = it._cpw; if (!s) return; if (s.open && this._wins && this._wins.has(it.dataset.key)) return;   /* a window stays (WSU-55) */
+        it._cpw = null; it.classList.remove('chip-peek', 'pill-open'); if (s.icon) it.classList.add('desk-icon');
         if (s.open) { it.classList.add('desk-chip'); it.dataset.deskFace = s.face; it.style.setProperty('height', s.h, 'important'); it.style.top = s.t; }
         if (s.seq !== this._placeSeq) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
         else { it.style.setProperty('width', s.w, 'important'); it.style.left = s.l; it.style.zIndex = s.z; }
@@ -4648,20 +4718,7 @@
          about 460 x 340, over its neighbours and kept on the desk - and goes back to a pill when the pointer leaves. */
       const key = it.dataset.key; clearTimeout(this._pillT);
       this._pillT = setTimeout(() => { if (this._hovKey !== key || (it._cpw && it._cpw.open) || !it.isConnected || it.classList.contains('desk-dragging') || (this._dg && this._dg.moved)) return;
-        /* the title widening (below) ran first: undone, the card opens in its place */
-        if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
-        if (!it.classList.contains('desk-chip')) return;
-        const st = it.parentElement; const W = (st && st.clientWidth) || 1000, H = (st && st.clientHeight) || 800;
-        const s = { w: it.style.getPropertyValue('width'), h: it.style.getPropertyValue('height'), l: it.style.left, t: it.style.top, z: it.style.zIndex,
-          icon: it.classList.contains('desk-icon'), face: it.dataset.deskFace, seq: this._placeSeq, open: true };
-        it._cpw = s; it.style.transition = 'none';
-        it.classList.remove('desk-chip', 'desk-icon'); it.classList.add('chip-peek', 'pill-open'); it.dataset.deskFace = 'card';
-        const w = Math.min(W - 8, 460), h = Math.min(H - 8, 340);
-        let left = parseFloat(s.l) || 0, top = parseFloat(s.t) || 0;
-        if (left + w > W - 4) left = Math.max(4, W - 4 - w); if (top + h > H - 4) top = Math.max(4, H - 4 - h);
-        it.style.setProperty('width', w + 'px', 'important'); it.style.setProperty('height', h + 'px', 'important');
-        it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = '210';
-        try { this._liveLayout(); } catch (e) { /* optional */ } }, 260);
+        this._pillCard(it); }, 260);
       const icon = it.classList.contains('desk-icon');
       const s = { w: it.style.getPropertyValue('width'), l: it.style.left, z: it.style.zIndex, icon, seq: this._placeSeq };
       it.style.transition = 'none'; if (icon) it.classList.remove('desk-icon');
@@ -4844,6 +4901,7 @@
       const pop = btn.closest('.hd-pop'); if (pop) pop.remove();
       if (!it && key) it = [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].find((x) => x.dataset.key === key) || null;
       if (act === 'lock') return this.toggleLock(key);
+      if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }   /* WSU-55 */
       if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
