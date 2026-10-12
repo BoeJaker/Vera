@@ -34,6 +34,164 @@ GATE_REQUIRED_DIMENSIONS = (
 )
 
 
+# How a capability's answer reaches the desk (DESK-SPINE-DESIGN.md §1.2): a closed vocabulary of kinds, each with the
+# map keys it reads (the first is the one that locates the content), the keys read inside each row of it, and the views
+# a person may switch to. A capability declares {"kind", "map", "views"?, "title"?, "refresh"?, "live"?, "detail"?,
+# "empty"?} as contract["presentation"]; the mapper (browser and server) reads it before guessing from the shape.
+PRESENTATION_KINDS: dict[str, dict[str, tuple[str, ...]]] = {
+    "table": {"keys": ("rows", "columns", "name", "value", "status", "time"), "row": ("name", "value", "status", "time"),
+              "views": ("table", "cards", "list", "chart", "graph")},
+    "records": {"keys": ("rows", "id", "title", "url", "snippet", "when", "score", "domain"),
+                "row": ("id", "title", "url", "snippet", "when", "score", "domain"), "views": ("list", "cards", "table", "graph")},
+    "reading": {"keys": ("rows", "id", "title", "url", "snippet", "when", "score", "domain", "text", "cited"),
+                "row": ("id", "title", "url", "snippet", "when", "score", "domain", "text", "cited"),
+                "views": ("list", "cards", "table", "graph")},
+    "document": {"keys": ("body", "title", "sources"), "row": (), "views": ("document", "outline")},
+    "status": {"keys": ("verdict", "checks"), "row": (), "views": ("status", "table")},
+    "metric": {"keys": ("value", "max", "unit", "trend"), "row": (), "views": ("hero", "ring", "trace")},
+    "series": {"keys": ("points", "t", "v", "split"), "row": ("t", "v"), "views": ("trace", "area", "column", "table")},
+    "graph": {"keys": ("nodes", "edges", "node_id", "edge_from", "edge_to", "label", "type"), "row": ("node_id", "label", "type"),
+              "views": ("graph", "table")},
+    "log": {"keys": ("events", "t", "text", "kind", "level"), "row": ("t", "text", "kind", "level"), "views": ("log", "table", "pareto")},
+    "progress": {"keys": ("steps", "name", "status", "detail"), "row": ("name", "status", "detail"), "views": ("progress", "log")},
+    "terminal": {"keys": ("command", "stdout", "stderr", "rc"), "row": (), "views": ("terminal",)},
+    "media": {"keys": ("url", "b64", "kind", "caption"), "row": (), "views": ("media", "gallery")},
+    "code": {"keys": ("code", "lang", "path"), "row": (), "views": ("code", "explode")},
+    "diff": {"keys": ("diff",), "row": (), "views": ("diff", "split")},
+    "kv": {"keys": ("fields",), "row": (), "views": ("tiles", "rows", "graph")},
+    "calendar": {"keys": ("events", "start", "end", "title"), "row": ("start", "end", "title"), "views": ("month", "agenda", "schedule")},
+    "entities": {"keys": ("groups", "entities"), "row": (), "views": ("chips", "list", "graph")},
+    "receipt": {"keys": ("ok", "id", "message", "changed"), "row": (), "views": ()},
+    "job": {"keys": ("job_id", "stream"), "row": (), "views": ()},
+    "composite": {"keys": ("parts",), "row": (), "views": ()},
+}
+# a kind's content must be located: one of these map keys is required (media: a url or inline bytes; entities: either form)
+_PRESENTATION_NEEDS = {"table": ("rows",), "records": ("rows",), "reading": ("rows",), "document": ("body",),
+                       "status": ("verdict",), "metric": ("value",), "series": ("points",), "graph": ("nodes",),
+                       "log": ("events",), "progress": ("steps",), "terminal": ("stdout",), "media": ("url", "b64"),
+                       "code": ("code",), "diff": ("diff",), "kv": ("fields",), "calendar": ("events",),
+                       "entities": ("groups", "entities"), "job": ("job_id",)}
+_PRESENTATION_FIELDS = ("kind", "map", "views", "title", "refresh", "live", "detail", "empty", "parts")
+
+
+def _schema_at(schema: Any, path: str) -> Any:
+    """The JSON-schema node a dotted path reaches, or None when the schema does not say."""
+    node = schema
+    for part in [p for p in str(path).split(".") if p]:
+        if not isinstance(node, Mapping):
+            return None
+        if node.get("type") == "array" and isinstance(node.get("items"), Mapping):
+            node = node["items"]
+        props = node.get("properties")
+        if not isinstance(props, Mapping) or part not in props:
+            return None
+        node = props[part]
+    return node
+
+
+def presentation_problems(presentation: Any, output_schema: Any = None) -> list[tuple[str, str, str, str]]:
+    """Check a `presentation` declaration: (code, severity, path, message) for each problem. A map path the declared
+    output_schema does not reach is a warning (schemas are often partial); everything else is an error."""
+    out: list[tuple[str, str, str, str]] = []
+    if not isinstance(presentation, Mapping):
+        return [("presentation.invalid", "error", "presentation", "presentation must be an object")]
+    for key in sorted(set(str(k) for k in presentation) - set(_PRESENTATION_FIELDS)):
+        out.append(("presentation.field_unknown", "error", f"presentation.{key}", f"unknown presentation field '{key}'"))
+    kind = _text(presentation.get("kind"))
+    spec = PRESENTATION_KINDS.get(kind)
+    if spec is None:
+        out.append(("presentation.kind_invalid", "error", "presentation.kind",
+                    f"unknown kind '{kind}'" if kind else "presentation requires a kind"))
+        return out
+    mapping = presentation.get("map", {})
+    if not isinstance(mapping, Mapping):
+        out.append(("presentation.map_invalid", "error", "presentation.map", "map must be an object of paths"))
+        mapping = {}
+    for key in sorted(set(str(k) for k in mapping) - set(spec["keys"])):
+        out.append(("presentation.map_key_unknown", "error", f"presentation.map.{key}",
+                    f"kind '{kind}' does not read '{key}' (it reads {', '.join(spec['keys'])})"))
+    for key, path in sorted(mapping.items()):
+        if not isinstance(path, str) or not path.strip():
+            out.append(("presentation.map_path_invalid", "error", f"presentation.map.{key}", "a map value is a path string"))
+    needs = _PRESENTATION_NEEDS.get(kind, ())
+    if needs and not any(k in mapping for k in needs) and kind != "composite":
+        out.append(("presentation.map_missing", "error", "presentation.map",
+                    f"kind '{kind}' needs map.{' or map.'.join(needs)}"))
+    if kind == "composite":
+        parts = presentation.get("parts")
+        if not isinstance(parts, list) or not parts:
+            out.append(("presentation.parts_missing", "error", "presentation.parts", "a composite lists its parts"))
+        else:
+            for i, part in enumerate(parts):
+                if isinstance(part, Mapping) and _text(part.get("kind")) == "composite":
+                    out.append(("presentation.parts_nested", "error", f"presentation.parts.{i}", "a part cannot be a composite"))
+                    continue
+                for code, sev, path, msg in presentation_problems(
+                        {k: v for k, v in (part.items() if isinstance(part, Mapping) else []) if k in ("kind", "map", "title")}
+                        if isinstance(part, Mapping) else part, output_schema):
+                    out.append((code, sev, path.replace("presentation", f"presentation.parts.{i}", 1), msg))
+    views = presentation.get("views")
+    if views is not None:
+        if not isinstance(views, (list, tuple)) or not all(isinstance(v, str) for v in views):
+            out.append(("presentation.views_invalid", "error", "presentation.views", "views is a list of view names"))
+        else:
+            for view in views:
+                if view not in spec["views"]:
+                    out.append(("presentation.view_unknown", "error", "presentation.views",
+                                f"kind '{kind}' has no view '{view}'" + (f" (its views: {', '.join(spec['views'])})" if spec["views"] else "")))
+    refresh = presentation.get("refresh")
+    if refresh is not None:
+        every = _mapping(refresh).get("every_s")
+        if not isinstance(refresh, Mapping) or isinstance(every, bool) or not isinstance(every, (int, float)) or every < 5:
+            out.append(("presentation.refresh_invalid", "error", "presentation.refresh", "refresh is {every_s: >= 5}"))
+    live = presentation.get("live")
+    if live is not None and not (isinstance(live, Mapping) and _text(live.get("event"))):
+        out.append(("presentation.live_invalid", "error", "presentation.live", "live is {event, key?}"))
+    detail = presentation.get("detail")
+    if detail is not None and not (isinstance(detail, Mapping) and _text(detail.get("cap"))):
+        out.append(("presentation.detail_invalid", "error", "presentation.detail", "detail is {cap, args?}"))
+    for key in ("title", "empty"):
+        if presentation.get(key) is not None and not isinstance(presentation.get(key), str):
+            out.append((f"presentation.{key}_invalid", "error", f"presentation.{key}", f"{key} is a string template"))
+    # the paths against the declared answer: the content key from the root, a row key inside the rows it names
+    if isinstance(output_schema, Mapping) and output_schema.get("properties") and isinstance(mapping, Mapping):
+        content = next((k for k in spec["keys"] if k in mapping), None)
+        content_node = _schema_at(output_schema, mapping[content]) if content and isinstance(mapping.get(content), str) else None
+        for key, path in sorted(mapping.items()):
+            if not isinstance(path, str) or not path.strip():
+                continue
+            if key in spec["row"] and key != content:
+                if content_node is None:
+                    continue   # the rows' own shape is not declared: nothing to check a row key against
+                node = _schema_at(content_node, path)
+            else:
+                node = _schema_at(output_schema, path)
+            if node is None:
+                out.append(("presentation.map_unresolved", "warning", f"presentation.map.{key}",
+                            f"'{path}' is not in the declared output_schema"))
+    return out
+
+
+def project_presentation(declared: Mapping[str, Any], output_schema: Any = None) -> dict[str, Any]:
+    """A contract's `presentation`, normalised for the manifest and /mcp/tools: the declaration with its kind's default
+    views filled in and status declared, or invalid with its problems; {"status": "unknown"} when none is declared."""
+    if "presentation" not in declared:
+        return _unknown()
+    raw = declared.get("presentation")
+    problems = presentation_problems(raw, output_schema)
+    errors = [p for p in problems if p[1] == "error"]
+    value = _json_copy(raw, {}) if isinstance(raw, Mapping) else {}
+    if not isinstance(value, dict):
+        value = {}
+    spec = PRESENTATION_KINDS.get(_text(value.get("kind")))
+    if spec is not None and "views" not in value and spec["views"]:
+        value["views"] = list(spec["views"])
+    value["status"] = "invalid" if errors else "declared"
+    if problems:
+        value["problems"] = [{"code": c, "severity": s, "path": p, "message": m} for c, s, p, m in problems]
+    return value
+
+
 def _json_copy(value: Any, fallback: Any) -> Any:
     if value is None:
         return copy.deepcopy(fallback)
@@ -133,6 +291,8 @@ def project_contract(name: str, entry: Mapping[str, Any]) -> dict[str, Any]:
             "output_status": "declared" if output_schema else "unknown",
         },
         "effects": {"status": effect_status, "declared": effects},
+        # how its answer reaches the desk (DA-01a): the declaration, validated, or {"status": "unknown"}
+        "presentation": project_presentation(declared, output_schema),
         "policy": {
             "approval": _json_copy(declared.get("approval"), _unknown()),
             "trust": _json_copy(declared.get("trust"), _unknown()),
@@ -218,6 +378,9 @@ def _coverage_presence(manifest: Mapping[str, Any]) -> dict[str, bool]:
         "latency": _mapping(quality.get("latency")).get("status") != "unknown",
         "quality": _mapping(quality.get("quality")).get("status") != "unknown",
         "resources": _mapping(manifest.get("resources")).get("status") != "unknown",
+        # how its answer reaches the desk (DA-01c): only a valid declaration counts; not one of the coverage
+        # dimensions below (a desk concern, not a contract-completeness one) - counted on its own, and a gate may require it
+        "presentation": _mapping(manifest.get("presentation")).get("status") == "declared",
     }
     return checks
 
@@ -233,19 +396,23 @@ def contract_coverage(manifests: list[Mapping[str, Any]]) -> dict[str, Any]:
     groups: dict[str, dict[str, Any]] = {}
     hotspots = []
     totals = {dimension: 0 for dimension in dimensions}
+    presented = 0
     ordered = sorted(manifests, key=lambda item: _text(item.get("name")))
     for manifest in ordered:
         name = _text(manifest.get("name"))
         declared_fields = set(_mapping(manifest.get("declaration")).get("fields") or [])
         checks = _coverage_presence(manifest)
         missing = [dimension for dimension in dimensions if not checks[dimension]]
-        for dimension, present in checks.items():
-            totals[dimension] += int(present)
+        for dimension in dimensions:
+            totals[dimension] += int(checks[dimension])
         group = name.split(".", 1)[0] if name else "unknown"
         bucket = groups.setdefault(group, {"group": group, "total": 0,
-                                           "declared": 0, "missing_fields": 0})
+                                           "declared": 0, "missing_fields": 0,
+                                           "presentation_declared": 0})
         bucket["total"] += 1
         bucket["declared"] += int(checks["contract"])
+        bucket["presentation_declared"] += int(checks["presentation"])
+        presented += int(checks["presentation"])
         bucket["missing_fields"] += len(missing)
         hotspots.append({"name": name, "group": group, "missing": missing,
                          "missing_count": len(missing),
@@ -261,7 +428,12 @@ def contract_coverage(manifests: list[Mapping[str, Any]]) -> dict[str, Any]:
     for bucket in groups.values():
         bucket["declaration_rate"] = round(
             bucket["declared"] / bucket["total"], 4) if bucket["total"] else 0.0
+        bucket["presentation_rate"] = round(
+            bucket["presentation_declared"] / bucket["total"], 4) if bucket["total"] else 0.0
         group_rows.append(bucket)
+    # the desk's share (DESK-SPINE rule 2): how many say how their answer is drawn
+    coverage["presentation"] = {"declared": presented, "total": count,
+                                "rate": round(presented / count, 4) if count else 0.0}
     return {
         "schema": COVERAGE_SCHEMA,
         "manifests": count,
@@ -412,6 +584,13 @@ def lint_contracts(manifests: list[Mapping[str, Any]]) -> list[dict[str, str]]:
         if effects.get("status") != "declared" and method in {"POST", "PUT", "PATCH", "DELETE"}:
             issues.append(_issue(name, "effects.undeclared", "warning", "effects",
                                  f"{method} capability has no explicit effect declaration"))
+
+        for problem in _mapping(manifest.get("presentation")).get("problems") or []:
+            if isinstance(problem, Mapping):
+                issues.append(_issue(name, _text(problem.get("code")) or "presentation.invalid",
+                                     _text(problem.get("severity")) or "error",
+                                     _text(problem.get("path")) or "presentation",
+                                     _text(problem.get("message"))))
 
         source = _text(_mapping(manifest.get("implementation")).get("source"))
         if source == "mcp_proxy" and _text(manifest.get("canonical_task")) == name:

@@ -1,0 +1,218 @@
+"""DA-01a: a capability declares how its answer reaches the desk - contract["presentation"] - and Contract v2 projects
+it, validated, into the manifest and /mcp/tools (DESK-SPINE-DESIGN.md §1.1-1.3)."""
+import asyncio
+import copy
+
+import pytest
+
+from vera.capability_contract_core import (
+    PRESENTATION_KINDS,
+    presentation_problems,
+    project_contract,
+    project_presentation,
+)
+from vera import capability_orchestration as orchestration
+
+
+pytestmark = pytest.mark.critical
+
+QUOTES_SCHEMA = {"type": "object", "properties": {"quotes": {"type": "array", "items": {
+    "type": "object", "properties": {"symbol": {"type": "string"}, "last": {"type": "number"}, "pct": {"type": "number"}}}}}}
+
+
+def _codes(problems):
+    return sorted({p[0] for p in problems})
+
+
+def _entry(presentation=None, output_schema=None):
+    contract = {"effects": ["read", "network"]}
+    if output_schema is not None:
+        contract["output_schema"] = output_schema
+    if presentation is not None:
+        contract["presentation"] = presentation
+    return {"description": "Quotes.", "schema": {"type": "object", "properties": {}}, "contract": contract}
+
+
+def test_no_declaration_is_unknown_not_guessed():
+    manifest = project_contract("markets.quotes", _entry())
+    assert manifest["presentation"] == {"status": "unknown"}
+
+
+def test_a_valid_table_is_declared_with_its_kinds_views():
+    pres = {"kind": "table", "map": {"rows": "quotes", "name": "symbol", "value": "last"},
+            "title": "Quotes · {symbols}", "refresh": {"every_s": 30},
+            "detail": {"cap": "markets.chart", "args": {"symbol": "{row.symbol}"}}, "empty": "No quotes"}
+    manifest = project_contract("markets.quotes", _entry(pres, QUOTES_SCHEMA))
+    got = manifest["presentation"]
+    assert got["status"] == "declared" and "problems" not in got
+    assert got["views"] == list(PRESENTATION_KINDS["table"]["views"])
+    assert got["map"] == pres["map"] and got["refresh"] == {"every_s": 30}
+
+
+def test_declared_views_are_kept_and_must_be_the_kinds():
+    ok = project_presentation({"presentation": {"kind": "records", "map": {"rows": "hits"}, "views": ["list", "cards"]}})
+    assert ok["status"] == "declared" and ok["views"] == ["list", "cards"]
+    bad = project_presentation({"presentation": {"kind": "records", "map": {"rows": "hits"}, "views": ["list", "gauge"]}})
+    assert bad["status"] == "invalid" and [p["code"] for p in bad["problems"]] == ["presentation.view_unknown"]
+
+
+@pytest.mark.parametrize("pres, code", [
+    ("table", "presentation.invalid"),
+    ({"map": {"rows": "x"}}, "presentation.kind_invalid"),
+    ({"kind": "spreadsheet", "map": {"rows": "x"}}, "presentation.kind_invalid"),
+    ({"kind": "table", "map": {"rows": "x", "colour": "c"}}, "presentation.map_key_unknown"),
+    ({"kind": "table", "map": {"name": "symbol"}}, "presentation.map_missing"),
+    ({"kind": "table", "map": "quotes"}, "presentation.map_invalid"),
+    ({"kind": "table", "map": {"rows": ""}}, "presentation.map_path_invalid"),
+    ({"kind": "table", "map": {"rows": "x"}, "refresh": {"every_s": 1}}, "presentation.refresh_invalid"),
+    ({"kind": "table", "map": {"rows": "x"}, "live": {"key": "symbol"}}, "presentation.live_invalid"),
+    ({"kind": "table", "map": {"rows": "x"}, "detail": {"args": {}}}, "presentation.detail_invalid"),
+    ({"kind": "table", "map": {"rows": "x"}, "title": 3}, "presentation.title_invalid"),
+    ({"kind": "table", "map": {"rows": "x"}, "colour": "red"}, "presentation.field_unknown"),
+    ({"kind": "composite"}, "presentation.parts_missing"),
+])
+def test_invalid_declarations_are_named(pres, code):
+    problems = presentation_problems(pres)
+    assert code in _codes(problems)
+    assert any(p[0] == code and p[1] == "error" for p in problems)
+    projected = project_presentation({"presentation": pres})
+    assert projected["status"] == "invalid"
+
+
+def test_media_needs_a_url_or_bytes_and_entities_either_form():
+    assert presentation_problems({"kind": "media", "map": {"b64": "png"}}) == []
+    assert _codes(presentation_problems({"kind": "media", "map": {"caption": "c"}})) == ["presentation.map_missing"]
+    assert presentation_problems({"kind": "entities", "map": {"entities": "found"}}) == []
+
+
+def test_paths_are_checked_against_the_declared_output_schema_as_warnings():
+    good = {"kind": "table", "map": {"rows": "quotes", "name": "symbol", "value": "last"}}
+    assert presentation_problems(good, QUOTES_SCHEMA) == []
+    off = {"kind": "table", "map": {"rows": "quote", "name": "symbol"}}
+    probs = presentation_problems(off, QUOTES_SCHEMA)
+    assert [(p[0], p[1], p[2]) for p in probs] == [("presentation.map_unresolved", "warning", "presentation.map.rows")]
+    row_off = {"kind": "table", "map": {"rows": "quotes", "name": "ticker"}}
+    assert [(p[0], p[2]) for p in presentation_problems(row_off, QUOTES_SCHEMA)] == [("presentation.map_unresolved", "presentation.map.name")]
+    # a warning does not make the declaration invalid
+    projected = project_presentation({"presentation": off}, QUOTES_SCHEMA)
+    assert projected["status"] == "declared" and projected["problems"][0]["severity"] == "warning"
+    # no output_schema: nothing to check against, no warnings
+    assert presentation_problems(off) == []
+
+
+def test_composite_parts_are_checked_each():
+    pres = {"kind": "composite", "parts": [{"kind": "metric", "map": {"value": "load"}, "title": "Load"},
+                                            {"kind": "log", "map": {"text": "line"}},
+                                            {"kind": "composite", "parts": []}]}
+    probs = presentation_problems(pres)
+    assert ("presentation.map_missing", "presentation.parts.1.map") in [(p[0], p[2]) for p in probs]
+    assert ("presentation.parts_nested", "presentation.parts.2") in [(p[0], p[2]) for p in probs]
+    assert not any(p[2].startswith("presentation.parts.0") for p in probs)
+
+
+def test_every_kind_in_the_vocabulary_projects_with_its_content_key():
+    for kind, spec in PRESENTATION_KINDS.items():
+        if kind == "composite":
+            pres = {"kind": "composite", "parts": [{"kind": "metric", "map": {"value": "v"}}]}
+        elif kind == "receipt":
+            pres = {"kind": "receipt", "map": {"ok": "ok"}}
+        else:
+            pres = {"kind": kind, "map": {spec["keys"][0]: "x"}}
+            if kind == "terminal":
+                pres["map"] = {"stdout": "out"}
+        assert project_presentation({"presentation": pres})["status"] == "declared", kind
+
+
+def test_projection_does_not_touch_the_registry_entry():
+    entry = _entry({"kind": "table", "map": {"rows": "quotes"}}, QUOTES_SCHEMA)
+    before = copy.deepcopy(entry)
+    manifest = project_contract("markets.quotes", entry)
+    manifest["presentation"]["map"]["rows"] = "changed"
+    assert entry == before
+
+
+def test_mcp_tools_carries_a_declared_presentation_only(monkeypatch):
+    registry = {
+        "demo.quotes": dict(_entry({"kind": "table", "map": {"rows": "quotes"}}, QUOTES_SCHEMA), mcp_expose=True),
+        "demo.plain": dict(_entry(), mcp_expose=True),
+        "demo.hidden": dict(_entry({"kind": "table", "map": {"rows": "quotes"}}), mcp_expose=False),
+    }
+    monkeypatch.setattr(orchestration, "CAPABILITY_REGISTRY", registry)
+    tools = {t["name"]: t for t in asyncio.run(orchestration.mcp_tools())}
+    assert set(tools) == {"demo.quotes", "demo.plain"}
+    assert tools["demo.quotes"]["presentation"]["status"] == "declared"
+    assert tools["demo.quotes"]["presentation"]["views"] == list(PRESENTATION_KINDS["table"]["views"])
+    assert "presentation" not in tools["demo.plain"]
+
+
+# ── DA-01b: the builders ──────────────────────────────────────────────────────
+
+from vera import presentation_core as P  # noqa: E402
+from vera.capability_contract_core import contract_coverage, gate_contracts, lint_contracts  # noqa: E402
+
+
+def test_every_kind_has_a_builder_whose_declaration_is_valid():
+    assert set(P.BUILDERS) == set(PRESENTATION_KINDS)
+    for kind, build in P.BUILDERS.items():
+        pres = build(P.metric("v")) if kind == "composite" else build("x")
+        assert pres["kind"] == kind
+        assert project_presentation({"presentation": pres})["status"] == "declared", (kind, pres)
+
+
+def test_builder_reads_like_the_spec_example():
+    pres = P.table("quotes", name="symbol", value="last", refresh=30, live="markets.tick",
+                   detail={"cap": "markets.chart", "args": {"symbol": "{row.symbol}"}}, title="Quotes · {symbols}",
+                   views=("table", "ranked"))
+    assert pres == {"kind": "table", "map": {"rows": "quotes", "name": "symbol", "value": "last"},
+                    "refresh": {"every_s": 30}, "live": {"event": "markets.tick"},
+                    "detail": {"cap": "markets.chart", "args": {"symbol": "{row.symbol}"}},
+                    "title": "Quotes · {symbols}", "views": ["table", "ranked"]}
+    # 'ranked' is not a table view: the builder does not raise, the projection says so
+    assert project_presentation({"presentation": pres})["status"] == "invalid"
+
+
+def test_builder_content_keys_and_strays():
+    assert P.terminal("out")["map"] == {"stdout": "out"}
+    assert P.media("img.url", caption="cap")["map"] == {"url": "img.url", "caption": "cap"}
+    assert P.media(b64="png")["map"] == {"b64": "png"}
+    stray = P.records("hits", colour="c")
+    assert stray["map"]["colour"] == "c"
+    assert "presentation.map_key_unknown" in _codes(presentation_problems(stray))
+    assert P.composite(P.metric("load", title="Load"), P.log("lines"), title="Host")["parts"][0] == {
+        "kind": "metric", "map": {"value": "load"}, "title": "Load"}
+
+
+# ── DA-01c: lint, coverage, gate ──────────────────────────────────────────────
+
+def test_lint_lists_presentation_problems():
+    good = project_contract("a.good", _entry(P.table("quotes"), QUOTES_SCHEMA))
+    bad = project_contract("a.bad", _entry({"kind": "table", "map": {"name": "symbol"}}))
+    warn = project_contract("a.warn", _entry(P.table("quote"), QUOTES_SCHEMA))
+    issues = lint_contracts([good, bad, warn])
+    got = [(i["name"], i["code"], i["severity"]) for i in issues if i["code"].startswith("presentation.")]
+    assert ("a.bad", "presentation.map_missing", "error") in got
+    assert ("a.warn", "presentation.map_unresolved", "warning") in got
+    assert not any(n == "a.good" for n, _, _ in got)
+
+
+def test_coverage_counts_valid_presentations_overall_and_per_family():
+    manifests = [project_contract("m.quotes", _entry(P.table("quotes"))),
+                 project_contract("m.chart", _entry({"kind": "nope"})),
+                 project_contract("m.plain", _entry()),
+                 project_contract("w.read", _entry(P.document("text")))]
+    result = contract_coverage(manifests)
+    assert result["coverage"]["presentation"] == {"declared": 2, "total": 4, "rate": 0.5}
+    groups = {g["group"]: g for g in result["groups"]}
+    assert groups["m"]["presentation_declared"] == 1 and groups["m"]["presentation_rate"] == 0.3333
+    assert groups["w"]["presentation_declared"] == 1
+    # not a contract-completeness dimension: the hotspots' missing lists do not change
+    assert all("presentation" not in h["missing"] for h in result["hotspots"])
+
+
+def test_gate_can_require_a_presentation_for_a_migration_set():
+    declared = project_contract("m.quotes", _entry(P.table("quotes")))
+    missing = project_contract("m.plain", _entry())
+    assert gate_contracts([declared], required_dimensions=("presentation",))["ok"] is True
+    res = gate_contracts([declared, missing], required_dimensions=("presentation",))
+    assert res["ok"] is False
+    assert [(i["name"], i["code"]) for i in res["issues"]] == [("m.plain", "gate.declaration_missing")]
