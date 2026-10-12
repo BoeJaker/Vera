@@ -245,6 +245,53 @@ def test_actions_skip_busy_nodes():
                 if a["node"] == "cpu-247"]
 
 
+# ── at most two big models per node (12 Oct 2026 host OOM) ──────────────────
+def test_plan_keeps_at_most_two_big_models():
+    """slots=3 with the 9B, the 35B and the 30b coder took the host down: the third big one is dropped."""
+    p = W.plan(INSTANCES, W.merge_config({"nodes": {"cpu-246": {"models": ["@default", "@long_horizon", CODER],
+                                                                 "slots": 3}}}),
+               RULES, ALIASES, {}, {k: SIZES for k in INSTANCES}, dict(RAM, **{"cpu-246": 200}))
+    assert _models(p, "cpu-246") == [DEFAULT, LONG]
+    assert any(d["model"] == CODER and "big-model limit" in d["why"] for d in p["cpu-246"]["dropped"])
+
+
+def test_small_specialists_and_embedders_do_not_count():
+    p = _plan({"nodes": {"cpu-246": {"models": ["@default", "@long_horizon", "@naming"], "slots": 3}}})
+    assert _models(p, "cpu-246") == [DEFAULT, LONG, NAMING]
+    assert p["cpu-246"]["embed"] == EMBED
+    assert not W.is_big(EMBED) and not W.is_big(NAMING, SIZES[NAMING]) and W.is_big(CODER, SIZES[CODER])
+    assert W.is_big("unknown:7b")                 # an unpriced model counts
+
+
+def test_swap_releases_before_it_loads():
+    """cpu-246 holds the 9B + 35B (ours); the plan says coder + 9B. The 35B goes this tick, the coder
+    loads on the next one - never three big models at once."""
+    p = _plan({"nodes": {"cpu-246": {"models": [CODER, "@default"]}}})
+    run = [{"name": DEFAULT, "expires_at_s": FOREVER, "size": SIZES[DEFAULT]},
+           {"name": LONG, "expires_at_s": FOREVER, "size": SIZES[LONG]},
+           {"name": EMBED, "expires_at_s": FOREVER, "size": SIZES[EMBED]}]
+    a = W.actions(p, {"cpu-246": run}, busy=(), now=NOW)
+    assert a == [{"node": "cpu-246", "action": "release", "model": LONG}]
+    a = W.actions(p, {"cpu-246": [r for r in run if r["name"] != LONG]}, busy=(), now=NOW)
+    assert [(x["action"], x["model"]) for x in a] == [("load", CODER)] and "big" not in a[0]
+
+
+def test_someone_elses_big_model_blocks_the_load():
+    p = _plan({"nodes": {"cpu-246": {"models": [CODER, "@default"]}}})
+    run = [{"name": DEFAULT, "expires_at_s": FOREVER, "size": SIZES[DEFAULT]},
+           {"name": "gemma3:27b", "expires_at_s": NOW + 200, "size": 17_000_000_000},
+           {"name": EMBED, "expires_at_s": FOREVER, "size": SIZES[EMBED]}]
+    assert W.actions(p, {"cpu-246": run}, busy=(), now=NOW) == []
+
+
+def test_embed_still_loads_beside_two_big():
+    p = _plan()
+    run = [{"name": LONG, "expires_at_s": FOREVER, "size": SIZES[LONG]},
+           {"name": DEFAULT, "expires_at_s": FOREVER, "size": SIZES[DEFAULT]}]
+    a = W.actions(p, {"cpu-247": run}, busy=(), now=NOW)
+    assert [(x["action"], x["model"]) for x in a] == [("load", EMBED)]
+
+
 def test_spill_needs_proven_speed_or_a_scenario():
     assert not W.spill_ok(0.08, 3.0, False)     # the 9b on an untuned CPU node
     assert not W.spill_ok(0, 3.0, False)        # never measured
