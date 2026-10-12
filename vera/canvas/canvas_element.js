@@ -3584,15 +3584,26 @@
       if (kept) {
         const at = {}; kept.forEach((k, i) => { at[k] = i; });
         const nat = new Map(ranked.map((x, i) => [x, i]));
-        ranked.sort((a, b) => { const ka = a.c.dataset.key || '', kb = b.c.dataset.key || '';
-          return (at[ka] != null ? at[ka] : 1e6 + nat.get(a)) - (at[kb] != null ? at[kb] : 1e6 + nat.get(b)); });
+        /* A COMBINED CARD KEEPS ITS PLACE WHICHEVER TAB IS IN FRONT (owner, 2026-10-12: "sometimes i swap a combined element
+           to another tab and it closes to a pill"): it is keyed by its front tab and each tab had its own place - 7th with
+           one in front, 13th of 14 with the other - so a switch could send the whole card to the border. It ranks by its
+           best member now. */
+        const atOf = (x) => { let best = at[x.c.dataset.key || '']; (grp.membersOf.get(x.c) || []).forEach((m) => { const v = at[m.dataset.key || '']; if (v != null && (best == null || v < best)) best = v; }); return best; };
+        const rk = new Map(ranked.map((x) => { const v = atOf(x); return [x, v != null ? v : 1e6 + nat.get(x)]; }));
+        ranked.sort((a, b) => rk.get(a) - rk.get(b));
       }
       let nowOrder = ranked.map((x) => x.c.dataset.key || '').filter(Boolean);
       /* ...and a card out of this pass but still on the canvas (the maximised one) keeps its place in it: the pass while it
          was maximised dropped it, it came back at the end, and a long code card restored after an edit stood somewhere else
          at 1080 px instead of 488 (WSU-59's open item) */
       if (kept) { const here = new Set(nowOrder), ks = new Set(kept); const held = kept.filter((k) => !here.has(k) && !!this._blockOf(k));
-        if (held.length) nowOrder = kept.filter((k) => here.has(k) || held.indexOf(k) >= 0).concat(nowOrder.filter((k) => !ks.has(k))); }
+        if (held.length) { const pos = {}; kept.forEach((k, i) => { pos[k] = i; });
+          /* a card of this pass at its rank (a combined card at its best member's place), a held one at its own */
+          const val = new Map(); nowOrder.forEach((k) => { const r = ranked.find((x) => x.c.dataset.key === k);
+            const v = r ? (() => { let b = pos[k]; (grp.membersOf.get(r.c) || []).forEach((m) => { const q = pos[m.dataset.key || '']; if (q != null && (b == null || q < b)) b = q; }); return b; })() : pos[k];
+            val.set(k, v != null ? v - 0.5 : 1e6 + val.size); });
+          held.forEach((k) => val.set(k, pos[k]));
+          nowOrder = [...val.keys()].sort((a, b) => val.get(a) - val.get(b)); } }
       if (!kept || nowOrder.length !== kept.length || nowOrder.some((k, i) => kept[i] !== k)) this._deskOrderSet(nowOrder);
       /* the primary topic leads (see setTopic): its items, best first, then the rest in the kept order - each of those
          marked for the border. Pinned (in context) items count as in the topic. Only on a desk that brings items in. */
@@ -4546,6 +4557,8 @@
       doc.addEventListener('mouseup', () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
+        /* what was just carried is the last touched: on top (the press gave it focus; the drag held it at the drag's z) */
+        if (d.el.dataset.key) { delete d.el.dataset.zRest; this._focusKey = null; this._focusSet(d.el); }
         /* let go where a card is a pill: it is kept a pill there (the person's earlier size does not hold it big, see the plan) */
         /* WHERE IT IS LET GO (owner, 2026-10-11: "i drag the pill to the desk and it goes back to the furthest area from chat.
            pills put near the furthest point should kinda stick to it so they align on whatever side is furthest from chat"):
@@ -4694,9 +4707,12 @@
     }
     /* a placing pass restyles every card: the windows open again where they were, the focused one stays on top */
     _winRestore() {
-      if (!this._wins || !this._wins.size || !this.deskAlign()) return;
+      if (!this.deskAlign()) return;
       const st = this.shadowRoot.getElementById('stage'); if (!st) return;
-      [...this._wins].forEach((key) => { const it = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
+      /* the last pressed card stays on top through every placing pass, a window or not (owner, 2026-10-12: "if i pickup and
+         drop one it goes under but it was the last interacted so should be at the top") - a drop re-placed the desk and
+         the focus was only put back while a window was open */
+      if (this._wins && this._wins.size) [...this._wins].forEach((key) => { const it = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
         if (!it) { this._wins.delete(key); return; }
         if (it.classList.contains('desk-chip')) { it._cpw = null; this._pillCard(it); } });
       const f = this._focusKey && [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === this._focusKey);
