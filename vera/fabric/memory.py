@@ -901,7 +901,8 @@ class PostgresBackend(MemoryBackend):
         # Convert asyncpg date types to ISO strings
         for tf in ("created_at","updated_at"):
             if hasattr(d.get(tf), "isoformat"):
-                d[tf] = d[tf].isoformat() + "Z"
+                rendered = d[tf].isoformat()
+                d[tf] = rendered[:-6] + "Z" if rendered.endswith("+00:00") else rendered
         # Fill fields MemoryRecord has but DB doesn't (embedding, relations, graph_id)
         d.setdefault("embedding", [])
         d.setdefault("relations", [])
@@ -2521,13 +2522,17 @@ async def memory_store(
         importance  = importance,
         parent_id   = parent_id,
     )
+    canary_snapshot = rec.to_dict()
     async def _native_store():
-        return await MEMORY.store(rec)
+        result = await MEMORY.store(rec)
+        canary_snapshot.clear()
+        canary_snapshot.update(rec.to_dict())
+        return result
 
     actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
     actor = {"mcp": "claude_code"}.get(actor, actor)
     result = await _revision_canary.store_public_memory_with_revision_canary(
-        rec.to_dict(), native_write=_native_store, actor=actor,
+        canary_snapshot, native_write=_native_store, actor=actor,
         observed_at=now_iso())
     return {"id": rec.id, "backends": result, "keywords": rec.keywords,
             "content_hash": rec.content_hash}

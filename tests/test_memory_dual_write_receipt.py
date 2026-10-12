@@ -123,3 +123,12 @@ def test_invalid_or_incomplete_evidence_fails_closed():
         make(observed_at="2026-01-01T00:00:00")
     with pytest.raises(TypeError, match="RecordRevision"):
         make(revision={})
+
+
+def test_additional_bounded_backend_is_accepted_and_affects_reconciliation():
+    receipt = make(
+        native_outcomes={**outcomes(), "qdrant": "failed"},
+        error_codes={"qdrant": "backend_failed"},
+    )
+    assert receipt.native_outcomes["qdrant"] == "failed"
+    assert receipt.requires_reconciliation is True
