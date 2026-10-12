@@ -47,10 +47,16 @@ def test_an_older_worker_keeps_one_job_at_a_time():
     assert not nc.admit("ml.train", _w(status="running:x"), CFG, {}, now=NOW)[0]
 
 
-def test_a_job_counts_on_top_only_until_the_metrics_show_it():
-    res = {"cpu": 5.0, "mem_gb": 5.0, "sent": [[NOW - 60, 4.0, 4.0], [NOW - 5, 1.0, 1.0]]}
-    assert nc.reserved_now(res, NOW) == (1.0, 1.0)              # the old one is in the metrics
-    assert nc.reserved_now({"cpu": 2.0, "mem_gb": 3.0}, NOW) == (2.0, 3.0)   # no send times: all of it
+def test_a_job_counts_for_its_whole_run():
+    # 2026-10-12: dropping a reservation once the node's metrics were 15 s
+    # newer let 4 four-core gate chunks onto one 12-core node - a node CT's
+    # psutil reads the Proxmox host, so its metrics never show its own jobs
+    res = {"cpu": 5.0, "mem_gb": 5.0, "sent": [[NOW - 600, 4.0, 4.0], [NOW - 5, 1.0, 1.0]]}
+    assert nc.reserved_now(res, NOW) == (5.0, 5.0)
+    w = _w(compute_slots=10)
+    ok, why, _ = nc.admit("pytest.shard", w, CFG, {"jobs": 2, "cpu": 8.0, "mem_gb": 12.0,
+                                                   "sent": [[NOW - 600, 4, 6], [NOW - 600, 4, 6]]}, now=NOW)
+    assert not ok and "CPU" in why, "a third 4-core chunk on a 12-core node with 8 cores in flight"
 
 
 def test_only_compute_jobs_run_detached_and_slots_leave_room():

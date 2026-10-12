@@ -82,9 +82,11 @@ def threads_for(fn: str, default: int) -> int:
     return max(1, int(round(need))) if need else max(1, int(default or 1))
 
 
-#: A job just sent counts against its node's free CPU / memory until the
-#: node's metrics are this much newer than the send: by then they show its load
-#: (counting it on top for its whole run under-admitted by half, MW-7).
+#: Kept for the record: MW-7 stopped counting a job this long after the node's
+#: metrics passed its send time, assuming the metrics then show its load. They
+#: do not - a node CT's psutil reads the whole Proxmox host - so a node took 4
+#: four-core gate chunks at once on 12 cores (2026-10-12). Reservations now
+#: count for the job's whole run again (reserved_now).
 RESERVE_LAG_S = 15
 
 
@@ -101,14 +103,12 @@ def run_detached(cap_name: str, is_worker: bool, slots: int) -> bool:
 
 
 def reserved_now(res: Optional[Dict[str, Any]], metrics_at: float) -> Tuple[float, float]:
-    """(cpu, mem_gb) of the jobs this host sent that the node's metrics do not
-    show yet. Without send times (older callers): everything reserved."""
+    """(cpu, mem_gb) this host has in flight on a node: every job it sent and
+    has not heard back about, for the job's whole run. A node's metrics cannot
+    be trusted to show its own jobs (its psutil reads the Proxmox host), so a
+    reservation is never dropped early (2026-10-12, see RESERVE_LAG_S)."""
     res = res or {}
-    sent = res.get("sent")
-    if sent is None or not metrics_at:
-        return float(res.get("cpu", 0.0)), float(res.get("mem_gb", 0.0))
-    recent = [s for s in sent if float(s[0]) > float(metrics_at) - RESERVE_LAG_S]
-    return sum(float(s[1]) for s in recent), sum(float(s[2]) for s in recent)
+    return float(res.get("cpu", 0.0)), float(res.get("mem_gb", 0.0))
 
 
 #: Node metrics older than this are not trusted for admission.
