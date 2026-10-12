@@ -23,6 +23,10 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.worldview import worldview_corpus_core as WC
 except Exception:                        # worktree / app-free import
     from vera.worldview import worldview_corpus_core as WC   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.models import training_contracts as TCX
+except Exception:                        # worktree / app-free import
+    from vera.models import training_contracts as TCX   # type: ignore
 
 VERSION = "v1"
 MIN_TEXT = 80
@@ -124,3 +128,40 @@ def compare(base: Dict[str, Any], arm: Dict[str, Any], k: int = 10) -> Dict[str,
     keys = ("mrr", f"ndcg@{k}", "hit@1", "hit@5", f"hit@{k}", "ms_p50", "ms_p95")
     return {key: (round(arm[key] - base[key], 3) if isinstance(arm.get(key), (int, float))
                   and isinstance(base.get(key), (int, float)) else None) for key in keys}
+
+
+# ── the run as a W5-03 EvaluationReport (backbone review 11 Oct 2026: one evaluation contract, not a third format) ──
+# The subject is memory.seek with the run's switch modes; the dataset revision is the set's content (its record ids and
+# queries), so two runs are comparable exactly when they ran the same cases. W5-04 holds that live search is not
+# admissible evidence for a frozen snapshot comparison: these reports compare seek arms against each other on the live
+# fabric, nothing more.
+REPORT_METRICS = ("hit_at_10", "mrr", "ndcg_at_10")
+PROVIDER_ID = "vera.retrieval.known_items"
+
+
+def set_revision(items: Iterable[Dict[str, Any]]) -> str:
+    """known_items:<sha> over the set's (record id, query) pairs - the cases, not the file."""
+    pairs = sorted((str(it.get("id") or ""), str(it.get("query") or "")) for it in items)
+    return "known_items:" + hashlib.sha256(repr(pairs).encode("utf-8")).hexdigest()[:32]
+
+
+def subject_id(minds: Optional[Dict[str, Any]] = None) -> str:
+    """memory.seek, then each switch mode the run set (identifier-safe: name:mode pairs)."""
+    safe = lambda x: re.sub(r"[^A-Za-z0-9._/+-]", "-", str(x))  # noqa: E731
+    parts = ["memory.seek"] + [f"{safe(k)}:{safe(v)}" for k, v in sorted((minds or {}).items())]
+    return ":".join(parts)[:256]
+
+
+def evaluation_report(set_rev: str, minds: Optional[Dict[str, Any]], summary: Dict[str, Any],
+                      baseline: Optional[Dict[str, Any]] = None, k: int = 10) -> Dict[str, Any]:
+    """The run's summary as a W5-03 EvaluationReport dict. Thresholds are the baseline's values when one is given (an arm
+    passes a metric by matching or beating it), else 0. A case is failed when its record was not retrieved at all."""
+    req = TCX.EvaluationRequest("capability", subject_id(minds), set_rev, REPORT_METRICS)
+    n = int(summary.get("n") or 0)
+    if not n:
+        return TCX.EvaluationReport(req, PROVIDER_ID, "failed", error_code="empty_run").to_dict()
+    key = {"hit_at_10": f"hit@{k}", "mrr": "mrr", "ndcg_at_10": f"ndcg@{k}"}
+    metrics = tuple(TCX.MetricResult(m, float(summary.get(key[m]) or 0.0),
+                                     float((baseline or {}).get(key[m]) or 0.0)) for m in REPORT_METRICS)
+    return TCX.EvaluationReport(req, PROVIDER_ID, "completed", metrics=metrics, evaluated_cases=n,
+                                failed_cases=int(summary.get("missing") or 0)).to_dict()
