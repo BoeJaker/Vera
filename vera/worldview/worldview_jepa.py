@@ -124,10 +124,20 @@ try:
         enrich_matching_revisions,
         summarize_provenance,
     )
+    from Vera.vera.worldview.canonical_corpus_projection import (
+        build_candidates as build_canonical_corpus_candidates,
+        materialize as materialize_canonical_corpus,
+        plan_summary as canonical_corpus_plan_summary,
+    )
 except ImportError:  # supported lower-case package topology
     from vera.worldview.canonical_revision_provenance import (
         enrich_matching_revisions,
         summarize_provenance,
+    )
+    from vera.worldview.canonical_corpus_projection import (
+        build_candidates as build_canonical_corpus_candidates,
+        materialize as materialize_canonical_corpus,
+        plan_summary as canonical_corpus_plan_summary,
     )
 from Vera.vera.fabric.dataset_provider import DatasetSnapshot
 
@@ -4606,6 +4616,119 @@ async def cap_worldview_retrieval_corpus_preview(
                 "activation_authority": False}
     return {"ok": True, "dataset_id": dataset_id, "limit": limit,
             **summarize_provenance(records, enrichment=enrichment)}
+
+
+def _canonical_corpus_plan(source_dataset_id: str, target_dataset_id: str,
+                           limit: int):
+    """Read one exact Chroma source set and build a content-free plan."""
+    fab = _get_fabric()
+    chroma = getattr(fab, "FABRIC_CHROMA", None) if fab else None
+    col = getattr(chroma, "_col", None) if chroma else None
+    if not chroma or not getattr(chroma, "available", False) or col is None:
+        raise RuntimeError("chroma_unavailable")
+    result = col.get(
+        where={"dataset_id": {"$eq": source_dataset_id}},
+        include=["documents", "metadatas", "embeddings"], limit=limit)
+    ids = result.get("ids")
+    documents = result.get("documents")
+    metadatas = result.get("metadatas")
+    embeddings = result.get("embeddings")
+    ids = ids if ids is not None else []
+    documents = documents if documents is not None else []
+    metadatas = metadatas if metadatas is not None else []
+    embeddings = embeddings if embeddings is not None else []
+    candidates, skipped = build_canonical_corpus_candidates(
+        source_dataset_id=source_dataset_id,
+        target_dataset_id=target_dataset_id,
+        ids=ids, documents=documents, metadatas=metadatas,
+        embeddings=embeddings)
+    summary = canonical_corpus_plan_summary(
+        source_dataset_id=source_dataset_id,
+        target_dataset_id=target_dataset_id,
+        requested=len(ids), candidates=candidates, skipped=skipped)
+    summary["limit"] = limit
+    return fab, col, candidates, summary
+
+
+@capability(
+    "worldview.corpus.canonical.preview",
+    http_method="GET", http_path="/worldview/corpus/canonical/preview",
+    http_tags=["worldview", "fabric", "provenance"], memory="off", silent=True,
+    description="Preview a bounded, immutable JEPA corpus projection from an "
+                "existing vector dataset. Inputs: source_dataset_id, "
+                "target_dataset_id (a new canonical dataset), limit (1..1000). "
+                "Returns only counts and a source-bound plan digest. It does "
+                "not expose content, write revisions, run a model, bind a "
+                "snapshot or activate retrieval.",
+)
+async def cap_worldview_canonical_corpus_preview(
+        source_dataset_id: str = "", target_dataset_id: str = "",
+        limit: int = 200, trace_id=None) -> Dict:
+    limit = max(1, min(int(limit), 1000))
+    try:
+        _, _, _, summary = await asyncio.to_thread(
+            _canonical_corpus_plan, source_dataset_id,
+            target_dataset_id, limit)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "mutates": False}
+    except Exception as exc:
+        log.warning("canonical corpus preview failed: %s", exc)
+        return {"ok": False, "error_code": "source_read_failed",
+                "mutates": False}
+    return {"ok": True, **summary}
+
+
+@capability(
+    "worldview.corpus.canonical.materialize",
+    http_method="POST", http_path="/worldview/corpus/canonical/materialize",
+    http_tags=["worldview", "fabric", "provenance"], memory="off",
+    description="Materialize a previously previewed, bounded JEPA corpus as "
+                "canonical Fabric revisions with exact Chroma projections. "
+                "Inputs: source_dataset_id, target_dataset_id, limit (1..1000), "
+                "expected_plan_digest, apply (default false). The source is "
+                "re-read and must match the digest. Source records are retained; "
+                "the operation does not train, bind or activate retrieval.",
+)
+async def cap_worldview_canonical_corpus_materialize(
+        source_dataset_id: str = "", target_dataset_id: str = "",
+        limit: int = 200, expected_plan_digest: str = "",
+        apply: bool = False, trace_id=None) -> Dict:
+    limit = max(1, min(int(limit), 1000))
+    if not apply:
+        preview = await cap_worldview_canonical_corpus_preview(
+            source_dataset_id=source_dataset_id,
+            target_dataset_id=target_dataset_id, limit=limit,
+            trace_id=trace_id)
+        return {**preview, "applied": False,
+                "requires_apply": bool(preview.get("ok"))}
+    if not str(expected_plan_digest or "").startswith("sha256:"):
+        return {"ok": False, "error": "expected_plan_digest is required",
+                "applied": False}
+
+    def _apply() -> Dict:
+        fab, col, candidates, summary = _canonical_corpus_plan(
+            source_dataset_id, target_dataset_id, limit)
+        path_factory = getattr(fab, "_canonical_revision_path", None)
+        actor_factory = getattr(fab, "_revision_actor", None)
+        if not callable(path_factory) or not callable(actor_factory):
+            raise RuntimeError("canonical_revision_path_unavailable")
+        result = materialize_canonical_corpus(
+            candidates=candidates,
+            expected_digest=expected_plan_digest,
+            summary=summary,
+            revision_path=path_factory(), actor=actor_factory(),
+            chroma_upsert=col.upsert, occurred_at=now_iso)
+        return {**summary, **result, "applied": True,
+                "mutates": True, "activation_authority": False}
+
+    try:
+        return await asyncio.to_thread(_apply)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "applied": False}
+    except Exception as exc:
+        log.warning("canonical corpus materialization failed: %s", exc)
+        return {"ok": False, "error_code": "materialization_failed",
+                "applied": False}
 
 
 @capability(

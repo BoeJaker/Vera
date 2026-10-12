@@ -37,6 +37,8 @@ assert namespace["HAS_TORCH"] is False
 assert namespace["MODEL"].ready is False
 assert callable(namespace["cap_worldview_retrieval_bind"])
 assert callable(namespace["cap_worldview_retrieval_corpus_preview"])
+assert callable(namespace["cap_worldview_canonical_corpus_preview"])
+assert callable(namespace["cap_worldview_canonical_corpus_materialize"])
 assert callable(namespace["cap_worldview_retrieval_snapshot_preview"])
 assert callable(namespace["cap_worldview_retrieval_status"])
 assert callable(namespace["cap_worldview_retrieval_query"])
@@ -158,5 +160,87 @@ assert result["activation_authority"] is False
         capture_output=True,
         timeout=90,
         check=False,
+    )
+    assert result.returncode == 0, result.stderr[-4000:]
+
+
+def test_canonical_corpus_capabilities_are_preview_first_and_digest_bound():
+    module = Path(__file__).parents[1] / "vera" / "worldview" / "worldview_jepa.py"
+    script = r'''
+import asyncio
+import builtins
+import inspect
+import runpy
+import sys
+import tempfile
+
+real_import = builtins.__import__
+def without_torch(name, *args, **kwargs):
+    if name == "torch" or name.startswith("torch."):
+        raise ImportError("torch deliberately unavailable")
+    return real_import(name, *args, **kwargs)
+builtins.__import__ = without_torch
+namespace = runpy.run_path(sys.argv[1], run_name="worldview_jepa_corpus_caps")
+preview_cap = inspect.unwrap(namespace["cap_worldview_canonical_corpus_preview"])
+materialize_cap = inspect.unwrap(namespace["cap_worldview_canonical_corpus_materialize"])
+state = preview_cap.__globals__
+from Vera.vera.fabric.revision_path import RevisionPath
+from Vera.vera.fabric.revision_store import RevisionStore
+
+class Collection:
+    def __init__(self): self.writes = []
+    def get(self, **kwargs):
+        assert kwargs["where"] == {"dataset_id": {"$eq": "legacy.source"}}
+        return {
+            "ids": ["legacy-1"], "documents": ["private text"],
+            "metadatas": [{"created_at": "2026-10-01T10:00:00Z", "tags": "[]"}],
+            "embeddings": [[0.1] * 12],
+        }
+    def upsert(self, **kwargs): self.writes.append(kwargs)
+
+class Chroma:
+    available = True
+    def __init__(self): self._col = Collection()
+
+class Fabric:
+    def __init__(self):
+        self.FABRIC_CHROMA = Chroma()
+        self.path = RevisionPath(RevisionStore(tempfile.mktemp()),
+                                 lambda action, actor, resource: True)
+    def _canonical_revision_path(self): return self.path
+    def _revision_actor(self): return "codex"
+
+fabric = Fabric()
+state["_get_fabric"] = lambda: fabric
+preview = asyncio.run(preview_cap(
+    source_dataset_id="legacy.source",
+    target_dataset_id="jepa.canonical.source", limit=200))
+assert preview["ok"] is True and preview["eligible_records"] == 1, preview
+assert preview["mutates"] is False
+assert "private text" not in repr(preview)
+dry = asyncio.run(materialize_cap(
+    source_dataset_id="legacy.source",
+    target_dataset_id="jepa.canonical.source", limit=200, apply=False))
+assert dry["requires_apply"] is True and fabric.FABRIC_CHROMA._col.writes == [], dry
+stale = asyncio.run(materialize_cap(
+    source_dataset_id="legacy.source",
+    target_dataset_id="jepa.canonical.source", limit=200,
+    expected_plan_digest="sha256:" + "0" * 64, apply=True))
+assert stale["ok"] is False and fabric.FABRIC_CHROMA._col.writes == [], stale
+applied = asyncio.run(materialize_cap(
+    source_dataset_id="legacy.source",
+    target_dataset_id="jepa.canonical.source", limit=200,
+    expected_plan_digest=preview["plan_digest"], apply=True))
+assert applied["ok"] is True and applied["applied"] == 1, applied
+assert len(fabric.FABRIC_CHROMA._col.writes) == 1
+metadata = fabric.FABRIC_CHROMA._col.writes[0]["metadatas"][0]
+assert metadata["revision_id"].startswith("rev_")
+assert metadata["content_hash"].startswith("sha256:")
+assert applied["activation_authority"] is False
+'''
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(module)],
+        cwd=module.parents[2], text=True, capture_output=True,
+        timeout=90, check=False,
     )
     assert result.returncode == 0, result.stderr[-4000:]
