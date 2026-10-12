@@ -746,8 +746,14 @@
     const pre = c.querySelector(':scope > pre') || c.querySelector(':scope > .vc-live, :scope > .cb-prev'); if (!pre) return;
     c.classList.add('editing'); if (c.classList.contains('prev')) preview(id, false);
     const ed = mountEditor(c, blk.code, blk.lang);
-    const rows = blk.code.split('\n').length;
-    ed.sc.style.height = Math.round(Math.min(window.innerHeight * 0.7, Math.max(320, rows * 17.5 + 40))) + 'px';
+    /* THE EDITOR IS AS TALL AS WHAT IT HOLDS (owner, WSU-59: "a few lines -> just enough to edit; grows on paste"): it
+       opened at 320 px whatever the code, and kept that height as lines were typed or pasted. It fits its lines now (a
+       floor of about three lines, a ceiling of 70% of the window), refits as the text changes, and says so to the page
+       (vera:code:editstart / vera:code:editsize) so a host can give its card the room. */
+    const fitEd = () => { const rows = ed.ta.value.split('\n').length; ed.sc.style.height = Math.round(Math.min(window.innerHeight * 0.7, Math.max(96, rows * 17.5 + 40))) + 'px'; return rows; };
+    const rows = fitEd();
+    ed.ta.addEventListener('input', () => { const h0 = ed.sc.style.height; const n = fitEd();
+      if (ed.sc.style.height !== h0) { try { c.dispatchEvent(new CustomEvent('vera:code:editsize', { bubbles: true, composed: true, detail: { id, rows: n } })); } catch (_) {} } });
     const bar = document.createElement('div'); bar.className = 'cb-editbar';
     bar.innerHTML = '<span class="cb-edithint">editing · Ctrl+Enter applies · Esc cancels</span><span class="cb-sp"></span>'
       + btn('edit-full', 'full', 'Full screen', 'Edit it full screen')
@@ -757,6 +763,7 @@
        edit panes to stop editing is annoying") - Apply and Cancel are where you start reading, not after the last line */
     pre.after(bar); bar.after(ed.box);
     edKeys(ed, (apply) => editDone(id, apply));
+    try { c.dispatchEvent(new CustomEvent('vera:code:editstart', { bubbles: true, composed: true, detail: { id, rows } })); } catch (_) {}
     try { ed.ta.focus({ preventScroll: true }); } catch (_) {}
   }
   const edText = (c) => { const ta = c && c.querySelector(':scope > .vo-ed .cb-editor'); return ta ? ta : null; };

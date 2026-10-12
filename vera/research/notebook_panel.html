@@ -23,6 +23,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/htmlmixed/htmlmixed.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/css/css.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/markdown/markdown.min.js"></script>
+<!-- the rust mode is written with CodeMirror.defineSimpleMode: its addon first, or the page threw
+     "e.defineSimpleMode is not a function" on load and rust cells had no highlighting (2026-10-11) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/addon/mode/simple.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.17/mode/rust/rust.min.js"></script>
 <style>
 /* ── Themes ──────────────────────────────────────────────────────────────── */
