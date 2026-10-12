@@ -157,18 +157,18 @@ async def _runs(limit: int = 100) -> List[Dict[str, Any]]:
 
 
 async def _update_run(run_id: str, **fields) -> None:
-    """Patch one run record in place (newest 500 only)."""
+    """Patch one run record in place (newest 500 only) - under WATCH/MULTI, so an LPUSH in between
+    cannot make it overwrite the neighbouring record (DEEP-21 D21-12)."""
     r = _redis()
     if r is None:
         return
     try:
-        raw = await r.lrange(KEY_RUNS, 0, MAX_RUNS - 1)
-        for i, v in enumerate(raw or []):
-            d = json.loads(v if isinstance(v, str) else v.decode())
-            if d.get("id") == run_id:
-                d.update(fields)
-                await r.lset(KEY_RUNS, i, json.dumps(d))
-                return
+        try:
+            from Vera.vera.evolve.redis_list_patch import patch_list_item
+        except ImportError:                                   # pragma: no cover
+            from vera.evolve.redis_list_patch import patch_list_item
+        await patch_list_item(r, KEY_RUNS, lambda d: d.get("id") == run_id,
+                              lambda d: dict(d, **fields), scan=MAX_RUNS)
     except Exception:
         pass
 

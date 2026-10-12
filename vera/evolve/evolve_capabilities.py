@@ -2004,18 +2004,16 @@ async def _update_run(run_id: str, patch: Dict[str, Any]):
             det.update(patch)
             await r.set(KEY_RUN + run_id, json.dumps(det, default=str))
             await r.expire(KEY_RUN + run_id, 14 * 86400)
-        rows = await r.lrange(KEY_RUNS, 0, RUNS_CAP - 1)
-        for i, row in enumerate(rows or []):
-            try:
-                rec = json.loads(row.decode() if isinstance(row, bytes) else row)
-            except Exception:
-                continue
-            if rec.get("run_id") == run_id:
-                for k in ("score", "combined", "assessed_by", "passed"):
-                    if k in patch:
-                        rec[k] = patch[k]
-                await r.lset(KEY_RUNS, i, json.dumps(rec, default=str))
-                break
+        # under WATCH/MULTI (DEEP-21 D21-12): an LPUSH between find and set shifted the index
+        # and the LSET overwrote the neighbouring run
+        try:
+            from Vera.vera.evolve.redis_list_patch import patch_list_item
+        except ImportError:                                   # pragma: no cover
+            from vera.evolve.redis_list_patch import patch_list_item
+        _keys = ("score", "combined", "assessed_by", "passed")
+        await patch_list_item(r, KEY_RUNS, lambda rec: rec.get("run_id") == run_id,
+                              lambda rec: dict(rec, **{k: patch[k] for k in _keys if k in patch}),
+                              scan=RUNS_CAP)
     except Exception as e:
         log.debug("evolve update run: %s", e)
 
