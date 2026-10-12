@@ -88,3 +88,15 @@ def test_the_live_client_is_served():
     import os
     libs = open(os.path.join(os.path.dirname(__file__), "..", "vera", "ui", "libs.py"), encoding="utf-8").read()
     assert '@APP.get("/ui/live.js", include_in_schema=False)' in libs and 'return _script("live.js")' in libs
+
+
+def test_alternatives_are_a_union():
+    f = normalize_event_filter({"any": [{"trace": ["t-1"]}, {"types": ["fabric."]}, {"sid": "s", "types": ["memory.feedback"]}]})
+    assert event_matches({"type": "cap.ok", "trace_id": "t-1"}, f)
+    assert event_matches({"type": "fabric.loom.progress"}, f)
+    assert event_matches({"type": "memory.feedback", "session_id": "s"}, f)
+    assert not event_matches({"type": "memory.feedback", "session_id": "other"}, f)
+    assert not event_matches({"type": "dream.tick", "trace_id": "t-9"}, f)
+    assert normalize_event_filter({"any": [{"trace": ["t"]}, {}]}) is None          # one alternative is everything
+    assert normalize_event_filter({"any": []}) is None
+    assert filter_summary(normalize_event_filter({"any": [{"types": ["a."]}]})) == {"any": [{"sid": "", "trace": [], "types": ["a."]}]}
