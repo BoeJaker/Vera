@@ -1622,6 +1622,16 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
   /* the card's own controls, big enough to hit (owner, 2026-10-11: "the controls of the desk items on the top bar need to be a bit bigger") */
+  /* the code explode's view switch (WSU-54): three words in the header row; the pane not shown is out, the structure the
+     larger half when both are */
+  .hda > .xvw{display:inline-flex;gap:2px;margin-right:6px;padding:2px;border-radius:7px;background:color-mix(in srgb,var(--bg2,#1c2026) 70%,transparent)}
+  .hda > .xvw > .hb.xvb{width:auto;height:22px;padding:0 7px;font-size:10px;letter-spacing:.02em}
+  .hda > .xvw > .hb.xvb.on{color:var(--acc,#5a9e8f);background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent)}
+  .it.xv-both > .it-bd.fu-beside > :not(.fu-p){flex:2 1 0!important}
+  .it.xv-both > .it-bd.fu-beside > .fu-p{flex:3 1 0!important}
+  .it.xv-code > .it-bd.fu > .fu-p{display:none!important}
+  .it.xv-structure > .it-bd.fu > :not(.fu-p){display:none!important}
+  .it.xv-structure > .it-bd.fu > .fu-p{border-left:0!important;padding-left:0!important}
   .hda > .hb{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:6px;cursor:pointer;color:var(--dim,#8b93a1)}
   .hda > .hb > svg{width:16px;height:16px}
   .hda > .hb:hover{color:var(--fg,#dce1e8);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
@@ -4161,10 +4171,16 @@
            that the offer lives where the thing does, and reads as a view of it rather than another card. */
         const xplodable = !bid && !!canExplode(b, this.explodeOffer());
         const xploded = xplodable && xplodedKeys.has(String(b.key));
+        /* THE CODE EXPLODE'S VIEWS (WSU-54, owner 2026-10-11: "explode opens full room, like reader mode; two views ... side by
+           side in the full view; the structure area larger"): a code item with its structure open shows the code, the
+           structure, or both side by side (the structure the larger) - the reader's pick per item. Prose explodes and the
+           chat's Explode scene are other things and are not touched. */
+        const xcode = xploded && canExplode(b, this.explodeOffer()) === 'code';
+        const xv = xcode ? ((this._xpView && this._xpView[String(b.key)]) || 'both') : '';
         // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (maxed && this._autoMax === key ? ' reading' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '') + (this.deskAlign() && this._lockGet()[key] ? ' desk-locked' : '');
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (xv ? ' xv-' + xv : '') + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (maxed && this._autoMax === key ? ' reading' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '') + (this.deskAlign() && this._lockGet()[key] ? ' desk-locked' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
           ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="dp solo" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>` : ''}${
             /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
@@ -4184,6 +4200,8 @@
             return `<div class="hda" data-w="canvas.item.controls">`
               + (vw.views.length > 1 ? hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')) : '')
               + hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked)
+              + (xcode ? '<span class="xvw" role="group" aria-label="Show">' + [['code', 'code', 'The code alone'], ['both', 'both', 'The code and its structure side by side'], ['structure', 'structure', 'The structure alone']]
+                  .map(([v, l, t]) => `<span class="hb xvb${xv === v ? ' on' : ''}" data-act="xview" data-view="${v}" role="button" tabindex="0" aria-pressed="${xv === v}" title="${t}">${l}</span>`).join('') + '</span>' : '')
               + (xplodable ? hb('explode', xploded ? 'source' : 'explode', xploded ? 'Back to the source alone' : 'See it as a structured diagram', xploded) : '')
               + (editable ? hb('edit', 'edit', editing ? 'Editing' : 'Edit its text', editing) : '')
               + (bid ? '' : hb('ctx', 'ctx', ctxOn ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ctxOn))
@@ -4831,6 +4849,7 @@
         else this._sepSet(key, act === 'cmpsep');
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
+      if (act === 'xview') { (this._xpView = this._xpView || {})[key] = btn.dataset.view || 'both'; if (this._doc) this.render(this._doc); return; }   /* WSU-54 */
       if (act === 'hdview') return this._viewMenu(key, btn);
       if (act === 'ownbtn') { const o = it && it._ownBtns && it._ownBtns[+btn.dataset.own]; if (o) { try { o.click(); } catch (e) { /* its own handler */ } } return; }   /* a card's own head's button, from its ⋯ menu */
       /* a view chosen (see VIEWS): a records item keeps it with its browsing state, any other kind in the view store */
