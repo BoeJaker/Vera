@@ -356,6 +356,9 @@ instances remain explicitly unobserved and therefore remain pre-cutover gates.
 performing either write. The receipt binds an operation and native
 `MemoryRecord.id` to the exact canonical `record_id`, `revision_id` and content
 hash, plus classified outcomes for the revision, Postgres, Chroma and Neo4j.
+Those three baseline outcomes are always present, while bounded additional
+registered Memory backends are retained instead of making a successful native
+write appear to fail.
 It distinguishes `dual_committed`, `canonical_only`, `native_only` and
 `uncommitted`; partial projection outcomes require reconciliation. Receipts
 contain no memory payload or exception text and always report
@@ -412,6 +415,13 @@ revision and evidence journals use `FABRIC_REVISION_SQLITE` and
 native store or synchronous revision transaction, avoiding cancellation that
 could report a timeout while an irreversible write continues. The switch is
 not enabled by this code change and grants no authority-switch permission.
+Canary setup is fail-open: invalid policy, snapshot or journal configuration
+falls through to the exact native write once. After native success, derived
+keywords and bounded metadata/graph fields are captured in the immutable
+revision; shadow classification or snapshot failure remains evidence failure,
+not a caller-visible native failure. Mutable `updated_at` is excluded from the
+revision identity, and Postgres UTC timestamps are emitted as canonical `Z`
+timestamps rather than the invalid `+00:00Z` form.
 
 Split receipts have a restart-safe reconciliation executor, but it remains an
 injected boundary rather than a live repair worker. An attempt is

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 import json
 import sqlite3
 
@@ -7,6 +8,7 @@ import pytest
 from vera.fabric.memory_dual_write_runtime import (
     default_memory_dual_write_receipt_path,
     default_memory_revision_path,
+    revision_from_native_memory_snapshot,
     store_public_memory_with_revision_canary,
 )
 
@@ -109,6 +111,55 @@ def test_enabled_path_commits_revision_and_receipt_after_native(tmp_path):
     assert row == ("dual_committed", 0)
 
 
+def test_invalid_canary_setup_fails_open_to_exact_native_write(tmp_path):
+    calls = 0
+    expected = {"postgres": True}
+
+    async def native():
+        nonlocal calls
+        calls += 1
+        return expected
+
+    result = run(store_public_memory_with_revision_canary(
+        snapshot(), native_write=native, actor="codex", observed_at=NOW,
+        environ=paths(tmp_path, policy="not-json")))
+    assert result is expected
+    assert calls == 1
+
+
+def test_enabled_revision_uses_post_native_derived_snapshot(tmp_path):
+    value = snapshot()
+
+    async def native():
+        value["metadata"] = {"noise": {"class": "low"}, "canonical_id": "canon-1"}
+        value["keywords"] = ["derived"]
+        value["embedding_model"] = "embed-1"
+        value["graph_id"] = "graph-1"
+        value["relations"] = [{"to": "other"}]
+        return {"postgres": True}
+
+    run(store_public_memory_with_revision_canary(
+        value, native_write=native, actor="codex", observed_at=NOW,
+        environ=paths(tmp_path)))
+    with sqlite3.connect(tmp_path / "revisions.sqlite3") as conn:
+        envelope = json.loads(conn.execute(
+            "SELECT envelope_json FROM fabric_record_revisions").fetchone()[0])
+        content = envelope["content"]["inline"]
+    assert content["metadata"]["canonical_id"] == "canon-1"
+    assert content["keywords"] == ["derived"]
+    assert content["embedding_model"] == "embed-1"
+    assert content["graph_id"] == "graph-1"
+    assert content["relations"] == [{"to": "other"}]
+
+
+def test_mutable_updated_at_does_not_change_revision_identity():
+    first = revision_from_native_memory_snapshot(snapshot())
+    changed = snapshot()
+    changed["updated_at"] = "2030-01-01T00:00:00Z"
+    second = revision_from_native_memory_snapshot(changed)
+    assert second.revision_id == first.revision_id
+
+
 def test_enabled_path_derives_the_pre_native_memory_hash(tmp_path):
     value = snapshot()
     value["content_hash"] = ""
@@ -209,6 +260,17 @@ def test_public_memory_store_uses_the_narrow_canary_seam(monkeypatch):
     assert seen["snapshot"]["session_id"] == "session-1"
     assert seen["actor"] == "user"
     assert seen["observed_at"]
+
+
+def test_postgres_rows_render_utc_timestamps_without_double_timezone_suffix():
+    from vera.fabric.memory import PostgresBackend
+
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    record = PostgresBackend._row_to_record({
+        "id": "native-1", "created_at": stamp, "updated_at": stamp,
+    })
+    assert record.created_at == "2026-01-01T00:00:00Z"
+    assert record.updated_at == "2026-01-01T00:00:00Z"
 
 
 def test_exact_backend_repair_does_not_fan_out(monkeypatch):
