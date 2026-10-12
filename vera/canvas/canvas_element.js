@@ -2247,6 +2247,8 @@
   .it.sized .vc-live.vc-preview{height:auto}
   .vc-nbout{margin-top:6px;border-left:2px solid var(--ac,var(--acc,#5a9e8f))}
   .vc-pq{margin-top:6px;max-height:160px}
+  .vc-addfloat{position:fixed;z-index:420;width:0;height:0}   /* the add popup with no bar to hang from (WSU-76) */
+  .vc-addfloat > .addpop{top:0;margin-top:0}
   .addpop{position:absolute;left:0;top:100%;z-index:6;margin-top:4px;min-width:260px;max-width:min(92%,420px);padding:8px;border-radius:var(--ui-radius,8px);background:var(--s1,var(--bg1,#15181d));box-shadow:var(--elev,0 8px 24px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,#2a2f37));display:flex;flex-direction:column;gap:2px}
   .addpop .pp{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:6px 8px;border:0;border-radius:var(--r-sm,6px);background:transparent;color:var(--t1,var(--fg,#dce1e8));font:inherit;font-size:11px;text-align:left;cursor:pointer}
   .addpop .pp:hover{background:var(--s2,var(--bg2,#1c2026))}
@@ -5806,9 +5808,27 @@
     }
     /* one popover under the add bar at a time; the same button again closes it */
     _pop(btn, w) {
-      const bar = btn.closest('.addbar'); if (!bar) return null; const old = bar.querySelector('.addpop');
+      /* NO BAR, STILL A POPUP (WSU-76, owner 2026-10-12: "the + Add to the canvas button does nothing"): since the canvas lost
+         its top bar (WSU-72) the add buttons are the chat LHM's - outside this element - and every add stopped here. The
+         popup now opens floating in the canvas body, beside the button pressed (the split chat's menu page sends the canvas
+         itself: top left), where the canvas's own clicks still serve its rows. */
+      const bar = (btn && btn.closest && btn.closest('.addbar')) || this._addFloat(btn); if (!bar) return null; const old = bar.querySelector('.addpop');
       if (old) { const same = old.dataset.for === (btn.dataset.kind || ''); old.remove(); if (same) return null; }
       const pop = document.createElement('div'); pop.className = 'addpop pk'; pop.setAttribute('data-w', w); pop.dataset.for = btn.dataset.kind || ''; bar.appendChild(pop); return pop;
+    }
+    _addFloat(btn) {
+      const body = this.shadowRoot && this.shadowRoot.getElementById('body'); if (!body) return null;
+      let f = body.querySelector(':scope > .vc-addfloat');
+      if (!f) { f = document.createElement('div'); f.className = 'vc-addfloat'; body.appendChild(f);
+        const doc = this.ownerDocument || document;
+        doc.addEventListener('mousedown', (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(f) || (this._addFrom && p.includes(this._addFrom))) return;
+          const o = f.querySelector('.addpop'); if (o) o.remove(); }, true); }
+      this._addFrom = btn && btn !== this ? btn : null;
+      const own = !!(btn && btn !== this && btn.getBoundingClientRect && btn.ownerDocument === (this.ownerDocument || document));
+      const r = own ? btn.getBoundingClientRect() : null, C = this.getBoundingClientRect();
+      const x = r ? Math.max(4, Math.min(window.innerWidth - 280, r.right + 6)) : C.left + 12, y = r ? Math.max(4, Math.min(window.innerHeight - 120, r.top)) : C.top + 12;
+      f.style.left = Math.round(x) + 'px'; f.style.top = Math.round(y) + 'px';
+      return f;
     }
     /* the note's menu (defect 44): a blank note · a checklist · a decision · a link · from the clipboard — each row
        says what it adds */

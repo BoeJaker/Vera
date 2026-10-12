@@ -145,6 +145,9 @@ details.lp-sub:not([open])>summary{opacity:.8}
 #rpCanvas .cvm-banner .cv-bn > b{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0)}
 #rpCanvas .cvm-sec{display:flex;flex-direction:column;gap:3px;padding-top:6px;border-top:1px solid var(--border,#2a2f37)}
 #rpCanvas .cvm-sec h5{margin:2px 0;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a92a0)}
+/* the section the menu's action points at (WSU-76): lit for a moment */
+#rpCanvas .cvm-sec.cvm-flash{animation:cvmFlash 1.2s ease-out 1}
+@keyframes cvmFlash{0%{background:color-mix(in srgb,var(--acc,#5a9e8f) 22%,transparent)}100%{background:transparent}}
 #rpCanvas .cvm-kinds{display:flex;flex-wrap:wrap;gap:3px}
 #rpCanvas .cvm-add b{margin-right:4px;font-family:var(--mono,ui-monospace,monospace);color:var(--acc,#5a9e8f)}
 #rpCanvas .cvm-it{display:flex;gap:6px;align-items:center;width:100%;text-align:left;border:0;background:none;color:var(--text,#d8dce4);font:inherit;font-size:11px;padding:3px 4px;border-radius:4px;cursor:pointer}
@@ -8636,7 +8639,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   let _cvRemote=null;
   function _cvLocal(){ const c=document.querySelector('#canvasColumnBody vera-canvas'); return c&&typeof c.shelves==='function'?c:null; }
   function _cvStateNow(){ const c=_cvLocal(); if(!c) return null; let runsOff=false; try{ runsOff=!!_runsOff.cv; }catch(_){}
-    return { kinds:c.kinds(), s:c.shelves(), cols:String(_cvCols()), enrich:_cvEnrichOn(), tell:_cvTellOn(), runsOff, resize:(typeof c.deskResizeMode==='function'?c.deskResizeMode():'pin'), desk:_cvDeskSw(), open:true }; }
+    return { kinds:c.kinds(), s:c.shelves(), cols:String(_cvCols()), enrich:_cvEnrichOn(), tell:_cvTellOn(), runsOff, resize:(typeof c.deskResizeMode==='function'?c.deskResizeMode():'pin'), desk:_cvDeskSw(), arrange:_cvCfg('cfgCvArrange'), open:true }; }
   /* the desk's own switches (WSU-48): the Settings sheet holds them; the Canvas menu shows and flips the same fields */
   const _CV_DESK_SW={ combine:'cfgCvCombine', fill:'cfgCvFill', settle:'cfgCvSettle', fit:'cfgCvFit' };
   function _cvDeskSw(){ const o={}; Object.keys(_CV_DESK_SW).forEach(k=>{ o[k]=_cvCfg(_CV_DESK_SW[k])!=='off'; }); return o; }
@@ -8653,6 +8656,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(a.a==='runs'){ _runsToggle('cv'); return Promise.resolve(); }
     if(a.a==='close'){ togglePage('canvas'); return Promise.resolve(); }
     if(a.a==='resize'){ if(typeof c.setDeskResizeMode==='function') c.setDeskResizeMode(a.n); return Promise.resolve(); }
+    if(a.a==='arrange'){ const e=document.getElementById('cfgCvArrange'); if(e&&['orbit','kind','timeline','stack'].includes(a.n)){ e.value=a.n; _persistCanvasCfg(); } return Promise.resolve(); }
     if(a.a==='desk'){ const e=document.getElementById(_CV_DESK_SW[a.n]||''); if(e){ e.value=(e.value==='off')?'on':'off'; _persistCanvasCfg(); } return Promise.resolve(); }
     return Promise.resolve(); }
   function _cvMenuRender(onlyIfOpen){
@@ -8676,7 +8680,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const rsz='<div class="cvm-sec"><h5>When I resize a card</h5><div class="cvm-kinds">'+[['move','keep moving','Its size is kept; it still moves out of the way of other cards'],['pin','pin it','Its place and size are kept; the others go round it (⤺ on the card lets it move again, keeping its size)'],['lock','lock it','Pinned and locked: nothing moves it until you unlock it']].map(([v,l,tip])=>'<button class="btn xs'+((st.resize||'pin')===v?' on':'')+'" data-cvm="resize" data-n="'+v+'" title="'+esc(tip)+'">'+l+'</button>').join('')+'</div></div>';
     const dsw=st.desk?'<div class="cvm-sec"><h5>The desk</h5><div class="cvm-kinds">'+[['combine','combine','Related items share one card as tabs'],['fill','fill','Cards grow into the free room round them'],['settle','settle','Cards rise into room left above them'],['fit','fit','A card is no bigger than what it holds']]
       .map(([n,l,tip])=>'<button class="btn xs'+(st.desk[n]?' on':'')+'" data-cvm="desk" data-n="'+n+'" aria-pressed="'+(st.desk[n]?'true':'false')+'" title="'+esc(tip+' - '+(st.desk[n]?'on':'off')+' (also on the Settings sheet)')+'" style="'+(st.desk[n]?'':'opacity:.55')+'">'+l+'</button>').join('')+'</div></div>':'';
-    dyn.innerHTML=remoteBanner+rsz+dsw+
+    const arr=st.arrange?'<div class="cvm-sec"><h5>Arrange the desk</h5><div class="cvm-kinds">'+[['orbit','orbit','Bands out from the chat'],['kind','by kind','A band per kind of item'],['timeline','by time','A band per turn ago'],['stack','stack','One stack beside the chat']]
+      .map(([v,l,tip])=>'<button class="btn xs'+(st.arrange===v?' on':'')+'" data-cvm="arrange" data-n="'+v+'" aria-pressed="'+(st.arrange===v?'true':'false')+'" title="'+esc(tip+' (also on the Settings sheet)')+'">'+l+'</button>').join('')+'</div></div>':'';
+    dyn.innerHTML=remoteBanner+arr+rsz+dsw+
       '<div class="cvm-sec"><h5>Add to the canvas</h5><div class="cvm-kinds">'+kinds.map(k=>'<button class="btn xs cvm-add" data-cvm="add" data-kind="'+esc(k.n)+'" title="Add a '+esc(k.n)+' (a '+esc(k.kind)+' item)"><b>'+esc(k.ik)+'</b>'+esc(k.n)+'</button>').join('')+'</div></div>'
       + shelf('Parked', s.parked, 'back', '⤴', 'Bring it back into view', 'Nothing parked.')
       + shelf('Hidden', s.hidden, 'back', '◐', 'Show it again', 'Nothing hidden.')
@@ -16621,7 +16627,10 @@ Your task: decide what to do next to advance toward the goal.
      desc_long:'The controls of the session canvas beside the chat: the kinds of item to add, columns, enrich and tell-the-model switches, the runs, and the shelves - parked, hidden and recently removed items, each a click from coming back. The action at the foot adds to the canvas. Navigate here to change what the canvas shows or recover something removed.',
      tabs:[{id:'Canvas',label:'Canvas', desc:'Add, arrange, shelves', desc_long:'Add an item, set the columns and switches, and bring back parked, hidden or removed items.'}],
      meta:()=>{ const st=_cvLocal()?_cvStateNow():_cvRemote; if(!st) return 'canvas closed'; const s=st.s; return s.items+' on the canvas'+(s.removed.length?' · '+s.removed.length+' removed':''); },
-     cta:{label:'+ Add to the canvas', run:()=>{ if(!_pages.has('canvas')) togglePage('canvas'); railTab('Canvas'); setTimeout(()=>{ const b=document.querySelector('#rpCanvasDyn .cvm-add'); if(b) b.focus(); },200); }}},
+     cta:{label:'+ Add to the canvas', run:()=>{ if(!_pages.has('canvas')) togglePage('canvas'); railTab('Canvas'); try{ _cvMenuRender(); }catch(_){}
+       setTimeout(()=>{ const sec=[...document.querySelectorAll('#rpCanvasDyn .cvm-sec')].find(x=>/Add to the canvas/.test(x.textContent)); if(!sec) return;
+         try{ sec.scrollIntoView({block:'nearest', behavior:'smooth'}); }catch(_){} sec.classList.remove('cvm-flash'); void sec.offsetWidth; sec.classList.add('cvm-flash');
+         const b=sec.querySelector('.cvm-add'); if(b) b.focus({preventScroll:true}); }, 250); }}},
     {id:'sandbox',  icon:'⌨', label:'Sandbox',   desc:'This session\'s code sandbox',
      desc_long:'The session\'s sandbox: its status and the code it holds. The action at the foot opens its terminal. Navigate here to inspect or run what the agent wrote.',
      tabs:[{id:'code',label:'Code', desc:'Files and code in the sandbox', desc_long:'The code and files in this session\'s sandbox.'}],
@@ -17485,7 +17494,7 @@ function _embedMount(){
       sessionId:()=>SID, initial, silentInitial:true, noDeep:true,
       base:BASE,
       // every pane is a widget with a record in the registry (widget.template.get lhm:…); ⚙ in edit mode opens it
-      panes:[{id:'rpHist',w:'sessions · list',tpl:'lhm:sessions'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form',tpl:'lhm:loop-graph'},{id:'ctxCanvas',w:'context galaxy · graph',tpl:'lhm:ctx-galaxy'},{id:'ctxMeter',w:'budget bar · meter',tpl:'lhm:ctx-budget'},{id:'paneLoopGraph',w:'loop graph · graph',tpl:'lhm:loop-graph'},{id:'paneMemGraph',w:'memory graph · graph',tpl:'lhm:memory-graph'},{id:'paneCode',w:'file tree · tree',tpl:'lhm:file-tree'},{id:'sbxSessionTools',w:'sandbox actions · controls',tpl:'lhm:actions'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
+      panes:[{id:'rpHist',w:'sessions · list',tpl:'lhm:sessions'},{id:'rpCanvas',w:'canvas controls · menu'},{id:'rpCfg',w:'settings · form'},{id:'rpCaps',w:'capabilities · list'},{id:'rpPanels',w:'panels · list'},{id:'rpLoop',w:'loop program · form',tpl:'lhm:loop-graph'},{id:'ctxCanvas',w:'context galaxy · graph',tpl:'lhm:ctx-galaxy'},{id:'ctxMeter',w:'budget bar · meter',tpl:'lhm:ctx-budget'},{id:'paneLoopGraph',w:'loop graph · graph',tpl:'lhm:loop-graph'},{id:'paneMemGraph',w:'memory graph · graph',tpl:'lhm:memory-graph'},{id:'paneCode',w:'file tree · tree',tpl:'lhm:file-tree'},{id:'sbxSessionTools',w:'sandbox actions · controls',tpl:'lhm:actions'},{id:'paneBrowser',w:'browser · panel'},{id:'paneMonitor',w:'monitor · log'}],
       onPick:(mid, tid)=>{ if(host.classList.contains('slim')) toggleRight(); try{ _dkPicked(mid, tid); }catch(_){} },
       onCollapse:()=>{ if(!host.classList.contains('slim')) toggleRight(); },   // the active rail icon, or ‹ in the header, folds the menu to the rail
       // "Save as menu…" (the ChatMenu board's edit mode): the composed menu becomes a record of yours through lhm.menu.save
@@ -17508,7 +17517,9 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     const rail=document.getElementById('rightRail');
     const anchor=document.getElementById('ctxCtrl');
     if(!rail||!anchor) return;
-    ['rpHist','rpCfg','rpCtx','rpCaps','rpPanels','rpLoop'].forEach(id=>{
+    /* rpCanvas too (WSU-76, owner 2026-10-12: "the lhm implementation of the canvas top menu is missing tonnes of controls"):
+       it was left in the hidden #leftRail, so the Canvas menu showed its header and its action and none of its controls */
+    ['rpHist','rpCfg','rpCtx','rpCaps','rpPanels','rpLoop','rpCanvas'].forEach(id=>{
       const p=document.getElementById(id);
       if(p && p.parentElement!==rail) rail.insertBefore(p,anchor);
     });
