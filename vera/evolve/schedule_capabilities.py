@@ -628,6 +628,41 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
             "controls": controls, "skipped": skipped, "considered": len(scheds), "state": state}
 
 
+#: when this process started - a background run begun before it cannot still be running here
+_PROCESS_STARTED = _now()
+
+
+async def _reconcile_runs() -> Dict[str, Any]:
+    """Once at start (DEEP-21 D21-5): close the background runs a restart killed as `interrupted` and
+    release their schedules (last_finished_at), instead of 'previous run still going' for 6 h."""
+    out: Dict[str, Any] = {"closed": []}
+    try:
+        started = _PROCESS_STARTED
+        runs = await _runs(limit=MAX_RUNS)
+        for run in core.interrupted_runs(runs, started):
+            fin = core.iso(_now())
+            await _update_run(run["id"], finished_at=fin, result="interrupted",
+                              detail="prod restarted while it ran")
+            rec = await _get(run.get("schedule_id", ""))
+            if rec and (rec.get("last_finished_at") or "") < (run.get("started_at") or ""):
+                rec["last_finished_at"], rec["last_result"] = fin, "interrupted"
+                await _save(rec)
+            out["closed"].append(run["id"])
+        if out["closed"]:
+            log.info("schedule: closed %d run(s) a restart interrupted: %s",
+                     len(out["closed"]), ", ".join(out["closed"]))
+    except Exception as e:
+        log.debug("schedule reconcile: %s", e)
+    return out
+
+
+async def _reconcile_startup() -> None:
+    await asyncio.sleep(20)
+    await _reconcile_runs()
+
+
+_orch.start_at_import(_reconcile_startup, "schedule_reconcile")
+
 _TICK_LOCK = asyncio.Lock()
 
 

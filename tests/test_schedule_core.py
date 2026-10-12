@@ -75,6 +75,9 @@ def test_once_per_window_and_every():
     e = weekday(kind="task", target={"id": "t1"}, repeat="every", every_minutes=30)
     e["last_started_at"] = sc.iso(_t(2026, 9, 21, 8, 45))
     assert sc.is_due(e, MON, FREE)[1] == "interval not elapsed"
+    # every kind runs in the background now (DEEP-21 D21-1): an unfinished run holds the next start
+    assert sc.is_due(e, _t(2026, 9, 21, 9, 15), FREE)[1] == "previous run still going"
+    e["last_finished_at"] = sc.iso(_t(2026, 9, 21, 8, 50))
     assert sc.is_due(e, _t(2026, 9, 21, 9, 15), FREE) == (True, "due")
     # An exclusive non-census schedule waits for the census; a non-exclusive one does not.
     assert sc.is_due(e, _t(2026, 9, 21, 9, 15), dict(FREE, census_running=True))[1] == "census in flight"
