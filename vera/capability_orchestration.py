@@ -9813,10 +9813,14 @@ async def obs_scheduler(trace_id=None):
 @capability("obs.events", memory="off", silent=True,
             http_method="GET", http_path="/events", http_tags=["obs"],
             description="Recent events from Redis event stream.", contract={"presentation": {'kind': 'log', 'form': 'log', 'map': {'events': '$', 't': 'ts', 'kind': 'type', 'text': 'name'}}})
-async def obs_events(limit: int = 100, trace_id=None):
+async def obs_events(limit: int = 100, since: str = "", trace_id=None):
+    """newest first; since (an event ts): only the ones after it - what a live page missed while its socket was down
+    (VeraLive's catch-up, DA-03b)"""
     if not REDIS: return []
-    data=await REDIS.xrevrange(EVENT_STREAM,count=min(limit,500))
-    return [json.loads(x[1][b"data"]) for x in data]
+    data=await REDIS.xrevrange(EVENT_STREAM,count=min(int(limit or 100),500))
+    out=[json.loads(x[1][b"data"]) for x in data]
+    since=str(since or "").strip()
+    return [e for e in out if str(e.get("ts") or "") > since] if since else out
 
 @capability("obs.stream_history", memory="off", silent=True,
             http_method="GET", http_path="/streams/history", http_tags=["obs"],

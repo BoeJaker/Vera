@@ -67,3 +67,24 @@ def test_the_ws_handler_sets_replaces_and_drops_the_filter():
     assert 'if (ws,"__events__") not in WS_CONNECTIONS:' in src                 # subscribing again replaces, not doubles
     assert 'if msg.get("stream")=="__events__": WS_EVENT_FILTERS.pop(id(ws), None)' in src
     assert "WS_CONNECTIONS[:]=[p for p in WS_CONNECTIONS if p[0] is not ws]\n        WS_EVENT_FILTERS.pop(id(ws), None)" in src
+
+
+def test_obs_events_since_returns_only_what_came_after(monkeypatch):
+    import json as _j
+
+    class FakeRedis:
+        async def xrevrange(self, stream, count=100):
+            evs = [{"type": "c", "ts": "2026-10-12T10:00:03"}, {"type": "b", "ts": "2026-10-12T10:00:02"}, {"type": "a", "ts": "2026-10-12T10:00:01"}]
+            return [(b"id", {b"data": _j.dumps(e).encode()}) for e in evs][:count]
+
+    monkeypatch.setattr(orch, "REDIS", FakeRedis())
+    run = asyncio.new_event_loop().run_until_complete
+    fn = getattr(orch.obs_events, "__wrapped__", orch.obs_events)
+    assert [e["type"] for e in run(fn(limit=10))] == ["c", "b", "a"]
+    assert [e["type"] for e in run(fn(limit=10, since="2026-10-12T10:00:01"))] == ["c", "b"]
+
+
+def test_the_live_client_is_served():
+    import os
+    libs = open(os.path.join(os.path.dirname(__file__), "..", "vera", "ui", "libs.py"), encoding="utf-8").read()
+    assert '@APP.get("/ui/live.js", include_in_schema=False)' in libs and 'return _script("live.js")' in libs
