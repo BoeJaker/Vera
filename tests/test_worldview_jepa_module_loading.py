@@ -42,6 +42,7 @@ assert callable(namespace["cap_worldview_canonical_corpus_materialize"])
 assert callable(namespace["cap_worldview_retrieval_snapshot_preview"])
 assert callable(namespace["cap_worldview_retrieval_status"])
 assert callable(namespace["cap_worldview_retrieval_query"])
+assert callable(namespace["cap_worldview_retrieval_rerank_canary"])
 '''
     result = subprocess.run(
         [sys.executable, "-c", script, str(module)],
@@ -75,9 +76,12 @@ namespace = runpy.run_path(sys.argv[1], run_name="worldview_jepa_no_torch_caps")
 bind_cap = inspect.unwrap(namespace["cap_worldview_retrieval_bind"])
 status_cap = inspect.unwrap(namespace["cap_worldview_retrieval_status"])
 query_cap = inspect.unwrap(namespace["cap_worldview_retrieval_query"])
+rerank_cap = inspect.unwrap(namespace["cap_worldview_retrieval_rerank_canary"])
 preview_cap = inspect.unwrap(namespace["cap_worldview_retrieval_snapshot_preview"])
 state = bind_cap.__globals__
 DatasetSnapshot = state["DatasetSnapshot"]
+assert set(state["_orch"].CAPABILITY_REGISTRY[
+    "worldview.retrieval.rerank.canary"]["redact_args"]) == {"text"}
 
 records = [
     {"record_id": "r1", "revision_id": "rev-a", "text": "private alpha"},
@@ -99,9 +103,11 @@ class Model:
     record_concepts = {"r1": 0, "r2": 1}
     record_meta = {
         "r1": {"revision_id": "rev-a", "content_hash": "sha256:a",
-               "dataset_id": "source-a", "text": "private alpha"},
+               "dataset_id": "source-a", "text": "private alpha",
+               "concept": 0, "concept_label": "alpha"},
         "r2": {"revision_id": "rev-b", "content_hash": "sha256:b",
-               "dataset_id": "source-b", "text": "private beta"},
+               "dataset_id": "source-b", "text": "private beta",
+               "concept": 1, "concept_label": "beta"},
     }
     last_fabric_persist = ""
     def serialize_bytes(self):
@@ -118,6 +124,7 @@ class Model:
 class Index:
     available = True
     _ids = ["r1", "r2"]
+    _meta = {}
     def connect(self):
         return True
 
@@ -198,6 +205,49 @@ assert result["citations"] == [{"record_id": "r2", "revision_id": "rev-b"}]
 assert "private query" not in repr(result)
 assert "private beta" not in repr(result)
 assert result["activation_authority"] is False
+
+async def embed(_text): return [0.1, 0.2, 0.3]
+state["_wv_embed"] = embed
+state["MODEL"].encode_isolated = lambda _emb: [0.2, 0.3, 0.4]
+state["WV_INDEX"].score_subset = lambda _latent, ids: [
+    (rid, {"r1": -0.8, "r2": 0.9}[rid]) for rid in ids]
+canary = asyncio.run(rerank_cap(
+    text="private query",
+    candidates=[{"id": "r1", "baseline_score": 0.9},
+                {"id": "r2", "baseline_score": 0.1}],
+    snapshot_id=snapshot.snapshot_id, weight=0.8))
+assert canary["ok"] is True, canary
+assert canary["mode"] == "shadow"
+assert canary["authoritative"] is False
+assert canary["changes_context_selection"] is False
+assert canary["effect"] == "none"
+assert canary["activation_authority"] is False
+assert canary["changed_positions"] == 2
+assert {row["revision_id"] for row in canary["candidates"]} == {"rev-a", "rev-b"}
+assert "private query" not in repr(canary)
+assert "private alpha" not in repr(canary)
+outside = asyncio.run(rerank_cap(
+    text="private query",
+    candidates=[{"id": "outside", "baseline_score": 0.5}],
+    snapshot_id=snapshot.snapshot_id))
+assert outside["error_code"] == "candidate_outside_snapshot", outside
+duplicate = asyncio.run(rerank_cap(
+    text="private query",
+    candidates=[{"id": "r1", "baseline_score": 0.5},
+                {"id": "r1", "baseline_score": 0.4}],
+    snapshot_id=snapshot.snapshot_id))
+assert duplicate["error_code"] == "invalid_candidates", duplicate
+mismatch = asyncio.run(rerank_cap(
+    text="private query",
+    candidates=[{"id": "r1", "baseline_score": 0.5}],
+    snapshot_id="snap_" + "0" * 64))
+assert mismatch["error_code"] == "snapshot_mismatch", mismatch
+state["WV_INDEX"].score_subset = lambda _latent, _ids: []
+index_drift = asyncio.run(rerank_cap(
+    text="private query",
+    candidates=[{"id": "r1", "baseline_score": 0.5}],
+    snapshot_id=snapshot.snapshot_id))
+assert index_drift["error_code"] == "candidate_index_mismatch", index_drift
 '''
     result = subprocess.run(
         [sys.executable, "-c", script, str(module)],
