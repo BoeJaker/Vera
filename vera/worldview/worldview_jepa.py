@@ -54,6 +54,7 @@ Capabilities registered
   worldview.rollout                 — multi-step trajectory through concepts
   worldview.counterfactual          — rollout with a concept swap
   worldview.query                   — nearest-neighbour search in latent space
+  worldview.retrieval.rerank.canary — bounded exact-candidate shadow reranking
   worldview.anomalies               — combined reconstruction + likelihood
   worldview.snapshot                — 2D projection for visualisation
   worldview.concepts                — list concepts with labels & populations
@@ -1348,6 +1349,27 @@ class WorldViewIndex:
         return [(self._ids[i], float(D[0][n_]))
                 for n_, i in enumerate(I[0])
                 if 0 <= i < len(self._ids)]
+
+    def score_subset(self, vector, record_ids):
+        """Cosine-score an exact bounded subset without widening retrieval."""
+        if not self._available or self._index.ntotal == 0:
+            return []
+        positions = {record_id: index for index, record_id in enumerate(self._ids)}
+        if any(record_id not in positions for record_id in record_ids):
+            return []
+        query = np.asarray(vector, dtype="float32").reshape(-1)
+        norm = np.linalg.norm(query)
+        if norm > 0:
+            query = query / norm
+        scored = []
+        for record_id in record_ids:
+            candidate = np.asarray(
+                self._index.reconstruct(positions[record_id]), dtype="float32").reshape(-1)
+            candidate_norm = np.linalg.norm(candidate)
+            if candidate_norm > 0:
+                candidate = candidate / candidate_norm
+            scored.append((record_id, float(np.dot(query, candidate))))
+        return scored
 
     def get_all_vectors(self):
         if not self._available or self._index.ntotal == 0:
@@ -4966,6 +4988,159 @@ async def cap_worldview_retrieval_query(
         "provenance": binding.receipt(),
         "effect": "none",
         "activation_authority": False,
+    }
+
+
+@capability(
+    "worldview.retrieval.rerank.canary",
+    http_method="POST", http_path="/worldview/retrieval/rerank/canary",
+    http_tags=["worldview", "retrieval", "canary"], memory="off",
+    redact_args=["text"],
+    description=(
+        "Run one bounded, non-authoritative JEPA reranking comparison over an "
+        "explicit candidate set. Every candidate must belong to the exact bound "
+        "DatasetSnapshot; the response is payload-free, changes no context, "
+        "registers no ranker, and grants no activation authority. Inputs: text, "
+        "candidates [{id, baseline_score}], optional snapshot_id and weight."
+    ),
+)
+async def cap_worldview_retrieval_rerank_canary(
+    text: str,
+    candidates: List[Dict],
+    snapshot_id: str = "",
+    weight: float = 0.25,
+    trace_id=None,
+) -> Dict:
+    if (not isinstance(text, str) or not text.strip() or
+            len(text.encode("utf-8")) > 20_000):
+        return {"ok": False, "error_code": "query_required"}
+    if not isinstance(candidates, list) or not 1 <= len(candidates) <= 100:
+        return {"ok": False, "error_code": "invalid_candidates"}
+    if (isinstance(weight, bool) or not isinstance(weight, (int, float)) or
+            not math.isfinite(weight) or not 0 <= weight <= 1):
+        return {"ok": False, "error_code": "invalid_weight"}
+    parsed = []
+    seen = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            return {"ok": False, "error_code": "invalid_candidates"}
+        record_id = str(candidate.get("id") or "").strip()
+        score = candidate.get("baseline_score")
+        if (not record_id or len(record_id) > 256 or record_id in seen or
+                isinstance(score, bool) or not isinstance(score, (int, float)) or
+                not math.isfinite(score) or not 0 <= score <= 1):
+            return {"ok": False, "error_code": "invalid_candidates"}
+        seen.add(record_id)
+        parsed.append((record_id, float(score)))
+
+    binding = await asyncio.to_thread(_verified_retrieval_provenance)
+    if binding is None:
+        return {"ok": False, "eligible": False,
+                "error_code": "provenance_unavailable"}
+    if snapshot_id and snapshot_id != binding.snapshot.snapshot_id:
+        return {"ok": False, "eligible": False,
+                "error_code": "snapshot_mismatch"}
+    if not seen.issubset(set(binding.indexed_record_ids)):
+        return {"ok": False, "eligible": False,
+                "error_code": "candidate_outside_snapshot"}
+
+    emb = await _wv_embed(text)
+    if not emb:
+        return {"ok": False, "eligible": False,
+                "error_code": "embedding_failed"}
+    if _dim_mismatch_error(emb):
+        return {"ok": False, "eligible": False,
+                "error_code": "embedding_dimension_mismatch"}
+    latent = MODEL.encode_isolated(emb)
+    if latent is None:
+        return {"ok": False, "eligible": False,
+                "error_code": "encoding_failed"}
+    try:
+        scored = WV_INDEX.score_subset(
+            latent, [record_id for record_id, _ in parsed])
+    except (RuntimeError, TypeError, ValueError):
+        scored = []
+    scored_ids = [record_id for record_id, _ in scored]
+    if (len(scored) != len(parsed) or len(set(scored_ids)) != len(scored_ids) or
+            set(scored_ids) != seen or any(
+                isinstance(score, bool) or not isinstance(score, (int, float)) or
+                not math.isfinite(score) or not -1.00001 <= score <= 1.00001
+                for _, score in scored)):
+        return {"ok": False, "eligible": False,
+                "error_code": "candidate_index_mismatch"}
+    results = []
+    for record_id, score in sorted(scored, key=lambda value: (-value[1], value[0])):
+        meta = _meta_for(record_id)
+        results.append({
+            "id": record_id, "score": round(max(-1.0, min(1.0, score)), 5),
+            "dataset_id": meta.get("dataset_id", ""),
+            "concept": meta.get("concept", -1),
+            "concept_label": meta.get("concept_label", ""),
+        })
+    try:
+        citations = binding.citations_for_result({"results": results}, limit=len(results))
+        from Vera.vera.context_provider import ContextCitation, ContextItem
+        from Vera.vera.worldview.context_ranker import PinnedWorldviewContextRanker
+        from Vera.vera.worldview.evidence_provider import JepaResultProjector
+        result = {
+            "ok": True, "eligible": True,
+            "query_digest": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "results": results,
+            "citations": [item.to_dict() for item in citations],
+            "provenance": binding.receipt(),
+        }
+        evidence = JepaResultProjector().project_bound_reranking(
+            result=result, snapshot=binding.snapshot,
+            retrieval_checkpoint=binding.checkpoint, observed_at=now_iso())
+        citation_by_id = {item.record_id: item for item in citations}
+        items = tuple(ContextItem(
+            item_id=f"canary:{record_id}", text="[redacted canary context]",
+            source=record_id, revision=citation_by_id[record_id].revision_id,
+            provider="worldview.canary", score=score, token_count=1,
+            citations=(ContextCitation(
+                record_id,
+                f"fabric://{record_id}?revision={citation_by_id[record_id].revision_id}"),),
+        ) for record_id, score in parsed)
+        ranker = PinnedWorldviewContextRanker(
+            evidence, expected_snapshot_id=binding.snapshot.snapshot_id,
+            expected_model_package_id=evidence.model_package_id,
+            weight=float(weight))
+        ranked = ranker.rank(items)
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False, "eligible": False,
+                "error_code": "canary_evidence_invalid"}
+
+    def ordered(values):
+        return sorted(values, key=lambda item: (
+            -item.score, item.token_count, item.provider, item.item_id, item.revision))
+    baseline_ranks = {item.source: index + 1
+                      for index, item in enumerate(ordered(items))}
+    canary_ranks = {item.source: index + 1
+                    for index, item in enumerate(ordered(ranked))}
+    ranked_by_id = {item.source: item for item in ranked}
+    rows = []
+    for record_id, baseline_score in parsed:
+        item = ranked_by_id[record_id]
+        ranking = item.ranking_evidence[-1]
+        rows.append({
+            "id": record_id,
+            "revision_id": item.revision,
+            "baseline_rank": baseline_ranks[record_id],
+            "canary_rank": canary_ranks[record_id],
+            "baseline_score": baseline_score,
+            "evidence_score": ranking.score,
+            "hypothetical_score": item.score,
+        })
+    return {
+        "ok": True, "eligible": True,
+        "mode": "shadow", "authoritative": False,
+        "changes_context_selection": False,
+        "candidate_count": len(rows),
+        "changed_positions": sum(
+            row["baseline_rank"] != row["canary_rank"] for row in rows),
+        "weight": float(weight), "evidence_id": evidence.evidence_id,
+        "candidates": rows, "provenance": binding.receipt(),
+        "effect": "none", "activation_authority": False,
     }
 
 
