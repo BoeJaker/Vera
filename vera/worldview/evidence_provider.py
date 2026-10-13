@@ -15,8 +15,8 @@ import math
 import re
 from typing import Any, Mapping, Protocol, Sequence
 
-from vera.fabric.dataset_provider import DatasetSnapshot
-from vera.models.model_package import ModelCompatibility, ModelPackage
+from ..fabric.dataset_provider import DatasetSnapshot
+from ..models.model_package import ModelCompatibility, ModelPackage
 
 
 EVIDENCE_SCHEMA = "vera.worldview-evidence/v1"

@@ -5,9 +5,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 import math
 
-from vera.context_provider import ContextItem, ContextRankingEvidence
-from vera.worldview.evidence_provider import WorldviewEvidence, evidence_availability
-from vera.worldview.reranking_shadow import compare_reranking_shadow
+from ..context_provider import ContextItem, ContextRankingEvidence
+from .evidence_provider import WorldviewEvidence, evidence_availability
+from .reranking_shadow import compare_reranking_shadow
 
 MAX_WORLDVIEW_RANKING_RESULTS = 1000
 
