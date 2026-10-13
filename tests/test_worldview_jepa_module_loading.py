@@ -130,9 +130,11 @@ async def store(blob, meta):
     assert meta["retrieval_provenance"]["snapshot"]["snapshot_id"] == snapshot.snapshot_id
     return {"sqlite": True, "postgres": False, "bytes": len(blob)}
 
+query_args = {}
 async def query(**kwargs):
+    query_args.update(kwargs)
     return {"results": [
-        {"id": "r2", "score": 0.9, "dataset_id": "worldview-corpus",
+        {"id": "r2", "score": 0.9, "dataset_id": "source-b",
          "text": "private beta", "concept": 1},
     ], "query": kwargs["text"]}
 
@@ -190,6 +192,7 @@ state["cap_worldview_query"] = query
 result = asyncio.run(query_cap(
     text="private query", top_k=1, snapshot_id=snapshot.snapshot_id))
 assert result["ok"] is True, result
+assert query_args == {"text": "private query", "top_k": 1}, query_args
 assert result["query_digest"] == "sha256:" + hashlib.sha256(b"private query").hexdigest()
 assert result["citations"] == [{"record_id": "r2", "revision_id": "rev-b"}]
 assert "private query" not in repr(result)

@@ -4940,8 +4940,13 @@ async def cap_worldview_retrieval_query(
     if snapshot_id and snapshot_id != binding.snapshot.snapshot_id:
         return {"ok": False, "eligible": False,
                 "error_code": "snapshot_mismatch"}
-    result = await cap_worldview_query(
-        text=text, top_k=top_k, dataset_id=binding.snapshot.dataset_id)
+    # The bound snapshot describes the complete active index; its dataset_id is
+    # the snapshot's logical identity, not the source dataset_id stored on each
+    # indexed record.  Filtering the nearest neighbours by that synthetic ID
+    # drops every result from a corpus assembled from one or more real source
+    # datasets.  Exact membership is already enforced above by the verified
+    # checkpoint/index binding and again below when citations are resolved.
+    result = await cap_worldview_query(text=text, top_k=top_k)
     try:
         citations = binding.citations_for_result(result, limit=top_k)
     except (TypeError, ValueError):
