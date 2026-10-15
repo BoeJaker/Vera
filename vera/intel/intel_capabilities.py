@@ -73,6 +73,7 @@ try:
     from Vera.vera.intel import intel_activity_core as act
     from Vera.vera.intel import intel_apis_core as apis_core
     from Vera.vera.intel import intel_switches_core as isw
+    from Vera.vera.intel import intel_run_projection as intel_run
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -88,6 +89,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_activity_core as act
     from vera.intel import intel_apis_core as apis_core
     from vera.intel import intel_switches_core as isw
+    from vera.intel import intel_run_projection as intel_run
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -3168,6 +3170,32 @@ def _past(until: str) -> bool:
 async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
     p = job.get("payload") or {}
     mode = p.get("mode") or ("topic" if p.get("topic_id") else "night")
+    try:
+        attempt = max(1, int(job.get("preempts") or 0) + 1)
+    except (TypeError, ValueError):
+        attempt = 1
+    projection = intel_run.start_intel_job_run(
+        job_id=str(job.get("id") or ""), mode=str(mode),
+        attempt=attempt,
+    )
+    result: Dict[str, Any] = {}
+    try:
+        result = await _intel_job_native(job, p, str(mode), should_continue)
+        return result
+    except asyncio.CancelledError:
+        intel_run.finish_intel_job_run(projection, cancelled=True)
+        raise
+    except Exception as ex:
+        intel_run.finish_intel_job_run(
+            projection, error_type=type(ex).__name__)
+        raise
+    finally:
+        if not projection or not projection.terminal:
+            intel_run.finish_intel_job_run(projection, result=result)
+
+
+async def _intel_job_native(job: Dict[str, Any], p: Dict[str, Any], mode: str,
+                            should_continue) -> Dict[str, Any]:
     if p.get("until") and _past(p["until"]):
         return {"ok": True, "skipped": "its session ended"}       # dropped, not re-queued
     if mode == "topic":
