@@ -74,6 +74,7 @@ try:
     from Vera.vera.intel import intel_apis_core as apis_core
     from Vera.vera.intel import intel_switches_core as isw
     from Vera.vera.intel import intel_run_projection as intel_run
+    from Vera.vera.intel import intel_model_inventory as intel_models
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -90,6 +91,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_apis_core as apis_core
     from vera.intel import intel_switches_core as isw
     from vera.intel import intel_run_projection as intel_run
+    from vera.intel import intel_model_inventory as intel_models
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -3958,6 +3960,52 @@ async def cap_session_status(trace_id=None):
             "budget": st.get_kv("budget", {}) or {}, "alerts": (st.get_kv("alerts", []) or [])[-10:],
             "spend_today": st.get_kv("spend:" + datetime.now(timezone.utc).strftime("%Y-%m-%d"), {}) or {},
             "night": {k: v for k, v in (st.get_kv("night", {}) or {}).items() if k != "pending"}}
+
+
+@capability("intel.models", http_method="GET", http_path="/intel/models",
+            http_tags=["intel", "models"], memory="off", silent=True,
+            description="Read-only inventory of the distributed NLP models and routed LLM roles "
+                        "the Intelligence subsystem actually consumes, joined to current callable, "
+                        "node-placement and portable package evidence. Reports missing evidence as "
+                        "gaps; never loads, executes, downloads or reroutes a model.")
+async def cap_models(trace_id=None):
+    callable_rows: List[Dict[str, Any]] = []
+    sources: Dict[str, Any] = {}
+    entry = CAPABILITY_REGISTRY.get("model.callable") or {}
+    reader = entry.get("func") or entry.get("raw")
+    if reader is None:
+        sources["model.callable"] = {"status": "unavailable", "reason": "capability_not_loaded"}
+    else:
+        try:
+            result = reader(include_llms=False, measure=False)
+            if inspect.isawaitable(result):
+                result = await result
+            callable_rows.extend((result or {}).get("models") or [])
+            sources["model.callable"] = {"status": "available",
+                                         "count": len((result or {}).get("models") or [])}
+        except Exception as exc:  # an inventory-source outage is data, not a 500
+            sources["model.callable"] = {"status": "unavailable", "reason": type(exc).__name__}
+    try:
+        try:
+            from Vera.vera import model_binding_core as model_binding
+        except ImportError:
+            from vera import model_binding_core as model_binding
+        llms = model_binding.llm_rows(getattr(_orch, "OLLAMA_INSTANCES", {}) or {},
+                                      getattr(_orch, "MODEL_TAGS", {}) or {})
+        callable_rows.extend(llms)
+        sources["llm.routing"] = {"status": "available", "count": len(llms),
+                                  "kind": "in_memory_placement"}
+    except Exception as exc:
+        sources["llm.routing"] = {"status": "unavailable", "reason": type(exc).__name__}
+    try:
+        profiles = getattr(_orch, "_effective_role_profiles", lambda: {})() or {}
+        profile = profiles.get("intel") or {"name": "intel", "roles": {}}
+        sources["intel.profile"] = {"status": "available" if profile.get("roles") else "unavailable",
+                                    "roles": len(profile.get("roles") or {})}
+    except Exception as exc:
+        profile = {"name": "intel", "roles": {}}
+        sources["intel.profile"] = {"status": "unavailable", "reason": type(exc).__name__}
+    return intel_models.project(callable_rows, profile, sources=sources)
 
 
 @capability("intel.config.get", http_method="GET", http_path="/intel/config", http_tags=["intel"],

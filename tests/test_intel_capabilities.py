@@ -240,7 +240,8 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
     for name in ("intel.topic.save", "intel.sweep", "intel.timeline.get", "intel.report.build", "intel.deliver",
                  "intel.action.run", "intel.brief", "intel.ingest_dream", "intel.import.n8n", "intel.n8n.retire",
                  "intel.panel.html", "intel.summary", "intel.entities.get", "intel.asof.get", "intel.command",
-                 "intel.save", "intel.files.run", "intel.advise", "intel.session.status", "intel.notes.list"):
+                 "intel.save", "intel.files.run", "intel.advise", "intel.session.status", "intel.notes.list",
+                 "intel.models"):
         assert name in orch.CAPABILITY_REGISTRY, name
     assert orch.UI and orch.UI[0][0][0] == "intel" and "<iframe" in orch.UI[0][1]["html"]
     fn, interval, kw = orch.SCHEDULED[0]
@@ -248,6 +249,30 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
     roles = orch.PROFILES["intel"]["roles"]
     assert roles["assess"]["model"] == "qwen3.6:35b-a3b" and roles["assess"]["pin"] == "cpu-247" and roles["assess"]["deny_gpu"]
     assert roles["enrich"]["deny_gpu"] and roles["enrich"]["model"] == "qwen3.6:35b-a3b" and roles["notes"]["pin"] == "cpu-247"
+
+
+def test_model_inventory_joins_intel_consumers_without_executing_models(tmp_path):
+    mod, orch = _load(tmp_path)
+
+    async def callable_models(**kw):
+        assert kw == {"include_llms": False, "measure": False}
+        return {"models": [{"id": "nlp.ner:gliner", "cap": "nlp.ner",
+                            "selector": {"task": "gliner"}, "model": "gliner/model",
+                            "package_id": "pkg:gliner", "present_on": ["cpu-246"],
+                            "loaded_on": ["cpu-246"]}]}
+
+    orch.CAPABILITY_REGISTRY["model.callable"] = {"func": callable_models}
+    orch.OLLAMA_INSTANCES = {"cpu-247": {"models": ["qwen3.6:35b-a3b"],
+                                         "running": [{"name": "qwen3.6:35b-a3b"}]}}
+    orch.MODEL_TAGS = {}
+    orch._effective_role_profiles = lambda: {"intel": {"name": "intel", "roles": {
+        "assess": {"model": "qwen3.6:35b-a3b", "pin": "cpu-247",
+                   "job_type": "idle_intel", "deny_gpu": True}}}}
+    result = _R(orch, "intel.models")
+    assert result["schema"] == "vera.intel-model-consumers/v1"
+    assert next(row for row in result["nlp"] if row["consumer_id"] == "intel.enrich.entities")["status"] == "verified"
+    assert result["roles"][0]["present_on"] == ["cpu-247"]
+    assert orch.PROMPTS == []
 
 
 def test_the_whole_cycle(tmp_path):

@@ -332,14 +332,16 @@ def llm_describe(model: str, facts: Optional[Mapping[str, Any]] = None,
 
 # ── the view ─────────────────────────────────────────────────────────────────
 def _node_rows(nodes: Sequence[Mapping[str, Any]], key: str) -> Dict[str, Dict[str, Any]]:
-    """Per node: what it reports for one served task key ({model, present, loaded})."""
+    """Per node facts for one served task, including reported package identity."""
     out = {}
     for n in nodes or ():
         row = (n.get("tasks") or {}).get(key)
         if isinstance(row, Mapping):
+            package = row.get("model_package") if isinstance(row.get("model_package"), Mapping) else {}
             out[str(n.get("node_id") or n.get("node") or "?")] = {
                 "model": row.get("model") or "", "present": bool(row.get("present")),
-                "loaded": bool(row.get("loaded"))}
+                "loaded": bool(row.get("loaded")),
+                "package_id": str(package.get("package_id") or row.get("package_id") or "")}
     return out
 
 
@@ -372,11 +374,20 @@ def callable_view(registry: Mapping[str, Mapping[str, Any]], *,
                 continue
             served = _node_rows(nodes, b.get("served_as") or b.get("task") or "")
             model = b.get("model") or defaults.get(b.get("served_as") or "", "") or ""
+            declared_package = str(b.get("package_id") or "")
+            observed_packages = sorted({str(v.get("package_id")) for v in served.values()
+                                        if v.get("package_id")})
+            package_id = declared_package or (observed_packages[0] if len(observed_packages) == 1 else "")
             rows.append({
                 **{k: b.get(k) for k in ("id", "cap", "selector", "task", "family", "uses", "limits",
                                          "io", "labels", "questions", "tier", "placement",
                                          "package_id", "note", "served_as")},
                 "model": model,
+                "package_id": package_id,
+                "package_ids": observed_packages,
+                "package_conflict": bool(len(observed_packages) > 1 or
+                                         (declared_package and observed_packages
+                                          and declared_package not in observed_packages)),
                 "nodes": served,
                 "loaded_on": sorted(k for k, v in served.items() if v["loaded"]),
                 "present_on": sorted(k for k, v in served.items() if v["present"]),

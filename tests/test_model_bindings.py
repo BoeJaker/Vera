@@ -77,6 +77,20 @@ def test_the_view_joins_nodes_catalog_and_defaults():
     assert [r["id"] for r in mb.callable_view(reg, family="nlp")] == ["nlp.ner:ner"]
 
 
+def test_the_view_preserves_node_reported_model_package_identity():
+    bindings, _ = mb.bind("nlp.ner", [mb.binding("ner", "gliner", uses=USES,
+                                                  selector={"task": "gliner"}, io_out="spans")])
+    nodes = [{"node_id": "cpu-246", "tasks": {"gliner": {
+        "model": "urchade/gliner_multi-v2.1", "present": True, "loaded": False,
+        "model_package": {"package_id": "pkg:gliner-multi-v2.1"},
+    }}}]
+    row = mb.callable_view({"nlp.ner": {"models": bindings}}, nodes=nodes)[0]
+    assert row["package_id"] == "pkg:gliner-multi-v2.1"
+    assert row["package_ids"] == ["pkg:gliner-multi-v2.1"]
+    assert row["nodes"]["cpu-246"]["package_id"] == "pkg:gliner-multi-v2.1"
+    assert row["package_conflict"] is False
+
+
 def test_llms_come_from_the_routing_system():
     inst = {"cpu-246": {"models": ["qwen3.5:9b", {"name": "nomic-embed-text"}],
                         "running": [{"name": "qwen3.5:9b"}]},
