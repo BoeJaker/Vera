@@ -31,7 +31,7 @@ READ = {
     "dash.health.summary": {}, "docker.ps": {}, "dream.history": {}, "estate.health": {},
     "evolve.activity": {}, "evolve.pipeline.list": {"limit": 10}, "evolve.sandbox.list": {}, "evolve.tasks.overview": {},
     "evolve.unittest.history": {}, "fabric.entity_graph.snapshot": {}, "fabric.graphs.snapshot": {},
-    "loop.ci.board": {}, "loop.ci.matrix": {}, "loop.ci.perf": {}, "loop.ci.race": {},
+    "loop.ci.board": {}, "loop.ci.matrix": {}, "loop.ci.perf": {}, "loop.ci.race": {}, "markets.overview": {}, "obs.cluster": {},
     "mesh.topology": {}, "obs.events": {"limit": 50}, "obs.health": {}, "obs.modules": {}, "obs.node_temps": {},
     "ollama.request_log": {}, "ollama.route_stats": {}, "perf.stalls": {}, "syslog.errors": {},
     "sysmon.history": {"limit": 60}, "sysmon.status": {}, "topology.snapshot": {},
