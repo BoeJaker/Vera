@@ -282,6 +282,42 @@ def test_shared_store_classifies_representative_internal_producers(record, expec
     assert memory._memory_producer_kind(value) == expected
 
 
+def test_shared_store_observes_internal_producer_once(monkeypatch, tmp_path):
+    from vera.fabric import memory
+
+    calls = []
+
+    class Backend:
+        def __init__(self, name):
+            self.name = name
+
+        async def store(self, record):
+            calls.append((self.name, record.id))
+            return True
+
+    value = memory.HybridMemoryStore()
+    for name in ("postgres", "chroma", "neo4j"):
+        value.register(Backend(name))
+    for key, setting in paths(tmp_path).items():
+        monkeypatch.setenv(key, setting)
+    monkeypatch.setattr(memory, "_sbx_write_blocked", lambda: False)
+    monkeypatch.setattr(memory, "MEMORY_AUTO_EMBED", False)
+    record = memory.MemoryRecord(
+        id="internal-1", record_type="capability_call", source_type="tool",
+        full_text="bounded internal activity evidence")
+
+    result = run(value.store(record, producer_kind="capability_activity"))
+
+    assert result == {"postgres": True, "chroma": True, "neo4j": True}
+    assert calls == [(name, "internal-1") for name in ("postgres", "chroma", "neo4j")]
+    with sqlite3.connect(tmp_path / "receipts.sqlite3") as conn:
+        row = conn.execute(
+            "SELECT producer_kind,evidence_json FROM memory_dual_write_receipts"
+        ).fetchone()
+    assert row[0] == "capability_activity"
+    assert json.loads(row[1])["producer_kind"] == "capability_activity"
+
+
 def test_postgres_rows_render_utc_timestamps_without_double_timezone_suffix():
     from vera.fabric.memory import PostgresBackend
 
