@@ -1663,6 +1663,30 @@ async def embed_text(text: str) -> Optional[List[float]]:
 # HYBRID MEMORY STORE  —  orchestrates all backends
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _memory_producer_kind(record: MemoryRecord) -> str:
+    """Classify a Memory producer without retaining content or inspecting stack frames."""
+    record_type = str(record.record_type or "").lower()
+    source_type = str(record.source_type or "").lower()
+    category = str(record.category or "").lower()
+    capability_name = str(record.capability or "").lower()
+    tags = {str(item).lower() for item in (record.tags or [])}
+    if capability_name == "agent.chat" or (
+            record_type == "message" and source_type in {"human", "ai"}):
+        return "conversation"
+    if (record_type in {"capability", "capability_call", "tool_call"}
+            or category in {"capability", "capability_activity"}
+            or "capability_call" in tags):
+        return "capability_activity"
+    if (category in {"dag_execution", "dag_step", "workflow", "workflow_step"}
+            or record_type in {"dag", "dag_step", "workflow", "workflow_step"}
+            or bool(tags & {"dag", "dag_step", "workflow", "workflow_step"})):
+        return "workflow"
+    if "auto_promoted" in tags:
+        return "automatic_promotion"
+    if category.startswith("stream.") or "stream" in tags:
+        return "context_stream"
+    return "internal"
+
 class HybridMemoryStore:
     """
     Orchestrates multiple MemoryBackend instances.
@@ -1776,8 +1800,13 @@ class HybridMemoryStore:
             backend.store(record), _BACKEND_OP_TIMEOUT_S)
         return result is True
 
-    async def store(self, record: MemoryRecord) -> Dict:
-        """Store a record across all backends. Returns per-backend success map."""
+    async def store(self, record: MemoryRecord, *, producer_kind: str = "") -> Dict:
+        """Store through the shared observational seam, then all backends.
+
+        ``producer_kind`` is a bounded classification only; no record payload is
+        copied into readiness evidence.  Callers that do not identify themselves
+        are classified from the stable MemoryRecord provenance fields.
+        """
         # Dev-sandbox write guard: the memory backends (Postgres/Chroma/Neo4j)
         # are prod's SHARED stores, so a dev loop storing memories would pollute
         # prod. Suppress the fan-out entirely (strict no-op in prod). The record
@@ -1788,6 +1817,27 @@ class HybridMemoryStore:
             # keeps callers from reporting data as stored when no backend saw
             # it; the write guard remains fail-closed and side-effect free.
             return {name: False for name in self._backends}
+
+        producer = str(producer_kind or _memory_producer_kind(record))
+        snapshot = record.to_dict()
+
+        async def _native_write():
+            result = await self._store_native(record)
+            # Native storage derives hashes, keywords, canonical/noise metadata
+            # and embeddings. Bind the shadow revision to that resulting record,
+            # as the former public-capability seam did.
+            snapshot.clear()
+            snapshot.update(record.to_dict())
+            return result
+
+        actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
+        actor = {"mcp": "claude_code"}.get(actor, actor)
+        return await _revision_canary.store_public_memory_with_revision_canary(
+            snapshot, native_write=_native_write, actor=actor,
+            observed_at=now_iso(), producer_kind=producer)
+
+    async def _store_native(self, record: MemoryRecord) -> Dict:
+        """The existing authoritative fan-out, called exactly once by ``store``."""
         # Fill in derived fields
         if not record.content_hash:
             record.content_hash = record.compute_hash()
@@ -2397,7 +2447,7 @@ async def _maybe_promote(event: dict):
     # Explicit memory events
     if etype == "memory.store":
         rec = _event_to_record(event)
-        await MEMORY.store(rec)
+        await MEMORY.store(rec, producer_kind="automatic_promotion")
         return
 
     if etype == "memory.promote":
@@ -2411,7 +2461,7 @@ async def _maybe_promote(event: dict):
                 except Exception:
                     pass
         rec = _event_to_record(event)
-        await MEMORY.store(rec)
+        await MEMORY.store(rec, producer_kind="automatic_promotion")
         return
 
     # Auto-promote LLM outputs
@@ -2438,7 +2488,7 @@ async def _maybe_promote(event: dict):
                 capability  = event.get("name",""),
                 importance  = 0.6,
             )
-            await MEMORY.store(rec)
+            await MEMORY.store(rec, producer_kind="automatic_promotion")
 
 
 def _event_to_record(event: dict) -> MemoryRecord:
@@ -2522,18 +2572,7 @@ async def memory_store(
         importance  = importance,
         parent_id   = parent_id,
     )
-    canary_snapshot = rec.to_dict()
-    async def _native_store():
-        result = await MEMORY.store(rec)
-        canary_snapshot.clear()
-        canary_snapshot.update(rec.to_dict())
-        return result
-
-    actor = str(_orch.CALLER_KIND.get("") or "user").strip().lower()
-    actor = {"mcp": "claude_code"}.get(actor, actor)
-    result = await _revision_canary.store_public_memory_with_revision_canary(
-        canary_snapshot, native_write=_native_store, actor=actor,
-        observed_at=now_iso())
+    result = await MEMORY.store(rec, producer_kind="public_capability")
     return {"id": rec.id, "backends": result, "keywords": rec.keywords,
             "content_hash": rec.content_hash}
 
@@ -3020,7 +3059,7 @@ async def memory_promote_cap(
     event.setdefault("category",    category)
     event.setdefault("importance",  importance)
     rec = _event_to_record(event)
-    result = await MEMORY.store(rec)
+    result = await MEMORY.store(rec, producer_kind="public_capability")
     return {"id": rec.id, "backends": result}
 
 

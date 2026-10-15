@@ -1,8 +1,8 @@
-"""Default-off runtime wiring for one public native Memory ingress.
+"""Default-off runtime wiring for Vera's shared native Memory write seam.
 
-Only ``memory.store`` calls this seam.  Internal ``HybridMemoryStore`` callers
-remain untouched.  When the switch is off, no revision, policy, SQLite path or
-receipt sink is constructed.
+``HybridMemoryStore.store`` calls this seam after the sandbox guard, so public
+and internal producers receive the same observational coverage.  When the
+switch is off, no revision, policy, SQLite path or receipt sink is constructed.
 """
 
 from __future__ import annotations
@@ -118,7 +118,8 @@ def revision_from_native_memory_snapshot(snapshot: Mapping[str, Any]):
 
 async def store_public_memory_with_revision_canary(
     snapshot: Mapping[str, Any], *, native_write: NativeWriter, actor: str,
-    observed_at: str, environ: Mapping[str, str] | None = None,
+    observed_at: str, producer_kind: str = "internal",
+    environ: Mapping[str, str] | None = None,
 ) -> Mapping[str, bool | str]:
     """Store through the native path, optionally shadowing canonical authority.
 
@@ -167,6 +168,7 @@ async def store_public_memory_with_revision_canary(
         native_timeout_s=None,
         revision_timeout_s=None,
         revision_factory=lambda: revision_from_native_memory_snapshot(snapshot),
+        producer_kind=producer_kind,
     )
     # ``MemoryDualWriteCanaryResult`` freezes its internal mapping with a
     # ``MappingProxyType``.  Capability results cross a JSON boundary, so do
