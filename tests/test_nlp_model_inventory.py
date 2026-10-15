@@ -40,7 +40,15 @@ def test_verified_package_is_deduplicated_across_nodes():
         for node in ("cpu-247", "cpu-246")])
     assert result["packages"] == [package]
     assert result["candidates"] == []
-    assert result["counts"] == {"packages": 1, "candidates": 0}
+    assert result["package_observations"] == [{
+        "schema": "vera.nlp-package-observation/v1",
+        "package_id": package["package_id"],
+        "task": "ner", "model": "owner/model",
+        "present_on": ["cpu-246", "cpu-247"], "loaded_on": [],
+    }]
+    assert result["counts"] == {
+        "packages": 1, "package_observations": 1, "candidates": 0,
+    }
 
 
 def test_invalid_or_wrong_task_package_fails_closed_to_candidate():
