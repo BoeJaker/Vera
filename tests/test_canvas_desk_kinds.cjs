@@ -47,7 +47,7 @@ t('calendar: an inner grid the wide layout lays out (month beside its list)', /<
 /* fitting and drawing */
 t('cards are fitted to what they hold after a placement; a fit that overflows a little grows, it is not dropped',
   src.includes('try { this._deskFit(); }') && src.includes('if (more > 160) delete nat[key]; else nat[key] = c.offsetHeight + more + 6;'));
-t('the fit caps a card\'s face, its separation size and its growth', src.includes('maxH: nat || undefined') && src.includes("(it.maxH || Infinity))) }; }, { W: W, H: H });") && src.includes('it.maxH || Infinity'));
+t('the fit caps a card\'s face, its separation size and its growth', src.includes('maxH: nat || undefined') && src.includes("Math.min(H - 8, s.h, chip ? Infinity : (it.maxH || Infinity))) };") && src.includes('it.maxH || Infinity'));
 t('WSU-69/70: separation also caps width by kind/form and keeps a measured least height (minH)', src.includes('chip ? Infinity : (it.maxW || Infinity)') && src.includes('Math.min(H - 8, it.minH || 0)') && src.includes('const DESK_FORM_MAXW = {'));
 t('an image fills its card, whole', src.includes('.vc-fig > img{flex:1 1 0;min-height:0;width:100%;height:100%;max-width:none;object-fit:contain}'));
 t('a diagram no longer being written is drawn whole (render), so a broken one shows its error', src.includes("if (!streaming && typeof inner.render === 'function') { try { inner.render(code); } catch (e) {} return; }"));
@@ -75,7 +75,7 @@ t('minimal: the card\'s icon row, a combined card\'s tabs and a drawing\'s capti
 t('a page opened in a list fills the room, alone, and closing the last puts the card back', src.includes('_readerFollow(key, grow) {') && src.includes("if (any && grow !== false && this._max !== key) { this._autoMax = key; this._toggleMax(key); return true; }")
   && src.includes("if (!any && this._autoMax === key) { this._autoMax = null; if (this._max === key) this._toggleMax(key); return true; }") && src.includes("(maxed && this._autoMax === key ? ' reading' : '')"));
 t('an opened page has a way back, shown while it fills the room', src.includes('class="vc-rbx-b rb-back" data-rec-act="open"') && src.includes('.rb-back{display:none!important}.it.reading .rb-back{display:inline-flex!important}'));
-t('the desk settles its cards upward after pulling them apart; a risen card keeps its size', src.includes('D.settle(plan, R, { W: W, H: H }, { gap: 12 });') && src.includes('if (it.settled && !it.fixed) { it.keepSize = true;'));
+t('the desk settles its cards upward after pulling them apart; a risen card keeps its size', src.includes('D.settle(tiled, R, { W: W, H: H }, { gap: 12 });') && src.includes('if (it.settled && !it.fixed) { it.keepSize = true;'));
 
 /* round 4 (owner, 2026-10-11): reader on the title, plain click in place, carry back from full, pills, names menu, sizes */
 t('a plain click opens a result in place; only reader mode fills the room', src.includes('_readerFollow(key, grow)') && src.includes('if (!st.open[it.id] && this._readerFollow(key, false)) return;'));
@@ -93,7 +93,7 @@ t('a card filling the desk is above every card and pill (the held canvas\'s z 8 
 
 /* round 5 (WSU-50, 51, 53, 56) */
 t('a pill opens as a card under the pointer, whatever its kind, and goes back when the pointer leaves', src.includes("it.classList.add('chip-peek', 'pill-open'); it.dataset.deskFace = 'card';") && src.includes("if (s.open) { it.classList.add('desk-chip'); it.dataset.deskFace = s.face;"));
-t('carried to where a card is a pill, it is a pill whatever size it was given; let go there it joins the border', src.includes("const bare = D.sizeAt(g.R, cx, cy, {}, g.desk);") && src.includes("if (asChip) this._deskPosSet(d.key, { chip: true });"));
+t('carried to where a card is a pill, it is a pill whatever size it was given; let go there it joins the border', src.includes("const bare = D.sizeAt(g.R, px, py, {}, g.desk);") && src.includes("if (asChip) this._deskPosSet(d.key, { chip: true });"));
 t('let go on the desk it stays there (and is no longer a minimised pill); the upward settle leaves it', src.includes("if (this._pillGet()[d.key]) this._pillSet(d.key, false);") && src.includes('stay: !!userAt(key)'));
 t('code scrolls in its card on the desk', src.includes('.vc-codewrap > .code-card > pre{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto!important'));
 

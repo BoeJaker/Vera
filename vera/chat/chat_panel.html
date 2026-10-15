@@ -2318,6 +2318,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <select id="cfgCvFill" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Cards grow into free room</option><option value="off">Cards keep their size</option></select></div>
     <div class="row"><label style="min-width:70px" title="On a Desk canvas: cards rise up the desk into room left above them; fixed ones stay. Off: cards stay where they were placed.">Settle</label>
       <select id="cfgCvSettle" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Cards settle up into free room</option><option value="off">Cards stay where placed</option></select></div>
+    <div class="row"><label style="min-width:70px" title="On a Desk canvas: a card you gave a size that the desk cannot make room for becomes a window at that size, over the other cards; a click brings any card to the top. Off: it stays among the cards, overlapping them.">Windows</label>
+      <select id="cfgCvWindows" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">No room: it becomes a window</option><option value="off">No room: it stays among the cards</option></select></div>
     <div class="row"><label style="min-width:70px" title="On a Desk canvas: a card is no taller (and no wider) than what it holds - a short note, a page that says its height, a diagram at the card's width. Off: cards are sized by their place alone.">Fit</label>
       <select id="cfgCvFit" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Cards fit what they hold</option><option value="off">Cards sized by place only</option></select></div>
     <div class="row"><label style="min-width:70px" title="Whether an HTML item, and a code block that is a whole page, draw themselves or show their source. Drawing happens in a sandboxed frame — no network, no cookies, no reach into this page — and each item keeps its own switch either way.">HTML items</label>
@@ -6232,7 +6234,7 @@ IMPORTANT:
   const _CV_CFG_KEY='vera_canvas_cfg';
   /* the desk is the chat's canvas (owner, 2026-10-08: "the desk is the replacement for the chat canvas"): it is the
      default alignment; Held and Strict stay for whoever chose them (a saved choice is kept) */
-  const _CV_CFG={ cfgCvAlign:['align','desk'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'], cfgCvBring:['bring-in','on'], cfgCvArrange:['desk-arrange','orbit'], cfgCvRoom:['panel-room','on'], cfgCvCombine:['desk-combine','on'], cfgCvFill:['desk-fill','on'], cfgCvSettle:['desk-settle','on'], cfgCvFit:['desk-fit','on'] };
+  const _CV_CFG={ cfgCvAlign:['align','desk'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'], cfgCvBring:['bring-in','on'], cfgCvArrange:['desk-arrange','orbit'], cfgCvRoom:['panel-room','on'], cfgCvCombine:['desk-combine','on'], cfgCvFill:['desk-fill','on'], cfgCvSettle:['desk-settle','on'], cfgCvFit:['desk-fit','on'], cfgCvWindows:['desk-windows','on'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
     const el=document.querySelector('#canvasColumnBody vera-canvas');
@@ -7872,32 +7874,37 @@ IMPORTANT:
     if(pr.element==='none'||pr.element==='receipt'||pr.element==='job'||!pr.records.length) return null;
     const title=String(pr.title||cap), r0=pr.records[0];
     const drawn=(r)=>{ try{ return W.dataFor(W.mapped(r, r.form, r.data), r.form); }catch(_){ return r.data; } };
-    const widget=(r)=>({ kind:'widget', n:String(r.title||title).slice(0,52), k:'widget', col:'#a78bfa', d:'widget · '+r.form,
+    const widget=(r)=>({ kind:'widget', n:String(r.title||title).slice(0,52), k:'widget', col:'var(--dv5, #a78bfa)', d:'widget · '+r.form,
       content:Object.assign({}, r, { widget:r.form, form:r.form, title:r.title||title, record:r }) });
     const rowsOf=(v)=>Array.isArray(v)?v:(v&&typeof v==='object'?(Array.isArray(v.rows)?v.rows:[]):[]);
+    /* A FORM IT NAMES IS THE FORM IT GETS (review 2026-10-15 U11): a table or record whose declaration names its own widget
+       form (docker.ps containers, sysmon.status numbers, obs.node_temps temps, evolve.sandbox.list sandboxes, ...) was drawn
+       as a plain table or field list - what the hint table drew before was that form. The desk's own calendar and code
+       elements stay: they do more than the forms of the same name. */
+    { const P=W.presentationOf(cap)||{}; if((pr.element==='table'||pr.element==='kv')&&P.form&&P.form!=='table'&&P.form!=='kv') return widget(Object.assign({}, r0, { form:String(P.form) })); }
     switch(pr.element){
       case 'table': { const rows=rowsOf(drawn(r0)).filter(x=>x&&typeof x==='object'); if(!rows.length) return null;
         const columns=Object.keys(rows[0]).filter(k=>rows[0][k]==null||typeof rows[0][k]!=='object').slice(0,8);   /* as _cvCapTable */
         const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':String(v).slice(0,120); }));
-        return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'#38bdf8', d:'table · '+body.length+' rows',
+        return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'var(--dv1, #38bdf8)', d:'table · '+body.length+' rows',
                  content:{ columns, rows:body, caption:title } }; }
       case 'records': { const items=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',
           domain:x.domain||(String(x.url||'').match(/^https?:\/\/([^/]+)/)||[])[1]||'', title:String(x.title||x.url||''), snippet:String(x.snippet||'').slice(0,1200),
           text:typeof x.text==='string'&&x.text.length>=200?x.text.slice(0,20000):undefined, when:x.when||undefined, score:typeof x.score==='number'?x.score:undefined }));
         if(!items.length) return null;
-        return { kind:'records', n:items.length+' '+(pr.kind==='reading'?'pages':'records'), k:'records', col:'#7aa2d6', d:'records · '+items.length,
+        return { kind:'records', n:items.length+' '+(pr.kind==='reading'?'pages':'records'), k:'records', col:'var(--dv2, #7aa2d6)', d:'records · '+items.length,
                  content:{ title, kind:pr.kind==='reading'?'web':'records', items, total:items.length } }; }
       case 'markdown': { const md=String(r0.data||''); return { kind:'markdown', n:(md.replace(/^#+\s*/,'').split('\n').find(x=>x.trim())||title).slice(0,52), k:'prose', col:'var(--acc2)', d:'written', content:{ md:md.slice(0,20000) } }; }
-      case 'code': { const d=r0.data||{}; if(pr.kind==='diff'){ const t=String(d.diff||''); return { kind:'code', n:'diff · '+t.split('\n').length+' lines', k:'code', col:'#fb923c', d:'diff', content:{ code:t.slice(0,120000), lang:'diff', filename:'' } }; }
+      case 'code': { const d=r0.data||{}; if(pr.kind==='diff'){ const t=String(d.diff||''); return { kind:'code', n:'diff · '+t.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'diff', content:{ code:t.slice(0,120000), lang:'diff', filename:'' } }; }
         const code=String(d.code||''), p=String(d.path||''), lang=String(d.lang||'');
-        return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' · '+code.split('\n').length+' lines', k:'code', col:'#fb923c', d:'code', content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; }
+        return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' · '+code.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'code', content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; }
       case 'session': { const ls=(r0.data&&r0.data.lines)||[]; const cmd=ls.length&&/^\$ /.test(ls[0])?ls[0].slice(2):''; const out=(cmd?ls.slice(1):ls).join('\n');
-        return { kind:'session', n:(cmd||title).slice(0,52), k:'term', col:'#7dd3fc', d:'terminal'+(r0.data&&r0.data.state?' · '+r0.data.state:''), content:{ command:cmd, output:out.slice(0,16000) } }; }
+        return { kind:'session', n:(cmd||title).slice(0,52), k:'term', col:'var(--dv6, #7dd3fc)', d:'terminal'+(r0.data&&r0.data.state?' · '+r0.data.state:''), content:{ command:cmd, output:out.slice(0,16000) } }; }
       case 'image': { const d=r0.data||{}; const url=d.image_b64?('data:image/png;base64,'+d.image_b64):String(d.url||''); if(!url) return null;
-        return { kind:'image', n:String(d.caption||title), k:'image', col:'#e879f9', d:'image', content:{ url, alt:String(d.caption||title), caption:String(d.caption||'') } }; }
-      case 'kv': { const f=r0.data; if(!f||typeof f!=='object') return null; return { kind:'kv', n:title, k:'kv', col:'#94a3b8', d:'record · '+Object.keys(f).length+' fields', content:{ title, fields:f } }; }
+        return { kind:'image', n:String(d.caption||title), k:'image', col:'var(--dv4, #e879f9)', d:'image', content:{ url, alt:String(d.caption||title), caption:String(d.caption||'') } }; }
+      case 'kv': { const f=r0.data; if(!f||typeof f!=='object') return null; return { kind:'kv', n:title, k:'kv', col:'var(--dim2, #94a3b8)', d:'record · '+Object.keys(f).length+' fields', content:{ title, fields:f } }; }
       case 'calendar': { const evs=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&x.start).map(x=>Object.assign({}, x, { title:String(x.title||'') })); if(!evs.length) return null;
-        return { kind:'calendar', n:'Calendar', k:'calendar', col:'#9fe1e7', d:'calendar · '+evs.length+' event'+(evs.length===1?'':'s'), key:'calendar:month',
+        return { kind:'calendar', n:'Calendar', k:'calendar', col:'var(--dv7, #9fe1e7)', d:'calendar · '+evs.length+' event'+(evs.length===1?'':'s'), key:'calendar:month',
                  content:{ title:title||'Calendar', month:_cvCalMonth(evs), selected:'', events:evs } }; }
       case 'composite': return pr.records.map(widget);
       default: return widget(r0);   // widget-drawn kinds (status, metric, series, log, progress, graph) and entities (json for now)
@@ -8694,7 +8701,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   function _cvStateNow(){ const c=_cvLocal(); if(!c) return null; let runsOff=false; try{ runsOff=!!_runsOff.cv; }catch(_){}
     return { kinds:c.kinds(), s:c.shelves(), cols:String(_cvCols()), enrich:_cvEnrichOn(), tell:_cvTellOn(), runsOff, resize:(typeof c.deskResizeMode==='function'?c.deskResizeMode():'pin'), desk:_cvDeskSw(), arrange:_cvCfg('cfgCvArrange'), open:true }; }
   /* the desk's own switches (WSU-48): the Settings sheet holds them; the Canvas menu shows and flips the same fields */
-  const _CV_DESK_SW={ combine:'cfgCvCombine', fill:'cfgCvFill', settle:'cfgCvSettle', fit:'cfgCvFit' };
+  const _CV_DESK_SW={ combine:'cfgCvCombine', fill:'cfgCvFill', settle:'cfgCvSettle', fit:'cfgCvFit', windows:'cfgCvWindows' };
   function _cvDeskSw(){ const o={}; Object.keys(_CV_DESK_SW).forEach(k=>{ o[k]=_cvCfg(_CV_DESK_SW[k])!=='off'; }); return o; }
   function _cvPublish(){ if(_EMBED.only!=='chat') return; const st=_cvStateNow(); if(st) _lhmPost('cvstate', st); }
   function _cvMenuAct(a){ const c=_cvLocal();
@@ -8710,6 +8717,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(a.a==='close'){ togglePage('canvas'); return Promise.resolve(); }
     if(a.a==='resize'){ if(typeof c.setDeskResizeMode==='function') c.setDeskResizeMode(a.n); return Promise.resolve(); }
     if(a.a==='arrange'){ const e=document.getElementById('cfgCvArrange'); if(e&&['orbit','kind','timeline','stack'].includes(a.n)){ e.value=a.n; _persistCanvasCfg(); } return Promise.resolve(); }
+    /* tidy: the desk dealt afresh - what it holds since the person moved or sized a card is let go, gaps are filled (U14) */
+    if(a.a==='tidy'){ if(typeof c.tidy==='function') c.tidy(); return Promise.resolve(); }
     if(a.a==='desk'){ const e=document.getElementById(_CV_DESK_SW[a.n]||''); if(e){ e.value=(e.value==='off')?'on':'off'; _persistCanvasCfg(); } return Promise.resolve(); }
     return Promise.resolve(); }
   function _cvMenuRender(onlyIfOpen){
@@ -8731,8 +8740,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const shelf=(label, list, act, glyph, tip, empty)=>'<div class="cvm-sec"><h5>'+label+(list.length?' · '+list.length:'')+'</h5>'+(list.length?list.map(it=>row(it, act, glyph, tip)).join(''):'<div class="cvm-dim">'+empty+'</div>')+'</div>';
     /* WSU-74: what a resize does - keep moving (size kept), pin it where it is (as before), or lock it */
     const rsz='<div class="cvm-sec"><h5>When I resize a card</h5><div class="cvm-kinds">'+[['move','keep moving','Its size is kept; it still moves out of the way of other cards'],['pin','pin it','Its place and size are kept; the others go round it (⤺ on the card lets it move again, keeping its size)'],['lock','lock it','Pinned and locked: nothing moves it until you unlock it']].map(([v,l,tip])=>'<button class="btn xs'+((st.resize||'pin')===v?' on':'')+'" data-cvm="resize" data-n="'+v+'" title="'+esc(tip)+'">'+l+'</button>').join('')+'</div></div>';
-    const dsw=st.desk?'<div class="cvm-sec"><h5>The desk</h5><div class="cvm-kinds">'+[['combine','combine','Related items share one card as tabs'],['fill','fill','Cards grow into the free room round them'],['settle','settle','Cards rise into room left above them'],['fit','fit','A card is no bigger than what it holds']]
-      .map(([n,l,tip])=>'<button class="btn xs'+(st.desk[n]?' on':'')+'" data-cvm="desk" data-n="'+n+'" aria-pressed="'+(st.desk[n]?'true':'false')+'" title="'+esc(tip+' - '+(st.desk[n]?'on':'off')+' (also on the Settings sheet)')+'" style="'+(st.desk[n]?'':'opacity:.55')+'">'+l+'</button>').join('')+'</div></div>':'';
+    const dsw=st.desk?'<div class="cvm-sec"><h5>The desk</h5><div class="cvm-kinds">'+[['combine','combine','Related items share one card as tabs'],['fill','fill','Cards grow into the free room round them'],['settle','settle','Cards rise into room left above them'],['fit','fit','A card is no bigger than what it holds'],['windows','windows','A card you sized that has no room becomes a window at that size; a click brings any card to the top']]
+      .map(([n,l,tip])=>'<button class="btn xs'+(st.desk[n]?' on':'')+'" data-cvm="desk" data-n="'+n+'" aria-pressed="'+(st.desk[n]?'true':'false')+'" title="'+esc(tip+' - '+(st.desk[n]?'on':'off')+' (also on the Settings sheet)')+'" style="'+(st.desk[n]?'':'opacity:.55')+'">'+l+'</button>').join('')+'<button class="btn xs" data-cvm="tidy" title="Deal the desk afresh: cards you moved or sized stay, the rest close the gaps and take the free room">tidy now</button></div></div>':'';
     const arr=st.arrange?'<div class="cvm-sec"><h5>Arrange the desk</h5><div class="cvm-kinds">'+[['orbit','orbit','Bands out from the chat'],['kind','by kind','A band per kind of item'],['timeline','by time','A band per turn ago'],['stack','stack','One stack beside the chat']]
       .map(([v,l,tip])=>'<button class="btn xs'+(st.arrange===v?' on':'')+'" data-cvm="arrange" data-n="'+v+'" aria-pressed="'+(st.arrange===v?'true':'false')+'" title="'+esc(tip+' (also on the Settings sheet)')+'">'+l+'</button>').join('')+'</div></div>':'';
     dyn.innerHTML=remoteBanner+arr+rsz+dsw+

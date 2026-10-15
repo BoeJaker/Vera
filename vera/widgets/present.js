@@ -76,8 +76,15 @@
   const asRows = (v) => Array.isArray(v) ? v : isObj(v) ? Object.keys(v).map((k) => isObj(v[k]) ? Object.assign({ name: k }, v[k]) : { name: k, value: v[k] }) : [];
 
   let REG = {};
+  /* THE LAST DECLARATIONS SEEN ARE KEPT (review 2026-10-15 U12): with the hint table gone (DA-01d), a capability list that
+     arrives without declarations - a server that does not carry them yet, a failed or stale /mcp/tools - drew every declared
+     capability as raw data. The last list that had them is kept in this browser and used until a list with them comes. */
+  const KEEP = 'vera:presentations';
+  const keep = (r) => { try { if (typeof localStorage !== 'undefined') localStorage.setItem(KEEP, JSON.stringify(r)); } catch (e) { /* this page only */ } };
+  const kept = () => { try { const v = typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem(KEEP) || 'null') : null; return isObj(v) ? v : {}; } catch (e) { return {}; } };
   function presentations(list) {
-    if (Array.isArray(list)) { const r = {}; list.forEach((t) => { if (t && t.name && isObj(t.presentation) && t.presentation.status === 'declared') r[t.name] = t.presentation; }); REG = r; }
+    if (Array.isArray(list)) { const r = {}; list.forEach((t) => { if (t && t.name && isObj(t.presentation) && t.presentation.status === 'declared') r[t.name] = t.presentation; });
+      if (Object.keys(r).length) { REG = r; keep(r); } else if (list.length) REG = kept(); else REG = r; }
     else if (isObj(list)) REG = Object.assign({}, list);
     return Object.assign({}, REG);
   }
