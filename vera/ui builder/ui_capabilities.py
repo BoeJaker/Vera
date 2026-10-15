@@ -1176,3 +1176,72 @@ try:
     _co_start.start_at_import(_startup, "ui_startup", queue=True)
 except Exception:
     pass
+
+# ── App manifests: what each panel offers as a window on the desk (DESK-SPINE-DESIGN §4-5; DA-05a, DA-06a) ─────────
+# vera/apps/<panel>.json, one array per panel, read and checked by vera/apps/app_manifest_core.py. The catalogue the
+# desk's add menu, panel menus and the chat will open apps from; the window itself (BLOCK.app) is DA-05b.
+def _apps_core():
+    from Vera.vera.apps import app_manifest_core
+    return app_manifest_core
+
+
+def _apps_panels() -> set:
+    ids = set(UI_PANELS.keys())
+    try:
+        ids |= set(DYNAMIC_PANELS.keys())
+    except Exception:
+        pass
+    return ids
+
+
+@capability(
+    "ui.apps.lint",
+    http_method="GET", http_path="/ui/apps/lint", http_tags=["ui"],
+    memory="off", silent=True,
+    description="Check every app manifest (vera/apps/<panel>.json) against the live registry: ids, panels, the "
+                "presentation kind and views, the capabilities it reads and acts with, live / actions / detail / size / "
+                "settings. Output: {ok, files, apps, errors, warnings, problems:[{file, id, level, code, message}]}.",
+)
+async def cap_apps_lint(trace_id=None):
+    return _apps_core().lint(caps=CAPABILITY_REGISTRY.keys(), panels=_apps_panels())
+
+
+@capability(
+    "ui.apps.list",
+    http_method="GET", http_path="/ui/apps", http_tags=["ui"],
+    memory="off", silent=True,
+    description="The apps the panels offer as desk windows. Input: panel (optional), q (optional, words in the id, title "
+                "or summary). Output: {apps:[{id, panel, title, summary, icon, kind, needs_args}], count}.",
+)
+async def cap_apps_list(panel: str = "", q: str = "", trace_id=None):
+    apps, _ = _apps_core().load()
+    words = [w for w in str(q or "").lower().split() if w]
+    out = []
+    for m in apps:
+        if not isinstance(m, dict) or not m.get("id"):
+            continue
+        if panel and m.get("panel") != panel:
+            continue
+        text = " ".join(str(m.get(k) or "") for k in ("id", "title", "summary")).lower()
+        if words and not all(w in text for w in words):
+            continue
+        out.append(_apps_core().summary(m))
+    return {"apps": out, "count": len(out)}
+
+
+@capability(
+    "ui.apps.get",
+    http_method="GET", http_path="/ui/apps/get", http_tags=["ui"],
+    memory="off", silent=True,
+    description="One app's whole manifest by id, with the arguments it needs before it can read (needs_args). "
+                "Input: id. Output: {ok, app} or {ok: false, error}.",
+)
+async def cap_apps_get(id: str, trace_id=None):
+    core = _apps_core()
+    apps, _ = core.load()
+    for m in apps:
+        if isinstance(m, dict) and m.get("id") == id:
+            app = {k: v for k, v in m.items() if k != "_file"}
+            app["needs_args"] = core.needs_args(app)
+            return {"ok": True, "app": app}
+    return {"ok": False, "error": "no app %r" % id}

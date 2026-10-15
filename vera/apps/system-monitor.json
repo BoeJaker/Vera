@@ -1,0 +1,24 @@
+[
+  {
+    "id": "system-monitor.now",
+    "panel": "system-monitor",
+    "title": "The stack now",
+    "icon": "gauge",
+    "summary": "CPU, memory, guests and containers - the numbers, live",
+    "view": { "kind": "kv", "views": ["tiles", "rows"] },
+    "read": { "cap": "sysmon.status", "args": {}, "refresh": { "every_s": 15 } },
+    "related": ["sysmon.history", "docker.ps", "estate.health"],
+    "size": { "default": "s", "min": "s" }
+  },
+  {
+    "id": "system-monitor.history",
+    "panel": "system-monitor",
+    "title": "The stack over time",
+    "icon": "chart",
+    "summary": "CPU and the rest over the last samples",
+    "view": { "kind": "series", "views": ["trace", "area", "column", "table"] },
+    "read": { "cap": "sysmon.history", "args": { "limit": 240 }, "refresh": { "every_s": 60 } },
+    "related": ["sysmon.status"],
+    "size": { "default": "m", "min": "s" }
+  }
+]
