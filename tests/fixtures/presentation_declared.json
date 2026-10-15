@@ -191,6 +191,14 @@
    "bars": "bars"
   }
  },
+ "markets.overview": {
+  "kind": "table",
+  "map": {
+   "name": "name",
+   "rows": "groups",
+   "value": "median_1d"
+  }
+ },
  "memory.graph_full": {
   "form": "vgraph",
   "kind": "graph"
@@ -198,6 +206,13 @@
  "mesh.topology": {
   "form": "vgraph",
   "kind": "graph"
+ },
+ "obs.cluster": {
+  "kind": "table",
+  "map": {
+   "name": "host",
+   "rows": "workers"
+  }
  },
  "obs.events": {
   "form": "log",

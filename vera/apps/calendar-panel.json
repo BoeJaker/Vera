@@ -1,0 +1,13 @@
+[
+  {
+    "id": "calendar.agenda",
+    "panel": "calendar-panel",
+    "title": "Agenda",
+    "icon": "calendar",
+    "summary": "What is on - the coming events, by day",
+    "view": { "kind": "calendar", "views": ["agenda", "month", "schedule"] },
+    "read": { "cap": "cal.events.list", "args": {}, "refresh": { "every_s": 300 } },
+    "detail": { "reader": true },
+    "size": { "default": "m", "min": "s" }
+  }
+]

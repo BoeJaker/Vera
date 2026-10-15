@@ -232,7 +232,8 @@ def test_the_former_hints_are_declared_on_their_capabilities():
     for cap, pres in source.items():
         got = project_presentation({"presentation": pres})
         assert got["status"] == "declared", (cap, got.get("problems"))
-        assert pres.get("form"), cap
+    # the 51 former hints keep the widget form they named; later declarations (DA-01e) may give the kind alone
+    assert sum(1 for p in source.values() if p.get("form")) >= 51
 
 
 def test_the_hint_tables_are_empty():

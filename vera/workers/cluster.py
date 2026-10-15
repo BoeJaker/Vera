@@ -1210,6 +1210,8 @@ async def _gather_onnx_runtimes() -> dict:
 @capability(
     "obs.cluster", memory="off",
     http_method="GET", http_path="/cluster", http_tags=["obs"],
+    # how its answer is drawn (DA-01e): the workers as a table by host (their figures arrive as text, so no ranking)
+    contract={"presentation": {'kind': 'table', 'map': {'rows': 'workers', 'name': 'host'}}},
     description="Full cluster view: all workers cross-referenced with their Ollama nodes. "
                 "Includes VRAM, running models, queue depth, and task duration.",
 )

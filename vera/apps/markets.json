@@ -1,0 +1,24 @@
+[
+  {
+    "id": "markets.overview",
+    "panel": "markets",
+    "title": "Markets overview",
+    "icon": "chart",
+    "summary": "The tracked universe by group - count, breadth and median moves",
+    "view": { "kind": "table", "views": ["table", "cards", "chart"] },
+    "read": { "cap": "markets.overview", "args": {}, "refresh": { "every_s": 60 } },
+    "related": ["markets.chart", "markets.lookup"],
+    "size": { "default": "m", "min": "s" }
+  },
+  {
+    "id": "markets.symbol",
+    "panel": "markets",
+    "title": "Symbol",
+    "icon": "chart",
+    "summary": "One symbol's candles over time",
+    "view": { "kind": "series", "views": ["trace", "area", "column", "table"] },
+    "read": { "cap": "markets.chart", "args": { "symbol": "{arg.symbol}" }, "refresh": { "every_s": 30 } },
+    "related": ["markets.overview", "markets.lookup"],
+    "size": { "default": "l", "min": "m" }
+  }
+]
