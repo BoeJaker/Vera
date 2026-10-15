@@ -421,6 +421,42 @@ def test_nightly_job_yields_when_told(tmp_path):
     assert r["skipped"] == "its session ended"
 
 
+def test_intel_job_wrapper_projects_the_actual_native_invocation(tmp_path, monkeypatch):
+    mod, _orch = _load(tmp_path)
+    from vera.execution.run_journal import MemoryRunJournal
+    from vera.execution.run_projection import ShadowRunRegistry
+
+    registry = ShadowRunRegistry(max_runs=20, journal=MemoryRunJournal())
+    monkeypatch.setattr(mod.intel_run, "SHADOW_RUNS", registry)
+
+    result = _run(mod._intel_job({
+        "id": "intel:native-job",
+        "preempts": "2",
+        "payload": {
+            "mode": "topic",
+            "topic_id": "private-topic",
+            "until": "2000-01-01T00:00:00Z",
+        },
+    }, None))
+
+    assert result["skipped"] == "its session ended"
+    observed = registry.get(registry.list()[0]["id"])
+    assert observed["run"]["status"] == "skipped"
+    assert observed["run"]["attempt"] == 3
+    assert observed["run"]["workflow_id"] == "intel.idle.topic"
+    assert "private-topic" not in str(observed)
+    assert "2000-01-01" not in str(observed)
+
+    registry = ShadowRunRegistry(max_runs=20, journal=MemoryRunJournal())
+    monkeypatch.setattr(mod.intel_run, "SHADOW_RUNS", registry)
+    result = _run(mod._intel_job({
+        "id": "intel:malformed-attempt", "preempts": "not-a-number",
+        "payload": {"mode": "unknown-mode"},
+    }, None))
+    assert result["ok"] is False
+    assert registry.get(registry.list()[0]["id"])["run"]["attempt"] == 1
+
+
 def test_review_regressions(tmp_path):
     mod, orch = _load(tmp_path)
     from datetime import datetime
