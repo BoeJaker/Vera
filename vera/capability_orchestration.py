@@ -11296,6 +11296,14 @@ async def _execute_native_dag_with_workflow_evidence(
         trace_id=tid, emit=emit_event, session_id=session_id,
         workflow_id=workflow_evidence.get("workflow_hash") or tid,
     )
+    from .execution.workflow_memory_observer import observe_completed_workflow
+    await observe_completed_workflow(
+        session_id=session_id,
+        dag=execution_graph,
+        state=state or {},
+        result=result,
+        trigger="native_dag",
+    )
     response = {"trace_id": tid, "result": result}
     if include_workflow_ir:
         response["workflow_ir"] = {
