@@ -1512,7 +1512,14 @@
   /* NO GROUND ON A BARE DESK (owner, 2026-10-09: "id like the elements to have no background (if there is no panel behind
      them, else keep the background)"): with nothing behind them the items sit on the desk itself. One that rides over the
      others - dragged, peeking open, maximised - keeps its ground, or its text would run into theirs. */
-  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.resizing):not(.peek):not(.hovopen):not(.maxed):not(.chip-peek){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
+  :host([align="desk"]:not([desk-narrow]):not([layered])) .stage .it:not([data-desk-face^="layer-"]):not(.desk-dragging):not(.resizing):not(.peek):not(.hovopen):not(.maxed):not(.chip-peek):not(.desk-win){background:transparent!important;border-color:transparent!important}   /* its marks (waiting, pinned, a run's end) are rings, kept */
+  /* A WINDOW (owner, 2026-10-15: "if it didnt have space it should then transition to a window mode element and the
+     elements can raise over each other on click"): a card kept at the size the person gave it, over the tiled cards. It
+     reads as a window - its own ground, a frame in the accent, a deeper shadow, a title bar - and the focused one is on top */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-win{background:var(--bg1,#15181d)!important;border:1px solid color-mix(in srgb,var(--acc,#5a9e8f) 45%,var(--border2,#3a3f48))!important;border-radius:10px;box-shadow:0 18px 46px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.3);overflow:hidden}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-win > .it-hd{background:color-mix(in srgb,var(--acc,#5a9e8f) 12%,var(--bg2,#1d2128));border-bottom:1px solid color-mix(in srgb,var(--acc,#5a9e8f) 25%,transparent)}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-win.desk-focus{border-color:var(--acc,#5a9e8f)!important;box-shadow:0 22px 54px rgba(0,0,0,.6),0 0 0 1px var(--acc,#5a9e8f)}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-win > .it-hd::before{content:"";flex:0 0 auto;width:6px;height:6px;margin:0 6px 0 2px;border-radius:50%;background:var(--acc,#5a9e8f);opacity:.8}
   /* a pill opened to its whole title under the pointer: over its neighbours, with a ground, its title unclipped */
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip.chip-peek{background:var(--bg2,#1d2128)!important;box-shadow:0 6px 18px rgba(0,0,0,.4);border-radius:17px}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip.chip-peek > .it-hd > .t{overflow:visible;text-overflow:clip}
@@ -3032,7 +3039,7 @@
          preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
                                     show their source. Either way the drawing is a sandboxed frame.
          explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange', 'panel-room', 'desk-combine', 'desk-fill', 'desk-settle', 'desk-fit']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange', 'panel-room', 'desk-combine', 'desk-fill', 'desk-settle', 'desk-fit', 'desk-windows']; }
 
     constructor() {
       super();
@@ -3096,7 +3103,7 @@
       if (name === 'panel-room') { try { this._panelRoom(); } catch (e) { /* optional */ } }
       /* the desk's own switches (WSU-48, Settings): combine changes which cards there are, the rest how they are placed -
          a change takes effect at once; fit switched off drops what it had measured */
-      if (/^desk-(combine|fill|settle|fit)$/.test(name) && this.deskAlign() && this.hasAttribute('stage')) {
+      if (/^desk-(combine|fill|settle|fit|windows)$/.test(name) && this.deskAlign() && this.hasAttribute('stage')) {
         if (name === 'desk-fit') { this._natH = {}; this._natW = {}; this._minH = {}; } this._fitRuns = 0;
         if (name === 'desk-combine' && this._doc) { this._html = null; this.render(this._doc); } else this._placeNow(); }
       // a floating chat moved: place again on the next frame (a drag sends many)
@@ -3285,6 +3292,16 @@
       try { this.dispatchEvent(new CustomEvent('vera:canvas:brought', { bubbles: true, detail: { keys: front } })); } catch (e) { /* no listener */ }
       return front.length;
     }
+    /* THE PERSON TOUCHES THE DESK (U4, see _placeDesk): from now on the cards stay where they are and only what is in the
+       way moves, until the desk is dealt afresh. `base` is the desk as it was when this move or resize began. */
+    _holdStart(key) {
+      (this._actAt = this._actAt || {})[key || ''] = Date.now();
+      const lp = this._lastPlan; if (!lp) return;
+      const base = {}; Object.keys(lp.rects).forEach((k) => { base[k] = Object.assign({}, lp.rects[k]); });
+      this._hold = { sig: lp.sig, rects: (this._hold && this._hold.sig === lp.sig) ? this._hold.rects : base, base };
+    }
+    /* the desk dealt afresh: a card given back to the arrangement goes to its place, and the others with it */
+    _holdEnd() { this._hold = null; }
     /* WHERE THE PERSON PUT THE CARDS on the desk: {key: {fx, fy}}, shares of the desk, per canvas, kept in this browser */
     _deskPosGet() {
       if (this._deskPos) return this._deskPos;
@@ -3654,6 +3671,17 @@
       const sized = (k) => !!(up[k] && up[k].w > 0 && up[k].h > 0);
       const firm = (x) => (this._rz && this._rz.el === x.c ? 8 : 0) + (lockOf(x.c.dataset.key || '') ? 4 : 0) + (sized(x.c.dataset.key || '') ? 2 : 0) + (userAt(x.c.dataset.key || '') ? 1 : 0);
       ranked.sort((a, b) => firm(b) - firm(a));   /* the card being sized, then locked, then placed by hand: the others go round them */
+      /* ONLY WHAT IS IN THE WAY MOVES (review 2026-10-15 U4; owner: "the version of the desk thats on main has better element
+         to element interaction i.e. on re-size or if moved"). Every pass dealt the desk afresh - arranged, separated, risen
+         (settle) and grown (grow) - so one card moved or sized moved 7-13 others. After the person moves or sizes a card the
+         desk is HELD (_holdStart): each card the arrangement placed starts where it is, keeps its size, and only those in
+         the way are pushed aside; nothing rises or grows. During a resize the cards start where they were when it began, so
+         a neighbour pushed aside comes back when the card is made smaller again. The hold ends when what is on the desk,
+         the topic, the desk's size or its arrangement settings change - the desk is dealt afresh then. */
+      const sig = [W, H, mode, this.getAttribute('desk-fill') || '', this.getAttribute('desk-settle') || '', T ? (T.order || []).join(',') : '',
+        ranked.map((x) => x.c.dataset.key || '').sort().join('|')].join('#');
+      if (this._hold && this._hold.sig !== sig) this._hold = null;
+      const hold = this._hold, seed = hold ? ((this._rz && hold.base) || hold.rects) : null;
       const plan = ranked.map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i);
         /* the card under the hand's resize: its top-left where it was, its size the hand's; the others go round it */
@@ -3664,7 +3692,7 @@
         const us = !lk && up[key] && up[key].w > 0 && up[key].h > 0 && isFinite(up[key].fx) && isFinite(up[key].fy) ? up[key] : null;
         const fx = lk || us;
         if (fx) { const lw = Math.min(W - 16, fx.w), lh = Math.min(H - 8, fx.h); if (us) c.classList.add('desk-placed');
-          return { c, id: key, so: {}, fixed: true, lock: fx, x: Math.max(lw / 2, Math.min(W - lw / 2, fx.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, fx.fy * H)), w: lw, h: lh }; }
+          return { c, id: key, so: {}, fixed: true, lock: fx, isLock: !!lk, x: Math.max(lw / 2, Math.min(W - lw / 2, fx.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, fx.fy * H)), w: lw, h: lh }; }
         const p = userAt(key) || pos[key] || [W - 90, H - 30];
         c.classList.toggle('desk-placed', !!userAt(key));
         /* the person's size: the drag in progress, else what the canvas remembers for the item (this._pw / this._px) -
@@ -3680,39 +3708,86 @@
         const so = { size: user, pinned: !!user && c.classList.contains('pinned'), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         /* a card is no taller than what it holds (see _deskFit): its measured height caps its face and its growth */
-        const nat = user ? null : (this._natH || {})[key];   /* a size the person gave wins over the content fit (WSU-74) */
+        /* a deep dive (WSU-42) is a few bars or a ring - it took the free room like a chart (808 px for 3 bars; review
+           2026-10-15 U13): no wider than 460 and no taller than 360 unless the person sizes it */
+        const dive = /^dive:/.test(key);
+        const nat0 = user ? null : (this._natH || {})[key];   /* a size the person gave wins over the content fit (WSU-74) */
+        const nat = user ? null : (dive ? Math.min(nat0 || Infinity, 360) : nat0);
         /* ...and no wider than its kind uses (owner, 2026-10-11: "some desk items like the 'mentioned' take up too much width
            for their content"): names, a note, fields, a page, what ran - their content wraps short; a wide card of them was
            a wide empty band */
         /* ...and a widget by its form (WSU-69, owner 2026-10-11: "some of the elements are still too wide, like the notes
            checklist"): lists, checklists, fields and single figures wrap short too; charts, tables and maps keep the room */
         const wf = c.dataset.type === 'widget' ? (() => { const cc = this._contentOf(key) || {}; return String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, ''); })() : '';
-        const nw0 = ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
+        const nw0 = (dive ? 460 : 0) || ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
           || DESK_FORM_MAXW[wf];
         /* ...and a text-like card no wider than its content measured (_deskFit, WSU-69) */
         const nwm = user ? null : (this._natW || {})[key]; const nw = nwm ? Math.min(nw0 || Infinity, nwm) : (user ? null : nw0);
         /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
         const mh = (this._minH || {})[key];
-        return { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
+        const o = { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
+        /* held (U4): a card the arrangement placed starts where it is now, at the size it has; one the person put somewhere
+           (userAt) has its own place already */
+        const hr = seed && !userAt(key) ? seed[key] : null;
+        if (hr) Object.assign(o, { x: hr.x, y: hr.y, w: hr.w, h: hr.h, bw: hr.bw || hr.w, bh: hr.bh || hr.h, held: true, keepSize: true, face0: hr.face });
+        return o;
       });
-      D.separate(plan, R, (xx, yy, it) => { const s = D.sizeAt(R, xx, yy, it.so, desk); const chip = s.face === 'chip' || s.face === 'icon';
-        return { w: Math.min(W - 16, s.w, chip ? Infinity : (it.maxW || Infinity)), h: Math.max(chip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h, chip ? Infinity : (it.maxH || Infinity))) }; }, { W: W, H: H });
+      const sepSize = (xx, yy, it) => {
+        const s = D.sizeAt(R, xx, yy, it.so, desk); const chip = s.face === 'chip' || s.face === 'icon';
+        const n = { w: Math.min(W - 16, s.w, chip ? Infinity : (it.maxW || Infinity)), h: Math.max(chip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h, chip ? Infinity : (it.maxH || Infinity))) };
+        /* a held card pushed aside keeps its size - or gives back the room it had grown into (fill): a desk whose cards had
+           taken all the free room had nowhere to push one at its grown size, so the card being sized went straight to a
+           window although a neighbour a little smaller would have made room. A held chip stays a chip. */
+        if (it.held) return it.h <= 40 || chip ? { w: it.w, h: it.h } : { w: Math.min(it.w, Math.max(it.bw || it.w, 160)), h: Math.min(it.h, Math.max(it.bh || it.h, 80)) };
+        return n; };
+      const start = plan.map((it) => [it, it.x, it.y, it.w, it.h, it.keepSize]);
+      D.separate(plan, R, sepSize, { W: W, H: H });
+      /* WINDOW MODE (owner, 2026-10-15: "if it didnt have space it should then transition to a window mode element and the
+         elements can raise over each other on click"; "it's about re-sizing when there isn't enough room for the element to
+         be the newly set size (user set size)"). A card the person gave a size - being sized now, sized and put down, or
+         released with its size - that the desk cannot make room for (the others were pushed aside and it still overlaps)
+         does not give up its size, is not squeezed and is not sent to the border: it becomes a WINDOW at that size, over the
+         tiled cards, and the others are placed again as if it were not there, so they keep their tiled places. Of two that
+         meet, the one the person touched last becomes the window. A click raises any card (_focusSet); every pass decides
+         again, so a window tiles once there is room. Off with desk-windows="off". */
+      const wins = new Set();
+      if (this.getAttribute('desk-windows') !== 'off') {
+        const actAt = this._actAt || {};
+        const mine = (it) => !!(it.sizing || it.own || (it.fixed && !it.isLock));
+        const tOf = (it) => it.sizing ? Infinity : (actAt[it.id] || 0);
+        const area = (a, b) => Math.max(0, Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2)) * Math.max(0, Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2));
+        for (let round = 0; round < 4; round++) {
+          const solid = plan.filter((it) => !wins.has(it) && it.h > 40), pick = new Set();
+          for (let i = 0; i < solid.length; i++) for (let j = i + 1; j < solid.length; j++) {
+            const a = solid[i], b = solid[j]; if (area(a, b) < 400) continue;
+            const both = [a, b].filter(mine); if (!both.length) continue;
+            pick.add(both.sort((p, q) => tOf(q) - tOf(p))[0]); }
+          if (!pick.size) break;
+          pick.forEach((it) => { wins.add(it); it.win = true; });
+          start.forEach(([it, x, y, w, h, k]) => { it.x = x; it.y = y; it.w = w; it.h = h; it.keepSize = k; });
+          D.separate(plan.filter((it) => !wins.has(it)), R, sepSize, { W: W, H: H });
+        }
+      }
+      const tiled = plan.filter((it) => !wins.has(it));
       /* ...up the desk into the room above them (D.settle), the person's places, locks and sizes staying where they are... */
-      if (typeof D.settle === 'function' && this.getAttribute('desk-settle') !== 'off') {
-        D.settle(plan, R, { W: W, H: H }, { gap: 12 });
+      if (!hold && typeof D.settle === 'function' && this.getAttribute('desk-settle') !== 'off') {
+        D.settle(tiled, R, { W: W, H: H }, { gap: 12 });
         /* a card that rose keeps the size it was pulled apart at: re-sized where it now sits, it could meet its neighbours */
-        plan.forEach((it) => { if (it.settled && !it.fixed) { it.keepSize = true; if (!it.face0) it.face0 = D.faceOf(it.w, it.h); } });
+        tiled.forEach((it) => { if (it.settled && !it.fixed) { it.keepSize = true; if (!it.face0) it.face0 = D.faceOf(it.w, it.h); } });
       }
       /* ...then every card takes the free desk round it (D.grow): a chip stays a chip, and what the person sized, locked
          or is sizing stays as it is. Off with the canvas's desk-fill="off". */
-      if (typeof D.grow === 'function' && this.getAttribute('desk-fill') !== 'off') {
-        plan.forEach((it) => { if (it.fixed || it.keepSize || it.own) { it.chip = it.h <= 40; return; }
+      /* the size each card had before it grew into the free room: a card pushed aside under the hold may give that room back */
+      tiled.forEach((it) => { if (!it.held) { it.bw = it.w; it.bh = it.h; } });
+      if (!hold && typeof D.grow === 'function' && this.getAttribute('desk-fill') !== 'off') {
+        tiled.forEach((it) => { if (it.fixed || it.keepSize || it.own) { it.chip = it.h <= 40; return; }
           const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); it.face0 = s0.face; it.chip = s0.face === 'chip' || s0.face === 'icon'; });
-        D.grow(plan, R, { W: W, H: H }, { maxW: W - 16, maxH: H - 8 });
+        D.grow(tiled, R, { W: W, H: H }, { maxW: W - 16, maxH: H - 8 });
       }
       const out = [];
       plan.forEach((it) => {
-        const c = it.c, key = it.id, s = it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 }
+        const c = it.c, key = it.id, s = it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
+          : it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 }
           /* grown into the free desk: that size, its face from it (a card grown past a full card's size is a full card) */
           : it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) })
           : it.sizing ? { w: it.w, h: it.h, face: c.dataset.deskFace || 'max', nd: 0 }
@@ -3732,8 +3807,10 @@
         if (s.face === 'icon') { const t = c.querySelector('.it-hd > .t'); c.title = t ? t.textContent.trim() : ''; } else if (c.title) c.removeAttribute('title');
         // the desk owns the size here: a compact card's own height rule must not grow a chip under its neighbours
         c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
-        c.style.zIndex = String(it.sizing ? D.stackOrder(0, { dragging: true }) : D.stackOrder(s.nd));
-        out.push({ key: key, x: left, y: top, w: w, h: h, face: s.face });
+        c.style.zIndex = String(it.sizing ? D.stackOrder(0, { dragging: true }) : it.win ? 160 : D.stackOrder(s.nd));
+        /* a window (above): over the tiled cards; the pill windows (_winOpen) keep their own mark */
+        c.classList.toggle('desk-win', !!it.win || !!(this._wins && this._wins.has(key)));
+        out.push({ key: key, x: left, y: top, w: w, h: h, face: s.face, win: !!it.win, bw: Math.min(w, it.bw || w), bh: Math.min(h, it.bh || h) });
         /* the group's other tabs: the same rectangle and face, unseen until their tab is chosen */
         (grp.membersOf.get(c) || []).forEach((m) => { if (m === c) return;
           m.style.left = left + 'px'; m.style.top = top + 'px'; m.style.setProperty('width', w + 'px', 'important'); m.style.setProperty('height', h + 'px', 'important'); m.style.setProperty('min-height', '0px', 'important');
@@ -3771,6 +3848,9 @@
       const news = [...st.querySelectorAll('.it.desk-new')];
       if (news.length) requestAnimationFrame(() => requestAnimationFrame(() => news.forEach((c) => c.classList.remove('desk-new'))));
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
+      /* what this pass laid out, for the hold (U4): centre and size of each card it placed */
+      { const rects = {}; out.forEach((o) => { if (!o.behind && !/^layer-/.test(o.face || '')) rects[o.key] = { x: o.x + o.w / 2, y: o.y + o.h / 2, w: o.w, h: o.h, bw: o.bw || o.w, bh: o.bh || o.h, face: o.face }; });
+        this._lastPlan = { sig, rects }; if (this._hold) this._hold.rects = rects; }
       try { this._liveLayout(); } catch (e) { /* the live layout readers are optional */ }
       // the cards slide to their places (.45s): the live layer follows once they have arrived
       clearTimeout(this._deskLiveT);
@@ -4484,7 +4564,8 @@
           l0: parseFloat(it.style.left) || 0, t0: parseFloat(it.style.top) || 0 };
         /* on the desk the card you are sizing rides over the rest (owner, 2026-10-10: grown by its corner, "other panels
            can move partially behind it"): it and its graph are on top, with their ground, until it is let go */
-        if (this.deskAlign() && root.VeraDesk) { it.style.zIndex = String(root.VeraDesk.stackOrder(0, { dragging: true })); try { this._liveLayout(); } catch (e) { /* optional */ } } });
+        if (this.deskAlign() && root.VeraDesk) { this._holdStart(it.dataset.key); this._rzPlacedAt = 0;
+          it.style.zIndex = String(root.VeraDesk.stackOrder(0, { dragging: true })); try { this._liveLayout(); } catch (e) { /* optional */ } } });
       /* MOVING A CARD ON THE DESK (owner-approved desk, 2026-10-06: "as you drag them in they become big enough to glance
          at"). Its header is the handle; past 4 px it follows the pointer, sized live by its distance from the chat and
          stacked on top; let go, it stays there (a share of the desk, per canvas). A double click on the header gives it
@@ -4502,12 +4583,13 @@
            back to the desk by moving them"): a press on a filling card's header waits for the hand to move; then the card
            is restored and picked up under the hand, and goes where it is let go */
         if (it.dataset.deskFace === 'layer-front') { this._dgMax = { key: it.dataset.key, x0: ev.clientX, y0: ev.clientY }; return; }
-        const Z = st.offsetWidth ? (st.getBoundingClientRect().width / st.offsetWidth) || 1 : 1;
+        const S0 = st.getBoundingClientRect(), Z = st.offsetWidth ? (S0.width / st.offsetWidth) || 1 : 1;
         this._dg = { el: it, key: it.dataset.key, x0: ev.clientX, y0: ev.clientY, Z,
+          sx: (ev.clientX - S0.left) / Z, sy: (ev.clientY - S0.top) / Z, w0: it.offsetWidth || 1, h0: it.offsetHeight || 1,
           cx0: (parseFloat(it.style.left) || 0) + it.offsetWidth / 2, cy0: (parseFloat(it.style.top) || 0) + it.offsetHeight / 2, moved: false }; });
       body.addEventListener('dblclick', (ev) => { const it = deskHandle(ev); if (!it) return;
         if (!this._deskPosGet()[it.dataset.key]) return; ev.preventDefault();
-        this._deskPosSet(it.dataset.key, null); this._placeNow(); });
+        this._deskPosSet(it.dataset.key, null); this._holdEnd(); this._placeNow(); });
       /* a click that ends a drag is not a click on what was under it */
       body.addEventListener('click', (ev) => { if (Date.now() - (this._dgEnd || 0) < 250) { ev.stopPropagation(); ev.preventDefault(); } }, true);
       const doc = this.ownerDocument || document;
@@ -4519,28 +4601,38 @@
           const S = st.getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
           /* the card's header under the hand: its centre is half its height below the pointer */
           const px = (ev.clientX - S.left) / Z, py = (ev.clientY - S.top) / Z;
-          this._dg = { el, key: m.key, x0: ev.clientX, y0: ev.clientY, Z, cx0: px, cy0: py + Math.max(20, el.offsetHeight / 2 - 16), moved: false };
+          this._dg = { el, key: m.key, x0: ev.clientX, y0: ev.clientY, Z, sx: px, sy: py, w0: el.offsetWidth || 1, h0: el.offsetHeight || 1, cx0: px, cy0: py + Math.max(20, el.offsetHeight / 2 - 16), moved: false };
           return; }
         const d = this._dg; if (!d) return;
         const dx = (ev.clientX - d.x0) / d.Z, dy = (ev.clientY - d.y0) / d.Z;
         if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
         if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(root.VeraDesk ? root.VeraDesk.stackOrder(0, { dragging: true }) : 200);
           /* a pill opened by hover is let go as it starts moving - the drag sizes it from here on (WSU-68) */
-          clearTimeout(this._pillT); if (d.el._cpw) { d.el._cpw = null; d.el.classList.remove('chip-peek', 'pill-open'); } }
+          clearTimeout(this._pillT); if (d.el._cpw) { d.el._cpw = null; d.el.classList.remove('chip-peek', 'pill-open'); }
+          /* a pill opened as a window (_winOpen) and carried: it goes on as a card at the window's size, which the desk
+             tiles where it is let go, or keeps a window there if there is no room (window mode, _placeDesk) */
+          if (this._wins && this._wins.delete(d.key)) { d.winOwn = { w: d.w0, h: d.h0, face: 'card' }; d.el.classList.remove('desk-win'); }
+          this._holdStart(d.key); }
         ev.preventDefault();
         const g = this._deskGeo, D = root.VeraDesk; if (!g || !D) return;
-        const cx = Math.max(10, Math.min(g.W - 10, d.cx0 + dx)), cy = Math.max(10, Math.min(g.H - 10, d.cy0 + dy));
+        /* BY THE HAND, NOT THE CARD'S MIDDLE (review 2026-10-15 U3): what a carried card is - a pill, a card, full - and its
+           size are read where the POINTER is. A card grown into the free desk is ~500 px wide; held by its header its middle
+           was ~250 px past the hand, so it turned into a pill (and dropped the person's size) long before the hand got near
+           the border. The card stays under the hand at the point it was picked up by, as a share of its size. */
+        const px = Math.max(4, Math.min(g.W - 4, d.sx + dx)), py = Math.max(4, Math.min(g.H - 4, d.sy + dy));
         const pw = this._pw[d.key] || parseInt(d.el.dataset.pw || '0', 10) || 0, ph = this._px[d.key] || 0;
         const so = { size: pw > 0 ? { w: pw, h: ph || Math.round(pw * 0.66) } : null, pinned: pw > 0 && d.el.classList.contains('pinned') };
         /* a card sized by the person keeps its size as it is carried; any other is sized by where it is */
-        const kept = this._deskPosGet()[d.key]; let own = kept && kept.w > 0 && kept.h > 0 ? kept : null;
+        const kept = this._deskPosGet()[d.key]; let own = kept && kept.w > 0 && kept.h > 0 ? kept : (d.winOwn || null);
         /* ...but carried out to where a card is a pill, it IS a pill, whatever size it was given (owner, 2026-10-11: "trying to
            get the 'from the fabric' desk element to turn into a pill by dragging it away from chat"; code with its explode
            open "wont turn back into a chip if dragged to the far edge"): a kept size, or the person's width, held it big. Let
            go there, it is a pill and its kept size goes. */
-        const bare = D.sizeAt(g.R, cx, cy, {}, g.desk);
+        const bare = D.sizeAt(g.R, px, py, {}, g.desk);
         if (bare.face === 'chip' || bare.face === 'icon') own = null;
-        const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : ((bare.face === 'chip' || bare.face === 'icon') ? bare : D.sizeAt(g.R, cx, cy, so, g.desk)), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
+        const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : ((bare.face === 'chip' || bare.face === 'icon') ? bare : D.sizeAt(g.R, px, py, so, g.desk)), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
+        const ox = (d.cx0 - d.sx) / d.w0, oy = (d.cy0 - d.sy) / d.h0;
+        const cx = Math.max(10, Math.min(g.W - 10, px + ox * w)), cy = Math.max(10, Math.min(g.H - 10, py + oy * h));
         d.cx = cx; d.cy = cy; d.own = own;
         /* the face changes with a margin: a card held near a boundary (chip | card | full) flipped its contents back and
            forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
@@ -4572,8 +4664,11 @@
             /* let go in a gap: fitted into it (WSU-73) - no larger than the gap, no larger than the card was, kept inside
                it round the drop point; a gap too small to hold a usable card leaves the drop as before */
             const gap = this._gapAt(d.cx, d.cy, d.key);
-            if (gap && gap.w >= 200 && gap.h >= 90) {
-              const w = Math.round(Math.min(d.el.offsetWidth, gap.w - 12)), h = Math.round(Math.min(d.el.offsetHeight, gap.h - 12));
+            /* ...its rectangle kept only when the gap made it smaller: a card that fits as it is keeps being sized by the desk
+               (a kept rectangle is fixed for good, and the desk could no longer move it - review 2026-10-15 I2) */
+            const gw = gap ? Math.round(Math.min(d.el.offsetWidth, gap.w - 12)) : 0, gh = gap ? Math.round(Math.min(d.el.offsetHeight, gap.h - 12)) : 0;
+            if (gap && gap.w >= 200 && gap.h >= 90 && !d.own && (gw < d.el.offsetWidth - 2 || gh < d.el.offsetHeight - 2)) {
+              const w = gw, h = gh;
               const cx = Math.max(gap.x + 6 + w / 2, Math.min(gap.x + gap.w - 6 - w / 2, d.cx)), cy = Math.max(gap.y + 6 + h / 2, Math.min(gap.y + gap.h - 6 - h / 2, d.cy));
               const face = d.el.dataset.deskFace && !/chip|icon/.test(d.el.dataset.deskFace) ? d.el.dataset.deskFace : 'card';
               this._deskPosSet(d.key, { fx: +(cx / g.W).toFixed(4), fy: +(cy / g.H).toFixed(4), w, h, face });
@@ -4581,17 +4676,22 @@
             this._deskPosSet(d.key, Object.assign({ fx: +(d.cx / g.W).toFixed(4), fy: +(d.cy / g.H).toFixed(4) }, d.own ? { w: d.own.w, h: d.own.h, face: d.own.face } : {}));
             if (this._pillGet()[d.key]) this._pillSet(d.key, false); }
         }
+        (this._actAt = this._actAt || {})[d.key] = Date.now();   /* the last touched becomes the window if two meet */
         this._placeNow(); });
       doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
         const h = Math.max(40, r.h0 + (ev.clientY - r.y0) / (r.Z || 1)); r.h = h; r.el.style.height = h + 'px';
         const w = Math.max(120, r.w0 + (ev.clientX - r.x0) / (r.Z || 1)); r.w = w; r.el.style.width = w + 'px';
         r.el.classList.add('openin');
-        /* on the desk only the card being resized moves while the grip is held (its widget follows it); the desk is
-           placed once, on the drop - re-placing every card on every move made the resize jitter and lag */
+        /* THE OTHERS MAKE ROOM AS IT GROWS (review 2026-10-15 U1; owner: "despite there being room if the other element had
+           moved a bit"). The desk is placed about every 90 ms while the grip is held, not only when the hand rests 220 ms
+           (a steady drag never rested, so nothing moved until the release). Each pass starts from the desk as it was when
+           the resize began (the hold's base, see _placeDesk) and moves only what is in the way, at its own size - the
+           re-dealing that made the old per-move placing jitter does not run during it. With no room, the card becomes a
+           window (window mode). */
         if (this.deskAlign()) { try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(400);
-          /* ...and when the hand rests a moment the others move out of its way (the card being sized stays put, its
-             corner under the hand) - not on every move, which made the resize jitter */
-          clearTimeout(this._rzPlaceT); this._rzPlaceT = setTimeout(() => { if (this._rz === r) { try { this._placeNow(); } catch (e) { /* optional */ } } }, 220); }
+          const now = Date.now();
+          if (now - (this._rzPlacedAt || 0) >= 90) { this._rzPlacedAt = now; try { this._placeNow(); } catch (e) { /* optional */ } }
+          clearTimeout(this._rzPlaceT); this._rzPlaceT = setTimeout(() => { if (this._rz === r) { this._rzPlacedAt = Date.now(); try { this._placeNow(); } catch (e) { /* optional */ } } }, 100); }
         else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
@@ -4622,7 +4722,11 @@
         r.el.dataset.pw = String(Math.round(r.w));
         const size = sizeOfHeight(r.h, this._vh || 0);   // against the column you dragged it in, not a fixed number
         try { this.dispatchEvent(new CustomEvent('vera:canvas:resized', { bubbles: true, detail: { key, height: r.h, size } })); } catch (e) {}
-        if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage')) this._placeNow(); });
+        (this._actAt = this._actAt || {})[key] = Date.now();
+        /* placed now, at the size let go: a change of size class is saved through the server, and waiting for its refresh
+           left the desk as it was mid-drag (on the desk it is placed in any case) */
+        if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); try { this._placeNow(); } catch (e) { /* optional */ } }
+        if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage') && !this.deskAlign()) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.recQ == null) return;
         const key = q.dataset.recQ, st = recState(this, key); st.q = String(q.value || ''); st.page = 0; clearTimeout(this._recQT);
@@ -4658,7 +4762,10 @@
        a window, WSU-55). A window sits at its pill's place in the stacking order (closeness to the chat) unless it has focus */
     _pillCard(it) {
       if (!it || !it.isConnected) return false;
-      if (it._cpw && it._cpw.open) return true;
+      /* already open by the hover (a person points before they click): a click that makes it a window still marks it one -
+         it returned here before, so the "window" was the hover peek kept open, nothing more (review 2026-10-15 U7) */
+      if (it._cpw && it._cpw.open) { const win = !!(this._wins && this._wins.has(it.dataset.key)); it.classList.toggle('desk-win', win);
+        if (win && this._focusKey !== it.dataset.key) it.style.zIndex = String(it._cpw.z || 10); return true; }
       /* the title widening ran first: undone, the card opens in its place */
       if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
       if (!it.classList.contains('desk-chip')) return false;
@@ -5001,7 +5108,7 @@
       if (act === 'max') return this._toggleMax(key);
       /* back to the arrangement, KEEPING THE SIZE the person gave it (WSU-74): its place is let go, it moves out of the way
          again; its width and height stay (kept in the entry, so a reload keeps them too) */
-      if (act === 'desk-auto') { const u = this._deskPosGet()[key]; this._deskPosSet(key, u && u.w > 0 && u.h > 0 ? { w: u.w, h: u.h, face: u.face, free: true } : null); return this._placeNow(); }
+      if (act === 'desk-auto') { const u = this._deskPosGet()[key]; this._deskPosSet(key, u && u.w > 0 && u.h > 0 ? { w: u.w, h: u.h, face: u.face, free: true } : null); this._holdEnd(); return this._placeNow(); }
       if (act === 'layer-behind' || act === 'layer-front') return this.setLayer(key, this._layer[key] === act.slice(6) ? '' : act.slice(6));
       if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
@@ -5975,6 +6082,10 @@
     /* what a resize does on the desk (WSU-74): the desk-resize attribute, else this browser's choice, else "pin" */
     deskResizeMode() { let m = this.getAttribute('desk-resize') || ''; if (!m) { try { m = localStorage.getItem('vera:canvas:deskresize') || ''; } catch (e) { m = ''; } }
       return m === 'move' || m === 'lock' ? m : 'pin'; }
+    /* TIDY (review 2026-10-15 U14, WSU-73 "big gaps"): after the person moves or sizes a card the desk holds where the
+       cards are and only what is in the way moves (_placeDesk). Tidy lets that go: the desk is dealt afresh - the cards
+       the person placed or sized stay, the rest close the gaps, rise and take the free room. */
+    tidy() { this._holdEnd(); this._fitRuns = 0; try { this._placeNow(); } catch (e) { /* placed on the next pass */ } return true; }
     setDeskResizeMode(m) { const v = m === 'move' || m === 'lock' ? m : 'pin'; try { localStorage.setItem('vera:canvas:deskresize', v); } catch (e) { /* this page only */ } this.setAttribute('desk-resize', v); return v; }
     addKind(n, anchor) {
       const k = ADD_KINDS.find((x) => x.n === n); if (!k) return false; const btn = anchor || this;
