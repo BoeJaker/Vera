@@ -241,7 +241,7 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
                  "intel.action.run", "intel.brief", "intel.ingest_dream", "intel.import.n8n", "intel.n8n.retire",
                  "intel.panel.html", "intel.summary", "intel.entities.get", "intel.asof.get", "intel.command",
                  "intel.save", "intel.files.run", "intel.advise", "intel.session.status", "intel.notes.list",
-                 "intel.models"):
+                 "intel.models", "intel.effects"):
         assert name in orch.CAPABILITY_REGISTRY, name
     assert orch.UI and orch.UI[0][0][0] == "intel" and "<iframe" in orch.UI[0][1]["html"]
     fn, interval, kw = orch.SCHEDULED[0]
@@ -273,6 +273,19 @@ def test_model_inventory_joins_intel_consumers_without_executing_models(tmp_path
     assert next(row for row in result["nlp"] if row["consumer_id"] == "intel.enrich.entities")["status"] == "verified"
     assert result["roles"][0]["present_on"] == ["cpu-247"]
     assert orch.PROMPTS == []
+
+
+def test_effect_inventory_is_read_only_and_reports_attribution_gap(tmp_path):
+    _mod, orch = _load(tmp_path)
+    before = list(orch.CALLS)
+    result = _R(orch, "intel.effects")
+    assert result["schema"] == "vera.intel-effect-inventory/v1"
+    assert result["readiness"]["intel_attributable"] is False
+    assert "intel_attribution_missing" in result["gaps"]
+    assert result["claims"] == {"executes": False, "probes": False,
+                                "records_evidence": False, "changes_enforcement": False,
+                                "retains_payload": False}
+    assert orch.CALLS == before
 
 
 def test_the_whole_cycle(tmp_path):
