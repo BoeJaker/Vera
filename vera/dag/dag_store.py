@@ -1651,6 +1651,7 @@ async def dag_store_run(
     supervised:    bool = False,
     auto_correct:  bool = True,
     include_workflow_ir: bool = False,
+    session_id:    str  = "",
     trace_id=None,
 ):
     rec = None
@@ -1686,6 +1687,14 @@ async def dag_store_run(
     # Update usage stats
     await DAG_STORE.update_stats(rec.id, result.get("runtime_ms", 0))
     await emit_event({"type": "dag.store_run", "id": rec.id, "name": rec.name, "trace_id": tid})
+    from ..execution.workflow_memory_observer import observe_completed_workflow
+    await observe_completed_workflow(
+        session_id=session_id,
+        dag=rec.dag,
+        state=state,
+        result=result.get("result") or {},
+        trigger="stored_dag",
+    )
 
     return {"dag_id": rec.id, "dag_name": rec.name, **result}
 
@@ -1703,6 +1712,7 @@ async def dag_run_monitored(
     supervised:   bool = False,
     auto_correct: bool = True,
     include_workflow_ir: bool = False,
+    session_id:   str  = "",
     trace_id=None,
 ):
     try: dag_arr = json.loads(dag)
@@ -1712,12 +1722,21 @@ async def dag_run_monitored(
     except: state_dict = {}
 
     tid = trace_id or new_id_fn()
-    return await EXEC_MONITOR.run_and_correct(
+    result = await EXEC_MONITOR.run_and_correct(
         dag_arr, state_dict, tid,
         max_corrections=3 if auto_correct else 0,
         supervised=supervised,
         include_workflow_ir=include_workflow_ir,
     )
+    from ..execution.workflow_memory_observer import observe_completed_workflow
+    await observe_completed_workflow(
+        session_id=session_id,
+        dag=dag_arr,
+        state=state_dict,
+        result=result.get("result") or {},
+        trigger="monitored_dag",
+    )
+    return result
 
 
 def new_id_fn():
