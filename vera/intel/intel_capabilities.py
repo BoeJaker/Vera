@@ -75,6 +75,7 @@ try:
     from Vera.vera.intel import intel_switches_core as isw
     from Vera.vera.intel import intel_run_projection as intel_run
     from Vera.vera.intel import intel_model_inventory as intel_models
+    from Vera.vera.intel import intel_effect_inventory as intel_effects
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -92,6 +93,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_switches_core as isw
     from vera.intel import intel_run_projection as intel_run
     from vera.intel import intel_model_inventory as intel_models
+    from vera.intel import intel_effect_inventory as intel_effects
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -2913,6 +2915,17 @@ async def cap_channel_list(trace_id=None):
         rows.append({"id": cid, "name": c["label"], "label": c["label"], "render": c["render"],
                      "needs_target": c.get("needs_target", ""), "available": avail})
     return {"rows": rows}
+
+
+@capability("intel.effects", http_method="GET", http_path="/intel/effects",
+            http_tags=["intel", "integrations"], memory="off", silent=True,
+            description="Read-only inventory of Intelligence delivery, alert, action, repository, "
+                        "automation and source effects. Distinguishes downstream provider shadow "
+                        "coverage from Intel-attributable evidence and reports unobserved paths. "
+                        "Never calls a provider, records synthetic evidence, retries or enforces.")
+async def cap_effects(trace_id=None):
+    return intel_effects.project(core.CHANNELS, core.ACTIONS,
+                                 available_caps=tuple(CAPABILITY_REGISTRY))
 
 
 # ── actions: what a report's buttons do ──────────────────────────────────────
