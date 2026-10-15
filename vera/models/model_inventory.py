@@ -121,6 +121,7 @@ def project_model_inventory(
     package_values: dict[str, dict[str, Any]] = {}
     package_sources: dict[str, set[str]] = defaultdict(set)
     candidates: list[dict[str, Any]] = []
+    source_evidence: dict[str, list[dict[str, Any]]] = defaultdict(list)
     conflicts: list[dict[str, str]] = []
 
     def add_package(raw: Any, source: str) -> None:
@@ -175,6 +176,39 @@ def project_model_inventory(
                 })
                 continue
             candidates.append({"source": source_id, **dict(candidate)})
+        for evidence in raw_inventory.get("package_observations") or ():
+            if not isinstance(evidence, Mapping):
+                conflicts.append({
+                    "kind": "invalid_source_evidence",
+                    "source": source_id,
+                    "reason": "package observation is not a mapping",
+                })
+                continue
+            value = dict(evidence)
+            if value.get("schema") != "vera.nlp-package-observation/v1":
+                conflicts.append({
+                    "kind": "invalid_source_evidence",
+                    "source": source_id,
+                    "reason": str(value.get("schema") or "missing_schema"),
+                })
+                continue
+            package_id = str(value.get("package_id") or "")
+            if not package_id:
+                conflicts.append({
+                    "kind": "invalid_source_evidence",
+                    "source": source_id,
+                    "reason": "package observation omits package_id",
+                })
+                continue
+            if package_id not in package_values:
+                conflicts.append({
+                    "kind": "unknown_source_evidence_package",
+                    "source": source_id,
+                    "package_id": package_id,
+                    "reason": str(value.get("schema") or "package_observation"),
+                })
+                continue
+            source_evidence[package_id].append({**value, "source": source_id})
         for conflict in raw_inventory.get("conflicts") or ():
             detail = dict(conflict) if isinstance(conflict, Mapping) else {
                 "reason": str(conflict)
@@ -275,6 +309,17 @@ def project_model_inventory(
             "legacy_bindings": sorted(bindings_by_package.get(package_id, ()),
                                       key=lambda value: (str(value.get("capability") or ""),
                                                          str(value.get("selector") or ""))),
+            # Source-owned placement observations are deliberately distinct
+            # from durable deployment/admission records.  They say where a
+            # verified package was observed, not that Vera deployed it.
+            "source_evidence": sorted(
+                source_evidence.get(package_id, ()),
+                key=lambda value: (
+                    str(value.get("source") or ""),
+                    str(value.get("task") or ""),
+                    str(value.get("model") or ""),
+                ),
+            ),
         })
 
     candidates.sort(key=lambda value: (
@@ -301,6 +346,7 @@ def project_model_inventory(
             "aliases": len(normalized_aliases),
             "deployments": len(normalized_deployments),
             "providers": len(normalized_providers),
+            "source_evidence": sum(len(values) for values in source_evidence.values()),
             "conflicts": len(conflicts),
             "external_sources": len(set(external_sources)),
         },

@@ -11,6 +11,7 @@ from vera.models.model_inventory import (
     project_model_inventory,
     project_persisted_inference_providers,
 )
+from vera.models.nlp_inventory import project_nlp_inventory
 from vera.models.admission import (
     ModelDeploymentTarget,
     ModelTrustPolicy,
@@ -38,6 +39,7 @@ def _package(name="ner-model"):
             accelerators=("cpu",),
         ),
         framework="onnxruntime",
+        metadata=(("model_id", name),),
     )
 
 
@@ -72,7 +74,8 @@ def test_inventory_joins_package_evidence_without_executing_it():
     assert result["schema"] == "vera.model-inventory/v1"
     assert result["counts"] == {
         "packages": 1, "candidates": 0, "aliases": 1, "deployments": 1,
-        "providers": 1, "conflicts": 0, "external_sources": 0,
+        "providers": 1, "source_evidence": 0, "conflicts": 0,
+        "external_sources": 0,
     }
     entry = result["packages"][0]
     assert entry["package"] == package.to_dict()
@@ -104,6 +107,77 @@ def test_nlp_packages_are_deduplicated_and_candidates_remain_unresolved():
         "source": "nlp", "task": "classify", "model": "owner/legacy",
         "format": "onnx", "status": "unresolved",
         "blockers": ["missing_content_verified_manifest"],
+    }]
+
+
+def test_nlp_verified_package_retains_source_owned_node_evidence():
+    package = _package()
+    nodes = (
+        {"node_id": "cpu-b", "tasks": {"ner": {
+            "model": "ner-model", "present": True, "loaded": False,
+            "model_package": package.to_dict(),
+        }}},
+        {"node_id": "cpu-a", "tasks": {"ner": {
+            "model": "ner-model", "present": True, "loaded": True,
+            "model_package": package.to_dict(),
+        }}},
+    )
+    external = project_nlp_inventory(nodes)
+    result = project_model_inventory(
+        external_inventories=(("nlp", external),))
+
+    assert external["counts"] == {
+        "packages": 1, "package_observations": 1, "candidates": 0,
+    }
+    assert result["counts"]["source_evidence"] == 1
+    assert result["counts"]["deployments"] == 0
+    assert result["packages"][0]["source_evidence"] == [{
+        "source": "nlp",
+        "schema": "vera.nlp-package-observation/v1",
+        "package_id": package.package_id,
+        "task": "ner",
+        "model": "ner-model",
+        "present_on": ["cpu-a", "cpu-b"],
+        "loaded_on": ["cpu-a"],
+    }]
+
+
+def test_nlp_unresolved_candidate_converges_specialist_placement_facts():
+    result = project_nlp_inventory((
+        {"node_id": "gpu", "tasks": {"nli": {
+            "model": "cross-encoder/nli", "present": True, "loaded": True,
+        }}},
+        {"node_id": "cpu", "tasks": {"nli": {
+            "model": "cross-encoder/nli", "present": True, "loaded": False,
+        }}},
+    ))
+
+    assert result["packages"] == []
+    assert result["package_observations"] == []
+    assert result["candidates"] == [{
+        "task": "nli", "model": "cross-encoder/nli", "format": "onnx",
+        "present_on": ["cpu", "gpu"], "loaded_on": ["gpu"],
+        "blockers": ["missing_content_verified_manifest"],
+        "status": "unresolved",
+    }]
+
+
+def test_external_package_observation_fails_closed_without_known_package():
+    result = project_model_inventory(external_inventories=(("nlp", {
+        "schema": "vera.nlp-model-inventory/v1",
+        "packages": [], "candidates": [],
+        "package_observations": [{
+            "schema": "vera.nlp-package-observation/v1",
+            "package_id": "mpkg_missing", "task": "ner", "model": "missing",
+        }],
+    }),))
+
+    assert result["packages"] == []
+    assert result["counts"]["source_evidence"] == 0
+    assert result["conflicts"] == [{
+        "kind": "unknown_source_evidence_package", "source": "nlp",
+        "package_id": "mpkg_missing",
+        "reason": "vera.nlp-package-observation/v1",
     }]
 
 

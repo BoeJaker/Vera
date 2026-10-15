@@ -79,6 +79,7 @@ def project_nlp_inventory(nodes: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     downgraded to candidates rather than admitted under an invented identity.
     """
     packages: dict[str, dict[str, Any]] = {}
+    package_observations: dict[tuple[str, str, str], dict[str, Any]] = {}
     candidates: dict[tuple[str, str], dict[str, Any]] = {}
     conflicts: list[dict[str, str]] = []
 
@@ -110,6 +111,19 @@ def project_nlp_inventory(nodes: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
                     if current is not None and current != value:
                         raise ModelPackageConflict("package identity collision across nodes")
                     packages[package.package_id] = value
+                    observation_key = (package.package_id, task, model)
+                    observation = package_observations.setdefault(observation_key, {
+                        "schema": "vera.nlp-package-observation/v1",
+                        "package_id": package.package_id,
+                        "task": task,
+                        "model": model,
+                        "present_on": [],
+                        "loaded_on": [],
+                    })
+                    if node_id:
+                        observation["present_on"].append(node_id)
+                        if row.get("loaded"):
+                            observation["loaded_on"].append(node_id)
                     continue
                 except (TypeError, ValueError) as exc:
                     blocker = f"invalid_model_package:{type(exc).__name__}"
@@ -139,10 +153,23 @@ def project_nlp_inventory(nodes: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         normalized.append(candidate)
     normalized.sort(key=lambda value: (value["task"], value["model"]))
 
+    observations = []
+    for observation in package_observations.values():
+        observation["present_on"] = sorted(set(observation["present_on"]))
+        observation["loaded_on"] = sorted(set(observation["loaded_on"]))
+        observations.append(observation)
+    observations.sort(key=lambda value: (
+        value["package_id"], value["task"], value["model"]))
+
     return {
         "schema": "vera.nlp-model-inventory/v1",
         "packages": [packages[key] for key in sorted(packages)],
+        "package_observations": observations,
         "candidates": normalized,
         "conflicts": conflicts,
-        "counts": {"packages": len(packages), "candidates": len(normalized)},
+        "counts": {
+            "packages": len(packages),
+            "package_observations": len(observations),
+            "candidates": len(normalized),
+        },
     }
