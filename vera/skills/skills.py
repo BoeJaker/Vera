@@ -355,7 +355,7 @@ async def _record_to_graph(item: dict, category: str, cap_name: str,
             importance=0.7, capability=cap_name,
             metadata={"item_id": item["id"], "item_name": item.get("name", "")},
         )
-        await MEMORY.store(rec)
+        await MEMORY.store(rec, producer_kind="skill")
         await hooks._link_nodes(sess_root, node_id, "SESSION_CONTENT",
                                 {"cap": cap_name, "item_id": item["id"]},
                                 session_id=session_id)

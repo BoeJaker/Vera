@@ -1743,7 +1743,8 @@ async def stream_complete(stream_id: str, final_text: str = "") -> Dict[str, Any
                 )
                 # Use store() directly — record_*_turn paths require human/AI pairing
                 if hasattr(mem.MEMORY, "store"):
-                    asyncio.create_task(mem.MEMORY.store(node))
+                    asyncio.create_task(mem.MEMORY.store(
+                        node, producer_kind="context_stream"))
         except Exception as e:
             log.debug("stream_complete memory store: %s", e)
 

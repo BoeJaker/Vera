@@ -231,7 +231,7 @@ def test_native_cancellation_propagates_and_never_commits_revision(tmp_path):
     assert "native_cancelled" in evidence
 
 
-def test_public_memory_store_uses_the_narrow_canary_seam(monkeypatch):
+def test_public_memory_store_uses_the_shared_canary_seam(monkeypatch):
     from vera.fabric import memory
 
     seen = {}
@@ -241,13 +241,16 @@ def test_public_memory_store_uses_the_narrow_canary_seam(monkeypatch):
         record.content_hash = record.compute_hash()
         return {"postgres": True}
 
-    async def seam(snapshot_value, *, native_write, actor, observed_at):
+    async def seam(snapshot_value, *, native_write, actor, observed_at,
+                   producer_kind):
         seen["snapshot"] = snapshot_value
         seen["actor"] = actor
         seen["observed_at"] = observed_at
+        seen["producer_kind"] = producer_kind
         return await native_write()
 
-    monkeypatch.setattr(memory.MEMORY, "store", native_store)
+    monkeypatch.setattr(memory.MEMORY, "_store_native", native_store)
+    monkeypatch.setattr(memory, "_sbx_write_blocked", lambda: False)
     monkeypatch.setattr(
         memory._revision_canary,
         "store_public_memory_with_revision_canary",
@@ -260,6 +263,59 @@ def test_public_memory_store_uses_the_narrow_canary_seam(monkeypatch):
     assert seen["snapshot"]["session_id"] == "session-1"
     assert seen["actor"] == "user"
     assert seen["observed_at"]
+    assert seen["producer_kind"] == "public_capability"
+
+
+@pytest.mark.parametrize("record,expected", [
+    ({"record_type": "message", "source_type": "human",
+      "capability": "agent.chat"}, "conversation"),
+    ({"record_type": "capability_call", "category": "activity"},
+     "capability_activity"),
+    ({"record_type": "event", "category": "dag_step"}, "workflow"),
+    ({"record_type": "fact", "tags": ["auto_promoted"]},
+     "automatic_promotion"),
+])
+def test_shared_store_classifies_representative_internal_producers(record, expected):
+    from vera.fabric import memory
+
+    value = memory.MemoryRecord(full_text="evidence", **record)
+    assert memory._memory_producer_kind(value) == expected
+
+
+def test_shared_store_observes_internal_producer_once(monkeypatch, tmp_path):
+    from vera.fabric import memory
+
+    calls = []
+
+    class Backend:
+        def __init__(self, name):
+            self.name = name
+
+        async def store(self, record):
+            calls.append((self.name, record.id))
+            return True
+
+    value = memory.HybridMemoryStore()
+    for name in ("postgres", "chroma", "neo4j"):
+        value.register(Backend(name))
+    for key, setting in paths(tmp_path).items():
+        monkeypatch.setenv(key, setting)
+    monkeypatch.setattr(memory, "_sbx_write_blocked", lambda: False)
+    monkeypatch.setattr(memory, "MEMORY_AUTO_EMBED", False)
+    record = memory.MemoryRecord(
+        id="internal-1", record_type="capability_call", source_type="tool",
+        full_text="bounded internal activity evidence")
+
+    result = run(value.store(record, producer_kind="capability_activity"))
+
+    assert result == {"postgres": True, "chroma": True, "neo4j": True}
+    assert calls == [(name, "internal-1") for name in ("postgres", "chroma", "neo4j")]
+    with sqlite3.connect(tmp_path / "receipts.sqlite3") as conn:
+        row = conn.execute(
+            "SELECT producer_kind,evidence_json FROM memory_dual_write_receipts"
+        ).fetchone()
+    assert row[0] == "capability_activity"
+    assert json.loads(row[1])["producer_kind"] == "capability_activity"
 
 
 def test_postgres_rows_render_utc_timestamps_without_double_timezone_suffix():

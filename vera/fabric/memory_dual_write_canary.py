@@ -88,6 +88,7 @@ async def execute_memory_dual_write_canary(
     receipt_sink: ReceiptSink, native_timeout_s: float | None = 30.0,
     revision_timeout_s: float | None = 10.0,
     revision_factory: RevisionFactory | None = None,
+    producer_kind: str = "internal",
 ) -> MemoryDualWriteCanaryResult:
     """Run the native write once and optionally observe a canonical shadow write.
 
@@ -111,7 +112,8 @@ async def execute_memory_dual_write_canary(
                 operation_id=operation_id, native_memory_id=native_memory_id,
                 native_content_hash=native_content_hash, revision=revision,
                 observed_at=observed_at, revision_outcome="skipped",
-                native_outcomes=native_outcomes, error_codes=errors)
+                native_outcomes=native_outcomes, error_codes=errors,
+                producer_kind=producer_kind)
             _persist(receipt_sink, receipt)
         raise
     except TimeoutError:
@@ -121,7 +123,8 @@ async def execute_memory_dual_write_canary(
                 operation_id=operation_id, native_memory_id=native_memory_id,
                 native_content_hash=native_content_hash, revision=revision,
                 observed_at=observed_at, revision_outcome="skipped",
-                native_outcomes=native_outcomes, error_codes=errors)
+                native_outcomes=native_outcomes, error_codes=errors,
+                producer_kind=producer_kind)
             _persist(receipt_sink, receipt)
         raise
     except Exception:
@@ -131,7 +134,8 @@ async def execute_memory_dual_write_canary(
                 operation_id=operation_id, native_memory_id=native_memory_id,
                 native_content_hash=native_content_hash, revision=revision,
                 observed_at=observed_at, revision_outcome="skipped",
-                native_outcomes=native_outcomes, error_codes=errors)
+                native_outcomes=native_outcomes, error_codes=errors,
+                producer_kind=producer_kind)
             _persist(receipt_sink, receipt)
         raise
 
@@ -192,7 +196,8 @@ async def execute_memory_dual_write_canary(
             operation_id=operation_id, native_memory_id=native_memory_id,
             native_content_hash=native_content_hash, revision=revision,
             observed_at=observed_at, revision_outcome=revision_outcome,
-            native_outcomes=native_outcomes, error_codes=errors)
+            native_outcomes=native_outcomes, error_codes=errors,
+            producer_kind=producer_kind)
         _persist(receipt_sink, receipt)
         raise
     except TimeoutError:
@@ -206,7 +211,8 @@ async def execute_memory_dual_write_canary(
         operation_id=operation_id, native_memory_id=native_memory_id,
         native_content_hash=native_content_hash, revision=revision,
         observed_at=observed_at, revision_outcome=revision_outcome,
-        native_outcomes=native_outcomes, error_codes=errors)
+        native_outcomes=native_outcomes, error_codes=errors,
+        producer_kind=producer_kind)
     persisted, evidence_error = _persist(receipt_sink, receipt)
     return MemoryDualWriteCanaryResult(
         native_result=raw_native, enabled=True, revision_attempted=True,

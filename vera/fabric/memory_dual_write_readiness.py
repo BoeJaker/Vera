@@ -17,6 +17,11 @@ from types import MappingProxyType
 from typing import Any, Mapping
 
 
+REQUIRED_PRODUCER_KINDS = (
+    "public_capability", "conversation", "capability_activity", "workflow",
+)
+
+
 SCHEMA = "vera.memory-authority-readiness/v1"
 ROLLBACK_SCHEMA = "vera.memory-canary-rollback-rehearsal/v1"
 _TOKEN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:@/-]{0,255}$")
@@ -179,6 +184,11 @@ def assess_memory_authority_readiness(
         "pending_attempts": evidence["pending_attempts"],
         "failed_attempts": evidence["failed_attempts"],
         "latest_observed_at": str(evidence["latest_observed_at"] or ""),
+        "producer_counts": {
+            str(key): int(value)
+            for key, value in dict(evidence.get("producer_counts") or {}).items()
+            if isinstance(value, int) and not isinstance(value, bool) and value >= 0
+        },
     }
     reasons: list[str] = []
     if metrics["returned_receipts"] < int(min_receipts):
@@ -189,6 +199,14 @@ def assess_memory_authority_readiness(
         reasons.append("pending_attempts")
     if metrics["failed_attempts"]:
         reasons.append("failed_attempts")
+    missing_producers = [
+        kind for kind in REQUIRED_PRODUCER_KINDS
+        if metrics["producer_counts"].get(kind, 0) < 1
+    ]
+    metrics["required_producer_kinds"] = list(REQUIRED_PRODUCER_KINDS)
+    metrics["missing_producer_kinds"] = missing_producers
+    if missing_producers:
+        reasons.append("insufficient_producer_coverage")
     latest = metrics["latest_observed_at"]
     if not latest:
         reasons.append("evidence_time_missing")

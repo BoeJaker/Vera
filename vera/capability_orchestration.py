@@ -7243,7 +7243,7 @@ async def _activity_worker():
                             },
                             created_at=ts, updated_at=ts,
                         )
-                        await MEMORY.store(rec)
+                        await MEMORY.store(rec, producer_kind="capability_activity")
                         graph_ok = True
                     except Exception as e:
                         log.warning("activity_worker store [%s]: %s",
