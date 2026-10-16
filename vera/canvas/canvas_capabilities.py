@@ -249,7 +249,9 @@ async def _target(id: str = "", session_id: str = "", create: bool = True) -> Op
 def _item_view(b: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": b.get("id"), "key": b.get("key"), "type": b.get("type"), "state": b.get("state"),
             "size": b.get("size"), "anchor": b.get("anchor"), "anchors": b.get("anchors") or [],
-            "ts": b.get("ts"), "score": b.get("score")}
+            "ts": b.get("ts"), "score": b.get("score"),
+            # the item contract's fields (canvas.item.set; DEEP-29 11A.4) - only those the item has
+            **{k: b[k] for k in ("face", "place", "view", "group", "folded") if k in b}}
 
 
 def _anchor_turn(anchor: Any) -> str:
@@ -785,6 +787,72 @@ async def cap_canvas_size(key: str = "", size: str = "m", id: str = "", session_
     rev = await _write(doc, "size", key, size=size)
     return {"ok": True, "key": key, "size": size, "prev": prev, "item": _item_view(hit),
             "id": doc["id"], "revision": rev}
+
+
+try:
+    from Vera.vera.canvas import item_core as _ic
+except ImportError:                                   # pragma: no cover
+    from vera.canvas import item_core as _ic
+
+
+@capability(
+    "canvas.item.set", memory="off",
+    http_method="POST", http_path="/canvas/item/set", http_tags=["canvas"],
+    description="Change how one session-canvas item is shown - its face, rect, view, size, lock, fold, group or state - "
+                "in one write and one canvas.updated event that names the fields. The item record is the same on every "
+                "surface (the desk, a dashboard, the chat): face 'pill'|'tile'|'window'|'full'; place {fx, fy (0-1 of the "
+                "surface), w, h (px), by 'auto'|'person', locked, layer 'among'|'behind'|'front', z}, merged over the "
+                "item's place; view 'list'|'cards'|'table'|'graph'|'code'|'structure'|'both'; size 'xs'|'s'|'m'|'l'|'xl'; "
+                "group {id, front} or {} to separate; state 'now'|'pinned'|'parked'|'hidden'. Inputs: key (str!), id or "
+                "session_id, and any of those fields. Output: {ok, key, changed, prev (to undo), item, revision}; a call "
+                "that changes nothing writes nothing.",
+)
+async def cap_canvas_item_set(key: str = "", id: str = "", session_id: str = "", face: str = None, place: Any = None,
+                              view: str = None, size: str = None, locked: Any = None, folded: Any = None,
+                              group: Any = None, state: str = None, trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    hit = _find_key(doc, key)
+    if not hit:
+        return {"ok": False, "error": f"unknown key: {key}"}
+    fields = {"face": face, "place": _as_obj(place), "view": view, "size": size, "locked": locked,
+              "folded": folded, "group": _as_obj(group), "state": state}
+    changed, prev, probs = _ic.apply_set(hit, fields)
+    if probs:
+        return {"ok": False, "error": "; ".join(probs), "key": key}
+    if not changed:
+        return {"ok": True, "key": key, "changed": {}, "prev": {}, "item": _ic.normalise(hit),
+                "id": doc["id"], "revision": int(doc.get("revision") or 0)}
+    _record(doc, "item", key, fields=",".join(sorted(changed)))
+    await _save(doc)
+    await _emit(doc["id"], "item", id=doc["id"], revision=doc.get("revision"), key=key, fields=changed)
+    return {"ok": True, "key": key, "changed": changed, "prev": prev, "item": _ic.normalise(hit),
+            "id": doc["id"], "revision": int(doc.get("revision") or 0)}
+
+
+@capability(
+    "canvas.items", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/items", http_tags=["canvas"],
+    description="The session canvas's items as item records - the one shape every surface reads: key, kind, content, "
+                "source, anchors, state, face, size, place, locked, view, group, folded, ts, score. Inputs: id or "
+                "session_id, state (optional filter), if_rev (int: returns {ok, unchanged:true} when the canvas is still "
+                "at that revision). Output: {ok, id, revision, items}. Read-only.",
+)
+async def cap_canvas_items(id: str = "", session_id: str = "", state: str = "", if_rev: Any = None, trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}", "items": []}
+    rev = int(doc.get("revision") or 0)
+    try:
+        if if_rev not in (None, "") and int(if_rev) == rev:
+            return {"ok": True, "id": doc["id"], "revision": rev, "unchanged": True}
+    except (TypeError, ValueError):
+        pass
+    items = [_ic.normalise(b) for b in doc.get("blocks", []) if isinstance(b, dict) and b.get("key")]
+    if state:
+        items = [i for i in items if i["state"] == state]
+    return {"ok": True, "id": doc["id"], "revision": rev, "items": items}
 
 
 @capability(

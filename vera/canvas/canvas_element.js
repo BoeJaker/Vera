@@ -30,6 +30,12 @@
  * ────────────────────────────────────────────────────────────────────────────*/
 (function () {
   const root = typeof window !== 'undefined' ? window : globalThis;
+  /* the item z bands (DEEP-29 11A.4 Decision 6): the same table as VeraItem.Z (/ui/vera-item.js) and vera-item.css, held to
+     it by tests/test_canvas_z_bands.cjs. A desk item's z-index is only ever one of these. */
+  const ZB = { back: 1, layerBehind: 2, tile: [10, 110], pill: 115, tileFocus: 120, window: [130, 149], full: 150,
+               layerFront: 155, flash: 180, drag: 200, pop: 230, menu: 240, chat: 250, sheet: 300 };
+  const zOf = (band, n) => { const b = ZB[band]; if (b === undefined) return ZB.tile[0];
+    return Array.isArray(b) ? Math.min(b[1], b[0] + Math.max(0, Math.round(n || 0))) : b; };
   if (root.__veraCanvasElement) return;
   root.__veraCanvasElement = true;
 
@@ -1298,7 +1304,7 @@
      note and terminal menus are see through"): a desk card stacks at 10-200 and the graph drawn over it with it, and the
      bar - its menus inside it - at 6, so cards covered the panel and terminal menus and a graph showed through the note
      menu. On the desk the bar, and so its menus, are over every card. */
-  :host([align="desk"]:not([desk-narrow])) .addbar{z-index:240}
+  :host([align="desk"]:not([desk-narrow])) .addbar{z-index:var(--z-menu,240)}
   .addbar .lbl{font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);margin-right:2px}
   /* THE ONE BANNER (§4.2): what this canvas is, the kinds you can add, then the host's own controls at the far end.
      The host's nodes are slotted, so they are styled by the host's stylesheet - only their PLACE is ours. */
@@ -1433,7 +1439,7 @@
   .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-grid-w{flex:1 1 auto;max-height:none}
   .it.hovopen{z-index:5;box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   /* the preview of a folded item: over the column, its own scroll past a screenful, no slide (it does not move) */
-  .stage .it.peek{z-index:8;max-height:min(70vh,640px);overflow:auto;transition:none;background:var(--bg1,#16181d);scrollbar-width:thin}
+  .stage .it.peek{z-index:var(--z-pop,230);max-height:min(70vh,640px);overflow:auto;transition:none;background:var(--bg1,#16181d);scrollbar-width:thin}
   .stage .it.peek .it-bd{max-height:none}
   /* the header line of an item that draws its own head: hidden while that head shows, the chip when the COLUMN folds it */
   .it > .it-hd.own-fold{display:none}
@@ -1509,7 +1515,7 @@
   /* a panel item sent behind the desk or brought in front: it fills its region the way a maximised item fills the column */
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face^="layer-"]{display:flex!important;flex-direction:column;border-radius:10px;background:var(--bg1,#15181d)!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face="layer-front"]{box-shadow:0 18px 48px rgba(0,0,0,.45)}
-  .stage > .lay-pill{position:absolute;z-index:190;display:flex;align-items:center;gap:6px;max-width:60%;padding:3px 4px 3px 9px;border-radius:14px;font-size:11px;
+  .stage > .lay-pill{position:absolute;z-index:var(--z-menu,240);display:flex;align-items:center;gap:6px;max-width:60%;padding:3px 4px 3px 9px;border-radius:14px;font-size:11px;
     background:var(--bg2,#1d2128);border:1px solid var(--border2,#3a3f48);box-shadow:0 6px 18px rgba(0,0,0,.4);pointer-events:auto}
   .stage > .lay-pill > b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
   .stage > .lay-pill > .m{color:var(--dim,#8b93a1);white-space:nowrap}
@@ -1642,10 +1648,10 @@
      menu holds the rest (see _hdMenu), and the header stays free to grab */
   :host([align="desk"]:not([desk-narrow])) .stage .it.pill-open:not(.desk-win) > .hda > :is(.hb:not([data-act="hdmore"]),.xvw){display:none}
   /* a mode's lane or cluster heading (board, map): a quiet label over its column */
-  :host([align="desk"]) .stage > .desk-lane{position:absolute;z-index:1;pointer-events:none;display:flex;align-items:center;gap:6px;padding:3px 2px 4px;font:600 9.5px/1.2 var(--mono,ui-monospace,monospace);letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a7e70);border-bottom:1px solid color-mix(in srgb,var(--acc,#5a9e8f) 28%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  :host([align="desk"]) .stage > .desk-lane{position:absolute;z-index:var(--z-back,1);pointer-events:none;display:flex;align-items:center;gap:6px;padding:3px 2px 4px;font:600 9.5px/1.2 var(--mono,ui-monospace,monospace);letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a7e70);border-bottom:1px solid color-mix(in srgb,var(--acc,#5a9e8f) 28%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   :host([align="desk"]) .stage > .desk-lane > i{font-style:normal;font-weight:400;color:var(--dim,#6c645a)}
   /* the desk's proposal (DR-04): a small chip at the top of the desk, never in the way */
-  :host([align="desk"]) .stage > .desk-propose{position:absolute;top:6px;left:50%;transform:translateX(-50%);z-index:240;display:flex;align-items:center;gap:6px;padding:3px 4px 3px 10px;border-radius:14px;background:var(--bg2,#1d2128);border:1px solid color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent);box-shadow:0 6px 18px rgba(0,0,0,.35);font-size:11px;color:var(--t1,#e8e0d4)}
+  :host([align="desk"]) .stage > .desk-propose{position:absolute;top:6px;left:50%;transform:translateX(-50%);z-index:var(--z-menu,240);display:flex;align-items:center;gap:6px;padding:3px 4px 3px 10px;border-radius:14px;background:var(--bg2,#1d2128);border:1px solid color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent);box-shadow:0 6px 18px rgba(0,0,0,.35);font-size:11px;color:var(--t1,#e8e0d4)}
   :host([align="desk"]) .stage > .desk-propose > button{font:inherit;font-size:10px;padding:1px 8px;border-radius:10px;border:1px solid var(--bd,rgba(127,127,127,.3));background:transparent;color:var(--t2,#b9aea0);cursor:pointer}
   :host([align="desk"]) .stage > .desk-propose > button[data-p="apply"],:host([align="desk"]) .stage > .desk-propose > button[data-p="undo"]{color:var(--acc,#5a9e8f);border-color:color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent)}
   /* the markets chart takes its card's room (WSU-75) */
@@ -1675,7 +1681,7 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:default!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .hda > .hb[data-act="lock"]{opacity:1}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .hda{opacity:1}
-  .stage > .hd-pop{position:absolute;z-index:230;display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:9px;
+  .stage > .hd-pop{position:absolute;z-index:var(--z-pop,230);display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:9px;
     background:var(--bg2,#1d2128);border:1px solid var(--border2,#3a3f48);box-shadow:0 10px 28px rgba(0,0,0,.45)}
   .stage > .hd-pop > .ib{display:block;width:100%;text-align:left;border:0;background:none;color:var(--fg,#dce1e8);padding:5px 9px;border-radius:6px;font:inherit;font-size:11.5px;cursor:pointer}
   .stage > .hd-pop > .ib:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
@@ -2374,7 +2380,7 @@
      ground was solid, but it sat at z 8 - the .it.maxed rule written for the held canvas's flow - while
      the desk stacks its cards 10..110 by their distance to the chat: every card and pill drew over it, and through it
      what was under it showed. On the desk it is above every card and pill (150), below only a card being carried (200). */
-  :host([align="desk"]:not([desk-narrow])) .stage .it.maxed{z-index:150!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.maxed{z-index:var(--z-full,150)!important}
   .stage .it:is(.maxed,.reading){background:var(--bg1,#15181d)!important;border-color:var(--border,#2a2f37)!important}
   /* the names and sites are a menu (the names · sites button and its widgets), not rows of pills, unless the full chrome */
   :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-facets{display:none!important}
@@ -3243,7 +3249,7 @@
       if (c.classList.contains('cmp-behind')) { const m = this._cmpGet(); m[String(key)] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[String(key)] = Date.now(); this._placeNow();
         c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)) || c; }
       c.classList.remove('desk-flash'); void c.offsetWidth; c.classList.add('desk-flash');
-      const z = c.style.zIndex; c.style.zIndex = '180';
+      const z = c.style.zIndex; c.style.zIndex = String(zOf('flash'));
       clearTimeout(c._flT); c._flT = setTimeout(() => { c.classList.remove('desk-flash'); c.style.zIndex = z; }, 1600);
       return true;
     }
@@ -4025,7 +4031,7 @@
         if (s.face === 'icon') { const t = c.querySelector('.it-hd > .t'); c.title = t ? t.textContent.trim() : ''; } else if (c.title) c.removeAttribute('title');
         // the desk owns the size here: a compact card's own height rule must not grow a chip under its neighbours
         c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
-        c.style.zIndex = String(it.sizing ? D.stackOrder(0, { dragging: true }) : it.win ? 160 : D.stackOrder(s.nd));
+        c.style.zIndex = String(it.sizing ? zOf('drag') : it.win ? zOf('window', Math.max(0, (this._winOrder || []).indexOf(key))) : zOf('tile', D.stackOrder(s.nd) - ZB.tile[0]));
         /* a window (above): over the tiled cards; the pill windows (_winOpen) keep their own mark */
         c.classList.toggle('desk-win', !!it.win || !!(this._wins && this._wins.has(key)));
         out.push({ key: key, x: left, y: top, w: w, h: h, face: s.face, win: !!it.win, bw: Math.min(w, it.bw || w), bh: Math.min(h, it.bh || h) });
@@ -4045,7 +4051,7 @@
         c.classList.remove('overfold', 'capped', 'desk-chip', 'desk-icon', 'compact'); c.style.maxHeight = ''; c.removeAttribute('title');
         c.dataset.deskFace = 'layer-' + mode;
         c.style.left = left + 'px'; c.style.top = top + 'px'; c.style.setProperty('width', w + 'px', 'important'); c.style.setProperty('height', h + 'px', 'important'); c.style.setProperty('min-height', '0px', 'important');
-        c.style.zIndex = mode === 'front' ? String(D.stackOrder(0, { full: true })) : '1';
+        c.style.zIndex = String(mode === 'front' ? zOf('layerFront') : zOf('back'));
         out.push({ key: c.dataset.key, x: left, y: top, w: w, h: h, face: 'layer-' + mode });
       });
       /* each layered panel's PILL, over every item at the panel's corner: a panel sent behind has its own head under the
@@ -4798,7 +4804,7 @@
         /* on the desk the card you are sizing rides over the rest (owner, 2026-10-10: grown by its corner, "other panels
            can move partially behind it"): it and its graph are on top, with their ground, until it is let go */
         if (this.deskAlign() && root.VeraDesk) { this._holdStart(it.dataset.key); this._rzPlacedAt = 0;
-          it.style.zIndex = String(root.VeraDesk.stackOrder(0, { dragging: true })); try { this._liveLayout(); } catch (e) { /* optional */ } } });
+          it.style.zIndex = String(zOf('drag')); try { this._liveLayout(); } catch (e) { /* optional */ } } });
       /* MOVING A CARD ON THE DESK (owner-approved desk, 2026-10-06: "as you drag them in they become big enough to glance
          at"). Its header is the handle; past 4 px it follows the pointer, sized live by its distance from the chat and
          stacked on top; let go, it stays there (a share of the desk, per canvas). A double click on the header gives it
@@ -4839,7 +4845,7 @@
         const d = this._dg; if (!d) return;
         const dx = (ev.clientX - d.x0) / d.Z, dy = (ev.clientY - d.y0) / d.Z;
         if (!d.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
-        if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(root.VeraDesk ? root.VeraDesk.stackOrder(0, { dragging: true }) : 200);
+        if (!d.moved) { d.moved = true; d.el.classList.add('desk-dragging'); d.el.style.zIndex = String(zOf('drag'));
           /* a pill opened by hover is let go as it starts moving - the drag sizes it from here on (WSU-68) */
           clearTimeout(this._pillT); if (d.el._cpw) { d.el._cpw = null; d.el.classList.remove('chip-peek', 'pill-open'); }
           /* a pill opened as a window (_winOpen) and carried: it goes on as a card at the window's size, which the desk
@@ -5016,7 +5022,7 @@
       if (win) { const others = [...(st ? st.querySelectorAll('.it.desk-win') : [])].filter((x) => x !== it).map((x) => [parseFloat(x.style.left) || 0, parseFloat(x.style.top) || 0]);
         for (let n = 0; n < 8 && others.some(([x, y]) => Math.abs(x - left) < 20 && Math.abs(y - top) < 20); n++) { left = Math.max(4, Math.min(W - 4 - w, left - 28)); top = Math.max(4, Math.min(H - 4 - h, top + 28)); } }
       it.classList.toggle('desk-win', win);
-      it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = win && this._focusKey !== it.dataset.key ? String(s.z || 10) : '210';
+      it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = win && this._focusKey !== it.dataset.key ? String(s.z || 10) : String(zOf('pop'));
       try { this._liveLayout(); } catch (e) { /* optional */ }
       return true;
     }
@@ -5043,7 +5049,10 @@
       this._focusKey = key;
       if (it && this.deskAlign() && !it.classList.contains('desk-dragging')) {
         if (it.dataset.zRest == null) it.dataset.zRest = (it._cpw && it._cpw.open && this._wins && this._wins.has(key)) ? String(it._cpw.z || 10) : (it.style.zIndex || '');
-        it.classList.add('desk-focus'); it.style.zIndex = '230'; }
+        /* a window comes to the front of the windows (the last focused highest); a tile above the other tiles only */
+        const win = it.classList.contains('desk-win');
+        if (win) { const o = this._winOrder = (this._winOrder || []).filter((k) => k !== key); o.push(key); }
+        it.classList.add('desk-focus'); it.style.zIndex = String(win ? zOf('window', ZB.window[1] - ZB.window[0]) : zOf('tileFocus')); }
     }
     /* a placing pass restyles every card: the windows open again where they were, the focused one stays on top */
     _winRestore() {
@@ -5092,7 +5101,7 @@
       const W = (it.parentElement && it.parentElement.clientWidth) || 1000;
       const w = Math.min(W - 8, it.offsetWidth + Math.max(0, t.scrollWidth - t.clientWidth) + 8);
       let left = parseFloat(it.style.left) || 0; if (left + w > W - 4) left = Math.max(4, W - 4 - w);
-      it.style.setProperty('width', w + 'px', 'important'); it.style.left = left + 'px'; it.style.zIndex = '210';
+      it.style.setProperty('width', w + 'px', 'important'); it.style.left = left + 'px'; it.style.zIndex = String(zOf('pop'));
     }
     /* A FOLDED ITEM, PREVIEWED IN PLACE (owner, 2026-10-04: "hovering over lots of collapsed canvas items makes the
        previews flicker in and out as it doesnt stay in-place under the mouse. sometime hovering them doesnt open the
