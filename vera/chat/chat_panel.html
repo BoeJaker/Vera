@@ -151,6 +151,11 @@ details.lp-sub:not([open])>summary{opacity:.8}
 #rpCanvas .cvm-kinds{display:flex;flex-wrap:wrap;gap:3px}
 #rpCanvas .cvm-add b{margin-right:4px;font-family:var(--mono,ui-monospace,monospace);color:var(--acc,#5a9e8f)}
 #rpCanvas .cvm-it{display:flex;gap:6px;align-items:center;width:100%;text-align:left;border:0;background:none;color:var(--text,#d8dce4);font:inherit;font-size:11px;padding:3px 4px;border-radius:4px;cursor:pointer}
+/* apps on the desk from the menu (DA-06b) */
+#rpCanvas .cvm-app-q{width:100%;box-sizing:border-box;font:11px system-ui,sans-serif;padding:2px 6px;margin:2px 0 4px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit}
+#rpCanvas .cvm-app{display:flex;align-items:center;gap:4px}#rpCanvas .cvm-app .cvm-it{flex:1 1 auto;min-width:0}
+#rpCanvas .cvm-app-arg{flex:0 0 76px;width:76px;font:10.5px system-ui,sans-serif;padding:1px 4px;border:1px solid var(--line,#2a2f36);border-radius:4px;background:transparent;color:inherit}#rpCanvas .cvm-app-arg.need{border-color:var(--warn,#e5c07b)}
+#rpCanvas .cvm-app-g{font-size:9.5px;color:var(--dim2,#8a92a0);margin:5px 0 1px;text-transform:capitalize}
 #rpCanvas .cvm-it:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent)}
 #rpCanvas .cvm-it i{font-style:normal;color:var(--acc,#5a9e8f);width:12px;text-align:center}
 #rpCanvas .cvm-it span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -8768,6 +8773,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   function _cvMenuAct(a){ const c=_cvLocal();
     if(!c){ if(a.a==='open'){ togglePage('canvas'); return Promise.resolve(); } _lhmPost('cvact', a); return Promise.resolve(); }
     if(a.a==='add') return Promise.resolve(c.addKind(a.kind, a.anchor||c));
+    if(a.a==='app'){ if(!a.app||typeof c.openApp!=='function') return Promise.resolve(); _cvAppRecent(a.app); return Promise.resolve(c.openApp(a.app, a.args||{})); }   /* DA-06b */
     if(a.a==='back') return Promise.resolve(c.bringBack(a.key));
     if(a.a==='restore') return Promise.resolve(c.restore(a.key));
     if(a.a==='clear') return Promise.resolve(c.clearAll(true));
@@ -8782,6 +8788,34 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(a.a==='tidy'){ if(typeof c.tidy==='function') c.tidy(); return Promise.resolve(); }
     if(a.a==='desk'){ const e=document.getElementById(_CV_DESK_SW[a.n]||''); if(e){ e.value=(e.value==='off')?'on':'off'; _persistCanvasCfg(); } return Promise.resolve(); }
     return Promise.resolve(); }
+  /* APPS ON THE DESK FROM THE MENU (DA-06b; DESK-SPINE §5): the catalogue (ui.apps.list), recently opened first, then
+     by panel; a search narrows it; an app that needs an argument (a symbol) asks for it in its row. Read once per page. */
+  let _CV_APPS=null, _cvAppsQ='';
+  function _cvAppsLoad(){ if(_CV_APPS) return; _CV_APPS=[]; Promise.resolve().then(()=>_capCall('ui.apps.list',{})).then(r=>{ const c=r&&r.type==='tool_result'?r.content:r;
+      _CV_APPS=(c&&Array.isArray(c.apps))?c.apps:[]; _cvMenuRender(true); }).catch(()=>{ _CV_APPS=[]; }); }
+  function _cvAppRecent(id){ try{ const k='vera:canvas:apps:recent'; const l=JSON.parse(localStorage.getItem(k)||'[]').filter(x=>x!==id); l.unshift(id); localStorage.setItem(k, JSON.stringify(l.slice(0,5))); }catch(_){} }
+  function _cvAppRecents(){ try{ return JSON.parse(localStorage.getItem('vera:canvas:apps:recent')||'[]'); }catch(_){ return []; } }
+  function _cvAppRow(ap){ const need=Array.isArray(ap.needs_args)?ap.needs_args:[];
+    return '<div class="cvm-app" data-app-row="'+esc(ap.id)+'"><button class="cvm-it" data-cvm="app" data-app="'+esc(ap.id)+'" title="'+esc((ap.summary||'')+' ('+ap.id+')')+'"><i>&#9636;</i><span>'+esc(ap.title||ap.id)+'</span></button>'
+      +need.map(n=>'<input class="cvm-app-arg" data-arg="'+esc(n)+'" placeholder="'+esc(n)+'" spellcheck="false">').join('')+'</div>'; }
+  function _cvAppsList(){ if(_CV_APPS===null){ _cvAppsLoad(); return '<div class="cvm-dim">Reading the catalogue…</div>'; }
+    if(!_CV_APPS.length) return '<div class="cvm-dim">No apps in the catalogue.</div>';
+    const q=_cvAppsQ.trim().toLowerCase(); const hit=ap=>!q||[ap.title,ap.summary,ap.panel,ap.id].some(x=>String(x||'').toLowerCase().indexOf(q)>=0);
+    const list=_CV_APPS.filter(hit); if(!list.length) return '<div class="cvm-dim">No app has “'+esc(_cvAppsQ)+'”.</div>';
+    const rec=q?[]:_cvAppRecents().map(id=>list.find(x=>x.id===id)).filter(Boolean);
+    const by={}; list.forEach(ap=>{ if(rec.indexOf(ap)>=0) return; (by[ap.panel||'other']=by[ap.panel||'other']||[]).push(ap); });
+    return (rec.length?'<div class="cvm-app-g">recent</div>'+rec.map(_cvAppRow).join(''):'')
+      +Object.keys(by).sort().map(p=>'<div class="cvm-app-g">'+esc(p.replace(/-panel$/,'').replace(/-/g,' '))+'</div>'+by[p].map(_cvAppRow).join('')).join(''); }
+  function _cvAppsSec(){ return '<div class="cvm-sec cvm-apps"><h5>Apps</h5><input class="cvm-app-q" placeholder="find an app" value="'+esc(_cvAppsQ)+'" spellcheck="false"><div class="cvm-app-list">'+_cvAppsList()+'</div></div>'; }
+  /* the arguments typed in an app's row: null (and the empty box marked) when one it needs is missing */
+  function _cvAppArgs(b){ const row=b.closest('[data-app-row]'); const args={}; let miss=null;
+    (row?[...row.querySelectorAll('.cvm-app-arg')]:[]).forEach(i=>{ const v=String(i.value||'').trim(); if(v) args[i.dataset.arg]=v; else if(!miss) miss=i; });
+    if(miss){ miss.classList.add('need'); miss.focus(); return null; } return args; }
+  document.addEventListener('input', ev=>{ const t=ev.target; if(!t||!t.classList) return;
+    if(t.classList.contains('cvm-app-q')){ _cvAppsQ=String(t.value||''); const box=t.parentElement&&t.parentElement.querySelector('.cvm-app-list'); if(box) box.innerHTML=_cvAppsList(); }
+    else if(t.classList.contains('cvm-app-arg')) t.classList.remove('need'); });
+  document.addEventListener('keydown', ev=>{ const t=ev.target; if(!t||!t.classList||ev.key!=='Enter') return;
+    if(t.classList.contains('cvm-app-arg')){ const b=t.closest('[data-app-row]')&&t.closest('[data-app-row]').querySelector('[data-cvm="app"]'); if(b){ ev.preventDefault(); b.click(); } } });
   function _cvMenuRender(onlyIfOpen){
     const pane=document.getElementById('rpCanvas'), dyn=document.getElementById('rpCanvasDyn'); if(!pane||!dyn) return;
     if(onlyIfOpen&&!pane.classList.contains('on')) return;
@@ -8807,11 +8841,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       .map(([v,l,tip])=>'<button class="btn xs'+(st.arrange===v?' on':'')+'" data-cvm="arrange" data-n="'+v+'" aria-pressed="'+(st.arrange===v?'true':'false')+'" title="'+esc(tip+' (also on the Settings sheet)')+'">'+l+'</button>').join('')+'</div></div>':'';
     dyn.innerHTML=remoteBanner+arr+rsz+dsw+
       '<div class="cvm-sec"><h5>Add to the canvas</h5><div class="cvm-kinds">'+kinds.map(k=>'<button class="btn xs cvm-add" data-cvm="add" data-kind="'+esc(k.n)+'" title="Add a '+esc(k.n)+' (a '+esc(k.kind)+' item)"><b>'+esc(k.ik)+'</b>'+esc(k.n)+'</button>').join('')+'</div></div>'
+      + _cvAppsSec()
       + shelf('Parked', s.parked, 'back', '⤴', 'Bring it back into view', 'Nothing parked.')
       + shelf('Hidden', s.hidden, 'back', '◐', 'Show it again', 'Nothing hidden.')
       + shelf('Recently removed', s.removed, 'restore', '↺', 'Put it back on the canvas', 'Nothing removed.')
       + '<div class="cvm-sec"><button class="btn xs" data-cvm="clear" title="Clear the canvas - pinned items stay; every item can be put back from Recently removed">Clear the canvas</button> <span class="cvm-dim">'+s.items+' on the canvas</span></div>';
     if(!dyn._cvmBound){ dyn._cvmBound=true; dyn.addEventListener('click', ev=>{ const b=ev.target.closest('[data-cvm]'); if(!b) return; const a=b.dataset.cvm;
+      if(a==='app'){ const args=_cvAppArgs(b); if(args===null) return; _cvMenuAct({ a, app:b.dataset.app||'', args }).then(()=>setTimeout(()=>{ _cvPublish(); _cvMenuRender(true); }, 400)); return; }
       _cvMenuAct({ a, kind:b.dataset.kind||'', key:b.dataset.key||'', n:b.dataset.n||'', anchor:_cvLocal()?b:null })
         .then(()=>setTimeout(()=>{ _cvPublish(); _cvMenuRender(true); }, 400)); }); }
   }
