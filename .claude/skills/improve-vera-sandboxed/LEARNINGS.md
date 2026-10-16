@@ -174,3 +174,21 @@ rules; new ones start here. Newest at the bottom.
 - evidence: pipeline `a9e77ffd`; unittest history at
   `2026-10-12T22:55:00Z`; board `loop-lab-critical-single-flight-join`
 - status: folded into SKILL.md v3
+
+## 2026-10-16 — loader entry points and stateful helpers need different import rules
+- task: add Home Assistant owning-boundary effect evidence (pipeline `f200db75`)
+- what happened: the first critical gate failed
+  `tests.test_loader_modules_have_no_parent_package` because
+  `homeassistant/ha_capabilities.py` used `from .ha_effects import …`. An earlier
+  effect-context test had also shown that mixing `Vera.vera...` and `vera...`
+  creates two `ContextVar` instances and loses attribution.
+- cause: capability entry modules can be loaded by file path with no parent
+  package, while Python also treats the uppercase and lowercase package paths
+  as different module identities. “Always relative” and “lowercase for
+  worktrees” are therefore not valid production-import rules.
+- rule now: use canonical `Vera.vera...` imports in path-loaded entry modules;
+  keep stateful package internals on one consistent identity; run the loader
+  guard and an identity-sensitive focused test before the full gate.
+- evidence: pipeline `f200db75`; first gate 7,445 passed/1 failed, repaired gate
+  7,446 passed/0 failed, 36 skipped; promoted `658bb3f5`
+- status: folded into SKILL.md v4

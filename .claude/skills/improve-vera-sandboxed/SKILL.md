@@ -416,6 +416,18 @@ commit, same as code, then land via §7 like any other change.
   - Host venv (has pytest): `/home/boejaker/langchain/bin/python3 -m pytest
     tests/… -q` — fast, but only correct via the lowercase `vera.X` + sys.path
     insert above; `Vera.vera.X` there still hits main.
+- **Capability entry modules loaded by path are not package modules.** Files in
+  the orchestrator's loader list (guarded by
+  `tests/test_loader_modules_have_no_parent_package.py`) can be imported as
+  top-level modules, so a relative import such as `from .effects import …`
+  prevents the entire entry module from registering. Use the canonical
+  `Vera.vera...` absolute identity in those entry modules. In ordinary package
+  internals, keep stateful helpers (`ContextVar`, caches, registries, singleton
+  stores) on one consistent package identity: mixing `Vera.vera.X` and `vera.X`
+  loads two module objects and silently splits their state. Run the loader test
+  for every changed capability entry point and an identity-sensitive focused
+  test for shared state; do not turn the host-worktree lowercase testing
+  workaround into production imports.
 - **Package re-exports expand the import closure (confirmed 2026-10-01).** A
   new export in `vera/<package>/__init__.py` is eager: every import of any child
   first runs the parent initializer, then every relative import it exposes.
