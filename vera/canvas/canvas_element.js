@@ -3354,6 +3354,7 @@
       return this._deskPos;
     }
     _deskPosSet(key, at) {
+      const kw = this._winKeepGet()[key]; if (kw && at && isFinite(at.fx) && isFinite(at.fy)) this._winKeepSet(key, Object.assign({}, kw, { fx: at.fx, fy: at.fy }));
       const m = this._deskPosGet(); if (at) m[key] = at; else delete m[key];
       try { localStorage.setItem('vera:canvas:deskpos:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ }
       this._itemSet(key, { place: at ? Object.assign({ fx: at.fx, fy: at.fy, by: 'person' }, at.w ? { w: at.w } : {}, at.h ? { h: at.h } : {}) : { by: 'auto' } });
@@ -3957,9 +3958,21 @@
          meet, the one the person touched last becomes the window. A click raises any card (_focusSet); every pass decides
          again, so a window tiles once there is room. Off with desk-windows="off". */
       const wins = new Set();
+      /* ONLY THE PERSON MAKES A WINDOW, AND ONLY BY A RESIZE (owner, 2026-10-16: "only the user should be able to trigger window
+         mode and thats only if an element is resized and there isnt space on the dashboard"; a card that had been a window
+         became one again on its own, and the desk kept moving): every pass used to decide again for any card the person had
+         sized or placed, so an arrival, a card growing to its content or a window tiling back made windows and undid them in
+         turn. Now the card under the hand's resize may become one, and the card just let go becomes one only if the desk still
+         has no room for it - then it is KEPT a window (with the item: face window) until the person sends it back to the desk
+         (its head's dock control, or Esc). No other pass makes or unmakes a window. */
+      const keptWin = this._winKeepGet();
+      if (this.getAttribute('desk-windows') !== 'off') plan.forEach((it) => { if (keptWin[it.id] && !it.strip) { wins.add(it); it.win = true;
+        const k = keptWin[it.id]; if (k.w > 0 && k.h > 0) { it.w = Math.min(W - 16, k.w); it.h = Math.min(H - 8, k.h); }
+        if (isFinite(k.fx) && isFinite(k.fy)) { it.x = Math.max(it.w / 2, Math.min(W - it.w / 2, k.fx * W)); it.y = Math.max(it.h / 2, Math.min(H - it.h / 2, k.fy * H)); } } });
+      if (wins.size) D.separate(withStrip(bySize(plan.filter((it) => !wins.has(it)))), R, sepSize, { W: W, H: H });
       if (this.getAttribute('desk-windows') !== 'off') {
         const actAt = this._actAt || {};
-        const mine = (it) => !it.strip && !!(it.sizing || it.own || (it.fixed && !it.isLock));
+        const mine = (it) => !it.strip && !wins.has(it) && !!(it.sizing || it.id === this._rzLetGo);
         const tOf = (it) => it.sizing ? Infinity : (actAt[it.id] || 0);
         const area = (a, b) => Math.max(0, Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2)) * Math.max(0, Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2));
         for (let round = 0; round < 4; round++) {
@@ -3969,8 +3982,8 @@
             const both = [a, b].filter(mine); if (!both.length) continue;
             pick.add(both.sort((p, q) => tOf(q) - tOf(p))[0]); }
           if (!pick.size) break;
-          pick.forEach((it) => { wins.add(it); it.win = true; });
-          start.forEach(([it, x, y, w, h, k]) => { it.x = x; it.y = y; it.w = w; it.h = h; it.keepSize = k; });
+          pick.forEach((it) => { wins.add(it); it.win = true; if (it.id === this._rzLetGo) this._winKeepSet(it.id, { w: Math.round(it.w), h: Math.round(it.h), fx: +(it.x / W).toFixed(4), fy: +(it.y / H).toFixed(4) }); });
+          start.forEach(([it, x, y, w, h, k]) => { if (keptWin[it.id]) return; it.x = x; it.y = y; it.w = w; it.h = h; it.keepSize = k; });
           D.separate(withStrip(bySize(plan.filter((it) => !wins.has(it)))), R, sepSize, { W: W, H: H });
         }
       } else {
@@ -4551,6 +4564,7 @@
             const ctl = [];
             if (xcode) ctl.push(hb('hdview', 'source', 'View: ' + XV[xv] + ' - choose another'));
             else if (vw.views.length > 1) ctl.push(hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')));
+            if (desk && this._winKeepGet()[key]) ctl.push(hb('dock', 'restore', 'Back to the desk: no longer a window - it is placed with the others again (Esc)', true));
             if (desk) ctl.push(hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked));
             if (!maxed && !bid) ctl.push(desk ? hb('pill', 'pill', 'Minimise it to a pill on the border - a click on the pill opens it again')
               : hb('fold', 'pill', ufold ? 'Open it again' : 'Fold it to this line - it stays folded until you open it', ufold));
@@ -4980,7 +4994,7 @@
         (this._actAt = this._actAt || {})[key] = Date.now();
         /* placed now, at the size let go: a change of size class is saved through the server, and waiting for its refresh
            left the desk as it was mid-drag (on the desk it is placed in any case) */
-        if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); try { this._placeNow(); } catch (e) { /* optional */ } }
+        if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); this._rzLetGo = key; try { this._placeNow(); } catch (e) { /* optional */ } finally { this._rzLetGo = null; } }
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage') && !this.deskAlign()) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.recQ == null) return;
@@ -4992,7 +5006,9 @@
       body.addEventListener('mousedown', (ev) => { if (!this.deskAlign()) return; const t = ev.target; const c = t && t.closest ? t.closest('.stage .it[data-key]') : null;
         if (c && c.classList.contains('desk-chip')) return; this._focusSet(c || null); }, true);   /* desktop focus (WSU-55) */
       if (!this._winBound) { this._winBound = true; this.addEventListener('vera:canvas:placed', () => { try { this._winRestore(); } catch (e) { /* optional */ } });
-        (this.ownerDocument || document).addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && this._focusKey && this._wins && this._wins.has(this._focusKey)) this._winClose(this._focusKey); }); }
+        (this.ownerDocument || document).addEventListener('keydown', (ev) => { if (ev.key !== 'Escape' || !this._focusKey) return;
+          if (this._winKeepGet()[this._focusKey]) { this._winDock(this._focusKey); return; }
+          if (this._wins && this._wins.has(this._focusKey)) this._winClose(this._focusKey); }); }
       body.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && this._editKey) { this._editKey = null; this._editFocused = false; if (this._doc) this.render(this._doc); } });
       /* THE ITEM BY KEYBOARD (DEEP-29 11A.4 Decision 4): an item takes focus (Tab); Enter opens it as a press on its head does,
          Esc restores a full one, F fills / restores, P makes it a pill (in the column: folds it), the arrows move between items;
@@ -5060,6 +5076,19 @@
        chat); the last clicked rises (desktop focus) and goes back to its stack place when it loses focus"). A pill the desk
        had no room for opens, on a click, as a window over the others and stays open; pressing a card brings it to the top,
        pressing another (or the desk) sends it back to its place in the stacking order. Esc, or its pill control, closes it. */
+    _winKeepGet() { if (this._winKeep) return this._winKeep; try { this._winKeep = JSON.parse(localStorage.getItem('vera:canvas:deskwin:' + this.canvasId) || '{}') || {}; } catch (e) { this._winKeep = {}; } return this._winKeep; }
+    _winKeepSet(key, at) { const m = this._winKeepGet(); if (at) m[key] = at; else delete m[key];
+      try { localStorage.setItem('vera:canvas:deskwin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ }
+      /* a window made by this pass gets its head's dock control: drawn again once the pass is done */
+      if (at && !this._winRedrawT) this._winRedrawT = setTimeout(() => { this._winRedrawT = 0; this._html = null; if (this._doc) this.render(this._doc); }, 0);
+      this._itemSet(key, at ? { face: 'window', place: { fx: at.fx, fy: at.fy, w: at.w, h: at.h, by: 'person' } } : { face: 'tile' }); }
+    /* BACK TO THE DESK: the window goes, and so does the size that made it one - the card is placed again like any other */
+    _winDock(key) {
+      key = String(key || ''); if (!this._winKeepGet()[key]) return false;
+      this._winKeepSet(key, null); delete this._pw[key]; delete this._px[key]; this._deskPosSet(key, null);
+      if (this._focusKey === key) this._focusSet(null);
+      this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return true;
+    }
     _winOpen(it) {
       if (!it || !this.deskAlign()) return; const key = it.dataset.key; (this._wins = this._wins || new Set()).add(key);
       this._pillCard(it); this._focusSet(it);
@@ -5348,6 +5377,8 @@
       if (!it && key) { const all = [...this.shadowRoot.querySelectorAll('.it[data-key]')]; it = all.find((x) => x.dataset.key === key)
         || all.find((x) => [...x.querySelectorAll('.fu-p[data-key]')].some((f) => f.dataset.key === key)) || null; }
       if (act === 'lock') return this.toggleLock(key);
+      if (act === 'dock') { this._winDock(key); return; }
+      if (act === 'pill' && this._winKeepGet()[key]) { this._winKeepSet(key, null); delete this._pw[key]; delete this._px[key]; this._deskPosSet(key, null); }
       if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }   /* WSU-55 */
       if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
