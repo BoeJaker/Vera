@@ -405,6 +405,69 @@
     return '<details class="j-node"' + (d < 2 ? ' open' : '') + '><summary>' + (arr ? '[' + keys.length + ']' : '{' + keys.length + '}') + '</summary>' + rows + '</details>';
   }
 
+  /* THE JSON LENS (DU-E-json, catalogue Q3: "a collapsible tree with a path breadcrumb, a validate badge and flatten to
+     table; each value's type as a small tag; any array of objects offers 'as table' inline"). Views (see VIEWS): tree ·
+     flat (path, type, value) · validate. Find marks what matches and opens its branches; a key pressed shows its path, to
+     copy. The reader's state (find, the selected path, the arrays shown as tables) is the element's, per item, never
+     written - like a records item's browsing. jsonTree above stays for the bodies that only need the plain tree. */
+  const jsonUi = (el, key) => { if (!el || !key) return { q: '', sel: '', tab: {} }; const m = el._jsonUi || (el._jsonUi = {}); return m[key] || (m[key] = { q: '', sel: '', tab: {} }); };
+  const jType = (v) => (v === null || v === undefined ? 'null' : Array.isArray(v) ? 'arr' : typeof v === 'object' ? 'obj' : typeof v === 'string' ? 'str' : typeof v === 'boolean' ? 'bool' : 'num');
+  const jPath = (base, k) => (typeof k === 'number' ? base + '[' + k + ']' : /^[A-Za-z_$][\w$]*$/.test(k) ? (base ? base + '.' + k : k) : base + '[' + JSON.stringify(k) + ']');
+  /* every leaf and branch as {path, type, value, n} - the flat view, and what find searches (bounded: 5000 nodes) */
+  function jsonFlat(v, cap) {
+    const out = []; cap = cap || 5000;
+    (function walk(x, p, d) { if (out.length >= cap) return; const t = jType(x);
+      if (t === 'arr' || t === 'obj') { const ks = t === 'arr' ? x.map((_, i) => i) : Object.keys(x); out.push({ path: p || '$', type: t, n: ks.length, value: '' }); if (d > 12) return; ks.forEach((k) => walk(x[k], jPath(p, k), d + 1)); }
+      else out.push({ path: p || '$', type: t, value: t === 'str' ? x : String(x) }); })(v, '', 0);
+    return out;
+  }
+  /* an array of objects that reads as rows: at least two, mostly objects, a few shared keys */
+  const jRows = (v) => { if (!Array.isArray(v) || v.length < 2) return null; const objs = v.filter((x) => x && typeof x === 'object' && !Array.isArray(x)); if (objs.length < v.length * 0.8) return null;
+    const cnt = {}; objs.slice(0, 50).forEach((o) => Object.keys(o).forEach((k) => { cnt[k] = (cnt[k] || 0) + 1; })); const cols = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a]).slice(0, 8);
+    return cols.length ? { cols, rows: objs } : null; };
+  const jCell = (x) => { const t = jType(x); if (t === 'obj' || t === 'arr') return '<i class="vc-jt">' + t + '·' + (t === 'arr' ? x.length : Object.keys(x).length) + '</i>'; const s = String(x == null ? 'null' : x); return esc(s.length > 80 ? s.slice(0, 80) + '…' : s); };
+  function jsonLens(c, size, key, el) {
+    const data = c && c.data !== undefined ? c.data : c; const ui = jsonUi(el, key); const q = String(ui.q || '').trim().toLowerCase();
+    const flat = jsonFlat(data); const hit = (n) => !!q && (n.path.toLowerCase().split(/[.[\]"]/).some((s) => s && s.indexOf(q) >= 0) || (n.type !== 'arr' && n.type !== 'obj' && String(n.value).toLowerCase().indexOf(q) >= 0));
+    const hits = q ? flat.filter(hit) : []; const hitPaths = new Set(hits.map((n) => n.path));
+    const openPaths = new Set(); hits.forEach((n) => { let p = n.path; while (p) { openPaths.add(p); const i = Math.max(p.lastIndexOf('.'), p.lastIndexOf('[')); p = i > 0 ? p.slice(0, i) : ''; } });
+    const view = viewOf(el, key, 'tree');
+    const bar = '<div class="vc-jbar"><input class="vc-jq" data-json-q="' + esc(key || '') + '" placeholder="find a key or a value" value="' + esc(ui.q || '') + '" spellcheck="false">'
+      + (q ? '<span class="vc-jn">' + hits.length + (hits.length === 1 ? ' match' : ' matches') + '</span>' : '<span class="vc-jn">' + flat.length + ' nodes</span>') + '</div>'
+      + (ui.sel ? '<div class="vc-jpath"><code>' + esc(ui.sel) + '</code><button class="ib" data-act="jcopy" title="Copy this path">copy path</button></div>' : '');
+    const mark = (s) => { const str = String(s); if (!q) return esc(str); const i = str.toLowerCase().indexOf(q); return i < 0 ? esc(str) : esc(str.slice(0, i)) + '<mark>' + esc(str.slice(i, i + q.length)) + '</mark>' + esc(str.slice(i + q.length)); };
+    let body = '';
+    if (view === 'validate') {
+      const raw = typeof c.text === 'string' ? c.text : (typeof data === 'string' ? data : null); let ok = true, msg = '';
+      if (raw != null) { try { JSON.parse(raw); } catch (e) { ok = false; msg = String(e && e.message || e); } }
+      let depth = 0; flat.forEach((n) => { const d = (n.path.match(/[.[]/g) || []).length; if (d > depth) depth = d; });
+      const bytes = (() => { try { return JSON.stringify(data).length; } catch (e) { return 0; } })();
+      body = '<div class="vc-jval ' + (ok ? 'ok' : 'bad') + '"><b>' + (raw == null ? 'parsed answer' : ok ? 'valid JSON' : 'not valid JSON') + '</b>' + (msg ? '<span>' + esc(msg) + '</span>' : '')
+        + '<span>' + flat.filter((n) => n.type !== 'arr' && n.type !== 'obj').length + ' values · depth ' + depth + ' · ' + (bytes > 1024 ? (bytes / 1024).toFixed(1) + ' KB' : bytes + ' B') + '</span></div>';
+    } else if (view === 'flat') {
+      const rows = (q ? flat.filter((n) => hitPaths.has(n.path)) : flat).slice(0, 500);
+      body = '<table class="vc-jflat"><thead><tr><th>path</th><th>type</th><th>value</th></tr></thead><tbody>' + rows.map((n) => '<tr><td><button class="vc-jk" data-act="jsel" data-jp="' + esc(n.path) + '">' + mark(n.path) + '</button></td><td><i class="vc-jt">' + n.type + (n.n != null ? '·' + n.n : '') + '</i></td><td>' + (n.type === 'arr' || n.type === 'obj' ? '' : mark(n.value.length > 160 ? n.value.slice(0, 160) + '…' : n.value)) + '</td></tr>').join('') + '</tbody></table>'
+        + (flat.length > 500 && !q ? '<div class="j-more">… ' + (flat.length - 500) + ' more - find narrows them</div>' : '');
+    } else {
+      const node = (v, p, k, d) => { const t = jType(v), here = p || '$';
+        const label = k == null ? '' : '<button class="vc-jk' + (ui.sel === here ? ' on' : '') + (hitPaths.has(here) ? ' hit' : '') + '" data-act="jsel" data-jp="' + esc(here) + '">' + mark(k) + '</button>';
+        if (t !== 'arr' && t !== 'obj') { let s = t === 'str' ? v : String(v); const long = t === 'str' && s.length > 200;
+          return '<div class="j-row">' + label + '<i class="vc-jt">' + t + '</i>' + (t === 'str' ? '<span class="j-str' + (hitPaths.has(here) ? ' hit' : '') + '"' + (long ? ' title="' + esc(s.slice(0, 2000)) + '"' : '') + '>"' + mark(long ? s.slice(0, 200) : s) + (long ? '… (' + s.length + ' chars)' : '') + '"</span>' : '<span class="' + (t === 'null' ? 'j-null' : 'j-num') + '">' + mark(s) + '</span>') + '</div>'; }
+        const ks = t === 'arr' ? v.map((_, i) => i) : Object.keys(v); const R = t === 'arr' ? jRows(v) : null; const asTab = !!(R && ui.tab[here]);
+        const open = d < 2 || openPaths.has(here) || (ui.sel && (ui.sel === here || ui.sel.indexOf(here + '.') === 0 || ui.sel.indexOf(here + '[') === 0));
+        const head = label + '<i class="vc-jt">' + t + '·' + ks.length + '</i>' + (R ? '<button class="ib vc-jtab' + (asTab ? ' on' : '') + '" data-act="jtab" data-jp="' + esc(here) + '" title="' + (asTab ? 'Back to the tree' : 'These rows as a table') + '">' + (asTab ? 'as tree' : 'as table') + '</button>' : '');
+        if (!ks.length) return '<div class="j-row">' + head + '<span class="j-null">' + (t === 'arr' ? '[]' : '{}') + '</span></div>';
+        if (asTab) return '<div class="j-row j-tabrow">' + head + '<table class="vc-jtable"><thead><tr><th>#</th>' + R.cols.map((col) => '<th>' + esc(col) + '</th>').join('') + '</tr></thead><tbody>'
+          + R.rows.slice(0, 100).map((o, i) => '<tr><td>' + i + '</td>' + R.cols.map((col) => '<td>' + jCell(o[col]) + '</td>').join('') + '</tr>').join('') + '</tbody></table>' + (R.rows.length > 100 ? '<div class="j-more">… ' + (R.rows.length - 100) + ' more rows</div>' : '') + '</div>';
+        if (d > 12) return '<div class="j-row">' + head + '<span class="j-more">…</span></div>';
+        const shown = ks.slice(0, 200);
+        return '<details class="j-node"' + (open ? ' open' : '') + '><summary>' + head + '</summary>' + shown.map((kk) => node(v[kk], jPath(p, kk), kk, d + 1)).join('')
+          + (ks.length > shown.length ? '<div class="j-more">… ' + (ks.length - shown.length) + ' more</div>' : '') + '</details>'; };
+      body = node(data, '', null, 0);
+    }
+    return '<div class="vc-json vc-jlens" data-w="canvas.json" data-jview="' + esc(view) + '">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '') + bar + '<div class="vc-jbody">' + body + '</div></div>';
+  }
+
   /* a records item's browser state (page, filter, sort, view, facet, what is open, what was fetched): the element's,
      per item key, never written to the canvas - paging is not an edit. A renderer called with no element (a
      result drawn inside another) keeps it here instead. */
@@ -1133,10 +1196,7 @@
     },
     /* ── elements for what a capability answers with (canvas.run, and the chat's adapter) ────────────────────── */
     // a nested answer as a tree you can open and close, rather than a wall of braces in a code fence
-    json: (c) => {
-      const data = c && c.data !== undefined ? c.data : c;
-      return '<div class="vc-json" data-w="canvas.json">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '') + jsonTree(data, 0) + '</div>';
-    },
+    json: (c, size, key, el) => jsonLens(c || {}, size, key, el),   /* the JSON lens (DU-E-json) */
     // a record: its fields, name beside value
     kv: (c, size, key, el) => {
       const f = (c && (c.fields || c.data)) || {};
@@ -2334,6 +2394,19 @@
   .vc-json details{margin-left:2px}.vc-json summary{cursor:pointer;color:var(--dim,#6b7480);list-style:none}.vc-json summary::before{content:'\u25b8 ';font-size:9px}.vc-json details[open] > summary::before{content:'\u25be '}
   .vc-json .j-row{display:flex;gap:6px;padding-left:12px;min-width:0}.vc-json .j-k{color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-json .j-k::after{content:':'}
   .vc-json .j-str{color:var(--acc2,#8fb87a);word-break:break-word}.vc-json .j-num{color:var(--acc3,#c9955a)}.vc-json .j-null,.vc-json .j-more{color:var(--dim,#6b7480)}
+  /* the JSON lens (DU-E-json) */
+  .vc-jlens{display:flex;flex-direction:column;min-height:0}.vc-jlens .vc-jbody{min-height:0;overflow:auto}
+  .vc-jbar{display:flex;align-items:center;gap:6px;margin:0 0 4px}.vc-jq{flex:1 1 auto;min-width:60px;font:11px system-ui,sans-serif;padding:2px 6px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit}
+  .vc-jn{font:10px system-ui,sans-serif;color:var(--dim,#6b7480);white-space:nowrap}
+  .vc-jpath{display:flex;align-items:center;gap:6px;margin:0 0 4px;font-size:10.5px}.vc-jpath code{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--acc4,#7aa2d6)}
+  .vc-jk{all:unset;cursor:pointer;color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-jk::after{content:':'}.vc-jk:hover,.vc-jk.on{text-decoration:underline}.vc-jk.on{font-weight:600}
+  .vc-jt{font:9px system-ui,sans-serif;font-style:normal;color:var(--dim,#6b7480);border:1px solid var(--line,#2a2f36);border-radius:3px;padding:0 3px;flex:0 0 auto;align-self:center}
+  .vc-jlens mark{background:color-mix(in srgb,var(--acc3,#c9955a) 40%,transparent);color:inherit;border-radius:2px}
+  .vc-jtab{font-size:9.5px;padding:0 5px}.vc-jtab.on{color:var(--acc,#5a9e8f)}
+  .vc-jlens .j-tabrow{flex-wrap:wrap}.vc-jtable,.vc-jflat{border-collapse:collapse;font-size:10.5px;width:100%;margin:2px 0}
+  .vc-jtable th,.vc-jtable td,.vc-jflat th,.vc-jflat td{border-bottom:1px solid var(--line,#2a2f36);padding:1px 5px;text-align:left;vertical-align:top;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+  .vc-jtable th,.vc-jflat th{position:sticky;top:0;background:var(--s1,var(--bg1,#15181d));font-weight:600}
+  .vc-jval{display:flex;flex-direction:column;gap:3px;padding:6px 8px;border-radius:6px;border:1px solid var(--line,#2a2f36)}.vc-jval.ok b{color:var(--ok,#8fb87a)}.vc-jval.bad b{color:var(--err,#c96b6b)}.vc-jval span{color:var(--dim,#6b7480)}
   .vc-kv .kv-r{display:grid;grid-template-columns:minmax(80px,38%) 1fr;gap:8px;padding:2px 0;border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 50%,transparent)}
   /* fields read in words: the names in the UI face, the values in the mono face; wide, as tiles (the value large) */
   .vc-kv{container:vckv / inline-size}
@@ -3098,7 +3171,7 @@
      A kind that can be seen more than one way says how: records (graph · list · cards · table), a table (table · cards ·
      list · chart when a column is numbers), the names a reply mentions (chips · list). The choice is the reader's, per
      item, kept in this browser; a records item's lives with its other browsing state. */
-  const VIEW_LABEL = { drawn: 'Its own view', list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips', fields: 'Fields' };
+  const VIEW_LABEL = { drawn: 'Its own view', list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips', fields: 'Fields', tree: 'Tree', flat: 'Flat (path, type, value)', validate: 'Validate' };
   const viewStore = (el) => { if (el._views) return el._views; try { el._views = JSON.parse(localStorage.getItem('vera:canvas:views:' + el.canvasId) || '{}') || {}; } catch (e) { el._views = {}; } return el._views; };
   const viewOf = (el, key, dflt) => (el && key && viewStore(el)[key]) || dflt;
   const viewSet = (el, key, v) => { const m = viewStore(el); m[key] = v; try { localStorage.setItem('vera:canvas:views:' + el.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } if (el._itemSet) el._itemSet(key, { view: v }); };
@@ -3115,6 +3188,7 @@
     if (b.type === 'records') { const v = (recCanGraph(c, el, key) ? ['graph'] : []).concat(['list', 'cards', 'table']); return { views: v, cur: recState(el, key).view || 'list' }; }
     if (b.type === 'table' && Array.isArray(c.rows) && c.rows.length) { const v = ['table', 'cards', 'list'].concat(numCol(c) > 0 ? ['chart'] : [], tableCats(c).length ? ['graph'] : []); return { views: v, cur: viewOf(el, key, tableDefault(c, el)) }; }
     if (b.type === 'entities' && Array.isArray(c.groups) && c.groups.length) return { views: ['chips', 'list', 'graph'], cur: viewOf(el, key, 'chips') };
+    if (b.type === 'json') return { views: ['tree', 'flat', 'validate'], cur: viewOf(el, key, 'tree') };   /* the JSON lens (DU-E-json) */
     if (b.type === 'kv') { const f = c.fields || c.data || {}; const n = Array.isArray(f) ? f.length : Object.keys(f).length; if (n >= 3) return { views: ['fields', 'graph'], cur: viewOf(el, key, 'fields') }; }
     return { views: [], cur: '' }; };
   /* DEEP DIVES AS WIDGETS (WSU-42 / DA-09; owner: "deep dives ... shown through widgets"; the spine: "no stats in front -
@@ -5202,6 +5276,13 @@
         if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); this._rzLetGo = key; try { this._placeNow(); } catch (e) { /* optional */ } finally { this._rzLetGo = null; } }
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage') && !this.deskAlign()) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.jsonQ == null) return;   /* the JSON lens's find (DU-E-json) */
+        const key = q.dataset.jsonQ; jsonUi(this, key).q = String(q.value || ''); clearTimeout(this._jsonQT);
+        this._jsonQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
+          /* the box is drawn again: focus goes back to the new one - now, on the next frame and once more, since the desk's
+             own pass can draw the card again after this one (the harness saw the focus lost) */
+          const back = () => { const nq = body.querySelector('[data-json-q="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]'); if (nq && this.shadowRoot.activeElement !== nq) { nq.focus(); try { nq.setSelectionRange(pos, pos); } catch (_) {} } };
+          back(); requestAnimationFrame(back); setTimeout(back, 120); }, 200); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.recQ == null) return;
         const key = q.dataset.recQ, st = recState(this, key); st.q = String(q.value || ''); st.page = 0; clearTimeout(this._recQT);
         this._recQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
@@ -5680,6 +5761,11 @@
         else this._sepSet(key, act === 'cmpsep');
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
+      /* the JSON lens (DU-E-json): a key pressed shows its path; copy it; an array of objects as a table and back */
+      if (act === 'jsel' || act === 'jtab' || act === 'jcopy') { const ui = jsonUi(this, key);
+        if (act === 'jcopy') { const p = ui.sel || ''; try { navigator.clipboard.writeText(p); } catch (e) { /* no clipboard */ } btn.textContent = 'copied'; setTimeout(() => { btn.textContent = 'copy path'; }, 1200); return; }
+        const jp = btn.dataset.jp || ''; if (act === 'jsel') ui.sel = ui.sel === jp ? '' : jp; else ui.tab[jp] = !ui.tab[jp];
+        if (this._doc) this.render(this._doc); return; }
       if (act === 'xview') { (this._xpView = this._xpView || {})[key] = btn.dataset.view || 'both'; if (this._doc) this.render(this._doc); return; }   /* WSU-54 */
       if (act === 'hdview') return this._viewMenu(key, btn);
       /* a body drawn by the shared kit (code, a diagram, a file): its own action, run by the kit on its card (VeraOut.actOn) */
