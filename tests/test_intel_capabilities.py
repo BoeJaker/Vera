@@ -146,7 +146,7 @@ def _load(tmp_path, *, nlp=True):
         orch.CALLS.append(("n8n.workflow.create", {"name": name, "activate": activate}))
         return {"id": "d1"}
 
-    async def fabric_browse(dataset_id, limit=200, offset=0, trace_id=None):
+    async def fabric_browse(dataset_id, limit=200, offset=0, lite=False, trace_id=None):
         data = {
             "vera.interests": [{"topic": "UK commercial real estate market", "active": True, "note": "sector", "created": "1"}],
             "vera.monitors": [{"topic": "UK commercial real estate market", "active": True, "created": "2"},
@@ -160,7 +160,9 @@ def _load(tmp_path, *, nlp=True):
             "intel.notes": [{"path": "/n/plan.md", "norm": "Plan: buy a GPU for the lab", "summary": "old", "updated": "1"}],
             "files.seen": [{"path": "/p/todo.txt", "hash": "1a6f417ab11736", "at": "1"}],   # n8n cyrb53 of "print me"
         }.get(dataset_id, [])
-        return {"records": [{"data": d} for d in data], "has_more": False}
+        page = data[offset:offset + limit]
+        return {"records": [{"id": d.get("_id", "fabric-row"), "data": d} for d in page],
+                "total": len(data), "has_more": offset + limit < len(data)}
 
     async def markets_lookup(query="", exchange="binance", limit=12, trace_id=None):
         orch.CALLS.append(("markets.lookup", {"query": query}))
@@ -241,7 +243,7 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
                  "intel.action.run", "intel.brief", "intel.ingest_dream", "intel.import.n8n", "intel.n8n.retire",
                  "intel.panel.html", "intel.summary", "intel.entities.get", "intel.asof.get", "intel.command",
                  "intel.save", "intel.files.run", "intel.advise", "intel.session.status", "intel.notes.list",
-                 "intel.models", "intel.effects"):
+                 "intel.models", "intel.effects", "intel.records"):
         assert name in orch.CAPABILITY_REGISTRY, name
     assert orch.UI and orch.UI[0][0][0] == "intel" and "<iframe" in orch.UI[0][1]["html"]
     fn, interval, kw = orch.SCHEDULED[0]
@@ -314,6 +316,76 @@ def test_effect_inventory_reads_only_intel_attributed_provider_evidence(tmp_path
     assert seen == [("telegram", "intel", 50), ("email", "intel", 50)]
     assert result["readiness"]["intel_attributable"] is True
     assert result["readiness"]["attributed_observations"] == 3
+
+
+def test_record_reconciliation_matches_only_real_fabric_and_delivery_evidence(tmp_path):
+    mod, orch = _load(tmp_path)
+    mod.store().put_signal({"id": "sig-1", "topic_id": "topic-1", "seen": "2026-10-16T00:00:00Z"})
+    mod.store().put_signal({"id": "sig-2", "topic_id": "topic-1", "seen": "2026-10-16T00:01:00Z"})
+    mod.store().put_report({"id": "report-1", "ts": "2026-10-16T01:00:00Z",
+                            "title": "Brief", "topic_ids": ["topic-1"]}, "<p>Brief</p>")
+    mod.store().put_report({"id": "report-local-only", "ts": "2026-10-16T01:01:00Z",
+                            "title": "Local", "topic_ids": ["topic-1"]}, "<p>Local</p>")
+    mod.store().log_delivery("report-1", "fabric", "2026-10-16T01:02:00Z", True,
+                             {"channel": "fabric", "ok": True})
+    mod.store().log_delivery("report-1", "memory", "2026-10-16T01:03:00Z", True,
+                             {"channel": "memory", "ok": True})
+    # A long unrelated tail must not hide evidence for a selected report.
+    for index in range(120):
+        mod.store().log_delivery("other", "html", f"2026-10-16T02:{index % 60:02d}:00Z", True,
+                                 {"channel": "html", "ok": True})
+
+    async def browse(dataset_id="", limit=200, offset=0, lite=False):
+        rows = {
+            "intel.signals": [
+                {"id": "intel-sig-sig-1", "data": {"id": "sig-1"}},
+                {"id": "intel-sig-orphan", "data": {"id": "orphan"}},
+            ],
+            "intel.reports": [
+                {"id": "random-fabric-id", "data": {"id": "report-1"}},
+            ],
+        }[dataset_id]
+        page = rows[offset:offset + limit]
+        return {"records": page, "total": len(rows),
+                "has_more": offset + limit < len(rows)}
+
+    orch.CAPABILITY_REGISTRY["fabric.browse"] = {"func": browse, "raw": browse}
+    result = _R(orch, "intel.records", limit=20)
+    assert result["schema"] == "vera.intel-record-reconciliation/v1"
+    assert result["native_authority"] == "intel.sqlite"
+    assert result["read_only"] and not result["executes"] and not result["writes"]
+    assert result["reconciliation"]["signals"]["status"] == "gaps"
+    assert result["reconciliation"]["signals"]["missing_ids"] == ["sig-2"]
+    assert result["reconciliation"]["signals"]["unexpected_ids"] == ["orphan"]
+    reports = result["reconciliation"]["reports"]
+    assert reports["status"] == "matched"
+    assert reports["expected_shared"] == 1
+    assert reports["fabric_delivery_successes_sampled"] == 1
+    assert reports["memory"] == {
+        "delivery_successes_sampled": 1,
+        "projection_receipts": 0,
+        "status": "delivery_evidence_only",
+        "reason": "native_delivery_log_retains_no_projection_identity",
+    }
+    families = {row["id"]: row for row in result["families"]}
+    assert families["reports"]["portable_record"]["status"] == "not_revision_backed"
+    assert families["decisions_outcomes"]["shared_contract"] == "four_minds.decision_outcome"
+
+
+def test_record_reconciliation_reports_fabric_failure_without_fabricating_missing_rows(tmp_path):
+    mod, orch = _load(tmp_path)
+    mod.store().put_signal({"id": "sig-1", "topic_id": "topic-1", "seen": "2026-10-16T00:00:00Z"})
+
+    async def unavailable(**_kw):
+        raise RuntimeError("fabric unavailable")
+
+    orch.CAPABILITY_REGISTRY["fabric.browse"] = {"func": unavailable, "raw": unavailable}
+    result = _R(orch, "intel.records", limit=20)
+    signals = result["reconciliation"]["signals"]
+    assert signals["status"] == "shared_source_unavailable"
+    assert signals["missing"] == 0
+    assert signals["coverage_complete"] is False
+    assert "fabric unavailable" in signals["error"]
 
 
 def test_the_whole_cycle(tmp_path):

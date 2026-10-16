@@ -77,6 +77,7 @@ try:
     from Vera.vera.intel import intel_model_inventory as intel_models
     from Vera.vera.intel import intel_effect_inventory as intel_effects
     from Vera.vera.intel import intel_repo_effects
+    from Vera.vera.intel import intel_record_reconciliation as intel_records
     from Vera.vera.integrations import effect_observation_context as effect_context
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
@@ -97,6 +98,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_model_inventory as intel_models
     from vera.intel import intel_effect_inventory as intel_effects
     from vera.intel import intel_repo_effects
+    from vera.intel import intel_record_reconciliation as intel_records
     from vera.integrations import effect_observation_context as effect_context
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
@@ -2938,6 +2940,108 @@ async def cap_effects(trace_id=None):
     return intel_effects.project(core.CHANNELS, core.ACTIONS,
                                  available_caps=tuple(CAPABILITY_REGISTRY),
                                  attributed_evidence=evidence)
+
+
+async def _intel_fabric_records(dataset_id: str, limit: int) -> Dict[str, Any]:
+    """Read a bounded Fabric window without treating a partial page as complete."""
+    rows: List[Dict[str, Any]] = []
+    total = -1
+    error = ""
+    while len(rows) < limit:
+        page_limit = min(200, limit - len(rows))
+        result = await _call("fabric.browse", dataset_id=dataset_id,
+                             limit=page_limit, offset=len(rows), lite=False)
+        if result.get("error"):
+            error = str(result.get("error") or "unavailable")
+            break
+        page = [row for row in (result.get("records") or []) if isinstance(row, dict)]
+        rows.extend(page)
+        if int(result.get("total", -1)) >= 0:
+            total = int(result["total"])
+        if not result.get("has_more") or not page:
+            break
+    if total < 0:
+        total = len(rows)
+    return {"records": rows, "total": total,
+            "complete": not error and total <= len(rows), "error": error}
+
+
+@capability("intel.records", http_method="GET", http_path="/intel/records",
+            http_tags=["intel", "fabric", "memory"], memory="off", silent=True,
+            description="Read-only reconciliation of Intelligence record families with actual Fabric and Memory "
+                        "delivery evidence. Reports native authority, bounded identity matches and explicit gaps; "
+                        "never creates revisions or projections, calls a model/provider, or changes routing.")
+async def cap_records(limit: int = 200, trace_id=None):
+    limit = max(1, min(500, int(limit)))
+    st = store()
+
+    signals = st.signals(limit=limit)
+    signal_total = st.count_signals()
+    signal_shared = await _intel_fabric_records(intel_records.SIGNAL_DATASET, limit)
+    if signal_shared["error"]:
+        signal_recon = intel_records.unavailable_reconciliation(
+            family="signals", local_total=signal_total,
+            local_sampled=len(signals), error=signal_shared["error"])
+    else:
+        signal_recon = intel_records.reconcile_ids(
+            family="signals", local_ids=(row.get("id") for row in signals),
+            shared_records=signal_shared["records"], local_total=signal_total,
+            shared_total=signal_shared["total"], local_complete=signal_total <= len(signals),
+            shared_complete=signal_shared["complete"])
+    signal_recon["dataset_id"] = intel_records.SIGNAL_DATASET
+
+    reports = st.reports(limit=limit)
+    report_total = st.count_reports()
+    report_complete = report_total <= len(reports)
+    report_ids = {str(row.get("id") or "") for row in reports}
+    delivered_channels = st.successful_delivery_channels(report_ids)
+    fabric_delivered = {
+        report_id for report_id, channels in delivered_channels.items()
+        if "fabric" in channels
+    }
+    memory_delivered = {
+        report_id for report_id, channels in delivered_channels.items()
+        if "memory" in channels
+    }
+    report_shared = await _intel_fabric_records(intel_records.REPORT_DATASET, limit)
+    if report_shared["error"]:
+        report_recon = intel_records.unavailable_reconciliation(
+            family="reports", local_total=report_total,
+            local_sampled=len(reports), error=report_shared["error"])
+    else:
+        report_recon = intel_records.reconcile_ids(
+            family="reports", local_ids=report_ids,
+            expected_shared_ids=fabric_delivered,
+            shared_records=report_shared["records"], local_total=report_total,
+            shared_total=report_shared["total"], local_complete=report_complete,
+            shared_complete=report_shared["complete"])
+    report_recon.update({
+        "dataset_id": intel_records.REPORT_DATASET,
+        "fabric_delivery_successes_sampled": len(fabric_delivered),
+        "memory": {
+            "delivery_successes_sampled": len(memory_delivered),
+            "projection_receipts": 0,
+            "status": "delivery_evidence_only" if memory_delivered else "no_successful_delivery_in_window",
+            "reason": "native_delivery_log_retains_no_projection_identity",
+        },
+    })
+
+    families = intel_records.family_contracts()
+    native_samples = {
+        "topics": len(st.topics()),
+        "snapshots": len(st.snapshots(limit=limit)),
+        "decisions_outcomes": len(st.decisions(limit=limit)),
+        "actions_deliveries": len(st.actions(limit=limit)) + len(st.deliveries(limit=limit)),
+        "configuration": 1 if st.get_kv("config") is not None else 0,
+    }
+    for family in families:
+        family["native_sampled"] = (len(signals) if family["id"] == "signals"
+                                     else len(reports) if family["id"] == "reports"
+                                     else native_samples.get(family["id"], 0))
+    return intel_records.result_envelope(
+        families=families,
+        reconciliation={"signals": signal_recon, "reports": report_recon},
+        limit=limit)
 
 
 # ── actions: what a report's buttons do ──────────────────────────────────────
