@@ -67,7 +67,8 @@ def _row(*, boundary_id: str, kind: str, capability: str, classification: str,
 
 
 def project(channels: Mapping[str, Mapping[str, Any]], actions: Mapping[str, Mapping[str, Any]],
-            *, available_caps: Sequence[str] = ()) -> dict[str, Any]:
+            *, available_caps: Sequence[str] = (),
+            attributed_evidence: Mapping[str, Mapping[str, Any]] | None = None) -> dict[str, Any]:
     """Describe current Intel boundaries and coverage without probing providers."""
     available = set(available_caps)
     rows = []
@@ -95,14 +96,29 @@ def project(channels: Mapping[str, Mapping[str, Any]], actions: Mapping[str, Map
                          observation=spec["observation"],
                          evidence_family=spec.get("evidence_family", ""),
                          available=any(cap in available for cap in caps)))
+    evidence = {str(family): dict(summary) for family, summary in
+                (attributed_evidence or {}).items()}
+    available_evidence = {family: summary for family, summary in evidence.items()
+                          if not summary.get("error")}
+    for row in rows:
+        family = row.get("evidence_family") or ""
+        if row.get("observation") == "downstream_shadow" and family in available_evidence:
+            row["gaps"] = [gap for gap in row["gaps"] if gap != "intel_attribution_missing"]
+            if not int((available_evidence[family].get("totals") or {}).get("observations") or 0):
+                row["gaps"].append("provider_family_has_no_intel_observations")
     gaps = sorted({gap for row in rows for gap in row["gaps"]})
+    attributed = sum(int((summary.get("totals") or {}).get("observations") or 0)
+                     for summary in available_evidence.values())
     return {"schema": SCHEMA, "boundaries": rows,
             "counts": {"total": len(rows), "external": sum(row["external"] for row in rows),
                        "downstream_shadow": sum(row["observation"] == "downstream_shadow" for row in rows),
                        "unobserved": sum(row["observation"] == "unobserved" for row in rows)},
             "gaps": gaps,
-            "readiness": {"intel_attributable": False,
-                          "reason": "provider_family_evidence_has_no_intel_source_dimension",
+            "evidence": evidence,
+            "readiness": {"intel_attributable": bool(available_evidence),
+                          "attributed_observations": attributed,
+                          "reason": ("source_filtered_provider_evidence_available" if available_evidence else
+                                     "provider_family_evidence_has_no_intel_source_dimension"),
                           "enforcement_enabled": False},
             "claims": {"executes": False, "probes": False, "records_evidence": False,
                        "changes_enforcement": False, "retains_payload": False}}
