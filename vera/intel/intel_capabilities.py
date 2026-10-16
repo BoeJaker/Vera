@@ -76,6 +76,7 @@ try:
     from Vera.vera.intel import intel_run_projection as intel_run
     from Vera.vera.intel import intel_model_inventory as intel_models
     from Vera.vera.intel import intel_effect_inventory as intel_effects
+    from Vera.vera.intel import intel_repo_effects
     from Vera.vera.integrations import effect_observation_context as effect_context
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
@@ -95,6 +96,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_run_projection as intel_run
     from vera.intel import intel_model_inventory as intel_models
     from vera.intel import intel_effect_inventory as intel_effects
+    from vera.intel import intel_repo_effects
     from vera.integrations import effect_observation_context as effect_context
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
@@ -3015,10 +3017,15 @@ _REPO_ROOT_ENV = "VERA_INTEL_REPO_DIR"
 
 
 @capability("intel.repo.get", http_method="POST", http_path="/intel/repo/get", http_tags=["intel"],
+            redact_args=["url", "topic_id", "idempotency_key", "approval_receipt_ref"],
+            redact_result=True,
             description="Fetch a code repository a report found: a shallow clone (no submodules, no hooks run) into "
                         "the intel repo area, then its README as a digest. Input: url (github/gitlab/codeberg/"
-                        "bitbucket repo page or .git url), topic_id. Output: {ok, path, readme, files}.")
-async def cap_repo_get(url: str = "", topic_id: str = "", trace_id=None):
+                        "bitbucket repo page or .git url), topic_id and optional observe-only effect controls. "
+                        "Output: {ok, path, readme, files}.")
+async def cap_repo_get(url: str = "", topic_id: str = "", idempotency_key: str = "",
+                       approval_receipt_ref: str = "", retry: bool = False,
+                       trace_id=None):
     r = core.repo_of(url)
     if not r:
         return {"error": "not a recognised repository url"}
@@ -3038,6 +3045,11 @@ async def cap_repo_get(url: str = "", topic_id: str = "", trace_id=None):
         cmds = [["git", "-C", str(dest), "fetch", "--depth", "1", "origin", "HEAD"],
                 ["git", "-C", str(dest), "reset", "--hard", "FETCH_HEAD"]]
     for cmd in cmds:
+        operation = "clone" if cmd[1] == "clone" else cmd[3]
+        intel_repo_effects.observe_repository_effect(
+            operation=operation, repository_ref=r["clone"], provider=r["host"],
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         try:
             p = await asyncio.create_subprocess_exec(*cmd, env=env, stdout=asyncio.subprocess.PIPE,
                                                      stderr=asyncio.subprocess.PIPE)
