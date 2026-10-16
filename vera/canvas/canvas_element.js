@@ -962,8 +962,11 @@
       const head = state === 'done' ? 'Research complete' : state === 'error' ? 'Research failed' : (c.writing ? 'Writing the report' : 'Researching');
       const VO = root.VeraOut; const draw = (s) => (VO && typeof VO.render === 'function' ? VO.render(s, { canvas: false }) : mdx(s));
       const chip = (k, v) => `<span class="vc-rr-chip"><i>${esc(k)}</i>${esc(v)}</span>`;
+      /* the run's outline - its plan written as prose, kept by the chat (WSU-77) - formatted, under the method's chips */
+      const outline = String(c.outline || '').trim();
+      const outlineHtml = outline ? `<h5>Outline</h5><div class="vc-rr-doc vc-rr-outline">${draw(outline)}</div>` : '';
       const methodHtml = () => {
-        if (!plan) return `<div class="vc-rr-wait">${state === 'running' ? 'planning the research…' : 'The run gave no method.'}</div>`;
+        if (!plan) return outlineHtml || `<div class="vc-rr-wait">${state === 'running' ? 'planning the research…' : 'The run gave no method.'}</div>`;
         const qs = plan.sub_questions || plan.key_questions || [];
         let h = '<div class="vc-rr-chips">';
         if (plan.depth) h += chip('depth', plan.depth);
@@ -976,7 +979,7 @@
         if (qs.length) h += `<h5>Questions it answers</h5><ol class="vc-rr-qs">${qs.slice(0, 16).map((q) => `<li>${esc(q)}</li>`).join('')}</ol>`;
         if (plan.writer_instructions) h += `<h5>Writing brief</h5><div class="vc-rr-brief">${esc(plan.writer_instructions)}</div>`;
         if ((plan.table_topics || []).length) h += `<h5>Tables</h5><div class="vc-rr-brief">${plan.table_topics.map(esc).join(' · ')}</div>`;
-        return h;
+        return h + outlineHtml;
       };
       const reportHtml = () => report ? `<div class="vc-rr-doc">${draw(report)}</div>`
         /* streamed formatted, as the chat draws it (owner, 2026-10-11: "the research streams in to the canvas / desk element

@@ -7637,9 +7637,16 @@ IMPORTANT:
       if(c){ rec.cited=true; rec.meta.cited='cited in the report'; }
       return rec; }).sort((a,b)=>(b.cited?1:0)-(a.cited?1:0));
     const status=r.err?'error':s.status;
+    /* THE OUTLINE GOES BESIDE THE REPORT (owner, 2026-10-15, WSU-77: "the first part of llm output is the plan for the
+       research, the outline - it streams in to the main panel but never reaches the formatted right hand panel"). What
+       streams before the run starts writing is its plan in prose - the card only recognises a plan given as JSON - and the
+       card drops it when writing starts. It is kept here as the run's outline, drawn in the method pane; the main pane
+       streams the report only. */
+    if(!s.writing&&status==='running'&&String(s.live||'').trim()) r.outline=String(s.live).slice(0,12000);
     return { title:'Research'+(r.q?' · '+r.q:''), query:r.q||undefined, job:String(jobId), status, error:r.err||undefined,
              step:s.step||'', writing:!!s.writing, started:s.started, secs:s.secs, plan:s.plan||undefined, items, cites,
-             live:keepLive&&status==='running'?String(s.live||'').slice(-20000):'', report:String(s.report||'').slice(0,60000) };
+             outline:r.outline||undefined,
+             live:keepLive&&status==='running'&&s.writing?String(s.live||'').slice(-20000):'', report:String(s.report||'').slice(0,60000) };
   }
   function _cvRunFeed(jobId, opt){
     const r=_CV_RR[jobId]; if(!r||r.ended) return; opt=opt||{};
