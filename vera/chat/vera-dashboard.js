@@ -226,6 +226,21 @@
       // a tile's buttons take no room until it is hovered, focused or arranged - the harness's rule, on every grid (a two-column
       // figure's title read "WORK..." beside its invisible buttons)
       '.dash-grid .widget > .w-head .w-actions{display:none}',
+      // the item's head (DEEP-29 11A.4): the tile's own buttons are listed by its more menu, never drawn in the head; the
+      // row is the same as a canvas item's, shown while the tile is hovered, focused, arranged or floating
+      '.widget > .w-head > .w-actions{display:none!important}',
+      '.widget > .w-head > .vd-row{display:none;margin-left:auto;gap:1px;align-items:center;flex:0 0 auto}',
+      '.widget:is(:hover,:focus-within,.floating,.vd-full,.vd-pill) > .w-head > .vd-row,.dash-grid.editing .widget > .w-head > .vd-row{display:inline-flex}',
+      '.vd-hb{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:0;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));cursor:pointer;padding:0}',
+      '.vd-hb:hover{color:var(--t1,var(--text,#d8dce4));background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}.vd-hb.on{color:var(--acc,#5a9e8f)}.vd-hb[data-vd-act="drop"]:hover{color:var(--err,#e06c6c)}',
+      '.vd-hb:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:1px}',
+      '.dash-grid .widget.vd-pill{grid-row:span 1!important;height:auto!important;min-height:0!important}.widget.vd-pill > :not(.w-head){display:none!important}',
+      '.widget.vd-full{position:fixed!important;z-index:var(--z-full,150);display:flex;flex-direction:column;box-shadow:0 18px 60px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent);border-color:var(--acc,#5a9e8f)}',
+      '.widget.vd-full > .w-body{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto}',
+      '.vd-pop-menu{position:fixed;z-index:var(--z-pop,230);min-width:200px;padding:4px;border-radius:9px;background:var(--bg2,#1d2128);border:1px solid var(--border2,var(--border,#3a3f48));box-shadow:0 10px 28px color-mix(in srgb,var(--bg0,#0e0f12) 60%,transparent);display:flex;flex-direction:column;gap:1px}',
+      '.vd-pop-menu .vd-pm-row{display:flex;align-items:center;gap:8px;padding:2px 6px;border-radius:6px;cursor:pointer;color:var(--fg,var(--text,#dce1e8));font-size:11.5px}',
+      '.vd-pop-menu .vd-pm-row:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}.vd-pop-menu .vd-pm-l{flex:1 1 auto;white-space:nowrap}',
+      '.vd-pop-menu .vd-pm-none{padding:6px 8px;font-size:11px;color:var(--dim,#6b7280)}',
       '.dash-grid .widget:hover > .w-head .w-actions,.dash-grid .widget:focus-within > .w-head .w-actions,.dash-grid.editing .widget > .w-head .w-actions,.dash-grid .widget.floating > .w-head .w-actions{display:inline-flex}',
       '.dash-grid.editing .vd-rec{opacity:1;color:var(--acc)}',
       '.vd-rec.sample{font-style:italic}',
@@ -1468,6 +1483,79 @@
       w.addEventListener('dragend', onDragEnd);
       ensureChrome(w);
       addPopButtons(w);
+      itemHead(w);
+    }
+
+    /* THE TILE'S HEAD IS THE ITEM'S (DEEP-29 11A.4 Decision 4; owner decision D1 2026-10-16): the same row as a canvas item -
+       pill (the tile folds to its head line), max (it fills the dashboard's view; Esc or max again restores), more, drop
+       (hide; on a floating tile, dock). A tile's own buttons - refresh, configure, deep dive, open, pop out, new window,
+       whatever a page wrote into its head - are what its head declares (.w-actions, never drawn): the more menu shows
+       them, the buttons themselves, moved in while it is open and put back when it closes, so each keeps its own handler.
+       A section divider keeps more and drop only. */
+    var FKEY = SKEY + '.faces';
+    function faces() { try { return JSON.parse(localStorage.getItem(FKEY) || '{}') || {}; } catch (e) { return {}; } }
+    function faceSet(wid, f) { var m = faces(); if (f) m[wid] = f; else delete m[wid]; try { localStorage.setItem(FKEY, JSON.stringify(m)); } catch (e) { /* this page only */ } }
+    var ICON = { pill: '<rect x="2.5" y="9.5" width="11" height="4" rx="2"/><path d="M8 2.5v4.5M5.8 5l2.2 2.2L10.2 5"/>',
+      max: '<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/>', restore: '<path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/>',
+      more: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
+      drop: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>' };
+    var svg = function (k) { return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + ICON[k] + '</svg>'; };
+    function isHideBtn(b) { return b.hasAttribute('data-vd-hide') || /dashHideWidget|hide\(/.test(b.getAttribute('onclick') || '') || (b.textContent || '').trim() === '\u00d7'; }
+    function itemHead(w) {
+      var head = w.querySelector(':scope > .w-head'); if (!head || head.querySelector(':scope > .vd-row')) return;
+      var sec = w.classList.contains('w-section');
+      var hb = function (a, ic, t) { return '<button type="button" class="vd-hb" data-vd-act="' + a + '" title="' + esc(t) + '">' + svg(ic) + '</button>'; };
+      head.insertAdjacentHTML('beforeend', '<span class="vd-row" data-w="dashboard.item.controls">'
+        + (sec ? '' : hb('pill', 'pill', 'Fold it to its head line - it stays folded until you open it') + hb('max', 'max', 'Fill the dashboard with it (Esc restores)'))
+        + hb('more', 'more', 'More: refresh, configure, pop out and its own actions') + hb('drop', 'drop', 'Hide it from the dashboard') + '</span>');
+      head.querySelector(':scope > .vd-row').addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('[data-vd-act]'); if (!b) return; e.stopPropagation(); e.preventDefault();
+        var a = b.getAttribute('data-vd-act');
+        if (a === 'pill') return pillToggle(w);
+        if (a === 'max') return fullToggle(w);
+        if (a === 'more') return tileMenu(w, b);
+        if (a === 'drop') { if (w.classList.contains('floating')) return dock(w); if (w.classList.contains('vd-full')) fullToggle(w); return hide(w.dataset.wid); }
+      });
+      if (faces()[w.dataset.wid] === 'pill' && !sec) pillToggle(w, true);
+    }
+    function pillToggle(w, on) {
+      on = on == null ? !w.classList.contains('vd-pill') : !!on;
+      if (on && w.classList.contains('vd-full')) fullToggle(w);
+      w.classList.toggle('vd-pill', on); faceSet(w.dataset.wid, on ? 'pill' : '');
+      var b = w.querySelector(':scope > .w-head .vd-hb[data-vd-act="pill"]'); if (b) { b.classList.toggle('on', on); b.title = on ? 'Open it again' : 'Fold it to its head line - it stays folded until you open it'; }
+      if (!on) fitSoon();
+    }
+    var _fullKey = null;
+    function fullToggle(w) {
+      var on = !w.classList.contains('vd-full');
+      if (on) { var sc = _scrollParent(grid) || document.documentElement; var r = (sc === document.documentElement || sc === document.body) ? { left: 0, top: 0, width: innerWidth, height: innerHeight } : sc.getBoundingClientRect();
+        var g = grid.getBoundingClientRect(); var top = Math.max(r.top, g.top > 0 ? Math.min(g.top, r.top + 40) : r.top);
+        /* a page drawn with a zoom (the harness): the screen rect is divided back into the page's own pixels */
+        var z = (w.getBoundingClientRect().width / (w.offsetWidth || 1)) || 1, L = Math.max(0, r.left), T = Math.max(0, top), RR = Math.min(innerWidth, r.left + r.width), B = Math.min(innerHeight, r.top + r.height);
+        w._vdFullWas = w.style.cssText; w.style.left = Math.round(L / z + 6) + 'px'; w.style.top = Math.round(T / z + 6) + 'px';
+        w.style.width = Math.round((RR - L) / z - 12) + 'px'; w.style.height = Math.round((B - T) / z - 12) + 'px';
+        if (w.classList.contains('vd-pill')) pillToggle(w, false);
+        w.classList.add('vd-full'); _fullKey = function (e) { if (e.key === 'Escape' && w.classList.contains('vd-full')) { e.preventDefault(); fullToggle(w); } }; document.addEventListener('keydown', _fullKey); }
+      else { w.classList.remove('vd-full'); w.style.cssText = w._vdFullWas || ''; if (_fullKey) document.removeEventListener('keydown', _fullKey); _fullKey = null; }
+      var b = w.querySelector(':scope > .w-head .vd-hb[data-vd-act="max"]'); if (b) { b.innerHTML = svg(on ? 'restore' : 'max'); b.classList.toggle('on', on); b.title = on ? 'Restore it (Esc)' : 'Fill the dashboard with it (Esc restores)'; }
+      try { w.querySelectorAll('vera-widget').forEach(function (x) { if (typeof x.render === 'function') x.render(); }); } catch (e) { /* its own resize */ }
+    }
+    function tileMenu(w, btn) {
+      var had = document.querySelector('.vd-pop-menu'); if (had) { had._close(); if (had._w === w) return; }
+      var act = w.querySelector(':scope > .w-head .w-actions'); var own = act ? Array.prototype.slice.call(act.children).filter(function (b) { return !(b.tagName === 'BUTTON' && isHideBtn(b)); }) : [];
+      var pop = document.createElement('div'); pop.className = 'vd-pop-menu'; pop.setAttribute('data-w', 'dashboard.item.menu'); pop._w = w;
+      if (!own.length) pop.innerHTML = '<div class="vd-pm-none">Nothing more for this tile</div>';
+      var back = own.map(function (b) { return [b, b.nextSibling]; });
+      own.forEach(function (b) { var row = document.createElement('div'); row.className = 'vd-pm-row'; row.appendChild(b);
+        if (b.tagName === 'BUTTON' && b.title && !b.querySelector('.vd-pm-l')) { var l = document.createElement('span'); l.className = 'vd-pm-l'; l.textContent = b.title.replace(/\s+[\u2014-].*$/, ''); row.appendChild(l); l.onclick = function () { b.click(); }; }
+        pop.appendChild(row); });
+      document.body.appendChild(pop);
+      var r = btn.getBoundingClientRect(), pw = pop.offsetWidth || 200;
+      pop.style.left = Math.max(4, Math.min(innerWidth - pw - 4, r.right - pw)) + 'px'; pop.style.top = Math.round(r.bottom + 4) + 'px';
+      var off = function (e) { if (pop.contains(e.target) || btn.contains(e.target)) return; pop._close(); };
+      pop._close = function () { back.forEach(function (x) { if (x[1] && x[1].parentNode === act) act.insertBefore(x[0], x[1]); else if (act) act.appendChild(x[0]); }); pop.remove(); document.removeEventListener('mousedown', off, true); };
+      pop.addEventListener('click', function (e) { if (e.target.closest && e.target.closest('button,a')) setTimeout(function () { if (pop.parentNode) pop._close(); }, 0); });
+      setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
     }
     // The frame is the record's: a grip to move it, a hide button, the resize handle (the one ol-bgqueue lacked)
     // and the chip that says form · source. Only what is missing is added; a page's own head is left as written.
