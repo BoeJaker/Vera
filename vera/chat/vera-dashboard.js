@@ -238,7 +238,7 @@
       '.dash-grid .widget > .w-head .w-actions{display:none}',
       // the item's head (DEEP-29 11A.4): the tile's own buttons are listed by its more menu, never drawn in the head; the
       // row is the same as a canvas item's, shown while the tile is hovered, focused, arranged or floating
-      '.widget > .w-head > .w-actions{display:none!important}',
+      '.widget > .w-head > .w-actions > .vd-dup{display:none!important}',
       '.widget > .w-head > .vd-row{display:none;margin-left:auto;gap:1px;align-items:center;flex:0 0 auto}',
       '.widget:is(:hover,:focus-within,.floating,.vd-full,.vd-pill) > .w-head > .vd-row,.dash-grid.editing .widget > .w-head > .vd-row{display:inline-flex}',
       '.vd-hb{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:0;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));cursor:pointer;padding:0}',
@@ -1498,12 +1498,12 @@
       itemHead(w);
     }
 
-    /* THE TILE'S HEAD IS THE ITEM'S (DEEP-29 11A.4 Decision 4; owner decision D1 2026-10-16): the same row as a canvas item -
-       pill (the tile folds to its head line), max (it fills the dashboard's view; Esc or max again restores), more, drop
-       (hide; on a floating tile, dock). A tile's own buttons - refresh, configure, deep dive, open, pop out, new window,
-       whatever a page wrote into its head - are what its head declares (.w-actions, never drawn): the more menu shows
-       them, the buttons themselves, moved in while it is open and put back when it closes, so each keeps its own handler.
-       A section divider keeps more and drop only. */
+    /* THE TILE'S HEAD IS THE ITEM'S (DEEP-29 11A.4 Decision 4; owner decision D1 2026-10-16): the tile's own buttons -
+       refresh, configure, deep dive, open, pop out, whatever the page wrote - stay in its head, where they are useful (owner,
+       2026-10-16: "controls relevant to whatever is in it ... i dont want everything to be chucked into the ⋯ menu"); then
+       the item row: pill (it folds to its head line), max (it fills the dashboard's view; Esc or max again restores), drop
+       (hide; on a floating tile, dock). The page's own hide button is the drop control's twin and is not drawn. A section
+       divider keeps drop only. */
     var FKEY = SKEY + '.faces';
     function faces() { try { return JSON.parse(localStorage.getItem(FKEY) || '{}') || {}; } catch (e) { return {}; } }
     function faceSet(wid, f) { var m = faces(); if (f) m[wid] = f; else delete m[wid]; try { localStorage.setItem(FKEY, JSON.stringify(m)); } catch (e) { /* this page only */ } }
@@ -1519,13 +1519,13 @@
       var hb = function (a, ic, t) { return '<button type="button" class="vd-hb" data-vd-act="' + a + '" title="' + esc(t) + '">' + svg(ic) + '</button>'; };
       head.insertAdjacentHTML('beforeend', '<span class="vd-row" data-w="dashboard.item.controls">'
         + (sec ? '' : hb('pill', 'pill', 'Fold it to its head line - it stays folded until you open it') + hb('max', 'max', 'Fill the dashboard with it (Esc restores)'))
-        + hb('more', 'more', 'More: refresh, configure, pop out and its own actions') + hb('drop', 'drop', 'Hide it from the dashboard') + '</span>');
+        + hb('drop', 'drop', 'Hide it from the dashboard') + '</span>');
+      var act0 = head.querySelector(':scope > .w-actions'); if (act0) Array.prototype.forEach.call(act0.querySelectorAll('button'), function (x) { if (isHideBtn(x)) x.classList.add('vd-dup'); });
       head.querySelector(':scope > .vd-row').addEventListener('click', function (e) {
         var b = e.target.closest && e.target.closest('[data-vd-act]'); if (!b) return; e.stopPropagation(); e.preventDefault();
         var a = b.getAttribute('data-vd-act');
         if (a === 'pill') return pillToggle(w);
         if (a === 'max') return fullToggle(w);
-        if (a === 'more') return tileMenu(w, b);
         if (a === 'drop') { if (w.classList.contains('floating')) return dock(w); if (w.classList.contains('vd-full')) fullToggle(w); return hide(w.dataset.wid); }
       });
       if (faces()[w.dataset.wid] === 'pill' && !sec) pillToggle(w, true);
@@ -1551,23 +1551,6 @@
       else { w.classList.remove('vd-full'); w.style.cssText = w._vdFullWas || ''; if (_fullKey) document.removeEventListener('keydown', _fullKey); _fullKey = null; }
       var b = w.querySelector(':scope > .w-head .vd-hb[data-vd-act="max"]'); if (b) { b.innerHTML = svg(on ? 'restore' : 'max'); b.classList.toggle('on', on); b.title = on ? 'Restore it (Esc)' : 'Fill the dashboard with it (Esc restores)'; }
       try { w.querySelectorAll('vera-widget').forEach(function (x) { if (typeof x.render === 'function') x.render(); }); } catch (e) { /* its own resize */ }
-    }
-    function tileMenu(w, btn) {
-      var had = document.querySelector('.vd-pop-menu'); if (had) { had._close(); if (had._w === w) return; }
-      var act = w.querySelector(':scope > .w-head .w-actions'); var own = act ? Array.prototype.slice.call(act.children).filter(function (b) { return !(b.tagName === 'BUTTON' && isHideBtn(b)); }) : [];
-      var pop = document.createElement('div'); pop.className = 'vd-pop-menu'; pop.setAttribute('data-w', 'dashboard.item.menu'); pop._w = w;
-      if (!own.length) pop.innerHTML = '<div class="vd-pm-none">Nothing more for this tile</div>';
-      var back = own.map(function (b) { return [b, b.nextSibling]; });
-      own.forEach(function (b) { var row = document.createElement('div'); row.className = 'vd-pm-row'; row.appendChild(b);
-        if (b.tagName === 'BUTTON' && b.title && !b.querySelector('.vd-pm-l')) { var l = document.createElement('span'); l.className = 'vd-pm-l'; l.textContent = b.title.replace(/\s+[\u2014-].*$/, ''); row.appendChild(l); l.onclick = function () { b.click(); }; }
-        pop.appendChild(row); });
-      document.body.appendChild(pop);
-      var r = btn.getBoundingClientRect(), pw = pop.offsetWidth || 200;
-      pop.style.left = Math.max(4, Math.min(innerWidth - pw - 4, r.right - pw)) + 'px'; pop.style.top = Math.round(r.bottom + 4) + 'px';
-      var off = function (e) { if (pop.contains(e.target) || btn.contains(e.target)) return; pop._close(); };
-      pop._close = function () { back.forEach(function (x) { if (x[1] && x[1].parentNode === act) act.insertBefore(x[0], x[1]); else if (act) act.appendChild(x[0]); }); pop.remove(); document.removeEventListener('mousedown', off, true); };
-      pop.addEventListener('click', function (e) { if (e.target.closest && e.target.closest('button,a')) setTimeout(function () { if (pop.parentNode) pop._close(); }, 0); });
-      setTimeout(function () { document.addEventListener('mousedown', off, true); }, 0);
     }
     // The frame is the record's: a grip to move it, a hide button, the resize handle (the one ol-bgqueue lacked)
     // and the chip that says form · source. Only what is missing is added; a page's own head is left as written.
