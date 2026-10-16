@@ -5,9 +5,63 @@
     "title": "Agenda",
     "icon": "calendar",
     "summary": "What is on - the coming events, by day",
-    "view": { "kind": "calendar", "views": ["agenda", "month", "schedule"] },
-    "read": { "cap": "cal.events.list", "args": {}, "refresh": { "every_s": 300 } },
-    "detail": { "reader": true },
-    "size": { "default": "m", "min": "s" }
+    "view": {
+      "kind": "calendar",
+      "views": [
+        "agenda",
+        "month",
+        "schedule"
+      ]
+    },
+    "read": {
+      "cap": "cal.events.list",
+      "args": {},
+      "refresh": {
+        "every_s": 300
+      }
+    },
+    "detail": {
+      "reader": true
+    },
+    "size": {
+      "default": "m",
+      "min": "s"
+    },
+    "actions": [
+      {
+        "id": "add",
+        "label": "Add event",
+        "cap": "cal.event.upsert",
+        "where": "header",
+        "form": "schema",
+        "fields": [
+          {
+            "key": "title",
+            "label": "Title",
+            "required": true
+          },
+          {
+            "key": "start",
+            "label": "Start",
+            "type": "datetime-local",
+            "required": true
+          },
+          {
+            "key": "location",
+            "label": "Where"
+          }
+        ]
+      },
+      {
+        "id": "delete",
+        "label": "Delete",
+        "cap": "cal.event.delete",
+        "where": "row",
+        "confirm": true,
+        "args": {
+          "id": "{row.id}"
+        }
+      }
+    ]
   }
 ]

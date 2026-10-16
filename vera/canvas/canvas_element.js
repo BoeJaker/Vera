@@ -62,6 +62,31 @@
         return (typeof p === 'number' && typeof q2 === 'number' ? p - q2 : String(p).localeCompare(String(q2), undefined, { numeric: true })) * d; }); }
     return { cols, list, total: rows.length };
   }
+  /* AN APP'S ACTIONS (DA-05d; DESK-SPINE-DESIGN §4.1): the bar over its body - the form of the action asked for (its fields),
+     the question of one that changes something (confirm), the line of what the last one did */
+  function appBarHtml(st) {
+    const ui = st.ui || {}; const acts = (st.manifest && st.manifest.actions) || []; const row = (i) => (i != null && st.rows ? st.rows[i] : null);
+    const nameOf = (x) => x ? appCell(x.title || x.name || x.symbol || x.node || x.id || x[Object.keys(x)[0]]) : '';
+    if (ui.form) { const a = acts.find((x) => x.id === ui.form.aid); if (a) return '<div class="vc-app-bar" data-app-form="' + esc(a.id) + '"><b>' + esc(a.label) + (row(ui.form.row) ? ' · ' + esc(nameOf(row(ui.form.row))) : '') + '</b>'
+      + (a.fields || []).map((f) => '<input class="vc-app-f" data-app-f="' + esc(f.key) + '" type="' + esc(f.type || 'text') + '" placeholder="' + esc(f.label || f.key) + (f.required ? ' *' : '') + '" value="' + esc(f.default == null ? '' : String(f.default)) + '" spellcheck="false">').join('')
+      + '<button type="button" class="hx on" data-app-run="1">' + esc(a.label) + '</button><button type="button" class="hx" data-app-cancel="1">Cancel</button></div>'; }
+    if (ui.confirm) { const a = acts.find((x) => x.id === ui.confirm.aid); if (a) return '<div class="vc-app-bar warn"><b>' + esc(a.label) + (row(ui.confirm.row) ? ' ' + esc(nameOf(row(ui.confirm.row))) : '') + '?</b>'
+      + '<button type="button" class="hx on" data-app-yes="1">Yes, ' + esc(a.label.toLowerCase()) + '</button><button type="button" class="hx" data-app-cancel="1">No</button></div>'; }
+    if (ui.msg) return '<div class="vc-app-bar ' + (ui.msg.ok ? 'ok' : 'bad') + '"><span>' + esc(ui.msg.text) + '</span><button type="button" class="hx" data-app-cancel="1" title="Close">\u2715</button></div>';
+    return '';
+  }
+  /* what an action answered, in a line */
+  function appActText(a, res) {
+    if (!res) return a.label + ': no answer';
+    if (res.ok === false || res.error) return a.label + ' failed: ' + String(res.error || 'the capability failed').slice(0, 160);
+    if (Array.isArray(res.planned)) return a.label + ': ' + (res.planned.length ? res.planned.length + ' would be stopped' : 'nothing is stuck') + (res.dry_run === false && Array.isArray(res.killed) ? ', ' + res.killed.length + ' stopped' : '');
+    return a.label + ': done' + (res.message ? ' - ' + String(res.message).slice(0, 120) : '');
+  }
+  /* an action's arguments: its templates filled from the row ({row.x}) and the app's ({arg.x}), then the form's fields */
+  function appActArgs(a, row, appArgs, vals) {
+    const fill = (v) => typeof v === 'string' ? v.replace(/\{(row|arg)\.([\w.-]+)\}/g, (x, w, k) => { const o = w === 'row' ? row : appArgs; return o && o[k] != null ? String(o[k]) : ''; }) : v;
+    const out = {}; Object.keys(a.args || {}).forEach((k) => { out[k] = fill(a.args[k]); }); Object.keys(vals || {}).forEach((k) => { if (vals[k] !== '') out[k] = vals[k]; }); return out;
+  }
   const appCsv = (cols, list) => [cols.join(',')].concat(list.map(({ x }) => cols.map((k) => { const v = appCell(x[k]); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','))).join('\n');
   /* the rows part of an app: the list in its view, and the drawer of the row opened */
   function appRowsHtml(st, view) {
@@ -79,6 +104,7 @@
     const d = ui.detail != null && st.rows ? st.rows[ui.detail] : null; const dm = st.manifest && st.manifest.detail;
     const drawer = d ? '<div class="vc-app-dt" data-w="canvas.app.detail"><div class="vc-app-dh"><b>' + esc(appCell(d[cols[0]]) || 'row') + '</b>'
         + (dm && dm.app ? '<button type="button" class="hx" data-app-detail="1" title="Open ' + esc(dm.app) + ' for this row on the desk">Open ' + esc(dm.app) + '</button>' : '')
+        + ((st.manifest && st.manifest.actions) || []).filter((a) => a.where === 'row').map((a) => '<button type="button" class="hx" data-app-rowact="' + esc(a.id) + '" title="' + esc(a.title || a.label) + '">' + esc(a.label) + '</button>').join('')
         + '<button type="button" class="hx" data-app-x="1" title="Close (Esc)">\u2715</button></div><div class="vc-app-kv">'
         + Object.keys(d).map((k) => '<span><i>' + esc(k) + '</i>' + esc(appCell(d[k])) + '</span>').join('') + '</div></div>' : '';
     return { html: body + drawer, count: list.length === total ? total + ' rows' : list.length + ' of ' + total };
@@ -1168,6 +1194,7 @@
       const stale = st && st.every && st.at && Date.now() - st.at > st.every * 2500;
       declare(el, key, { sub: esc((m && m.panel) || 'app') + (st && st.reading ? ' · reading…' : ago != null ? ' · read ' + (ago < 60 ? ago + ' s' : Math.round(ago / 60) + ' min') + ' ago' + (stale ? ' · stale' : '') : ''),
         acts: [{ act: 'appread', label: 'Refresh', title: 'Read it again now' + (m && m.read && m.read.cap ? ' (' + m.read.cap + ')' : '') }]
+          .concat(((m && m.actions) || []).filter((a) => a.where !== 'row').map((a) => ({ act: 'appact', aid: a.id, label: a.label, title: a.title || (a.label + ' (' + a.cap + ')') })))
           .concat(st && appRows(st.result) && appRows(st.result).length ? [{ act: 'appcsv', label: 'Copy CSV', title: 'Copy the rows shown, as CSV' }] : [])
           .concat(m && m.panel ? [{ act: 'appopen', label: 'Open the panel ↗', title: 'Open ' + m.panel + ' - the page this app comes from' }] : []) });
       if (!st || (st.result === undefined && !st.error)) return `<div class="vc-app vc-app-sk" data-app="${esc(id)}" data-w="canvas.app"><span class="vc-dim">${st && st.waiting ? esc(st.waiting) : 'opening ' + esc((m && m.title) || id) + '…'}</span><i></i><i></i><i></i></div>`;
@@ -1178,13 +1205,13 @@
       st.rows = appRows(st.result);
       const avw = el && typeof viewsOf === 'function' ? viewsOf({ type: 'app', key, content: c }, el) : { cur: 'drawn' };
       if (st.rows && avw.cur !== 'drawn') { st.ui = st.ui || { q: '', sort: null, sel: null, detail: null }; const rh = appRowsHtml(st, avw.cur);
-        return `<div class="vc-app vc-app-rowsapp" data-app="${esc(id)}" data-as="rows" data-w="canvas.app"><div class="vc-app-tb"><input class="vc-app-q" data-app-q="1" type="search" placeholder="Filter ( / )" value="${esc(st.ui.q || '')}" spellcheck="false"><span class="vc-app-n">${esc(rh.count)}</span></div><div class="vc-app-rows" tabindex="0">${rh.html}</div></div>`; }
+        return `<div class="vc-app vc-app-rowsapp" data-app="${esc(id)}" data-as="rows" data-w="canvas.app">${appBarHtml(st)}<div class="vc-app-tb"><input class="vc-app-q" data-app-q="1" type="search" placeholder="Filter ( / )" value="${esc(st.ui.q || '')}" spellcheck="false"><span class="vc-app-n">${esc(rh.count)}</span></div><div class="vc-app-rows" tabindex="0">${rh.html}</div></div>`; }
       const rc = { cap: st.cap, args: st.args, result: st.result, ok: true };
       /* the manifest's own view when the generic mapping has nothing better than the raw tree (a calendar's events) */
       let v = resultView(rc); const mk = m && m.view && m.view.kind; if ((!v || v.kind === 'json') && mk && BLOCK[mk] && mk !== 'app' && st.result && typeof st.result === 'object') v = { kind: mk, content: st.result };
       let inner = '';
       try { const fn = v && BLOCK[v.kind]; inner = fn ? fn(v.content || {}, size, key + ':app', el) : '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; } catch (e) { inner = '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; }
-      return `<div class="vc-app" data-app="${esc(id)}" data-as="${esc(v ? v.kind : 'json')}" data-w="canvas.app">${inner}</div>`;
+      return `<div class="vc-app" data-app="${esc(id)}" data-as="${esc(v ? v.kind : 'json')}" data-w="canvas.app">${st.ui ? appBarHtml(st) : ''}${inner}</div>`;
     },
 
     schedule: c => `<div class="vc-stub"><span class="vc-badge">when</span>
@@ -1703,6 +1730,12 @@
   /* while the row shows (hover, focus, locked, full) the head makes room for it, so its own buttons are never under the row */
   :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-n, 0) * 27px + 14px)!important}
   @container (max-width: 320px) { :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-nn, 0) * 27px + 14px)!important} }
+  /* an app's bar: an action's form, its question, its answer */
+  .vc-app-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 7px;border-radius:7px;background:color-mix(in srgb,var(--acc,#5a9e8f) 9%,transparent);font-size:11px;flex:0 0 auto}
+  .vc-app-bar.warn{background:color-mix(in srgb,var(--warn,#d6b25e) 14%,transparent)}.vc-app-bar.bad{background:color-mix(in srgb,var(--err,#e06c6c) 14%,transparent)}
+  .vc-app-bar > span,.vc-app-bar > b{flex:1 1 auto;min-width:0}
+  .vc-app-bar .hx{border:0;background:transparent;color:var(--dim2,#8a92a0);cursor:pointer;font-size:10.5px;padding:3px 8px;border-radius:5px}.vc-app-bar .hx.on{color:var(--acc,#5a9e8f)}.vc-app-bar .hx:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .vc-app-f{flex:1 1 120px;min-width:90px;height:24px;padding:0 7px;border-radius:6px;border:1px solid var(--border,#2a2f37);background:var(--bg0,#0e0f12);color:var(--fg,#dce1e8);font:11.5px var(--f-ui,var(--sans,system-ui,sans-serif))}
   /* an app's list (DA-05c): the filter row, the rows (a table or cards), the drawer of the row opened */
   .vc-app-rowsapp{display:flex;flex-direction:column;min-height:0;height:100%;gap:6px}
   .vc-app-tb{display:flex;align-items:center;gap:8px;flex:0 0 auto}
@@ -3585,7 +3618,7 @@
       /* the body's own: what it declared as it was drawn, or the kit's actions for its card - never one the menu has above */
       const SKIP_VO = new Set(['explode', 'canvas']);
       const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; let o = '';
-        (d.acts || []).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
+        (d.acts || []).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : x.aid ? '[data-app-action="' + x.aid + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { if (x.aid) { o += `<button class="ib" data-act="appact" data-app-action="${esc(x.aid)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label)}</button>`; return; } o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
         const card = this._kitCard(host, lead); const VO = root.VeraOut; const kit = card && VO && typeof VO.barActions === 'function' ? VO.barActions(card) : { acts: [], menus: [] };
         kit.acts.filter((x) => !SKIP_VO.has(x.vo) && (kk !== key || !inHead('[data-vo-act="' + x.vo + '"]'))).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
         return o + (d.menus || []).concat(kit.menus).map((m) => `<div class="hd-dd">${m}</div>`).join(''); };
@@ -4706,7 +4739,7 @@
             const RANK = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'];
             if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane').sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
               .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
-            (d.acts || []).forEach((a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"`, a.label, a.title, a.on); });
+            (d.acts || []).forEach((a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"` + (a.aid ? ` data-app-action="${esc(a.aid)}"` : ''), a.label, a.title, a.on); });
             if (b.type === 'panel') { if (desk) { const L0 = (this._layer || {})[key] || ''; hx('data-act="layer-behind"', 'Behind', 'Fill the free desk, under the other items', L0 === 'behind'); hx('data-act="layer-front"', 'Front', 'Fill the free desk, over the other items', L0 === 'front'); }
               hx('data-act="prefresh"', 'Refresh', 'Reload the panel'); hx('data-act="pquery"', 'Query', 'panel.query - what the panel holds'); hx('data-act="pdispatch"', 'Dispatch', 'panel.dispatch - drive it'); hx('data-act="pstand"', 'Standalone ↗', 'Open it in a tab of its own'); }
             if (b.type === 'result' && c.cap) hx('data-act="rerun"', 'Run again', 'Run ' + c.cap + ' again with the same arguments');
@@ -4889,7 +4922,16 @@
         try { (od.defaultView || window).addEventListener('blur', () => { closeAdd(); }); } catch (e) { /* no window */ } }
       /* an app's list (DA-05c): a column's head sorts (again: the other way, a third time: as read), a row opens its drawer,
          the drawer's own controls */
-      body.addEventListener('click', (ev) => { const t = ev.target; if (!t || !t.closest || !t.closest('.vc-app-rowsapp')) return; const a = this._appUi(t); if (!a) return;
+      body.addEventListener('click', (ev) => { const t = ev.target; if (!t || !t.closest) return; const box = t.closest('.vc-app'); if (!box) return;
+        const it = t.closest('.it[data-key]'); const key = it && it.dataset.key; const st = key && this._apps && this._apps[key];
+        if (st && t.closest('[data-app-cancel],[data-app-run],[data-app-yes],[data-app-rowact]')) { ev.stopPropagation(); const ui = st.ui || (st.ui = {});
+          if (t.closest('[data-app-cancel]')) { ui.form = null; ui.confirm = null; ui.msg = null; return this._appDraw(key); }
+          if (t.closest('[data-app-rowact]')) return this._appAction(key, t.closest('[data-app-rowact]').dataset.appRowact, ui.detail);
+          const acts = (st.manifest && st.manifest.actions) || [];
+          if (t.closest('[data-app-yes]') && ui.confirm) { const a = acts.find((x) => x.id === ui.confirm.aid); if (a) this._appRun(key, a, ui.confirm.row, {}); return; }
+          if (t.closest('[data-app-run]') && ui.form) { const a = acts.find((x) => x.id === ui.form.aid); const vals = {};
+            box.querySelectorAll('[data-app-f]').forEach((x) => { vals[x.dataset.appF] = x.value; }); if (a) this._appRun(key, a, ui.form.row, vals); return; } }
+        if (!t.closest('.vc-app-rowsapp')) return; const a = this._appUi(t); if (!a) return;
         const th = t.closest('[data-app-sort]'), row = t.closest('[data-app-row]');
         if (th) { const k = th.dataset.appSort, so = a.ui.sort; a.ui.sort = !so || so[0] !== k ? [k, 'asc'] : so[1] === 'asc' ? [k, 'desc'] : null; }
         else if (t.closest('[data-app-x]')) a.ui.detail = null;
@@ -5286,6 +5328,23 @@
       const sig = Object.keys(args).sort().map((k) => k + '=' + args[k]).join('&');
       return this.call('canvas.add', { kind: 'app', key: 'app:' + dm.app + (sig ? ':' + sig : ''), content: { app: dm.app, args } });
     }
+    _appAction(key, aid, rowIdx) {
+      const st = this._apps && this._apps[key]; const a = st && st.manifest && (st.manifest.actions || []).find((x) => x.id === aid); if (!a) return;
+      const ui = st.ui || (st.ui = { q: '', sort: null, sel: null, detail: null }); ui.msg = null;
+      if (a.fields && a.fields.length) { ui.form = { aid, row: rowIdx }; ui.confirm = null; return this._appDraw(key); }
+      if (a.confirm) { ui.confirm = { aid, row: rowIdx }; ui.form = null; return this._appDraw(key); }
+      return this._appRun(key, a, rowIdx, {});
+    }
+    async _appRun(key, a, rowIdx, vals) {
+      const st = this._apps && this._apps[key]; if (!st || st.acting) return; const ui = st.ui || (st.ui = {});
+      const row = rowIdx != null && st.rows ? st.rows[rowIdx] : null; const app = this._blockOf(key); const appArgs = (app && app.content && app.content.args) || {};
+      const miss = (a.fields || []).filter((f) => f.required && !String((vals || {})[f.key] || '').trim()).map((f) => f.label || f.key);
+      if (miss.length) { ui.msg = { ok: false, text: a.label + ' needs ' + miss.join(', ') }; return this._appDraw(key); }
+      st.acting = true; ui.form = null; ui.confirm = null; ui.msg = { ok: true, text: a.label + '…' }; this._appDraw(key);
+      let res = null; try { res = await this.callResult(a.cap, appActArgs(a, row, appArgs, vals)); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      st.acting = false; ui.msg = { ok: !(res && (res.ok === false || res.error)), text: appActText(a, res) };
+      if (ui.msg.ok) { ui.detail = null; this._appRead(key, true); } else this._appDraw(key);
+    }
     _appDraw(key) { if (!this._doc) return; clearTimeout(this._appDrawT); this._appDrawT = setTimeout(() => { this._html = null; this.render(this._doc); }, 30); }
     /* refresh only while it is seen: on the desk and open (not a pill, not hidden, not behind another tab of its group), the
        page visible - never more than one read in flight (_appRead) */
@@ -5605,6 +5664,7 @@
       if (act === 'lock') return this.toggleLock(key);
       if (act === 'dock') { this._winDock(key); return; }
       if (act === 'appread') { this._appRead(key, true); return; }
+      if (act === 'appact') { this._appAction(key, btn.dataset.appAction, null); return; }
       if (act === 'appcsv') { const st = this._apps && this._apps[key]; const rows = st && appRows(st.result); if (!rows) return; const v = appView(rows, st.ui || {});
         try { navigator.clipboard.writeText(appCsv(v.cols, v.list)); btn.textContent = 'Copied ' + v.list.length; setTimeout(() => { try { btn.textContent = 'Copy CSV'; } catch (e) { /* redrawn */ } }, 1600); } catch (e) { /* no clipboard */ } return; }
       if (act === 'appopen') { const st = this._apps && this._apps[key]; const p = st && st.manifest && st.manifest.panel; if (!p) return;
@@ -6831,7 +6891,7 @@
     }
   }
 
-  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
+  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

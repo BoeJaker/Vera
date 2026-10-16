@@ -1,0 +1,44 @@
+[
+  {
+    "id": "estate.nodes",
+    "panel": "estate",
+    "title": "Compute nodes",
+    "icon": "server",
+    "summary": "Every compute node the node agent reports - cores, load, memory, GPU and its runners",
+    "view": {
+      "kind": "table",
+      "views": [
+        "table",
+        "cards"
+      ]
+    },
+    "read": {
+      "cap": "nodes.agent.status",
+      "args": {},
+      "refresh": {
+        "every_s": 30
+      }
+    },
+    "actions": [
+      {
+        "id": "stuck",
+        "label": "Check stuck runners",
+        "cap": "nodes.runner.reap",
+        "where": "header",
+        "title": "A dry run: what the stuck rule would stop, and why - nothing is stopped",
+        "args": {
+          "dry_run": true
+        }
+      }
+    ],
+    "related": [
+      "nodes.runner.list",
+      "estate.health",
+      "sysmon.status"
+    ],
+    "size": {
+      "default": "m",
+      "min": "s"
+    }
+  }
+]
