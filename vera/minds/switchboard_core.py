@@ -99,12 +99,13 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "memory.seek's result cache: the same seek (query, scope, since, k, size, memory merge) within 10 minutes "
        "and the same fabric generation - a counter every fabric ingest bumps - answers from Redis. 'off' (default) "
        "= every seek searches; 'on' = cached answers carry cached=true; session-memory hits can lag by up to 10 min."),
-    _f("plan.goal_frame", ("off", "on"), "loop", "FM-1.3",
+    _f("plan.goal_frame", ("off", "on", "writer"), "loop", "FM-1.3",
        "Goal constraints (compute-roles B2): dates, versions and numeric limits in the goal text "
-       "(\"since March 2024\", \"Python 3.12\", \"under 500 words\", \"top 5\") become done_when items "
-       "and the final gate's must-cover list; the run records which ones its answer met. 'off' "
-       "(default) = none; 'on' = added when the goal has any. Measured on dated goals (info-eval), not "
-       "the census templates, which carry none."),
+       "(\"since March 2024\", \"Python 3.12\", \"under 500 words\", \"top 5\"). 'off' (default) = none; "
+       "'on' = they become done_when items and the final gate's must-cover list (measured 12 Oct on dated goals: "
+       "HURTS - self-verification and a research loop that never converged); 'writer' (R-B2) = they ride on every "
+       "code.author / prose.author task as instructions, and coverage of the delivered answer is recorded as a "
+       "shadow signal, done_when and the gate untouched. Census templates carry none - measure on dated goals."),
     _f("plan.tier_lower", ("off", "on"), "loop", "FM-4.3",
        "Tier lowering: the deterministic tier floor no longer calls a goal 'complex' only because it "
        "has three or more conjunctions (no complex hint, under 60 words) - it falls to the length rules "
