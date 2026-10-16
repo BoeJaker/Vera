@@ -118,6 +118,10 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
                          "as the element that fits it (terminal, table, widget, code, html, image, a record's fields, "
                          "a JSON tree). Keyed by the cap and its arguments, so running it again updates it.",
                  "content": "{cap:str, args:obj, result:any, ok:bool, error?:str, ms?:int, ts?:str}"},
+    "app":      {"desc": "An APP from the catalogue (vera/apps/*.json, ui.apps.list / ui.apps.get) as an item: it reads its "
+                         "source when opened and again on its manifest's interval while it is seen, and draws the answer the "
+                         "way a capability's result is drawn. `args` fill the manifest's {arg.x} templates.",
+                 "content": "{app:str(app id), args?:obj, title?:str}"},
     "json":     {"desc": "Structured data as a tree you can open and close.",
                  "content": "{data:any, title?:str}"},
     "kv":       {"desc": "A record: its fields, name beside value.",

@@ -66,10 +66,12 @@ t('and a swap is at most every half second', /Math\.max\(0, 500 - \(Date\.now\(\
   t('the tree opens its first levels', /<details class="j-node" open>/.test(tree) && /j-str/.test(tree));
   const g = globalThis; const was = g.VeraCanvasAdapt;
   g.VeraCanvasAdapt = (cap, res) => (res && res.hosts ? { kind: 'table', content: { columns: ['name'], rows: [['a']] } } : null);
-  const r = V.BLOCK.result({ cap: 'docker.hosts', args: { all: true }, result: { hosts: [{ name: 'a' }] }, ok: true, ms: 1200 }, 'm', 'result:docker.hosts:x', null);
+  const er = {}; const r = V.BLOCK.result({ cap: 'docker.hosts', args: { all: true }, result: { hosts: [{ name: 'a' }] }, ok: true, ms: 1200 }, 'm', 'result:docker.hosts:x', er);
   t('a result is drawn as the element the chat\'s registry says it is', /data-as="table"/.test(r) && /<table class="vc-table">/.test(r), r.slice(0, 300));
-  t('with the cap, its arguments and how long it took', /<code>docker\.hosts<\/code>/.test(r) && /all=true/.test(r) && /1\.2 s/.test(r));
-  t('and a way to run it again', /data-act="rerun"/.test(r));
+  /* its line is declared for the item's head (DEEP-29 11A.4: a body draws no head) */
+  const rd = (er._decl || {})['result:docker.hosts:x'] || {};
+  t('with the cap, its arguments and how long it took', /docker\.hosts/.test(rd.sub || '') && /all=true/.test(rd.sub || '') && /1\.2 s/.test(rd.sub || '') && !/vc-res-h/.test(r));
+  t('and a way to run it again - a head button of the item', SRC.includes("if (b.type === 'result' && c.cap) hx('data-act=\"rerun\"', 'Run again',"));
   const bad = V.BLOCK.result({ cap: 'x.y', ok: false, error: 'boom' }, 'm', 'result:x', null);
   t('a failed run says so', /vc-res-err/.test(bad) && /boom/.test(bad));
   g.VeraCanvasAdapt = was;
