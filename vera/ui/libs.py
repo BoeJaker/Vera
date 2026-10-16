@@ -19,6 +19,9 @@ from the same copy.
   /ui/desk-layout.js -> vera/ui/desk_layout_core.js  window.VeraDesk  the desk's layout
                                                        rules (sizes by distance to the chat,
                                                        arrangements, layers, making room)
+  /ui/vera-item.js -> vera/ui/vera_item.js  window.VeraItem  the item contract: record,
+                                                       bodies, the head's controls, z bands
+  /ui/vera-item.css -> vera/ui/vera-item.css   the z bands as custom properties
 
 Routes only - no state, no capabilities - so the module body may run more than
 once (the namespace import trap) without a side effect.
@@ -117,6 +120,18 @@ async def _serve_structgraph_js():
 @APP.get("/ui/desk-layout.js", include_in_schema=False)
 async def _serve_desk_layout_js():
     return _script("desk_layout_core.js")
+
+
+# the item contract (window.VeraItem, DEEP-29 11A.4): the item record's browser half, the body registry, the head's
+# standard controls and the z table; vera-item.css carries the same z table as custom properties
+@APP.get("/ui/vera-item.js", include_in_schema=False)
+async def _serve_vera_item_js():
+    return _script("vera_item.js")
+
+
+@APP.get("/ui/vera-item.css", include_in_schema=False)
+async def _serve_vera_item_css():
+    return _style("vera-item.css")
 
 
 # the page's one live channel (window.VeraLive, DA-03b): one /ws/mcp socket, filtered subscriptions, reconnect + catch-up

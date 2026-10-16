@@ -89,7 +89,7 @@ const ge = fs.readFileSync(path.join(__dirname, '..', 'vera', 'graph_embed_eleme
 t('a graph of the host\'s own data takes no estate events (it flickered with each one)', ge.includes("subscribeLiveEvents: !(this.getAttribute('renderer') === 'data' || this.hasAttribute('calm'))"));
 t('the memory graph says why it is empty rather than drawing nothing', chat.includes('session started on a sandbox') && chat.includes("textContent='nothing stored in memory for this session'"));
 
-t('a card filling the desk is above every card and pill (the held canvas\'s z 8 put it under them: "see-through")', src.includes(':host([align="desk"]:not([desk-narrow])) .stage .it.maxed{z-index:150!important}'));
+t('a card filling the desk is above every card and pill (the held canvas\'s z 8 put it under them: "see-through")', src.includes(':host([align="desk"]:not([desk-narrow])) .stage .it.maxed{z-index:var(--z-full,150)!important}'));
 
 /* round 5 (WSU-50, 51, 53, 56) */
 t('a pill opens as a card under the pointer, whatever its kind, and goes back when the pointer leaves', src.includes("it.classList.add('chip-peek', 'pill-open'); it.dataset.deskFace = 'card';") && src.includes("if (s.open) { it.classList.add('desk-chip'); it.dataset.deskFace = s.face;"));
