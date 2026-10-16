@@ -8781,9 +8781,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       /* 'placed' is the start of the items' .32s glide, not the end of it, so the runs follow the glide itself —
          from inside the shadow root the items live in, which a document listener cannot be relied on to see */
       try{ if(el.shadowRoot) el.shadowRoot.addEventListener('transitionstart', _runsGlide, true); }catch(_){}
+      /* ...and the pointer on a desk item shows its route back to its placeholder (drawn only while that is on screen) */
       el.addEventListener('vera:canvas:hover', ev=>{ _cvHoverKey=(ev.detail||{}).key||null; _cvRunsDraw(); });
       const msgs=document.getElementById('msgs');
-      if(msgs&&!msgs._cvStageBound){ msgs._cvStageBound=true; msgs.addEventListener('scroll', ()=>_cvStageSync(), {passive:true}); msgs.addEventListener('mouseover', ev=>{ const w=ev.target&&ev.target.closest&&ev.target.closest('.mwrap[data-mid]'); const m=w?w.dataset.mid:null; if(m!==_cvHoverMid){ _cvHoverMid=m; _cvRunsDraw(); } });
+      if(msgs&&!msgs._cvStageBound){ msgs._cvStageBound=true; msgs.addEventListener('scroll', ()=>_cvStageSync(), {passive:true}); /* ONE ROUTE PER PLACEHOLDER (owner, 2026-10-15, WSU-82: "it needs to highlight the route of each desk placeholder in the chat to the desk/canvas individually on hover"): the pointer on a placeholder chip shows that chip's route alone - the message around it no longer lights every route of the turn; leaving the transcript clears it */ msgs.addEventListener('mouseover', ev=>{ const ch=ev.target&&ev.target.closest&&ev.target.closest('.cv-moved[data-cv-key]'); const k=ch?ch.dataset.cvKey:null; if(k!==_cvHoverChip){ _cvHoverChip=k; _cvRunsDraw(); } }); msgs.addEventListener('mouseleave', ()=>{ if(_cvHoverChip){ _cvHoverChip=null; _cvRunsDraw(); } });
         try{ if(window.ResizeObserver){ const ro=new ResizeObserver(()=>_cvStageSync(true)); ro.observe(msgs); msgs.querySelectorAll('.mwrap').forEach(w=>ro.observe(w)); _cvStageRO=ro; } }catch(_){}
         try{ new MutationObserver(()=>{ if(_cvStageRO) msgs.querySelectorAll('.mwrap').forEach(w=>_cvStageRO.observe(w)); _cvStageSync(true); }).observe(msgs, {childList:true, subtree:true}); }catch(_){} }
       window.addEventListener('resize', ()=>_cvStageSync(true));
@@ -8817,7 +8818,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
      scroll follows the transcript so a level item stays level; the runs are drawn over the chat column from the
      turn's right edge, down the gutter at the column's edge, into the item's left edge — never diagonally, never
      across a card — and the checker counts crossings and missed joins (zero by construction in one column). ── */
-  let _cvStageTimer=null, _cvStageRO=null, _cvStageSig='', _cvHoverKey=null, _cvHoverMid=null, _cvLastCheck=null, _cvColShown=null;
+  let _cvStageTimer=null, _cvStageRO=null, _cvStageSig='', _cvHoverKey=null, _cvHoverMid=null, _cvHoverChip=null, _cvLastCheck=null, _cvColShown=null;
   /* the element has placed into 1-4 columns all along; the control was the only thing that stopped at 2 (defect 77).
      AUTO is the default and the element decides it from the stage's width AND the content on it (VeraCanvas.autoCols);
      1-4 pin it. The pinned count is remembered, so turning AUTO off returns you to the count you last chose. */
@@ -8877,7 +8878,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(den==='zen'){ svg.innerHTML=''; _cvLastCheck={crossings:0, missedJoins:0, n:0, tier:den}; return; }
     // Hover draws the hovered item's run, or the hovered turn's runs; Full draws every run, out-of-focus dimmed
     const pick=(its)=>{ const C=ccol.getBoundingClientRect(); const items=its.filter(it=>it.mid&&!it.out&&it.state==='now'&&it.rect.bottom>C.top+30&&it.rect.top<C.bottom);
-      const wanted=den==='hover'?items.filter(it=>it.key===_cvHoverKey||(_cvHoverMid&&it.mid===_cvHoverMid)):items; return wanted; };
+      const wanted=den==='hover'?items.filter(it=>it.key===_cvHoverKey||it.key===_cvHoverChip):items; return wanted; };
     // the channel is sized for the runs that will be drawn, THEN everything is measured (the inset moves the cards)
     // a run leaves where the item CAME FROM - the reply that made it - and the turn only when nothing made it
     const _srcMid=(it)=>it.from||it.mid;
@@ -8936,8 +8937,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
           const cands=[ty].concat(others.flatMap(rc=>[rc.y0-6, rc.y1+6]), [it.rect.top-6, it.rect.bottom+6]).filter(inDesk).sort((a,b)=>Math.abs(a-ty)-Math.abs(b-ty));
           const band=lx>ex+8?cands.find(y=>hFree(y, ex, lx)&&vFree(lx, y, ty)):null;
           if(band!=null) pts=[{x:M.right, y:my},{x:gx, y:my},{x:gx, y:band},{x:lx, y:band},{x:lx, y:ty},{x:tx, y:ty}].filter((p,i,a)=>!(i>0&&p.x===a[i-1].x&&p.y===a[i-1].y)); }
-        const cls='run'+(it.inFocus?'':' dim');
-        out+='<polyline class="'+cls+'" data-key="'+esc(it.key)+'" data-mid="'+esc(mid)+'" data-lane="'+r.lane+'" points="'+pts.map(p=>(p.x-R.left).toFixed(1)+','+(p.y-R.top).toFixed(1)).join(' ')+'"><title>'+esc(it.key)+' · turn '+esc(mid)+'</title></polyline>';
+        /* the route under the pointer (its chip, or its item) stands out - solid and brighter - wherever every route is drawn */
+        const hot=it.key===_cvHoverKey||it.key===_cvHoverChip;
+        const cls='run'+(it.inFocus?'':' dim')+(hot?' hot':'');
+        out+='<polyline class="'+cls+'"'+(hot?' stroke-width="2.4" stroke-opacity="1" stroke-dasharray="none"':'')+' data-key="'+esc(it.key)+'" data-mid="'+esc(mid)+'" data-lane="'+r.lane+'" points="'+pts.map(p=>(p.x-R.left).toFixed(1)+','+(p.y-R.top).toFixed(1)).join(' ')+'"><title>'+esc(it.key)+' · turn '+esc(mid)+'</title></polyline>';
         drawn.push({key:it.key, pts, from:{key:'turn:'+mid, x0:M.left, y0:M.top, x1:M.right, y1:M.bottom}, to:{key:it.key, x0:it.rect.left, y0:it.rect.top, x1:it.rect.right, y1:it.rect.bottom}}); });
     try{ if(typeof cv.runTargets==='function') cv.runTargets(cvDesk?routes.map(r=>r.it.key):[]); }catch(_){}
     /* dotted (WSU-61): a run is a relation, not a part of either end */
