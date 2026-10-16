@@ -24,7 +24,8 @@ READINESS_THRESHOLDS = {
     "minimum_replay_suppressions": 1,
 }
 EVIDENCE_FAMILIES = frozenset({
-    "integration_api", "telegram", "email", "commerce", "infrastructure"})
+    "integration_api", "telegram", "email", "commerce", "infrastructure",
+    "homeassistant"})
 
 
 def evaluate_enforcement_readiness(summary: Mapping[str, Any]) -> dict[str, Any]:

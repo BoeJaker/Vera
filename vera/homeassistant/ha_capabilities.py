@@ -50,6 +50,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.homeassistant import ha_core as core
 from Vera.vera.homeassistant import ha_estate as estate
 from Vera.vera.security import secrets as vsecrets
+from Vera.vera.homeassistant.ha_effects import observe_homeassistant_notification_effect
 
 log = logging.getLogger("vera.homeassistant")
 
@@ -506,14 +507,20 @@ async def cap_scene(scene: str = "", trace_id=None):
 @capability(
     "ha.notify", http_method="POST", http_path="/ha/notify",
     http_tags=["homeassistant"], memory="on",
+    redact_args=["message", "title", "target", "data", "idempotency_key",
+                 "approval_receipt_ref"], redact_result=True,
     description="Push a notification through a Home Assistant notify target - "
                 "a paired phone, say. Target accepts 'notify.smasnug', "
                 "'mobile_app_x' or the bare slug. "
                 "Input: message (str!), title (str), target (str), "
-                "data (dict). Output: {ok, service}.",
+                "data (dict), optional idempotency_key, approval_receipt_ref "
+                "and retry policy evidence. Control references are never sent "
+                "to Home Assistant. Output includes effect_shadow.",
 )
 async def cap_notify(message: str = "", title: str = "",
                      target: str = "", data: Optional[Dict[str, Any]] = None,
+                     idempotency_key: str = "", approval_receipt_ref: str = "",
+                     retry: bool = False,
                      trace_id=None):
     if not message.strip():
         return {"error": "message is required"}
@@ -522,12 +529,17 @@ async def cap_notify(message: str = "", title: str = "",
                          "ha.services(domain='notify')"}
     domain, service = core.notify_service(target)
     payload = core.notify_payload(message, title, data)
+    shadow = observe_homeassistant_notification_effect(
+        target_ref=f"{domain}.{service}", idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     try:
-        return await _do_call(domain, service, payload)
+        result = await _do_call(domain, service, payload)
+        return {**result, "effect_shadow": shadow}
     except RuntimeError as e:
-        return _unconfigured() if "not configured" in str(e) else {"error": str(e)}
+        result = _unconfigured() if "not configured" in str(e) else {"error": str(e)}
+        return {**result, "effect_shadow": shadow}
     except Exception as e:
-        return {"error": str(e)[:300]}
+        return {"error": str(e)[:300], "effect_shadow": shadow}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
