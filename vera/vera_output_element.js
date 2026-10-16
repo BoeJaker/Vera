@@ -300,6 +300,22 @@
       + (want('save') ? btn('save', 'save', 'Save', "Save it to the session's artifacts") : '')
       + (o.extra || '') + '</div>';
   }
+  /* A HEADLESS CARD (o.bar === false): for a host that draws one head of its own around the card (the canvas's item
+     container, DEEP-29 11A.4). The bar is still made - hidden - so the card's actions keep finding it (a label that
+     toggles, the outline under it, a run's flash); the host lists them with barActions(card) and runs one with
+     actOn(card, name), and the bar's dropdowns (Send to, Download) are handed over whole, to be drawn in its menu. */
+  const barOpen = (o) => '<div class="code-bar"' + (o && o.bar === false ? ' hidden' : '') + '>';
+  function barActions(c) {
+    const bar = c && c.querySelector && c.querySelector(':scope > .code-bar'); if (!bar) return { acts: [], menus: [] };
+    const acts = [...bar.querySelectorAll(':scope > .cb-act[data-vo]')].filter((b) => !b.disabled).map((b) => {
+      const s = b.querySelector('span'); return { vo: b.getAttribute('data-vo'), label: String((s ? s.textContent : b.textContent) || '').trim(), title: b.title || '', on: b.classList.contains('on') }; });
+    const menus = [...bar.querySelectorAll(':scope > .vo-send')].map((x) => x.outerHTML);
+    return { acts, menus };
+  }
+  function actOn(c, name, b) {
+    const id = c && c.getAttribute && c.getAttribute('data-cb'); if (!id || !name) return;
+    return act(String(name), id, b || c.querySelector(':scope > .code-bar [data-vo="' + String(name).replace(/"/g, '') + '"]'), c);
+  }
   // a host's own button in the card's look (its own attribute, its own handler)
   const hostBtn = (attrs, ico, label, tip, on) => '<button class="cb-act' + (on ? ' on' : '') + '" ' + attrs + ' title="' + esc(tip) + '">' + (I[ico] || '') + '<span>' + label + '</span></button>';
   /* THE ONE CODE CARD (owner, 2026-10-03: "the code renderer in the canvas does not have the same options as the one in
@@ -320,11 +336,11 @@
     if (o.id) blocks[id] = Object.assign(blocks[id] || {}, { lang, code, filename: fname });
     const lbl = esc(L || 'plain') + (fname ? ' · <span class="cb-file">' + esc(fname) + '</span>' : '');
     const cls = 'code-card' + (o.cls ? ' ' + o.cls : '');
-    if (o.incomplete) return '<div class="' + cls + '" data-cb="' + id + '" data-incomplete="1"><div class="code-bar"><span class="code-lang">' + lbl
+    if (o.incomplete) return '<div class="' + cls + '" data-cb="' + id + '" data-incomplete="1">' + barOpen(o) + '<span class="code-lang">' + lbl
       + '</span><div class="cb-sp"></div><span class="cb-stream">streaming</span></div>' + (o.body || codeBody(code, lang, o.lines)) + '</div>';
     const page = wholePage(lang, code) && !o.body && o.autoPrev !== false;
     const nSym = Object.keys(symbols(code, lang)).length;
-    return '<div class="' + cls + '" data-cb="' + id + '"' + (page ? ' data-auto-prev="1"' : '') + '><div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
+    return '<div class="' + cls + '" data-cb="' + id + '"' + (page ? ' data-auto-prev="1"' : '') + '>' + barOpen(o) + '<span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
       + btn('copy', 'copy', 'Copy', 'Copy to the clipboard')
       + btn('edit', 'edit', 'Edit', 'Edit this code - in place, or full screen; Run, Preview and Save use your version')
       + btn('explode', 'explode', 'Explode', 'A structured diagram of this code - symbols, calls, imports, lint')
@@ -352,7 +368,7 @@
     if (o.id) blocks[id] = Object.assign(blocks[id] || {}, { lang: 'mermaid', code, filename: '' });
     blocks[id].title = title;
     const lbl = 'mermaid' + (title ? ' · <span class="cb-file">' + esc(title) + '</span>' : '');
-    return '<div class="code-card vo-diagram' + (o.cls ? ' ' + o.cls : '') + '" data-cb="' + id + '"><div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
+    return '<div class="code-card vo-diagram' + (o.cls ? ' ' + o.cls : '') + '" data-cb="' + id + '">' + barOpen(o) + '<span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>'
       + btn('copy', 'copy', 'Copy', 'Copy the mermaid source')
       + btn('edit', 'edit', 'Edit', 'Edit the source - the diagram is redrawn from your version')
       + btn('dsrc', 'outline', 'Source', 'Show the mermaid source under the diagram', 'cb-srcbtn')
@@ -503,7 +519,7 @@
     o = o || {}; const id = o.id || register(lang, code, ''); if (o.id) blocks[id] = Object.assign(blocks[id] || {}, { lang, code, filename: '' });
     blocks[id].fileKind = kind; blocks[id].title = String(o.title || '');
     const lbl = esc(fileLabel(kind, code, String(lang).toLowerCase()));
-    const head = '<div class="code-card vo-file vo-' + kind + (o.cls ? ' ' + o.cls : '') + '" data-cb="' + id + '" data-kind="' + kind + '"' + (o.incomplete ? ' data-incomplete="1"' : '') + '><div class="code-bar"><span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>';
+    const head = '<div class="code-card vo-file vo-' + kind + (o.cls ? ' ' + o.cls : '') + '" data-cb="' + id + '" data-kind="' + kind + '"' + (o.incomplete ? ' data-incomplete="1"' : '') + '>' + barOpen(o) + '<span class="code-lang">' + lbl + '</span><div class="cb-sp"></div>';
     if (o.incomplete) return head + '<span class="cb-stream">streaming</span></div><div class="vo-fview">' + fileView(kind, id, code, String(lang).toLowerCase(), true) + '</div></div>';
     return head + btn('copy', 'copy', 'Copy', 'Copy its source')
       + btn('edit', 'edit', 'Edit', 'Edit the source - it is redrawn from your version')
@@ -1089,6 +1105,7 @@
 .code-card{margin:6px 0;border:1px solid var(--border,rgba(255,255,255,.09));border-radius:var(--ui-radius,6px);overflow:hidden;background:var(--bg2,#1a1d24)}
 .code-card pre{margin:0;padding:10px 12px;overflow:auto;background:var(--bg0,#0e0f12);font-family:var(--mono,ui-monospace,monospace);font-size:11.5px;line-height:1.5;color:var(--text,#d8dce4);max-height:420px}
 .code-card pre code{font-family:inherit;background:transparent;padding:0;color:inherit;white-space:pre}
+.code-card > .code-bar[hidden]{display:none}
 .code-card .code-bar{display:flex;align-items:center;flex-wrap:wrap;gap:2px;padding:3px 6px 3px 10px;background:var(--bg1,#14161b);border-bottom:1px solid var(--border,rgba(255,255,255,.09));font-family:var(--mono,ui-monospace,monospace);font-size:9px}
 .code-card .code-lang{color:var(--acc,#5a9e8f);text-transform:uppercase;letter-spacing:.7px;font-weight:600}
 .code-card .cb-file{color:var(--acc2,#8fb87a);text-transform:none;letter-spacing:0}
@@ -1210,7 +1227,7 @@
   }
 
   window.VeraOut = { version: 2, fileKind: (l) => FILE_KIND[String(l || '').toLowerCase()] || '', slidesOf, rowsOf, sheetValues, fileCard, render, card, diagram, sendMenu, bar, hostBtn, icons: I, fence, highlight, lintCode, lintCard, hydrate, wire, adopt, preview, run, edit, editFull, applyCode, symbols, codeBody, proseMenu, prose,
-    register, blocks, hooks, previewable, runnable, wholePage, previewDoc, fenceFilename, langClass, ensureLib, css: CSS };
+    register, blocks, hooks, previewable, runnable, wholePage, previewDoc, fenceFilename, langClass, ensureLib, css: CSS, barActions, actOn };
   const boot = () => { adopt(document); wire(document); };
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();

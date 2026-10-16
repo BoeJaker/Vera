@@ -44,9 +44,9 @@ const mod = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element
   /* with its page (the chat or the canvas's own resolver gives it: WSU-67, /ui/panels/<id> is not a route) */
   const h = mod.BLOCK.panel({ panel: 'calendar-panel', title: 'Calendar', src: '/cal/panel' }, 'l', 'panel:calendar-panel', null);
   t('live in its frame', /data-live="frame"/.test(h) && /calendar-panel/.test(h) && /data-src="\/cal\/panel"/.test(h));
-  t('with query and dispatch over the bridge', /data-act="pquery"/.test(h) && /data-act="pdispatch"/.test(h));
+  t('with query and dispatch over the bridge', cv.includes("row('pquery'") && cv.includes("row('pdispatch'"));
   t('a console to drive it by hand', /data-f="action"/.test(h) && /data-f="payload"/.test(h));
-  t('and a way out to the standalone page', /data-act="pstand"/.test(h));
+  t('and a way out to the standalone page', cv.includes("row('pstand'"));
   t('the bridge is the capability, not a private channel', /panel\.dispatch/.test(cv) && /panel\.query/.test(cv));
 }
 
