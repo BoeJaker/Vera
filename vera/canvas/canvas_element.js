@@ -2955,7 +2955,7 @@
   const VIEW_LABEL = { list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips', fields: 'Fields' };
   const viewStore = (el) => { if (el._views) return el._views; try { el._views = JSON.parse(localStorage.getItem('vera:canvas:views:' + el.canvasId) || '{}') || {}; } catch (e) { el._views = {}; } return el._views; };
   const viewOf = (el, key, dflt) => (el && key && viewStore(el)[key]) || dflt;
-  const viewSet = (el, key, v) => { const m = viewStore(el); m[key] = v; try { localStorage.setItem('vera:canvas:views:' + el.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } };
+  const viewSet = (el, key, v) => { const m = viewStore(el); m[key] = v; try { localStorage.setItem('vera:canvas:views:' + el.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } if (el._itemSet) el._itemSet(key, { view: v }); };
   /* a table of three or more columns reads as a list on a desk card (a 250 px card cut a model table into words per line);
      a narrow one, or one on a held column, as a table - the reader's choice always wins */
   const tableDefault = (c, el) => (el && el.deskAlign && el.deskAlign() && (c.columns || []).length >= 3) ? 'list' : 'table';
@@ -3356,6 +3356,7 @@
     _deskPosSet(key, at) {
       const m = this._deskPosGet(); if (at) m[key] = at; else delete m[key];
       try { localStorage.setItem('vera:canvas:deskpos:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ }
+      this._itemSet(key, { place: at ? Object.assign({ fx: at.fx, fy: at.fy, by: 'person' }, at.w ? { w: at.w } : {}, at.h ? { h: at.h } : {}) : { by: 'auto' } });
     }
     /* A LOCKED CARD DOES NOT MOVE (owner, 2026-10-09: "users need the ability to pin items so they cant move"): its place
        (a share of the desk), its size and its face are kept as they were when it was locked. The arrangement, a turn
@@ -3369,6 +3370,43 @@
     _lockSet(key, at) {
       const m = this._lockGet(); if (at) m[key] = at; else delete m[key];
       try { localStorage.setItem('vera:canvas:desklock:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ }
+      this._itemSet(key, { place: at ? { fx: at.fx, fy: at.fy, w: at.w, h: at.h, by: 'person', locked: true } : { locked: false } });
+    }
+    /* THE ITEM'S STATE LIVES WITH THE ITEM (DEEP-29 11A.4 Decision 2, owner decision D1 2026-10-16): its face, its place, its
+       lock, its view and its fold are written to the item record (canvas.item.set), so another tab, another viewer and the
+       relevance engine see them; this browser's copies are a cache. A change is sent once the hand stops (one call per item,
+       its fields merged); the page has already drawn it, so nothing waits on the answer. Keyless blocks keep theirs here. */
+    _itemSet(key, f) {
+      key = String(key || ''); if (!key || !this.canvasId || this._bidOf(key)) return;
+      const q = this._itemQ || (this._itemQ = {}); const was = q[key] || {};
+      if (f.place && was.place) f = Object.assign({}, f, { place: Object.assign({}, was.place, f.place) });
+      q[key] = Object.assign(was, f); (this._itemPend || (this._itemPend = new Set())).add(key);
+      clearTimeout(this._itemT); this._itemT = setTimeout(() => {
+        const all = this._itemQ || {}; this._itemQ = {}; const base = (window._veraBase || '').replace(/\/$/, '');
+        /* one after another: the canvas is still saved whole, so two writes at once would lose the first (B1 - per-item
+           storage - is the cure; until then the page never races itself) */
+        const id = this.canvasId; this._itemChain = Object.keys(all).reduce((p, k) => p.then(() => fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'canvas.item.set', arguments: Object.assign({ id, key: k }, all[k]) }) })
+          .catch(() => { /* the cache keeps it */ }).finally(() => { setTimeout(() => this._itemPend && this._itemPend.delete(k), 1500); })), this._itemChain || Promise.resolve()); }, 400);
+    }
+    /* ...and read back from it: where the record says how an item is shown, it wins over this browser's copy - unless a change
+       of ours to that item is still on its way. A record that says nothing leaves the copy as it is (so what was kept here
+       before the record carried it is not lost; it goes up with the next change). */
+    _itemHydrate(doc) {
+      const pend = this._itemPend || new Set(); let lk = 0, ps = 0, pl = 0, vw = 0, fd = 0;
+      const locks = this._lockGet(), pos = this._deskPosGet(), pills = this._pillGet(), views = viewStore(this), folds = this._folds();
+      ((doc && doc.blocks) || []).forEach((b) => { const key = b && b.key ? String(b.key) : ''; if (!key || pend.has(key)) return;
+        if (b.face === 'pill' || b.face === 'tile') { const on = b.face === 'pill' && b.state !== 'parked'; if (!!pills[key] !== on) { if (on) pills[key] = 1; else delete pills[key]; pl++; } }
+        const P = b.place && typeof b.place === 'object' ? b.place : null;
+        if (P && 'locked' in P) { if (P.locked && P.fx != null) { const v = { fx: P.fx, fy: P.fy, w: P.w, h: P.h, face: b.face === 'pill' ? 'chip' : 'card' }; if (JSON.stringify(locks[key]) !== JSON.stringify(v)) { locks[key] = v; lk++; } } else if (!P.locked && locks[key]) { delete locks[key]; lk++; } }
+        if (P && P.by === 'person' && !P.locked && P.fx != null) { const v = { fx: P.fx, fy: P.fy }; if (P.w) v.w = P.w; if (P.h) v.h = P.h; if (JSON.stringify(pos[key]) !== JSON.stringify(v)) { pos[key] = v; ps++; } }
+        else if (P && P.by === 'auto' && pos[key]) { delete pos[key]; ps++; }
+        if (b.view && views[key] !== b.view) { views[key] = b.view; vw++; }
+        if (typeof b.folded === 'boolean' && !!folds[key] !== b.folded) { folds[key] = b.folded; fd++; } });
+      const save = (n, k, v) => { if (n) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* this page only */ } } };
+      save(lk, 'vera:canvas:desklock:' + this.canvasId, locks); save(ps, 'vera:canvas:deskpos:' + this.canvasId, pos); save(pl, 'vera:canvas:deskpill:' + this.canvasId, pills);
+      save(vw, 'vera:canvas:views:' + this.canvasId, views); save(fd, 'vera:canvas:fold:' + this._foldsFor, folds);
+      if (lk || ps || pl) this._html = null;
     }
     /* the ⋯ menu of a desk card: what is not worth a place in its one row of controls. On the stage (a card clips what is
        inside it), under the button, closed by its own use, a second ⋯ or a press anywhere else. */
@@ -3640,7 +3678,7 @@
     /* A CARD MINIMISED TO A PILL (owner, 2026-10-11: "id like a way to minimise them to a pill from the top bar controls"):
        kept per canvas; the desk places it on its border as a pill whatever the topic; a click on the pill opens it again */
     _pillGet() { if (this._pillA) return this._pillA; try { this._pillA = JSON.parse(localStorage.getItem('vera:canvas:deskpill:' + this.canvasId) || '{}') || {}; } catch (e) { this._pillA = {}; } return this._pillA; }
-    _pillSet(key, on) { const m = this._pillGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:deskpill:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
+    _pillSet(key, on) { const m = this._pillGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:deskpill:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } this._itemSet(key, { face: on ? 'pill' : 'tile' }); }
     _cmpGet() { if (this._cmpA) return this._cmpA; try { this._cmpA = JSON.parse(localStorage.getItem('vera:canvas:deskfront:' + this.canvasId) || '{}') || {}; } catch (e) { this._cmpA = {}; } return this._cmpA; }
     _cmpSet(m) { this._cmpA = m; const ks = Object.keys(m); if (ks.length > 400) ks.sort((a, b) => m[a] - m[b]).slice(0, ks.length - 400).forEach((k) => delete m[k]);
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
@@ -4294,6 +4332,7 @@
          header and result - "blank except for the text m1:cap:0 research.run ...") is not drawn: the chat no longer makes
          them, and those already kept are skipped */
       if (Array.isArray(doc.blocks)) doc.blocks = doc.blocks.filter((b) => !(b && b.type === 'markdown' && /^turn:[^:]+:cap:\d+$/.test(String(b.key || ''))));
+      try { this._itemHydrate(doc); } catch (e) { /* the browser's copy stands */ }
       const blocks = doc.blocks || [];
       // what the host is streaming into an item outranks whatever an older revision says it holds (liveUpdate)
       if (this._liveOv) blocks.forEach((b) => { const ov = b && b.key != null && this._liveOv[String(b.key)]; if (ov) b.content = Object.assign({}, b.content || {}, ov); });
@@ -5167,6 +5206,7 @@
       key = String(key); const f = this._folds(); f[key] = !!on;
       const ks = Object.keys(f); if (ks.length > 400) ks.slice(0, ks.length - 400).forEach((k) => { delete f[k]; });   // bounded
       try { localStorage.setItem('vera:canvas:fold:' + this._foldsFor, JSON.stringify(f)); } catch (e) {}
+      this._itemSet(key, { folded: !!on });
       // folding closes it; unfolding is asking to see it, so it opens IN PLACE - at its size's cap a list opened to its
       // graph was cut off under its own header line (measured on the mirror)
       if (on) this._open.delete(key); else this._open.add(key);
