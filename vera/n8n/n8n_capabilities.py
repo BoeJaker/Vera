@@ -49,6 +49,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.mcp.mcp_client import MCPClient, MCPError, probe as mcp_probe
 from Vera.vera.mcp import mcp_client_core as mcc
 from Vera.vera.n8n import n8n_core as core
+from Vera.vera.n8n.n8n_effects import observe_n8n_workflow_effect
 from Vera.vera.security import secrets as vsecrets
 
 log = logging.getLogger("vera.n8n")
@@ -297,16 +298,27 @@ async def cap_workflow_get(id: str = "", full: bool = False, trace_id=None):
 @capability(
     "n8n.workflow.create", http_method="POST", http_path="/n8n/workflow/create",
     http_tags=["n8n"], memory="on",
+    redact_args=["name", "nodes", "connections", "settings",
+                 "idempotency_key", "approval_receipt_ref"], redact_result=True,
     description="Create an n8n workflow from a node graph. Input: name (str!), "
                 "nodes (list!), connections (dict), settings (dict), "
-                "activate (bool). Output: {ok, id, workflow}.",
+                "activate (bool), optional idempotency_key, "
+                "approval_receipt_ref and retry policy evidence. Control "
+                "references are not sent to n8n. Output includes one shadow "
+                "per provider mutation in effect_shadows.",
 )
 async def cap_workflow_create(name: str = "", nodes: Optional[List] = None,
                               connections: Optional[Dict] = None,
                               settings: Optional[Dict] = None,
-                              activate: bool = False, trace_id=None):
+                              activate: bool = False, idempotency_key: str = "",
+                              approval_receipt_ref: str = "", retry: bool = False,
+                              trace_id=None):
     if not name or not nodes:
         return {"error": "name and nodes are required"}
+    shadows = [observe_n8n_workflow_effect(
+        operation="create", workflow_ref=name,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)]
     try:
         body = {"name": name, "nodes": nodes,
                 "connections": connections or {},
@@ -315,46 +327,74 @@ async def cap_workflow_create(name: str = "", nodes: Optional[List] = None,
         wf = wf.get("data", wf)
         wid = wf.get("id", "")
         if activate and wid:
+            shadows.append(observe_n8n_workflow_effect(
+                operation="activate", workflow_ref=wid,
+                idempotency_key=idempotency_key,
+                approval_receipt_ref=approval_receipt_ref, retry=retry))
             await _api("POST", f"workflows/{wid}/activate")
             wf["active"] = True
         await emit_event({"type": "n8n.workflow.created", "id": wid, "name": name})
         cfg = await _load_config()
         return {"ok": True, "id": wid,
-                "workflow": core.workflow_summary(wf, cfg.get("base_url", ""))}
+                "workflow": core.workflow_summary(wf, cfg.get("base_url", "")),
+                "effect_shadows": shadows}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "effect_shadows": shadows}
 
 
 @capability(
     "n8n.workflow.activate", http_method="POST", http_path="/n8n/workflow/activate",
     http_tags=["n8n"], memory="on",
+    redact_args=["id", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Activate or deactivate an n8n workflow — an inactive workflow's "
                 "production webhook/MCP URL returns 404. Input: id (str!), "
-                "active (bool=True). Output: {ok, id, active}.",
+                "active (bool=True), optional idempotency_key, "
+                "approval_receipt_ref and retry policy evidence. Control "
+                "references are not sent to n8n. Output includes effect_shadow.",
 )
-async def cap_workflow_activate(id: str = "", active: bool = True, trace_id=None):
+async def cap_workflow_activate(id: str = "", active: bool = True,
+                                idempotency_key: str = "",
+                                approval_receipt_ref: str = "",
+                                retry: bool = False, trace_id=None):
     if not id:
         return {"error": "id required"}
+    shadow = observe_n8n_workflow_effect(
+        operation="activate" if active else "deactivate", workflow_ref=id,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     try:
         await _api("POST", f"workflows/{id}/{'activate' if active else 'deactivate'}")
-        return {"ok": True, "id": id, "active": bool(active)}
+        return {"ok": True, "id": id, "active": bool(active),
+                "effect_shadow": shadow}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "effect_shadow": shadow}
 
 
 @capability(
     "n8n.workflow.delete", http_method="POST", http_path="/n8n/workflow/delete",
     http_tags=["n8n"], memory="on",
-    description="Delete an n8n workflow. Input: id (str!). Output: {ok, id}.",
+    redact_args=["id", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
+    description="Delete an n8n workflow. Input: id (str!), optional "
+                "idempotency_key, approval_receipt_ref and retry policy "
+                "evidence. Control references are not sent to n8n. Output "
+                "includes effect_shadow.",
 )
-async def cap_workflow_delete(id: str = "", trace_id=None):
+async def cap_workflow_delete(id: str = "", idempotency_key: str = "",
+                              approval_receipt_ref: str = "",
+                              retry: bool = False, trace_id=None):
     if not id:
         return {"error": "id required"}
+    shadow = observe_n8n_workflow_effect(
+        operation="delete", workflow_ref=id,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     try:
         await _api("DELETE", f"workflows/{id}")
-        return {"ok": True, "id": id}
+        return {"ok": True, "id": id, "effect_shadow": shadow}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "effect_shadow": shadow}
 
 
 @capability(
