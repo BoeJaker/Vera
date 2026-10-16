@@ -3363,8 +3363,8 @@
       if (c.classList.contains('cmp-behind')) { const m = this._cmpGet(); m[String(key)] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[String(key)] = Date.now(); this._placeNow();
         c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === String(key)) || c; }
       c.classList.remove('desk-flash'); void c.offsetWidth; c.classList.add('desk-flash');
-      const z = c.style.zIndex; c.style.zIndex = String(zOf('flash'));
-      clearTimeout(c._flT); c._flT = setTimeout(() => { c.classList.remove('desk-flash'); c.style.zIndex = z; }, 1600);
+      const z = c.style.zIndex; c.style.zIndex = String(zOf('flash')); this._liveZ([c]);
+      clearTimeout(c._flT); c._flT = setTimeout(() => { c.classList.remove('desk-flash'); c.style.zIndex = z; this._liveZ([c]); }, 1600);
       return true;
     }
     /* A PLACEHOLDER IN THE CHAT OPENS ITS ITEM (owner, 2026-10-11, WSU-60: "a placeholder in the chat opens and focuses
@@ -4000,6 +4000,7 @@
       const slotFor = (key) => { const s0 = D.sizeAt(R, (side === 'right' ? W - 300 : 300), H / 2, {}, desk); const w = Math.min(s0.w, 460), h = Math.min(s0.h, 340);
         const bs = D.bestSlot ? D.bestSlot({ w, h, rel: relByKey[key] || [] }, slotted, R, desk, { strip: W < 760 ? 46 : 170 }) : null;
         if (!bs) return null; const p = [bs.x, bs.y]; p.size = { w: bs.w, h: bs.h }; slotted.push({ x: bs.x, y: bs.y, w: bs.w, h: bs.h, rel: relByKey[key] || [] }); return p; };
+      const listOpen = ranked.slice(0, 9).some((x) => !outside.has(x.c.dataset.key || '') && this._kindOf(x.c, x.c.dataset.key || '') === 'list');
       const plan = ranked.map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i);
         /* the card under the hand's resize: its top-left where it was, its size the hand's; the others go round it */
@@ -4030,14 +4031,23 @@
         const user = pw > 0 && !(up[key] && up[key].chip) ? { w: pw, h: ph || Math.round(pw * 0.66) } : null;
         /* a mode's cell (or a free slot) gives the card its size there; the person's own size still wins */
         const msz = p && p.size ? p.size : null;
-        const so = { size: user || msz, pinned: (!!user && c.classList.contains('pinned')) || (!user && !!msz), icon: p[2] === 'icon' };
+        /* the size its kind asks for (see _kindOf): a chart the free width (less a column when a list card is open beside it),
+           a table what its table measures, a list tall and narrow - asked, not kept: the person's size and a mode's cell win,
+           and the distance from the chat still makes a far card a pill */
+        const kind = this._kindOf(c, key); let ksz = null;
+        if (!user && !msz && kind) { const FR = D.freeRegion ? D.freeRegion(R, desk, W < 760 ? 46 : 170) : { l: 8, r: W - 8 }; const FW = Math.max(240, FR.r - FR.l - 16);
+          if (kind === 'chart') ksz = { w: Math.max(Math.min(FW, 480), FW - (listOpen ? 470 : 0)), h: Math.round(Math.max(340, Math.min(600, H * 0.5))) };
+          else if (kind === 'table') { const tb = c.querySelector('.it-bd table'); const tw = tb ? tb.scrollWidth : 0, th = tb ? tb.scrollHeight : 0;
+            ksz = tw ? { w: Math.round(Math.max(300, Math.min(FW, tw + 28))), h: Math.round(Math.max(160, Math.min(H * 0.7, th + 64))) } : { w: Math.round(Math.min(FW, 560)), h: Math.round(Math.min(H * 0.55, 380)) }; }
+          else if (kind === 'list') ksz = { w: Math.round(Math.max(380, Math.min(520, FW * 0.32))), h: Math.round(Math.max(380, Math.min(H - 16, H * 0.75))) }; }
+        const so = { size: user || msz || ksz, pinned: (!!user && c.classList.contains('pinned')) || (!user && !!msz), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         /* a card is no taller than what it holds (see _deskFit): its measured height caps its face and its growth */
         /* a deep dive (WSU-42) is a few bars or a ring - it took the free room like a chart (808 px for 3 bars; review
            2026-10-15 U13): no wider than 460 and no taller than 360 unless the person sizes it */
         const dive = /^dive:/.test(key);
         const nat0 = user ? null : (this._natH || {})[key];   /* a size the person gave wins over the content fit (WSU-74) */
-        const nat = user ? null : (dive ? Math.min(nat0 || Infinity, 360) : nat0);
+        const nat = user || kind === 'chart' ? null : (dive ? Math.min(nat0 || Infinity, 360) : nat0);
         /* ...and no wider than its kind uses (owner, 2026-10-11: "some desk items like the 'mentioned' take up too much width
            for their content"): names, a note, fields, a page, what ran - their content wraps short; a wide card of them was
            a wide empty band */
@@ -4047,7 +4057,7 @@
         const nw0 = (dive ? 460 : 0) || ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
           || DESK_FORM_MAXW[wf];
         /* ...and a text-like card no wider than its content measured (_deskFit, WSU-69) */
-        const nwm = user ? null : (this._natW || {})[key]; const nw = nwm ? Math.min(nw0 || Infinity, nwm) : (user ? null : nw0);
+        const nwm = user || kind === 'chart' || kind === 'table' ? null : (this._natW || {})[key]; const nw = kind === 'chart' || kind === 'table' ? null : nwm ? Math.min(nw0 || Infinity, nwm) : (user ? null : nw0);
         /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
         const mh = (this._minH || {})[key];
         const o = { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
@@ -5283,7 +5293,7 @@
       /* already open by the hover (a person points before they click): a click that makes it a window still marks it one -
          it returned here before, so the "window" was the hover peek kept open, nothing more (review 2026-10-15 U7) */
       if (it._cpw && it._cpw.open) { const win = !!(this._wins && this._wins.has(it.dataset.key)); it.classList.toggle('desk-win', win);
-        if (win && this._focusKey !== it.dataset.key) it.style.zIndex = String(it._cpw.z || 10); return true; }
+        if (win && this._focusKey !== it.dataset.key) { it.style.zIndex = String(it._cpw.z || 10); this._liveZ([it]); } return true; }
       /* the title widening ran first: undone, the card opens in its place */
       if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
       if (!it.classList.contains('desk-chip')) return false;
@@ -5413,6 +5423,26 @@
       if (it) { it.classList.remove('desk-win'); this._chipPeek(it, false); }
       return true;
     }
+    /* A LIVE ELEMENT FOLLOWS ITS CARD'S PLACE IN THE STACK AT ONCE (owner 2026-10-16: "the controls in the revised ohlcv element
+       dont work"): the chart, a terminal, a frame live in their own layer over their card's body and took the card's z-index
+       only when that layer was next laid out. A press raises the card (_focusSet) - its body then lay over its own chart and
+       took every later click. Every z change now carries to the card's live elements (and its fused panes'). */
+    _liveZ(cards) {
+      const L = this._live || {}; (cards || []).forEach((c) => { if (!c) return; const z = c.style.zIndex || '';
+        [c.dataset.key].concat([...c.querySelectorAll('.fu-p[data-key]')].map((f) => f.dataset.key)).forEach((k) => { const el = L[k]; if (el && el.style.zIndex !== z) el.style.zIndex = z; }); });
+    }
+    /* WHAT A CARD IS, FOR ITS SIZE (owner 2026-10-16: "complex charts (like ohlcv) should try to be a larger element - they could
+       at least take the full width available (given any vertically favoured elements open). tables would be on a rung below
+       this and suitable to be any size that fits the number of rows and columns"; lists and cards "should be longer"):
+       chart · table · list, or '' for the rest */
+    _kindOf(c, key) {
+      if (!c) return ''; const t = c.dataset.type || ''; const cc = this._contentOf(key) || {}; const rec = cc.record && typeof cc.record === 'object' ? cc.record : cc;
+      const f = String(rec.form || cc.form || cc.widget || (rec.draw && rec.draw.form) || '').replace(/@iso$/, '');
+      if (c.querySelector('.vc-mchart-w, vera-mkt-chart') || /^(candles|ohlcv|trace|area|column|line|series|scatter|bands|heat|matrix)$/.test(f) || c.querySelector('.vc-app[data-as="widget"]')) return 'chart';
+      if (t === 'table' || f === 'table' || c.querySelector('.it-bd .vc-app-t, .it-bd > .vc-res[data-as="table"], .it-bd > table.vc-table, .it-bd .vc-tbl')) return 'table';
+      if (/^(records|entities|research|source)$/.test(t) || /^(list|cards|news|feed|links|notices|checklist|people|ranked)$/.test(f) || c.querySelector('.it-bd .vc-rbx, .it-bd .vc-app-cards')) return 'list';
+      return '';
+    }
     _focusSet(it) {
       const st = this.shadowRoot && this.shadowRoot.getElementById('stage'); if (!st) return;
       const prev = this._focusKey ? [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === this._focusKey) : null;
@@ -5425,6 +5455,7 @@
         const win = it.classList.contains('desk-win');
         if (win) { const o = this._winOrder = (this._winOrder || []).filter((k) => k !== key); o.push(key); }
         it.classList.add('desk-focus'); it.style.zIndex = String(win ? zOf('window', ZB.window[1] - ZB.window[0]) : zOf('tileFocus')); }
+      this._liveZ([prev, it]);
     }
     /* a placing pass restyles every card: the windows open again where they were, the focused one stays on top */
     _winRestore() {
@@ -5473,7 +5504,7 @@
       const W = (it.parentElement && it.parentElement.clientWidth) || 1000;
       const w = Math.min(W - 8, it.offsetWidth + Math.max(0, t.scrollWidth - t.clientWidth) + 8);
       let left = parseFloat(it.style.left) || 0; if (left + w > W - 4) left = Math.max(4, W - 4 - w);
-      it.style.setProperty('width', w + 'px', 'important'); it.style.left = left + 'px'; it.style.zIndex = String(zOf('pop'));
+      it.style.setProperty('width', w + 'px', 'important'); it.style.left = left + 'px'; it.style.zIndex = String(zOf('pop')); this._liveZ([it]);
     }
     /* A FOLDED ITEM, PREVIEWED IN PLACE (owner, 2026-10-04: "hovering over lots of collapsed canvas items makes the
        previews flicker in and out as it doesnt stay in-place under the mouse. sometime hovering them doesnt open the
