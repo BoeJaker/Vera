@@ -496,6 +496,23 @@
     ui.i = ((ui.i || 0) + d + ms.length) % ms.length; ms.forEach((m, k) => m.classList.toggle('cur', k === ui.i)); mdShow(ms[ui.i]);
     const n = wrap.querySelector('.vc-mdn'); if (n) n.textContent = (ui.i + 1) + ' of ' + ms.length;
   }
+  /* a terminal's colours (DU-E-session): ANSI SGR codes as spans - the 8 + 8 bright colours, bold, dim, underline, reset;
+     every other escape sequence dropped, never shown as text */
+  const ANSI_C = ['#4b5563', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#d7dae0'];
+  const ANSI_B = ['#7f848e', '#ff7b86', '#b5e890', '#ffd68a', '#82c4ff', '#de9bf0', '#7fd5e0', '#ffffff'];
+  function ansiHtml(s) {
+    const parts = String(s).split(/\x1b\[([0-9;]*)m/); let st = {}; let out = '';
+    const open = () => { const css = []; if (st.fg) css.push('color:' + st.fg); if (st.bold) css.push('font-weight:700'); if (st.dim) css.push('opacity:.7'); if (st.ul) css.push('text-decoration:underline'); return css.length ? '<span style="' + css.join(';') + '">' : ''; };
+    for (let i = 0; i < parts.length; i++) {
+      if (i % 2 === 0) { const txt = parts[i].replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*(\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\r(?!\n)/g, ''); if (!txt) continue; const o = open(); out += o + esc(txt) + (o ? '</span>' : ''); continue; }
+      const codes = (parts[i] || '0').split(';').map((x) => +x || 0);
+      for (let k = 0; k < codes.length; k++) { const n = codes[k];
+        if (n === 0) st = {}; else if (n === 1) st.bold = true; else if (n === 2) st.dim = true; else if (n === 4) st.ul = true; else if (n === 22) { st.bold = false; st.dim = false; } else if (n === 24) st.ul = false;
+        else if (n >= 30 && n <= 37) st.fg = ANSI_C[n - 30]; else if (n >= 90 && n <= 97) st.fg = ANSI_B[n - 90]; else if (n === 39) st.fg = null;
+        else if (n === 38 && codes[k + 1] === 5) { const c = codes[k + 2]; st.fg = c < 8 ? ANSI_C[c] : c < 16 ? ANSI_B[c - 8] : null; k += 2; }
+        else if (n === 38 && codes[k + 1] === 2) { st.fg = 'rgb(' + codes[k + 2] + ',' + codes[k + 3] + ',' + codes[k + 4] + ')'; k += 4; } } }
+    return out;
+  }
   const tblUi = (el, key) => { if (!el || !key) return { sort: -1, dir: 1, q: '', hide: {}, cols: false }; const m = el._tblUi || (el._tblUi = {}); return m[key] || (m[key] = { sort: -1, dir: 1, q: '', hide: {}, cols: false }); };
   const tblNum = (v) => { const s = String(v == null ? '' : v).replace(/[,%$£€\s]/g, ''); return s !== '' && isFinite(+s) ? +s : null; };
   /* the rows the bar shows, in its order: [index into the answer's rows, row] */
@@ -1098,10 +1115,17 @@
       const head = '';
       /* A COMMAND THAT RAN (a capability's command and its output, no shell open): what was run, where, and what it said -
          not a connect form over it. The form is for opening a shell; "open a shell" still does that, on the same host. */
-      if (!attached && c.command && c.output != null) return `<div class="vc-term vc-ran" data-w="canvas.terminal">`
+      /* ...with its exit code, its colours, and "run again" (DU-E-session): the same capability, the same arguments, asked
+         first in place (a command can change things), the answer written into this item */
+      if (!attached && c.command && c.output != null) { const rc = c.rc != null && c.rc !== '' ? +c.rc : null; const ask = !!(el && el._ranAsk && el._ranAsk[key]); const busy = !!(el && el._ranBusy && el._ranBusy[key]);
+        return `<div class="vc-term vc-ran" data-w="canvas.terminal">`
         + `<div class="vc-ran-cmd"><span class="ps">$</span><code>${esc(String(c.command))}</code>${shown ? `<span class="host">${esc(shown)}</span>` : ''}`
+        + (rc != null && isFinite(rc) ? `<span class="vc-rc ${rc === 0 ? 'ok' : 'bad'}" title="exit code">exit ${rc}</span>` : '')
+        + (c.cap && key ? (busy ? '<span class="vc-dim">running\u2026</span>' : `<button class="ib" data-act="tagain" title="Run ${esc(String(c.command))} again${shown ? ' on ' + esc(shown) : ''}">run again</button>`) : '')
         + (ws ? '<button class="ib" data-act="tattach" title="Open a shell on this host">open a shell</button>' : '') + `</div>`
-        + `<pre class="vc-pre vc-out"><code>${esc(String(c.output).slice(0, 8000)) || '<span class="vc-dim">(no output)</span>'}</code></pre></div>`;
+        + (ask ? `<div class="vc-ran-ask">Run <code>${esc(String(c.command))}</code> again${shown ? ' on <b>' + esc(shown) + '</b>' : ''}? <button class="ib" data-act="tagainok">run it</button><button class="ib" data-act="tagainno">no</button></div>` : '')
+        + (c.ran_at ? `<div class="vc-ran-when vc-dim">ran again ${esc(String(c.ran_at).slice(11, 19))}</div>` : '')
+        + `<pre class="vc-pre vc-out"><code>${ansiHtml(String(c.output).slice(0, 8000)) || '<span class="vc-dim">(no output)</span>'}</code></pre></div>`; }
       const conn = attached ? `<div class="vc-live" data-live="term" data-key="${esc(key)}" data-ws="${esc(ws)}"><span class="vc-dim">connecting…</span></div>`
         : `<div class="vc-tconnect" data-w="canvas.terminal.connect"><input class="ti" data-f="host_id" placeholder="host id — an SSH host of the Exec panel" value="${esc(shown)}" spellcheck="false"><input class="ti" data-f="container" placeholder="container (docker) — optional" value="${esc(container)}" spellcheck="false"><input class="ti sm" data-f="shell" placeholder="shell" value="${esc(shell)}" spellcheck="false"><button class="ib${hostsOpen ? ' on' : ''}" data-act="thosts" title="The estate's known hosts — the Exec panel's SSH hosts, the containers on every docker host, your saved connections">hosts ▾</button><button class="ib on" data-act="tconnect">Connect</button></div>` + hosts;
       return `<div class="vc-term" data-w="canvas.terminal">${head}${conn}${c.output ? `<pre class="vc-pre vc-out"><code>${esc(String(c.output).slice(0, 4000))}</code></pre>` : ''}</div>`;
@@ -2467,6 +2491,9 @@
   .vc-json details{margin-left:2px}.vc-json summary{cursor:pointer;color:var(--dim,#6b7480);list-style:none}.vc-json summary::before{content:'\u25b8 ';font-size:9px}.vc-json details[open] > summary::before{content:'\u25be '}
   .vc-json .j-row{display:flex;gap:6px;padding-left:12px;min-width:0}.vc-json .j-k{color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-json .j-k::after{content:':'}
   .vc-json .j-str{color:var(--acc2,#8fb87a);word-break:break-word}.vc-json .j-num{color:var(--acc3,#c9955a)}.vc-json .j-null,.vc-json .j-more{color:var(--dim,#6b7480)}
+  /* a command that ran (DU-E-session) */
+  .vc-rc{font:10px system-ui,sans-serif;padding:0 6px;border-radius:9px;border:1px solid currentColor;white-space:nowrap}.vc-rc.ok{color:var(--ok,#8fb87a)}.vc-rc.bad{color:var(--err,#e06c75)}
+  .vc-ran-ask{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;margin:4px 0;border:1px solid var(--warn,#e5c07b);border-radius:6px;font:11px system-ui,sans-serif}.vc-ran-when{font-size:10px;margin:2px 0}
   /* the long document (DU-E-markdown) */
   .vc-mdwrap{container-type:inline-size;display:flex;flex-direction:column;min-height:0}
   .vc-mdbar{display:flex;align-items:center;gap:5px;padding:0 0 6px;opacity:.6;transition:opacity .15s}.it:is(:hover,:focus-within) .vc-mdbar,.vc-mdbar:has(.vc-mdq:not(:placeholder-shown)){opacity:1}
@@ -5899,6 +5926,18 @@
         else this._sepSet(key, act === 'cmpsep');
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
+      /* a command that ran (DU-E-session): run again - asked first, in place; then the same capability with the same
+         arguments, its answer written into this item (output, exit code, when) */
+      if (act === 'tagain' || act === 'tagainno') { (this._ranAsk = this._ranAsk || {})[key] = act === 'tagain'; if (this._doc) this.render(this._doc); return; }
+      if (act === 'tagainok') { const c = this._contentOf(key) || {}; (this._ranAsk = this._ranAsk || {})[key] = false; if (!c.cap) return;
+        (this._ranBusy = this._ranBusy || {})[key] = true; if (this._doc) this.render(this._doc);
+        const base = (window._veraBase || '').replace(/\/$/, '');
+        (async () => { let a = null; try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: c.cap, arguments: c.args || {} }) }); const j = await r.json(); a = j && j.type === 'tool_result' ? j.content : j; } catch (e) { a = { stderr: String(e && e.message || e), rc: -1 }; }
+          const out = a && typeof a === 'object' ? [String(a.stdout || a.output || ''), String(a.stderr || '')].filter((x) => x.trim()).join('\n') : String(a == null ? '' : a);
+          const rc = a && typeof a === 'object' ? (a.rc != null ? a.rc : a.returncode != null ? a.returncode : a.exit_code) : null;
+          this._ranBusy[key] = false;
+          await this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, c, { output: out.slice(0, 16000), ran_at: new Date().toISOString() }, rc != null ? { rc } : {}) })); })();
+        return; }
       /* the long document (DU-E-markdown): step through the matches, jump to a heading, the rail and the width */
       if (act === 'mdprev' || act === 'mdnext' || act === 'mdgo' || act === 'mdrail' || act === 'mdwidth') { const ui = mdUi(this, key); const wrap = btn.closest('.vc-mdwrap');
         if (act === 'mdprev' || act === 'mdnext') { mdStep(wrap, ui, act === 'mdnext' ? 1 : -1); return; }

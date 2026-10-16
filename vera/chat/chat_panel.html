@@ -7952,7 +7952,7 @@ IMPORTANT:
         const code=String(d.code||''), p=String(d.path||''), lang=String(d.lang||'');
         return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' · '+code.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'code', content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; }
       case 'session': { const ls=(r0.data&&r0.data.lines)||[]; const cmd=ls.length&&/^\$ /.test(ls[0])?ls[0].slice(2):''; const out=(cmd?ls.slice(1):ls).join('\n');
-        return { kind:'session', n:(cmd||title).slice(0,52), k:'term', col:'var(--dv6, #7dd3fc)', d:'terminal'+(r0.data&&r0.data.state?' · '+r0.data.state:''), content:{ command:cmd, output:out.slice(0,16000) } }; }
+        return { kind:'session', n:(cmd||title).slice(0,52), k:'term', col:'var(--dv6, #7dd3fc)', d:'terminal'+(r0.data&&r0.data.state?' · '+r0.data.state:''), content:Object.assign({ command:cmd, output:out.slice(0,16000), cap, args:Object.assign({}, args||{}) }, (()=>{ const m=String((r0.data&&r0.data.state)||'').match(/^rc (-?\d+)$/); return m?{ rc:+m[1] }:{}; })()) }; }   /* what ran it, how it ended (DU-E-session) */
       case 'image': { const d=r0.data||{}; const url=d.image_b64?('data:image/png;base64,'+d.image_b64):String(d.url||''); if(!url) return null;
         return { kind:'image', n:String(d.caption||title), k:'image', col:'var(--dv4, #e879f9)', d:'image', content:{ url, alt:String(d.caption||title), caption:String(d.caption||'') } }; }
       case 'kv': { const f=r0.data; if(!f||typeof f!=='object') return null; return { kind:'kv', n:title, k:'kv', col:'var(--dim2, #94a3b8)', d:'record · '+Object.keys(f).length+' fields', content:{ title, fields:f } }; }
@@ -8089,11 +8089,19 @@ IMPORTANT:
   cvAdapter('terminal',
     (c,ctx)=>!!(c&&typeof c==='object'&&c.command!=null&&(c.stdout!=null||c.stderr!=null))
            || !!(c&&typeof c==='object'&&_cvDec(ctx,'stdout')&&(c.stdout!=null||c.stderr!=null)),
-    (c)=>_cvCapTerm(c) || (function(){
+    (c,ctx)=>_cvRanOf(c, ctx, _cvCapTerm(c) || (function(){
       const out=[String(c.stdout||''),String(c.stderr||'')].filter(x=>x.trim()).join('\n');
       const cmd=String(c.command||c.cmd||'').replace(/\s+/g,' ').trim();
       return { kind:'session', n:cmd.slice(0,52)||'output', k:'term', col:'#7dd3fc', d:'terminal',
-               content:{ command:cmd, output:out.slice(0,16000) } }; })());
+               content:{ command:cmd, output:out.slice(0,16000) } }; })()));
+  /* what ran it and how it ended, kept on the item: the desk's "run again" repeats the same capability with the same
+     arguments, and the exit code is the item's chip (DU-E-session) */
+  function _cvRanOf(c, ctx, it){
+    if(!it||!it.content) return it;
+    if(ctx&&ctx.cap){ it.content.cap=String(ctx.cap); it.content.args=Object.assign({}, ctx.args||{}); }
+    const rc=c&&(c.rc!=null?c.rc:c.returncode!=null?c.returncode:c.exit_code); if(rc!=null&&rc!=='') it.content.rc=rc;
+    return it;
+  }
 
   /* A FAILED ANSWER is a failure, said once - not a record of {ok:false, error} drawn as data. After the terminal, so
      a command that failed still shows its stderr. */
