@@ -75,7 +75,7 @@ t('minimal: the card\'s icon row, a combined card\'s tabs and a drawing\'s capti
 t('a page opened in a list fills the room, alone, and closing the last puts the card back', src.includes('_readerFollow(key, grow) {') && src.includes("if (any && grow !== false && this._max !== key) { this._autoMax = key; this._toggleMax(key); return true; }")
   && src.includes("if (!any && this._autoMax === key) { this._autoMax = null; if (this._max === key) this._toggleMax(key); return true; }") && src.includes("(maxed && this._autoMax === key ? ' reading' : '')"));
 t('an opened page has a way back, shown while it fills the room', src.includes('class="vc-rbx-b rb-back" data-rec-act="open"') && src.includes('.rb-back{display:none!important}.it.reading .rb-back{display:inline-flex!important}'));
-t('the desk settles its cards upward after pulling them apart; a risen card keeps its size', src.includes('D.settle(tiled, R, { W: W, H: H }, { gap: 12 });') && src.includes('if (it.settled && !it.fixed) { it.keepSize = true;'));
+t('the desk settles its cards upward after pulling them apart; a risen card keeps its size', src.includes('D.settle(withStrip(tiled), R, { W: W, H: H }, { gap: 12 });') && src.includes('if (it.settled && !it.fixed) { it.keepSize = true;'));
 
 /* round 4 (owner, 2026-10-11): reader on the title, plain click in place, carry back from full, pills, names menu, sizes */
 t('a plain click opens a result in place; only reader mode fills the room', src.includes('_readerFollow(key, grow)') && src.includes('if (!st.open[it.id] && this._readerFollow(key, false)) return;'));

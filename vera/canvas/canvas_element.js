@@ -1548,7 +1548,7 @@
      row: the column above stacked the diagram under the code, past the card's foot, and Explode showed nothing (owner,
      2026-10-10: "pressing explode on a piece of code on the desk ... cant see the exploded view") - each pane scrolls on its
      own and the diagram's slot takes the pane's height. Wherever the card is (a desk face or filling the desk). */
-  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside{flex-direction:row!important;display:flex!important;flex:1 1 auto;min-height:0;overflow:hidden}
+  :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face]:not(.desk-chip) > .it-bd.fu-beside{flex-direction:row!important;display:flex!important;flex:1 1 auto;min-height:0;overflow:hidden}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside > *{flex:1 1 0;min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside > .fu-p > .fu-b{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
   :host([align="desk"]:not([desk-narrow])) .stage .it[data-desk-face] > .it-bd.fu-beside .vc-live[data-live="explode"]{flex:1 1 auto;height:auto!important;min-height:160px}
@@ -1630,6 +1630,12 @@
     :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:168px!important} }   /* view · lock · fill · more · drop */
   .hda{display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
+  /* A PILL OPEN UNDER THE POINTER HAS ONE MENU (owner, 2026-10-15, WSU-79: "it can be hard to grab a pill as its menu items
+     appear, can this be combined into a single menu in pill mode so the pill can still be grabbed"): only ⋯ shows; its
+     menu holds the rest (see _hdMenu), and the header stays free to grab */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.pill-open:not(.desk-win) > .hda > :is(.hb:not([data-act="hdmore"]),.xvw){display:none}
+  /* (a pill never shows its body: the fused code + explode body's display rule above now leaves pills out - a strip of line
+     numbers showed in the pill column; found with WSU-80, also on the edge before it) */
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
   /* the card's own controls, big enough to hit (owner, 2026-10-11: "the controls of the desk items on the top bar need to be a bit bigger") */
   /* the code explode's view switch (WSU-54): three words in the header row; the pane not shown is out, the structure the
@@ -3338,14 +3344,20 @@
       const row = (act, label, title, on) => `<button class="ib${on ? ' on' : ''}" data-act="${act}" data-layer-key="${k}" title="${esc(title || label)}">${esc(label)}</button>`;
       /* a narrow card's row keeps lock, fill, ⋯ and drop: its other icons are here instead (never in both) */
       const narrow = c.offsetWidth <= 320; const hd = (a) => c.querySelector(':scope > .hda > .hb[data-act="' + a + '"]');
-      let h = (narrow && hd('explode') ? row('explode', hd('explode').classList.contains('on') ? 'Back to the source' : 'Explode', hd('explode').title) : '')
-        + (narrow && hd('edit') ? row('edit', 'Edit', hd('edit').title) : '')
-        + (narrow && hd('ctx') ? row('ctx', hd('ctx').classList.contains('on') ? '✓ In context' : 'Put in context', hd('ctx').title, hd('ctx').classList.contains('on')) : '')
+      /* a pill open under the pointer shows only ⋯ (WSU-79): every control of its row is here instead */
+      const peek = c.classList.contains('pill-open') && !c.classList.contains('desk-win');
+      let h = (peek ? (hd('hdview') ? row('hdview', 'View…', hd('hdview').title) : '')
+          + (hd('lock') ? row('lock', hd('lock').classList.contains('on') ? 'Unlock' : 'Lock it where it is', hd('lock').title, hd('lock').classList.contains('on')) : '')
+          + (hd('max') ? row('max', 'Open it full', hd('max').title) : '') : '')
+        + ((narrow || peek) && hd('explode') ? row('explode', hd('explode').classList.contains('on') ? 'Back to the source' : 'Explode', hd('explode').title) : '')
+        + ((narrow || peek) && hd('edit') ? row('edit', 'Edit', hd('edit').title) : '')
+        + ((narrow || peek) && hd('ctx') ? row('ctx', hd('ctx').classList.contains('on') ? '✓ In context' : 'Put in context', hd('ctx').title, hd('ctx').classList.contains('on')) : '')
         + row('park', 'Park', 'Park it below the flow') + row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size')
         + (this._deskPosGet()[key] ? row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement') : '')
         + row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line')
         + (c.classList.contains('cmp-front') ? row('cmpsep', 'Take it out of the group', 'Show it as a card of its own; the group keeps its other tabs')
           : this._sepGet()[key] ? row('cmpjoin', 'Combine with similar items', 'Put it back with the items of its kind on its topic, as a tab') : '');
+      if (peek) h += row('remove', 'Take it off the desk', 'Take it off the desk');
       /* the card's own head's buttons (a code item's copy · preview · edit · run, a terminal's, a diagram's): that head is not
          drawn on the desk, so its buttons are listed here and a row presses the original - one container, nothing lost */
       /* the head's own buttons only - not the entries of a dropdown inside it (Send to's targets), and not one the header row
@@ -3367,7 +3379,9 @@
       const pw = pop.offsetWidth || 180; let left = Math.round((r.right - S.left) / Z - pw), top = Math.round((r.bottom - S.top) / Z + 4);
       left = Math.max(4, Math.min(st.clientWidth - pw - 4, left)); pop.style.left = left + 'px'; pop.style.top = top + 'px';
       const doc = this.ownerDocument || document;
-      const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true); };
+      const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true);
+        /* a pill's peek kept open for its menu (WSU-79) closes once the menu has, unless the pointer is back on it */
+        if (peek && this._hovKey !== key) { try { this._chipPeek(c, false); } catch (e) { /* placed on the next pass */ } } };
       setTimeout(() => doc.addEventListener('mousedown', off, true), 0);
     }
     /* the item's views, under its View button: one row each, the one shown lit; a choice redraws the item that way */
@@ -3560,6 +3574,9 @@
       const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
       this._liveFollow(650);   /* every card it places may glide (.45 s): what is drawn over them follows each frame */
       this._placeSeq = (this._placeSeq || 0) + 1;
+      /* every item on the desk, a combined card's other tabs included: which tab is in front changes with a touch, and the
+         hold (U4) must not end for it */
+      const sigKeys = cards.map((c) => c.dataset.key || '').filter(Boolean).sort().join('|');
       const W = st.clientWidth || 300;
       const bar = this.shadowRoot.querySelector('.addbar'), bh = this.shadowRoot.querySelector('.band.now > .band-h');
       const pad = (bar ? bar.offsetHeight : 0) + (bh ? bh.offsetHeight : 0);
@@ -3682,7 +3699,7 @@
          a neighbour pushed aside comes back when the card is made smaller again. The hold ends when what is on the desk,
          the topic, the desk's size or its arrangement settings change - the desk is dealt afresh then. */
       const sig = [W, H, mode, this.getAttribute('desk-fill') || '', this.getAttribute('desk-settle') || '', T ? (T.order || []).join(',') : '',
-        ranked.map((x) => x.c.dataset.key || '').sort().join('|')].join('#');
+        sigKeys].join('#');
       if (this._hold && this._hold.sig !== sig) this._hold = null;
       const hold = this._hold, seed = hold ? ((this._rz && hold.base) || hold.rects) : null;
       const plan = ranked.map((x) => {
@@ -3731,11 +3748,14 @@
         const o = { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
         /* held (U4): a card the arrangement placed starts where it is now, at the size it has; one the person put somewhere
            (userAt) has its own place already */
-        const hr = seed && !userAt(key) ? seed[key] : null;
+        const hr = seed && !userAt(key) ? (seed[key] || (grp.membersOf.get(c) || []).map((m) => seed[m.dataset.key || '']).find(Boolean) || null) : null;   /* a group's new front tab takes the group's place */
         if (hr) Object.assign(o, { x: hr.x, y: hr.y, w: hr.w, h: hr.h, bw: hr.bw || hr.w, bh: hr.bh || hr.h, held: true, keepSize: true, face0: hr.face });
         return o;
       });
       const sepSize = (xx, yy, it) => {
+        /* a size the person gave is kept wherever the card is pushed - re-sized by its distance from the chat, a card
+           released to keep moving (WSU-74 "move") shrank to a pill out at the border (WSU-78: "never to the pill area") */
+        if (it.own && !it.held) return { w: it.w, h: it.h };
         const s = D.sizeAt(R, xx, yy, it.so, desk); const chip = s.face === 'chip' || s.face === 'icon';
         const n = { w: Math.min(W - 16, s.w, chip ? Infinity : (it.maxW || Infinity)), h: Math.max(chip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h, chip ? Infinity : (it.maxH || Infinity))) };
         /* a held card pushed aside keeps its size - or gives back the room it had grown into (fill): a desk whose cards had
@@ -3743,8 +3763,37 @@
            window although a neighbour a little smaller would have made room. A held chip stays a chip. */
         if (it.held) return it.h <= 40 || chip ? { w: it.w, h: it.h } : { w: Math.min(it.w, Math.max(it.bw || it.w, 160)), h: Math.min(it.h, Math.max(it.bh || it.h, 80)) };
         return n; };
+      /* THE PILLS HAVE THEIR OWN STRIP (owner, 2026-10-15, WSU-80: "the pills should not be able to be displaced by the open
+         elements - the pills can live in their own strip"; WSU-81: "pills on the far edge need to ... stick to it, pills on
+         the far edge often also leave a gap but they shouldnt"). Every item that is a pill here - minimised, out of the
+         topic, or placed where the desk makes pills - goes to a strip along the edge farthest from the chat: flush with it,
+         top down, in the desk's order, a further column inward when one is full. The strip is room no card takes: it is in
+         every separation, rise and growth as a fixed block, so an open card never pushes a pill aside. */
+      const farRight = side === 'right' ? false : side === 'float' ? (R.l + R.r) / 2 < W / 2 : true;
+      /* a narrow desk keeps its width for the cards: its strip is of icons (the pill's mark, its title on hover), not pills */
+      const iconStrip = W < 760;
+      const CHW = iconStrip ? 34 : 150, CHH = 34, SGAP = 6, perCol = Math.max(1, Math.floor((H - SGAP) / (CHH + SGAP)));
+      const pillish = (it) => { if (it.fixed || it.sizing || it.own) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
+        const f = D.sizeAt(R, it.x, it.y, it.so, desk).face; return f === 'chip' || f === 'icon'; };
+      const pills = plan.filter(pillish);
+      const cols = pills.length ? Math.min(Math.max(1, Math.floor((W * 0.45) / (CHW + SGAP))), Math.ceil(pills.length / perCol)) : 0;
+      const toStrip = (it, i) => { const col = Math.min(Math.max(cols, 1) - 1, Math.floor(i / perCol)), row = i - col * perCol;
+        const cx = farRight ? W - SGAP - CHW / 2 - col * (CHW + SGAP) : SGAP + CHW / 2 + col * (CHW + SGAP);
+        Object.assign(it, { x: cx, y: SGAP + CHH / 2 + row * (CHH + SGAP), w: CHW, h: CHH, fixed: true, strip: true, keepSize: true, face0: iconStrip ? 'icon' : 'chip' }); };
+      /* under the hold the strip keeps its order: the pills it holds stay in their slots, a new one joins at the end */
+      if (hold) { const slot = (it) => it.held ? Math.floor((farRight ? W - it.x : it.x) / (CHW + SGAP)) * 1e5 + it.y : 1e9 + plan.indexOf(it); pills.sort((p, q) => slot(p) - slot(q)); }
+      pills.forEach(toStrip);
+      const stripW = cols ? cols * (CHW + SGAP) + SGAP : 0;
+      const stripBox = stripW ? { id: '__strip', fixed: true, strip: true, x: farRight ? W - stripW / 2 : stripW / 2, y: H / 2, w: stripW, h: H } : null;
+      const withStrip = (list) => (stripBox ? [stripBox].concat(list) : list);
+      /* ...and nothing reaches into it: a card sized, placed or carried by the person is fixed where it is, so separation
+         would not move it off the pills - it is moved out of the strip here, and made narrower only when the free desk is */
+      if (stripBox) { const sl = stripBox.x - stripBox.w / 2, sr = stripBox.x + stripBox.w / 2, G = 6;
+        plan.forEach((it) => { if (it.strip || it.h <= 40) return;
+          if (farRight && it.x + it.w / 2 > sl - G) { const room = sl - G - 8; if (it.w > room) it.w = Math.max(160, room); it.x = Math.min(it.x, sl - G - it.w / 2); }
+          if (!farRight && it.x - it.w / 2 < sr + G) { const room = W - 8 - (sr + G); if (it.w > room) it.w = Math.max(160, room); it.x = Math.max(it.x, sr + G + it.w / 2); } }); }
       const start = plan.map((it) => [it, it.x, it.y, it.w, it.h, it.keepSize]);
-      D.separate(plan, R, sepSize, { W: W, H: H });
+      D.separate(withStrip(plan), R, sepSize, { W: W, H: H });
       /* WINDOW MODE (owner, 2026-10-15: "if it didnt have space it should then transition to a window mode element and the
          elements can raise over each other on click"; "it's about re-sizing when there isn't enough room for the element to
          be the newly set size (user set size)"). A card the person gave a size - being sized now, sized and put down, or
@@ -3756,7 +3805,7 @@
       const wins = new Set();
       if (this.getAttribute('desk-windows') !== 'off') {
         const actAt = this._actAt || {};
-        const mine = (it) => !!(it.sizing || it.own || (it.fixed && !it.isLock));
+        const mine = (it) => !it.strip && !!(it.sizing || it.own || (it.fixed && !it.isLock));
         const tOf = (it) => it.sizing ? Infinity : (actAt[it.id] || 0);
         const area = (a, b) => Math.max(0, Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2)) * Math.max(0, Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2));
         for (let round = 0; round < 4; round++) {
@@ -3768,13 +3817,47 @@
           if (!pick.size) break;
           pick.forEach((it) => { wins.add(it); it.win = true; });
           start.forEach(([it, x, y, w, h, k]) => { it.x = x; it.y = y; it.w = w; it.h = h; it.keepSize = k; });
-          D.separate(plan.filter((it) => !wins.has(it)), R, sepSize, { W: W, H: H });
+          D.separate(withStrip(plan.filter((it) => !wins.has(it))), R, sepSize, { W: W, H: H });
         }
+      } else {
+        /* WINDOWS OFF: AS LARGE AS THE ROOM ALLOWS, NEVER A PILL (owner, 2026-10-15, WSU-78: "with window mode off it could
+           just resize to the max given the space available instead of shrinking to the pill area - it should never shrink to
+           the pill area on resize"). A card the person sized that still overlaps after the others were pushed aside keeps
+           its top-left and is cut back on the right or the bottom - whichever keeps more of it - to the edge of what it
+           meets, never below a usable card (160 x 90). The card under the hand is left to the hand until it is let go. */
+        const gap = 10, MINW = 160, MINH = 90;
+        const sizedByPerson = (it) => !it.sizing && !it.strip && (it.own || (it.fixed && !it.isLock));
+        plan.filter((it) => sizedByPerson(it) && it.h > 40).forEach((a) => {
+          let l = a.x - a.w / 2, t = a.y - a.h / 2, r = l + a.w, b = t + a.h;
+          for (let n = 0; n < 8; n++) {
+            const hit = withStrip(plan).find((o) => o !== a && o.h > 40 && Math.min(r, o.x + o.w / 2) - Math.max(l, o.x - o.w / 2) > 8 && Math.min(b, o.y + o.h / 2) - Math.max(t, o.y - o.h / 2) > 8);
+            if (!hit) break;
+            const ol = hit.x - hit.w / 2, ot = hit.y - hit.h / 2;
+            const cutR = ol - gap - l >= MINW ? (ol - gap - l) * (b - t) : -1, cutB = ot - gap - t >= MINH ? (r - l) * (ot - gap - t) : -1;
+            if (cutR < 0 && cutB < 0) break;
+            if (cutR >= cutB) r = ol - gap; else b = ot - gap;
+          }
+          if (r - l < a.w - 1 || b - t < a.h - 1) { a.w = r - l; a.h = b - t; a.x = l + a.w / 2; a.y = t + a.h / 2; a.fitted = true; }
+        });
+      }
+      /* NO ROOM AT ALL: two cards the desk placed (neither sized nor put there by the person) still overlap after every card
+         was pushed aside - a narrow desk with a large card. The one later in the desk's order (the less relevant) goes to the
+         pill strip; a locked card or one the person placed never does. */
+      { const kept = (it) => it.strip || it.win || it.isLock || it.stay || it.sizing || it.own || (it.fixed && !it.isLock);
+        const ov2 = (a, b) => Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2) > 20 && Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2) > 20;
+        for (let round = 0; round < 4 && stripBox; round++) {
+          const solid = plan.filter((it) => !it.strip && !it.win && it.h > 40); let victim = null;
+          for (let i = 0; i < solid.length && !victim; i++) for (let j = i + 1; j < solid.length && !victim; j++) {
+            if (!ov2(solid[i], solid[j])) continue;
+            const later = plan.indexOf(solid[i]) > plan.indexOf(solid[j]) ? solid[i] : solid[j], other = later === solid[i] ? solid[j] : solid[i];
+            victim = !kept(later) ? later : !kept(other) ? other : null; }
+          if (!victim) break;
+          toStrip(victim, pills.length); pills.push(victim); victim.held = false; }
       }
       const tiled = plan.filter((it) => !wins.has(it));
       /* ...up the desk into the room above them (D.settle), the person's places, locks and sizes staying where they are... */
       if (!hold && typeof D.settle === 'function' && this.getAttribute('desk-settle') !== 'off') {
-        D.settle(tiled, R, { W: W, H: H }, { gap: 12 });
+        D.settle(withStrip(tiled), R, { W: W, H: H }, { gap: 12 });
         /* a card that rose keeps the size it was pulled apart at: re-sized where it now sits, it could meet its neighbours */
         tiled.forEach((it) => { if (it.settled && !it.fixed) { it.keepSize = true; if (!it.face0) it.face0 = D.faceOf(it.w, it.h); } });
       }
@@ -3785,7 +3868,18 @@
       if (!hold && typeof D.grow === 'function' && this.getAttribute('desk-fill') !== 'off') {
         tiled.forEach((it) => { if (it.fixed || it.keepSize || it.own) { it.chip = it.h <= 40; return; }
           const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); it.face0 = s0.face; it.chip = s0.face === 'chip' || s0.face === 'icon'; });
-        D.grow(tiled, R, { W: W, H: H }, { maxW: W - 16, maxH: H - 8 });
+        D.grow(withStrip(tiled), R, { W: W, H: H }, { maxW: W - 16, maxH: H - 8 });
+      }
+      /* THE EDGE BY THE CHAT HOLDS ITS CARDS (owner, 2026-10-15, WSU-81: "elements on the closest edge to chat should have a
+         sticky hold to it and elements often dont line up to it leaving a gap"). A card whose edge is within 80 px of the desk's
+         side by the chat is moved flush to it (8 px in) when that place is clear; a locked card and the card under the hand
+         stay as they are. A docked chat only - a floating one has no side. */
+      if (side !== 'float') {
+        const nearLeft = side !== 'right', EDGE = 8, REACH = 80;
+        const clearAt = (it, x) => tiled.every((o) => o === it || o.h <= 40 || Math.min(x + it.w / 2, o.x + o.w / 2) - Math.max(x - it.w / 2, o.x - o.w / 2) <= 2 || Math.min(it.y + it.h / 2, o.y + o.h / 2) - Math.max(it.y - it.h / 2, o.y - o.h / 2) <= 2);
+        tiled.filter((it) => it.h > 40 && !it.strip && !it.isLock && !it.sizing).sort((p, q) => nearLeft ? (p.x - p.w / 2) - (q.x - q.w / 2) : (q.x + q.w / 2) - (p.x + p.w / 2)).forEach((it) => {
+          const off = nearLeft ? (it.x - it.w / 2) - EDGE : (W - EDGE) - (it.x + it.w / 2);
+          if (off > 1 && off <= REACH) { const nx = nearLeft ? EDGE + it.w / 2 : W - EDGE - it.w / 2; if (clearAt(it, nx)) { it.x = nx; it.snapped = true; } } });
       }
       const out = [];
       plan.forEach((it) => {
@@ -4831,6 +4925,8 @@
     _chipPeek(it, on) {
       if (!it || !this.deskAlign()) return;
       if (!on) { clearTimeout(this._pillT); const s = it._cpw; if (!s) return; if (s.open && this._wins && this._wins.has(it.dataset.key)) return;   /* a window stays (WSU-55) */
+        /* ...and so does a peek whose ⋯ menu is open: the pointer went to the menu (WSU-79) */
+        { const stg = it.parentElement; if (s.open && stg && [...stg.querySelectorAll(':scope > .hd-pop')].some((p) => p.dataset.key === it.dataset.key)) return; }
         it._cpw = null; it.classList.remove('chip-peek', 'pill-open'); if (s.icon) it.classList.add('desk-icon');
         if (s.open) { it.classList.add('desk-chip'); it.dataset.deskFace = s.face; it.style.setProperty('height', s.h, 'important'); it.style.top = s.t; }
         if (s.seq !== this._placeSeq) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }

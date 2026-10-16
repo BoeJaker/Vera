@@ -18,7 +18,7 @@ t('the tabs act through the dispatcher, and the ⋯ menu takes one out or puts i
 t('a composite is in the topic when any of its tabs is', src.includes('const inT = (x) => mem(x).some('));
 t('a hidden tab is never drawn, even as a pill', src.includes('.stage .it.cmp-behind:not(.cmp-front){display:none!important}'));
 t('composites and filling can be turned off on the canvas', src.includes("getAttribute('desk-combine') === 'off'") && src.includes("getAttribute('desk-fill') !== 'off'"));
-t('cards grow into the free desk after they are pulled apart; a grown card keeps that size', src.includes('D.grow(tiled, R, { W: W, H: H }') && src.includes(': it.grown ? Object.assign({}, D.sizeAt('));
+t('cards grow into the free desk after they are pulled apart; a grown card keeps that size', src.includes('D.grow(withStrip(tiled), R, { W: W, H: H }') && src.includes(': it.grown ? Object.assign({}, D.sizeAt('));
 
 const D = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
 const items = [{ id: 'a', x: 179, y: 197, w: 330, h: 363 }, { id: 'b', x: 495, y: 150, w: 279, h: 270 }, { id: 'c', x: 789, y: 34, w: 150, h: 34, chip: true }];

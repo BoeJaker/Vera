@@ -20,9 +20,9 @@ t('U1: during a resize the others start from the desk as it was when it began', 
 t('U1: a neighbour pushed aside may give back the room it grew into', C.includes('{ w: Math.min(it.w, Math.max(it.bw || it.w, 160)), h: Math.min(it.h, Math.max(it.bh || it.h, 80)) }'));
 t('U1: the release places the desk at once (not after the server refresh)', C.includes("if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); try { this._placeNow(); }"));
 /* U6 / U2 - window mode */
-t('U6: a card the person sized that still overlaps becomes a window', C.includes('const mine = (it) => !!(it.sizing || it.own || (it.fixed && !it.isLock));') && C.includes("pick.forEach((it) => { wins.add(it); it.win = true; });"));
+t('U6: a card the person sized that still overlaps becomes a window', C.includes('const mine = (it) => !it.strip && !!(it.sizing || it.own || (it.fixed && !it.isLock));') && C.includes("pick.forEach((it) => { wins.add(it); it.win = true; });"));
 t('U6: of two that meet, the last touched is the window', C.includes('const tOf = (it) => it.sizing ? Infinity : (actAt[it.id] || 0);') && C.includes('(this._actAt = this._actAt || {})[d.key] = Date.now();'));
-t('U6: the others are placed again without the window', C.includes('D.separate(plan.filter((it) => !wins.has(it)), R, sepSize, { W: W, H: H });'));
+t('U6: the others are placed again without the window', C.includes('D.separate(withStrip(plan.filter((it) => !wins.has(it))), R, sepSize, { W: W, H: H });'));
 t('U6: a window keeps its size and is over the tiled cards', C.includes("s = it.win ? { w: it.w, h: it.h, face:") && C.includes(': it.win ? 160 : D.stackOrder(s.nd)'));
 t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
 t('U10: windows can be switched off (desk-windows)', C.includes("this.getAttribute('desk-windows') !== 'off'") && C.includes("'desk-fit', 'desk-windows']") && H.includes("cfgCvWindows:['desk-windows','on']") && H.includes("windows:'cfgCvWindows'"));
@@ -40,6 +40,18 @@ t('U14: tidy deals the desk afresh, from the Canvas menu', C.includes('    tidy(
 t('U11: a table or record that names its own form gets that form', H.includes("if((pr.element==='table'||pr.element==='kv')&&P.form&&P.form!=='table'&&P.form!=='kv') return widget("));
 const fn = H.slice(H.indexOf('function _cvPresented('), H.indexOf('function _cvAdapt('));
 t('U18: the declared reader takes its colours from the theme', fn.length > 100 && !/col:'#/.test(fn) && fn.includes("col:'var(--dv5, #a78bfa)'"));
+
+/* round 7 (owner 2026-10-15) */
+t('WSU-78: windows off - a sized card is cut back to the room, never below 160 x 90', C.includes('const gap = 10, MINW = 160, MINH = 90;') && C.includes('const sizedByPerson = (it) => !it.sizing && !it.strip && (it.own || (it.fixed && !it.isLock));'));
+t('WSU-78: a size the person gave is kept wherever the card is pushed', C.includes('if (it.own && !it.held) return { w: it.w, h: it.h };'));
+t('WSU-79: a peeked pill shows one menu, which holds the rest', C.includes('.stage .it.pill-open:not(.desk-win) > .hda > :is(.hb:not([data-act="hdmore"]),.xvw){display:none}') && C.includes("const peek = c.classList.contains('pill-open') && !c.classList.contains('desk-win');") && C.includes("if (peek) h += row('remove', 'Take it off the desk'"));
+t('WSU-79: the peek stays open while its menu is', C.includes("[...stg.querySelectorAll(':scope > .hd-pop')].some((p) => p.dataset.key === it.dataset.key)) return; }"));
+t('WSU-80: pills go to a strip on the far edge; no card enters it', C.includes("Object.assign(it, { x: cx, y: SGAP + CHH / 2 + row * (CHH + SGAP), w: CHW, h: CHH, fixed: true, strip: true, keepSize: true, face0: iconStrip ? 'icon' : 'chip' });") && C.includes("const stripBox = stripW ? { id: '__strip', fixed: true, strip: true,") && C.includes('if (farRight && it.x + it.w / 2 > sl - G)'));
+t('WSU-80: a pill never shows its body (fused code + explode)', C.includes('.stage .it[data-desk-face]:not(.desk-chip) > .it-bd.fu-beside{flex-direction:row!important;display:flex!important;'));
+t('WSU-80: a narrow desk has a strip of icons; the strip keeps its order under the hold', C.includes('const iconStrip = W < 760;') && C.includes('if (hold) { const slot = (it) => it.held ?'));
+t('WSU-80: with no room at all, the less relevant of two placed cards goes to the strip (never a locked or hand-placed one)', C.includes('const kept = (it) => it.strip || it.win || it.isLock || it.stay || it.sizing || it.own') && C.includes('toStrip(victim, pills.length); pills.push(victim);'));
+t('U4: the hold counts every item - a combined card switching its front tab does not end it', C.includes("const sigKeys = cards.map((c) => c.dataset.key || '').filter(Boolean).sort().join('|');") && C.includes('/* a group\'s new front tab takes the group\'s place */'));
+t('WSU-81: cards near the chat-side edge are flush with it', C.includes('const nearLeft = side !== \'right\', EDGE = 8, REACH = 80;') && C.includes('if (off > 1 && off <= REACH)'));
 
 /* U12 - the last declarations are kept (functional) */
 const store = {}; const ls = { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } };
