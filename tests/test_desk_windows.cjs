@@ -10,7 +10,7 @@ t('a click on a border pill (not one you minimised) opens a window', C.includes(
 t('an unfocused window sits at its stacking place (closeness to the chat)', C.includes("it.style.zIndex = win && this._focusKey !== it.dataset.key ? String(s.z || 10) : String(zOf('pop'));"));
 t('the pressed card rises; the one before goes back', C.includes("it.classList.add('desk-focus'); it.style.zIndex = String(win ? zOf('window', ZB.window[1] - ZB.window[0]) : zOf('tileFocus')); }") && C.includes("prev.style.zIndex = prev.dataset.zRest; delete prev.dataset.zRest;"));
 t('a placing pass keeps the windows and the focus', C.includes("this.addEventListener('vera:canvas:placed', () => { try { this._winRestore(); }"));
-t('Esc or the pill control closes a window', C.includes("if (ev.key === 'Escape' && this._focusKey && this._wins && this._wins.has(this._focusKey)) this._winClose(this._focusKey);") && C.includes("if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }"));
+t('Esc or the pill control closes a window', C.includes("if (this._winKeepGet()[this._focusKey]) { this._winDock(this._focusKey); return; }") && C.includes("if (this._wins && this._wins.has(this._focusKey)) this._winClose(this._focusKey);") && C.includes("if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }"));
 t('windows from one column do not open over each other', C.includes('left = Math.max(4, Math.min(W - 4 - w, left - 28)); top = Math.max(4, Math.min(H - 4 - h, top + 28));'));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
