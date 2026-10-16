@@ -5563,6 +5563,14 @@
     }
     _appUi(t) { const it = t.closest && t.closest('.it[data-key]'); const key = it && it.dataset.key; const st = key && this._apps && this._apps[key];
       return st && st.rows ? { key, st, ui: st.ui || (st.ui = { q: '', sort: null, sel: null, detail: null }) } : null; }
+    /* AN APP FROM THE CATALOGUE ON THE DESK (DA-06b/c): by its id and its arguments - the add menu, the chat's
+       [[app:...]] and /app, a panel's "open on the desk". One item per app and arguments (the key says both), so opening it
+       again brings the same item back rather than a second. */
+    openApp(id, args) {
+      id = String(id || '').trim(); if (!id) return false; const a = args && typeof args === 'object' ? args : {};
+      const sig = Object.keys(a).filter((k) => a[k] != null && a[k] !== '').sort().map((k) => k + '=' + a[k]).join('&');
+      return this.call('canvas.add', { kind: 'app', key: 'app:' + id + (sig ? ':' + sig : ''), content: { app: id, args: a } });
+    }
     /* a row's detail app (manifest.detail.app; its {row.x} filled from the row) - put on the desk beside this one */
     _appDetailOpen(key) {
       const st = this._apps && this._apps[key]; const dm = st && st.manifest && st.manifest.detail; const row = st && st.ui && st.ui.detail != null && st.rows ? st.rows[st.ui.detail] : null;
