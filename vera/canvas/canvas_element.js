@@ -468,6 +468,41 @@
     return '<div class="vc-json vc-jlens" data-w="canvas.json" data-jview="' + esc(view) + '">' + (c && c.title ? '<div class="vc-json-t">' + esc(c.title) + '</div>' : '') + bar + '<div class="vc-jbody">' + body + '</div></div>';
   }
 
+  /* THE TABLE BAR (DU-E-table, DX-table: "sort, filter, column picker, row count, copy/CSV, sticky head"): the table view
+     of a table item. A header pressed sorts by it (numbers as numbers), again the other way, a third time back to the
+     answer's order; the filter keeps the rows with it in any shown cell; columns can be hidden; Copy puts the rows shown
+     on the clipboard as tab-separated text, CSV downloads them. The reader's state is the element's, per item, never
+     written (like the JSON lens and a records item's browsing). */
+  const tblUi = (el, key) => { if (!el || !key) return { sort: -1, dir: 1, q: '', hide: {}, cols: false }; const m = el._tblUi || (el._tblUi = {}); return m[key] || (m[key] = { sort: -1, dir: 1, q: '', hide: {}, cols: false }); };
+  const tblNum = (v) => { const s = String(v == null ? '' : v).replace(/[,%$£€\s]/g, ''); return s !== '' && isFinite(+s) ? +s : null; };
+  /* the rows the bar shows, in its order: [index into the answer's rows, row] */
+  function tblRows(c, ui) {
+    const cols = c.columns || []; const show = cols.map((_, j) => !ui.hide[j]); const q = String(ui.q || '').trim().toLowerCase();
+    let rows = (c.rows || []).map((r, i) => [i, Array.isArray(r) ? r : []]);
+    if (q) rows = rows.filter(([, r]) => r.some((v, j) => (show[j] !== false) && String(v == null ? '' : v).toLowerCase().indexOf(q) >= 0));
+    const j = ui.sort; if (j >= 0) { const nums = rows.filter(([, r]) => r[j] != null && r[j] !== '').every(([, r]) => tblNum(r[j]) != null);
+      rows = rows.slice().sort(([ia, a], [ib, b]) => { const x = a[j], y = b[j]; if (x == null || x === '') return 1; if (y == null || y === '') return -1;
+        const d = nums ? tblNum(x) - tblNum(y) : String(x).localeCompare(String(y), undefined, { numeric: true, sensitivity: 'base' }); return (d || ia - ib) * ui.dir; }); }
+    return rows;
+  }
+  const tblText = (c, ui, sep) => { const cols = c.columns || []; const keep = cols.map((_, j) => !ui.hide[j]);
+    const cell = (v) => { const s = String(v == null ? '' : v); return sep === ',' && /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s.replace(/[\t\n]/g, ' '); };
+    return [cols.filter((_, j) => keep[j]).map(cell).join(sep)].concat(tblRows(c, ui).map(([, r]) => r.filter((_, j) => keep[j] !== false).map(cell).join(sep))).join('\n'); };
+  function tableBar(c, key, el) {
+    const cols = c.columns || [], all = (c.rows || []).length; const ui = tblUi(el, key); const rows = tblRows(c, ui); const q = String(ui.q || '').trim().toLowerCase();
+    const shown = cols.map((_, j) => !ui.hide[j]); const LIM = 500;
+    const mark = (s) => { const str = String(s == null ? '' : s); if (!q) return esc(str); const i = str.toLowerCase().indexOf(q); return i < 0 ? esc(str) : esc(str.slice(0, i)) + '<mark>' + esc(str.slice(i, i + q.length)) + '</mark>' + esc(str.slice(i + q.length)); };
+    const bar = '<div class="vc-tbar"><input class="vc-tq" data-tbl-q="' + esc(key || '') + '" placeholder="filter rows" value="' + esc(ui.q || '') + '" spellcheck="false">'
+      + '<span class="vc-tn">' + (rows.length === all ? all + ' rows' : rows.length + ' of ' + all + ' rows') + '</span>'
+      + (cols.length > 1 ? '<button class="ib' + (ui.cols ? ' on' : '') + '" data-act="tblcols" title="Show or hide columns">columns</button>' : '')
+      + '<button class="ib" data-act="tblcopy" title="Copy the rows shown (tab-separated)">copy</button><button class="ib" data-act="tblcsv" title="Download the rows shown as CSV">CSV</button></div>'
+      + (ui.cols ? '<div class="vc-tcols">' + cols.map((h, j) => '<label><input type="checkbox" data-act="tblcol" data-col="' + j + '"' + (shown[j] ? ' checked' : '') + '>' + esc(h) + '</label>').join('') + '</div>' : '');
+    const head = cols.length ? '<thead><tr>' + cols.map((h, j) => shown[j] ? '<th><button class="vc-tsort' + (ui.sort === j ? ' on' : '') + '" data-act="tblsort" data-col="' + j + '" title="Sort by ' + esc(h) + '">' + esc(h) + (ui.sort === j ? (ui.dir > 0 ? ' ▲' : ' ▼') : '') + '</button></th>' : '').join('') + '</tr></thead>' : '';
+    const body = '<tbody>' + rows.slice(0, LIM).map(([, r]) => '<tr>' + r.map((v, j) => shown[j] === false ? '' : '<td>' + mark(v) + '</td>').join('') + '</tr>').join('') + '</tbody>';
+    return '<div class="vc-tablewrap vc-tbarwrap">' + bar + '<table class="vc-table">' + head + body + '</table>'
+      + (rows.length > LIM ? '<div class="j-more">… ' + (rows.length - LIM) + ' more rows - the filter narrows them</div>' : '') + (q && !rows.length ? '<div class="vc-dim">no row has "' + esc(ui.q) + '"</div>' : '') + '</div>';
+  }
+
   /* a records item's browser state (page, filter, sort, view, facet, what is open, what was fetched): the element's,
      per item key, never written to the canvas - paging is not an edit. A renderer called with no element (a
      result drawn inside another) keeps it here instead. */
@@ -954,6 +989,8 @@
           const mx = Math.max(...pts.map((p) => Math.abs(p[1])), 1e-9);
           return `<div class="vc-tv vc-tv-chart"><div class="vc-tv-ch">${esc(cols[j] || '')}</div>` + pts.map((p) => `<div class="vc-tv-bar"><span class="l" title="${esc(p[0])}">${esc(p[0])}</span><span class="b"><i style="width:${(100 * Math.abs(p[1]) / mx).toFixed(1)}%"></i></span><span class="v">${esc(String(p[1]))}</span></div>`).join('') + `</div>`
             + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : ''); } }
+      /* the table view: the bar (DU-E-table) over the rows - sort, filter, columns, copy, CSV */
+      if (rows.length) return tableBar(c, key, el) + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : '');
       return `<div class="vc-tablewrap"><table class="vc-table">
         ${cols.length ? `<thead><tr>${cols.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>` : ''}
         <tbody>${rows.map(r => `<tr>${(r || []).map(v => `<td>${esc(v)}</td>`).join('')}</tr>`).join('')}
@@ -2394,6 +2431,15 @@
   .vc-json details{margin-left:2px}.vc-json summary{cursor:pointer;color:var(--dim,#6b7480);list-style:none}.vc-json summary::before{content:'\u25b8 ';font-size:9px}.vc-json details[open] > summary::before{content:'\u25be '}
   .vc-json .j-row{display:flex;gap:6px;padding-left:12px;min-width:0}.vc-json .j-k{color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-json .j-k::after{content:':'}
   .vc-json .j-str{color:var(--acc2,#8fb87a);word-break:break-word}.vc-json .j-num{color:var(--acc3,#c9955a)}.vc-json .j-null,.vc-json .j-more{color:var(--dim,#6b7480)}
+  /* the table bar (DU-E-table) */
+  .vc-tbarwrap{display:flex;flex-direction:column;min-height:0}
+  .vc-tbar{display:flex;align-items:center;gap:6px;padding:0 0 4px;position:sticky;left:0;top:0;z-index:2;background:var(--s1,var(--bg1,#15181d))}
+  .vc-tq{flex:1 1 auto;min-width:60px;font:11px system-ui,sans-serif;padding:2px 6px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit}
+  .vc-tn{font:10px system-ui,sans-serif;color:var(--dim,#6b7480);white-space:nowrap}.vc-tbar .ib{font-size:10px;padding:1px 6px}.vc-tbar .ib.on{color:var(--acc,#5a9e8f)}
+  .vc-tcols{display:flex;flex-wrap:wrap;gap:4px 10px;padding:2px 0 6px;font:10.5px system-ui,sans-serif}.vc-tcols label{display:flex;align-items:center;gap:3px;cursor:pointer}
+  .vc-tbarwrap .vc-table thead th{position:sticky;top:0;z-index:1;background:var(--s1,var(--bg1,#15181d))}
+  .vc-tsort{all:unset;cursor:pointer;font-weight:600}.vc-tsort:hover,.vc-tsort.on{color:var(--acc,#5a9e8f)}
+  .vc-tbarwrap mark{background:color-mix(in srgb,var(--acc3,#c9955a) 40%,transparent);color:inherit;border-radius:2px}
   /* the JSON lens (DU-E-json) */
   .vc-jlens{display:flex;flex-direction:column;min-height:0}.vc-jlens .vc-jbody{min-height:0;overflow:auto}
   .vc-jbar{display:flex;align-items:center;gap:6px;margin:0 0 4px}.vc-jq{flex:1 1 auto;min-width:60px;font:11px system-ui,sans-serif;padding:2px 6px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit}
@@ -5276,6 +5322,11 @@
         if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); this._rzLetGo = key; try { this._placeNow(); } catch (e) { /* optional */ } finally { this._rzLetGo = null; } }
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage') && !this.deskAlign()) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.tblQ == null) return;   /* the table bar's filter (DU-E-table) */
+        const key = q.dataset.tblQ; tblUi(this, key).q = String(q.value || ''); clearTimeout(this._tblQT);
+        this._tblQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
+          const back = () => { const nq = body.querySelector('[data-tbl-q="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]'); if (nq && this.shadowRoot.activeElement !== nq) { nq.focus(); try { nq.setSelectionRange(pos, pos); } catch (_) {} } };
+          back(); requestAnimationFrame(back); setTimeout(back, 120); }, 200); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.jsonQ == null) return;   /* the JSON lens's find (DU-E-json) */
         const key = q.dataset.jsonQ; jsonUi(this, key).q = String(q.value || ''); clearTimeout(this._jsonQT);
         this._jsonQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
@@ -5761,6 +5812,16 @@
         else this._sepSet(key, act === 'cmpsep');
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
+      /* the table bar (DU-E-table): sort by a header (again: the other way; a third time: the answer's order), the column
+         picker and a column in it, copy (tab-separated) and CSV of the rows shown */
+      if (act === 'tblsort' || act === 'tblcols' || act === 'tblcol' || act === 'tblcopy' || act === 'tblcsv') { const ui = tblUi(this, key); const c = this._contentOf(key) || {};
+        if (act === 'tblsort') { const j = +btn.dataset.col; if (ui.sort !== j) { ui.sort = j; ui.dir = 1; } else if (ui.dir > 0) ui.dir = -1; else { ui.sort = -1; ui.dir = 1; } }
+        else if (act === 'tblcols') ui.cols = !ui.cols;
+        else if (act === 'tblcol') { const j = +btn.dataset.col; ui.hide[j] = !ui.hide[j]; if ((c.columns || []).every((_, k) => ui.hide[k])) ui.hide[j] = false; }   /* never no columns */
+        else if (act === 'tblcopy') { try { navigator.clipboard.writeText(tblText(c, ui, '\t')); } catch (e) { /* no clipboard */ } btn.textContent = 'copied'; setTimeout(() => { btn.textContent = 'copy'; }, 1200); return; }
+        else if (act === 'tblcsv') { try { const doc = this.ownerDocument || document; const a = doc.createElement('a'); a.href = URL.createObjectURL(new Blob([tblText(c, ui, ',')], { type: 'text/csv' }));
+            a.download = String((c.caption || key || 'table')).replace(/[^\w.-]+/g, '_').slice(0, 60) + '.csv'; doc.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); } catch (e) { /* no download here */ } return; }
+        if (this._doc) this.render(this._doc); return; }
       /* the JSON lens (DU-E-json): a key pressed shows its path; copy it; an array of objects as a table and back */
       if (act === 'jsel' || act === 'jtab' || act === 'jcopy') { const ui = jsonUi(this, key);
         if (act === 'jcopy') { const p = ui.sel || ''; try { navigator.clipboard.writeText(p); } catch (e) { /* no clipboard */ } btn.textContent = 'copied'; setTimeout(() => { btn.textContent = 'copy path'; }, 1200); return; }
