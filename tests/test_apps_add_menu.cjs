@@ -12,7 +12,7 @@ const a0 = H.indexOf('  let _CV_APPS=null, _cvAppsQ=\'\';'), a1 = H.indexOf('  f
 t('the helpers are in the page, before the menu', a0 > 0 && a1 > a0);
 const store = {};
 const ctx = { esc: (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])), localStorage: { getItem: (k) => store[k] || null, setItem: (k, v) => { store[k] = v; } },
-  document: { addEventListener() {} }, _capCall: async () => ({}), _cvMenuRender() {}, Promise, JSON, console };
+  document: { addEventListener() {} }, window: { addEventListener() {} }, location: { origin: 'https://vera.local' }, _capCall: async () => ({}), _cvMenuRender() {}, Promise, JSON, console };
 vm.createContext(ctx); vm.runInContext(H.slice(a0, a1) + '\n;this.__set=(l)=>{_CV_APPS=l;};this.__q=(q)=>{_cvAppsQ=q;};this.list=_cvAppsList;this.sec=_cvAppsSec;this.recent=_cvAppRecent;this.args=_cvAppArgs;', ctx);
 const CAT = [{ id: 'calendar.agenda', panel: 'calendar-panel', title: 'Agenda', summary: 'What is on', needs_args: [] }, { id: 'markets.watchlist', panel: 'markets', title: 'Watchlist', summary: 'The assets kept up to date', needs_args: [] },
   { id: 'markets.symbol', panel: 'markets', title: 'Symbol', summary: "One symbol's candles", needs_args: ['symbol'] }, { id: 'estate.nodes', panel: 'estate', title: 'Compute nodes', summary: 'Every compute node', needs_args: [] }];
