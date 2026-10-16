@@ -1630,6 +1630,10 @@
     :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:168px!important} }   /* view · lock · fill · more · drop */
   .hda{display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
+  /* A PILL OPEN UNDER THE POINTER HAS ONE MENU (owner, 2026-10-15, WSU-79: "it can be hard to grab a pill as its menu items
+     appear, can this be combined into a single menu in pill mode so the pill can still be grabbed"): only ⋯ shows; its
+     menu holds the rest (see _hdMenu), and the header stays free to grab */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.pill-open:not(.desk-win) > .hda > :is(.hb:not([data-act="hdmore"]),.xvw){display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
   /* the card's own controls, big enough to hit (owner, 2026-10-11: "the controls of the desk items on the top bar need to be a bit bigger") */
   /* the code explode's view switch (WSU-54): three words in the header row; the pane not shown is out, the structure the
@@ -3338,14 +3342,20 @@
       const row = (act, label, title, on) => `<button class="ib${on ? ' on' : ''}" data-act="${act}" data-layer-key="${k}" title="${esc(title || label)}">${esc(label)}</button>`;
       /* a narrow card's row keeps lock, fill, ⋯ and drop: its other icons are here instead (never in both) */
       const narrow = c.offsetWidth <= 320; const hd = (a) => c.querySelector(':scope > .hda > .hb[data-act="' + a + '"]');
-      let h = (narrow && hd('explode') ? row('explode', hd('explode').classList.contains('on') ? 'Back to the source' : 'Explode', hd('explode').title) : '')
-        + (narrow && hd('edit') ? row('edit', 'Edit', hd('edit').title) : '')
-        + (narrow && hd('ctx') ? row('ctx', hd('ctx').classList.contains('on') ? '✓ In context' : 'Put in context', hd('ctx').title, hd('ctx').classList.contains('on')) : '')
+      /* a pill open under the pointer shows only ⋯ (WSU-79): every control of its row is here instead */
+      const peek = c.classList.contains('pill-open') && !c.classList.contains('desk-win');
+      let h = (peek ? (hd('hdview') ? row('hdview', 'View…', hd('hdview').title) : '')
+          + (hd('lock') ? row('lock', hd('lock').classList.contains('on') ? 'Unlock' : 'Lock it where it is', hd('lock').title, hd('lock').classList.contains('on')) : '')
+          + (hd('max') ? row('max', 'Open it full', hd('max').title) : '') : '')
+        + ((narrow || peek) && hd('explode') ? row('explode', hd('explode').classList.contains('on') ? 'Back to the source' : 'Explode', hd('explode').title) : '')
+        + ((narrow || peek) && hd('edit') ? row('edit', 'Edit', hd('edit').title) : '')
+        + ((narrow || peek) && hd('ctx') ? row('ctx', hd('ctx').classList.contains('on') ? '✓ In context' : 'Put in context', hd('ctx').title, hd('ctx').classList.contains('on')) : '')
         + row('park', 'Park', 'Park it below the flow') + row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size')
         + (this._deskPosGet()[key] ? row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement') : '')
         + row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line')
         + (c.classList.contains('cmp-front') ? row('cmpsep', 'Take it out of the group', 'Show it as a card of its own; the group keeps its other tabs')
           : this._sepGet()[key] ? row('cmpjoin', 'Combine with similar items', 'Put it back with the items of its kind on its topic, as a tab') : '');
+      if (peek) h += row('remove', 'Take it off the desk', 'Take it off the desk');
       /* the card's own head's buttons (a code item's copy · preview · edit · run, a terminal's, a diagram's): that head is not
          drawn on the desk, so its buttons are listed here and a row presses the original - one container, nothing lost */
       /* the head's own buttons only - not the entries of a dropdown inside it (Send to's targets), and not one the header row
@@ -3367,7 +3377,9 @@
       const pw = pop.offsetWidth || 180; let left = Math.round((r.right - S.left) / Z - pw), top = Math.round((r.bottom - S.top) / Z + 4);
       left = Math.max(4, Math.min(st.clientWidth - pw - 4, left)); pop.style.left = left + 'px'; pop.style.top = top + 'px';
       const doc = this.ownerDocument || document;
-      const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true); };
+      const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true);
+        /* a pill's peek kept open for its menu (WSU-79) closes once the menu has, unless the pointer is back on it */
+        if (peek && this._hovKey !== key) { try { this._chipPeek(c, false); } catch (e) { /* placed on the next pass */ } } };
       setTimeout(() => doc.addEventListener('mousedown', off, true), 0);
     }
     /* the item's views, under its View button: one row each, the one shown lit; a choice redraws the item that way */
@@ -4854,6 +4866,8 @@
     _chipPeek(it, on) {
       if (!it || !this.deskAlign()) return;
       if (!on) { clearTimeout(this._pillT); const s = it._cpw; if (!s) return; if (s.open && this._wins && this._wins.has(it.dataset.key)) return;   /* a window stays (WSU-55) */
+        /* ...and so does a peek whose ⋯ menu is open: the pointer went to the menu (WSU-79) */
+        { const stg = it.parentElement; if (s.open && stg && [...stg.querySelectorAll(':scope > .hd-pop')].some((p) => p.dataset.key === it.dataset.key)) return; }
         it._cpw = null; it.classList.remove('chip-peek', 'pill-open'); if (s.icon) it.classList.add('desk-icon');
         if (s.open) { it.classList.add('desk-chip'); it.dataset.deskFace = s.face; it.style.setProperty('height', s.h, 'important'); it.style.top = s.t; }
         if (s.seq !== this._placeSeq) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
