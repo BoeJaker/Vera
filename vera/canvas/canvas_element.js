@@ -1608,6 +1608,9 @@
     .it:not(.desk-chip) > .hda > .hb:is([data-act="hdview"],[data-act="max"]){display:none}
     .it:not(.desk-chip) > .it-hd{padding-right:calc(var(--hda-nn, 0) * 27px + 14px)} }   /* lock · pill · more · drop */
   .hda{display:none}
+  /* the keyboard's focus ring: on the item, and on a control of its row */
+  .it:focus{outline:none}
+  .it:focus-visible,.hda > .hb:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:1px}
   .it:not(.desk-chip):not(.ghost) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
   /* the body's own line (a terminal's host and shell, a cell's notebook, a diagram's size): quiet, beside the title */
   .it-hd > .it-sub{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px/1.2 var(--mono,ui-monospace,monospace);color:var(--dim,#6b7480)}
@@ -4493,7 +4496,7 @@
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
         const cls = 'it ' + esc(b.state || 'now') + fcls + (xv ? ' xv-' + xv : '') + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (maxed ? ' maxed' : '') + (maxed && this._autoMax === key ? ' reading' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '') + (this.deskAlign() && this._lockGet()[key] ? ' desk-locked' : '');
-        return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
+        return `<div class="${cls}" tabindex="0" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
           ${(() => {
             /* THE ITEM'S ONE HEAD (DEEP-29 11A.4 Decision 4; owner decision D1, 2026-10-16), on every surface of the canvas - the
                column and the desk - and for every kind. The whole head is the handle: the kind's glyph, the title from the content
@@ -4952,6 +4955,20 @@
       if (!this._winBound) { this._winBound = true; this.addEventListener('vera:canvas:placed', () => { try { this._winRestore(); } catch (e) { /* optional */ } });
         (this.ownerDocument || document).addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && this._focusKey && this._wins && this._wins.has(this._focusKey)) this._winClose(this._focusKey); }); }
       body.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && this._editKey) { this._editKey = null; this._editFocused = false; if (this._doc) this.render(this._doc); } });
+      /* THE ITEM BY KEYBOARD (DEEP-29 11A.4 Decision 4): an item takes focus (Tab); Enter opens it as a press on its head does,
+         Esc restores a full one, F fills / restores, P makes it a pill (in the column: folds it), the arrows move between items;
+         a control in the head's row answers Enter and Space as a press. Never while typing, never with a modifier. */
+      body.addEventListener('keydown', (ev) => {
+        const t = ev.target; if (!t || !t.classList || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        if (t.classList.contains('hb') && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); t.click(); return; }
+        if (!t.matches('.it[data-key]')) return; const key = t.dataset.key;
+        const go = (act) => { ev.preventDefault(); this._act({ dataset: { act, layerKey: key }, closest: () => null }); };
+        if (ev.key === 'Enter') { ev.preventDefault(); const h = t.querySelector(':scope > .it-hd'); if (h) h.click(); return; }
+        if (ev.key === 'Escape') { if (t.classList.contains('maxed')) go('max'); return; }
+        if (ev.key === 'f' || ev.key === 'F') return go('max');
+        if (ev.key === 'p' || ev.key === 'P') return go(this.deskAlign() ? 'pill' : 'fold');
+        if (/^Arrow/.test(ev.key)) { const all = [...body.querySelectorAll('.it[data-key]')].filter((x) => x.offsetParent); const i = all.indexOf(t);
+          const nx = all[(i + (ev.key === 'ArrowDown' || ev.key === 'ArrowRight' ? 1 : -1) + all.length) % all.length]; if (nx) { ev.preventDefault(); nx.focus(); } } });
     }
     /* a folded item opens in the layout under the pointer — every folded item in the Hover tier, an aged one in any
        tier ("hover to read, click to open") — and folds back when the pointer leaves; one opened by a click stays */

@@ -69,4 +69,9 @@ t('the column has the menu too: drawn over the page where there is no stage', ()
   assert(SRC.includes("_popHost() { return this.shadowRoot.getElementById('stage') || this.shadowRoot; }") && SRC.includes("pop.style.position = 'fixed'"));
   assert(SRC.includes('  .hd-pop{position:absolute;z-index:var(--z-pop,230);'));
 });
+t('the item by keyboard: focusable, Enter opens, Esc restores, F fills, P pills, arrows move; a row control answers Enter', () => {
+  assert(SRC.includes('return `<div class="${cls}" tabindex="0" data-key='));
+  ["if (ev.key === 'Enter') { ev.preventDefault(); const h = t.querySelector(':scope > .it-hd'); if (h) h.click(); return; }", "if (ev.key === 'Escape') { if (t.classList.contains('maxed')) go('max'); return; }",
+   "if (ev.key === 'f' || ev.key === 'F') return go('max');", "return go(this.deskAlign() ? 'pill' : 'fold');", "if (t.classList.contains('hb') && (ev.key === 'Enter' || ev.key === ' '))", '.it:focus-visible,.hda > .hb:focus-visible{outline:2px solid'].forEach((s) => assert(SRC.includes(s), s));
+});
 console.log(n + ' passed');
