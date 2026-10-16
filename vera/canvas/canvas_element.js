@@ -3736,6 +3736,9 @@
         return o;
       });
       const sepSize = (xx, yy, it) => {
+        /* a size the person gave is kept wherever the card is pushed - re-sized by its distance from the chat, a card
+           released to keep moving (WSU-74 "move") shrank to a pill out at the border (WSU-78: "never to the pill area") */
+        if (it.own && !it.held) return { w: it.w, h: it.h };
         const s = D.sizeAt(R, xx, yy, it.so, desk); const chip = s.face === 'chip' || s.face === 'icon';
         const n = { w: Math.min(W - 16, s.w, chip ? Infinity : (it.maxW || Infinity)), h: Math.max(chip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h, chip ? Infinity : (it.maxH || Infinity))) };
         /* a held card pushed aside keeps its size - or gives back the room it had grown into (fill): a desk whose cards had
@@ -3770,6 +3773,26 @@
           start.forEach(([it, x, y, w, h, k]) => { it.x = x; it.y = y; it.w = w; it.h = h; it.keepSize = k; });
           D.separate(plan.filter((it) => !wins.has(it)), R, sepSize, { W: W, H: H });
         }
+      } else {
+        /* WINDOWS OFF: AS LARGE AS THE ROOM ALLOWS, NEVER A PILL (owner, 2026-10-15, WSU-78: "with window mode off it could
+           just resize to the max given the space available instead of shrinking to the pill area - it should never shrink to
+           the pill area on resize"). A card the person sized that still overlaps after the others were pushed aside keeps
+           its top-left and is cut back on the right or the bottom - whichever keeps more of it - to the edge of what it
+           meets, never below a usable card (160 x 90). The card under the hand is left to the hand until it is let go. */
+        const gap = 10, MINW = 160, MINH = 90;
+        const sizedByPerson = (it) => !it.sizing && (it.own || (it.fixed && !it.isLock));
+        plan.filter((it) => sizedByPerson(it) && it.h > 40).forEach((a) => {
+          let l = a.x - a.w / 2, t = a.y - a.h / 2, r = l + a.w, b = t + a.h;
+          for (let n = 0; n < 8; n++) {
+            const hit = plan.find((o) => o !== a && o.h > 40 && Math.min(r, o.x + o.w / 2) - Math.max(l, o.x - o.w / 2) > 8 && Math.min(b, o.y + o.h / 2) - Math.max(t, o.y - o.h / 2) > 8);
+            if (!hit) break;
+            const ol = hit.x - hit.w / 2, ot = hit.y - hit.h / 2;
+            const cutR = ol - gap - l >= MINW ? (ol - gap - l) * (b - t) : -1, cutB = ot - gap - t >= MINH ? (r - l) * (ot - gap - t) : -1;
+            if (cutR < 0 && cutB < 0) break;
+            if (cutR >= cutB) r = ol - gap; else b = ot - gap;
+          }
+          if (r - l < a.w - 1 || b - t < a.h - 1) { a.w = r - l; a.h = b - t; a.x = l + a.w / 2; a.y = t + a.h / 2; a.fitted = true; }
+        });
       }
       const tiled = plan.filter((it) => !wins.has(it));
       /* ...up the desk into the room above them (D.settle), the person's places, locks and sizes staying where they are... */
