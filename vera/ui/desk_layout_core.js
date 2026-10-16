@@ -509,7 +509,122 @@
     return { planes: planes, areas: areas, nodes: nodes, links: links };
   }
 
-  var api = { DESK: DESK, grow: grow, settle: settle, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
+
+  /* ── THE DESK'S MODES (DESK-ARRANGEMENT DR-01..03; owner decision D2, 2026-10-16: "replace with new modes") ──────────
+     orbit / by kind / by time / stack barely differed (most items were border pills in every one). The modes now lay the
+     desk out by the situation: auto (the topic's items in bands out from the chat - the old orbit), focus (one large, its
+     relations round it), compare (2-4 of a kind side by side, the same size, tops aligned), flow (in the order the work
+     happened), board (columns by status), map (clusters of what shares context), free (the person's places; automation
+     only fills holes). Items: [{id, kind, rel:[keys], status, t, border}] in the desk's order, the most relevant first.
+     A layout returns {cells:{id:{x,y,w,h}} (centre and size), chips:[id], lanes:[{x,y,w,h,label}]}. */
+  var MODES = ['auto', 'focus', 'compare', 'flow', 'board', 'map', 'free'];
+  var LEGACY_MODE = { orbit: 'auto', stack: 'auto', kind: 'map', timeline: 'flow' };
+  function modeOf(m) { m = String(m || ''); if (LEGACY_MODE[m]) return LEGACY_MODE[m]; return MODES.indexOf(m) >= 0 ? m : 'auto'; }
+
+  /* the free part of the desk: beside the chat on its roomier side, short of the pill strip at the far end */
+  function freeRegion(R, d, strip) {
+    d = desk(d); var g = 14, s = strip == null ? SIZE.chip.w + 20 : strip, top = d.top == null ? 4 : d.top;
+    if (R.t > d.H * 0.55 && R.l < d.W * 0.5 && R.r > d.W * 0.5) return { l: d.m, t: top, r: d.W - d.m - s, b: R.t - g, farRight: true };
+    var leftRoom = R.l - d.m, rightRoom = d.W - d.m - R.r;
+    if (rightRoom >= leftRoom) return { l: Math.max(d.m, R.r + g), t: top, r: d.W - d.m - s, b: d.H - 8, farRight: true };
+    return { l: d.m + s, t: top, r: Math.min(d.W - d.m, R.l - g), b: d.H - 8, farRight: false };
+  }
+  function cellAt(l, t, w, h) { return { x: l + w / 2, y: t + h / 2, w: Math.round(w), h: Math.round(h) }; }
+  function shares(a, b) { var ra = (a && a.rel) || [], rb = (b && b.rel) || []; for (var i = 0; i < ra.length; i++) if (rb.indexOf(ra[i]) >= 0) return true; return false; }
+
+  function layoutMode(mode, R, items, d, o) {
+    d = desk(d); o = o || {}; mode = modeOf(mode);
+    var out = { cells: {}, chips: [], lanes: [] };
+    if (mode === 'auto') return null;
+    var F = freeRegion(R, d, o.strip), fw = Math.max(0, F.r - F.l), fh = Math.max(0, F.b - F.t), g = 12;
+    var live = items.filter(function (it) { return it && !it.border; });
+    items.forEach(function (it) { if (it && it.border) out.chips.push(it.id); });
+    var used = {}; var put = function (it, c) { out.cells[it.id] = c; used[it.id] = true; };
+    var rest = function () { live.forEach(function (it) { if (!used[it.id]) out.chips.push(it.id); }); return out; };
+    if (!live.length || fw < 160 || fh < 90) { live.forEach(function (it) { out.chips.push(it.id); }); return out; }
+    if (mode === 'free') { out.free = true; return out; }
+
+    if (mode === 'focus') {
+      var lead = live[0]; var leadW = Math.round(fw * 0.6), leadH = Math.round(Math.min(fh, leadW * 0.85));
+      put(lead, cellAt(F.farRight ? F.l : F.r - leadW, F.t, leadW, leadH));
+      var sat = live.slice(1).filter(function (it) { return shares(it, lead); }).slice(0, 6);
+      var colW = fw - leadW - g;
+      if (colW >= 200 && sat.length) { var hh = Math.min(260, (fh - g * (sat.length - 1)) / sat.length);
+        if (hh >= 80) sat.forEach(function (it, i) { put(it, cellAt(F.farRight ? F.l + leadW + g : F.l, F.t + i * (hh + g), colW, hh)); }); }
+      return rest();
+    }
+    if (mode === 'compare') {
+      var k0 = live[0].kind; var set = live.filter(function (it) { return it.kind === k0; }).slice(0, 4);
+      if (set.length < 2) set = live.slice(0, Math.min(4, live.length));
+      var n = set.length, cols = fw / n >= 260 ? n : Math.min(2, n), rows = Math.ceil(n / cols);
+      var w = (fw - g * (cols - 1)) / cols, h = Math.min((fh - g * (rows - 1)) / rows, w * 0.9);
+      set.forEach(function (it, i) { put(it, cellAt(F.l + (i % cols) * (w + g), F.t + Math.floor(i / cols) * (h + g), w, h)); });
+      return rest();
+    }
+    if (mode === 'flow') {
+      var ord = live.slice().sort(function (a, b) { return (a.t || 0) - (b.t || 0); });
+      var c3 = Math.max(1, Math.min(3, Math.floor((fw + g) / (280 + g)))); var fwc = (fw - g * (c3 - 1)) / c3, fhc = Math.min(fwc * 0.75, 300);
+      var rws = Math.max(1, Math.floor((fh + g) / (fhc + g))), cap = c3 * rws; var shown = ord.length > cap ? ord.slice(-cap) : ord;
+      shown.forEach(function (it, i) { put(it, cellAt(F.l + (i % c3) * (fwc + g), F.t + Math.floor(i / c3) * (fhc + g), fwc, fhc)); });
+      return rest();
+    }
+    if (mode === 'board') {
+      var LANES = [['todo', 'To do'], ['running', 'Running'], ['needs', 'Needs you'], ['done', 'Done']], HD = 22;
+      var lw = (fw - g * 3) / 4;
+      LANES.forEach(function (ln, li) { var x0 = F.l + li * (lw + g); out.lanes.push({ x: x0, y: F.t, w: lw, h: HD, label: ln[1], n: 0 });
+        var its = live.filter(function (it) { return (it.status || 'todo') === ln[0]; }); out.lanes[li].n = its.length;
+        var k = its.length; if (!k) return; var hb = Math.min(200, (fh - HD - g * (k - 1)) / k);
+        if (hb < 80) { var fit = Math.max(0, Math.floor((fh - HD + g) / (80 + g))); its.slice(0, fit).forEach(function (it, i) { put(it, cellAt(x0, F.t + HD + i * (80 + g), lw, 80)); }); return; }
+        its.forEach(function (it, i) { put(it, cellAt(x0, F.t + HD + i * (hb + g), lw, hb)); }); });
+      return rest();
+    }
+    if (mode === 'map') {
+      /* clusters: items joined by a shared key, biggest first; each a cell of the desk, its items a small grid in it */
+      var par = live.map(function (_, i) { return i; }); var find = function (i) { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+      /* a key most items hold (the topic, one long turn) tells nothing apart: clusters are made of the keys that do */
+      var freq = {}; live.forEach(function (it) { (it.rel || []).forEach(function (k) { freq[k] = (freq[k] || 0) + 1; }); });
+      var common = function (k) { return freq[k] > Math.max(2, live.length * 0.6); };
+      var keysOf = function (it) { return (it.rel || []).filter(function (k) { return !common(k); }); };
+      for (var a = 0; a < live.length; a++) for (var b = a + 1; b < live.length; b++) if (shares({ rel: keysOf(live[a]) }, { rel: keysOf(live[b]) })) par[find(a)] = find(b);
+      var cl = {}; live.forEach(function (it, i) { var r = find(i); (cl[r] = cl[r] || []).push(it); });
+      var cls = Object.keys(cl).map(function (k) { return cl[k]; }).sort(function (x, y) { return y.length - x.length; });
+      var cc = Math.ceil(Math.sqrt(cls.length)), cr = Math.ceil(cls.length / cc), HD2 = 20;
+      var cw = (fw - g * (cc - 1)) / cc, ch = (fh - g * (cr - 1)) / cr;
+      cls.forEach(function (list, ci) { var x0 = F.l + (ci % cc) * (cw + g), y0 = F.t + Math.floor(ci / cc) * (ch + g);
+        var key = ''; keysOf(list[0]).some(function (k) { if (list.every(function (it) { return (it.rel || []).indexOf(k) >= 0; })) { key = k; return true; } return false; });
+        out.lanes.push({ x: x0, y: y0, w: cw, h: HD2, label: (key || list[0].kind || '').replace(/^[a-z]+:/, '').slice(0, 40), n: list.length });
+        /* the grid of the cluster's cards that gives each the most room, then no taller than 1.2 x its width */
+        var k = list.length, gc = 1, best = -1; for (var q = 1; q <= k; q++) { var r0 = Math.ceil(k / q), w0 = (cw - 8 * (q - 1)) / q, h0 = (ch - HD2 - 8 * (r0 - 1)) / r0, sc0 = Math.min(w0, h0 * 1.5); if (sc0 > best) { best = sc0; gc = q; } }
+        var gr = Math.ceil(k / gc), iw = (cw - 8 * (gc - 1)) / gc, ih = Math.min((ch - HD2 - 8 * (gr - 1)) / gr, iw * 1.2);
+        if (iw < 150 || ih < 70) return;
+        list.forEach(function (it, i) { put(it, cellAt(x0 + (i % gc) * (iw + 8), y0 + HD2 + Math.floor(i / gc) * (ih + 8), iw, ih)); }); });
+      return rest();
+    }
+    return null;
+  }
+
+  /* THE PLACE FOR ONE MORE (DR-01): the free slot a new item fits best - 3 x relation (how many of its neighbours share its
+     keys) + 2 x attention (nearness to the chat) + 1 x fit (its size, or three quarters of it) - nothing displaced, as only
+     free room is a candidate. placed: [{x,y,w,h,rel}] (centres). Returns {x,y,w,h,score} or null. */
+  function bestSlot(item, placed, R, d, o) {
+    d = desk(d); o = o || {}; var F = o.region || freeRegion(R, d, o.strip), g = 10, step = o.step || 24;
+    var hit = function (a, b) { return a.l < b.r + g && b.l < a.r + g && a.t < b.b + g && b.t < a.b + g; };
+    var boxes = (placed || []).map(function (p) { return { l: p.x - p.w / 2, t: p.y - p.h / 2, r: p.x + p.w / 2, b: p.y + p.h / 2, rel: p.rel || [] }; });
+    var chat = { l: R.l, t: R.t, r: R.r, b: R.b }, best = null;
+    [1, 0.75].forEach(function (k) { if (best) return; var w = Math.round(item.w * k), h = Math.round(item.h * k);
+      for (var y = F.t; y + h <= F.b; y += step) for (var x = F.l; x + w <= F.r; x += step) {
+        var c = { l: x, t: y, r: x + w, b: y + h }; if (hit(c, chat) || boxes.some(function (b) { return hit(c, b); })) continue;
+        var cx = x + w / 2, cy = y + h / 2, reach = 1.5 * Math.max(w, h);
+        /* each neighbour sharing its keys counts by how close it is: next to it is worth more than across the desk */
+        var rel = Math.min(1, boxes.reduce(function (s, b) { if (!shares({ rel: b.rel }, item)) return s; var dd = Math.hypot((b.l + b.r) / 2 - cx, (b.t + b.b) / 2 - cy); return s + Math.max(0, 1 - dd / reach); }, 0));
+        var att = clamp(1 - distance(R, cx, cy, d), 0, 1);
+        var s = 3 * rel + 2 * att + k;
+        if (!best || s > best.score) best = { x: cx, y: cy, w: w, h: h, score: +s.toFixed(3) };
+      } });
+    return best;
+  }
+
+  var api = { DESK: DESK, grow: grow, MODES: MODES, modeOf: modeOf, freeRegion: freeRegion, layoutMode: layoutMode, bestSlot: bestSlot, settle: settle, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
               arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom,
               latticeOf: latticeOf };
   root.VeraDesk = api;
