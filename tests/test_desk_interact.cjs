@@ -10,9 +10,9 @@ let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL '
 
 /* U4 - the hold */
 t('U4: a hold starts when the person moves or sizes a card', C.includes('    _holdStart(key) {') && C.includes("this._holdStart(it.dataset.key); this._rzPlacedAt = 0;") && C.includes('this._holdStart(d.key); }'));
-t('U4: the hold ends when the desk is dealt afresh (its signature changes)', C.includes('if (this._hold && this._hold.sig !== sig) this._hold = null;'));
+t('U4: the hold ends when the desk is dealt afresh (its signature changes)', C.includes('if ((this._hold.sb ? this._hold.sb !== sigBase : this._hold.sig !== sig) || gone) this._hold = null;'));
 t('U4: held cards start where they are, at their size', C.includes('if (hr) Object.assign(o, { x: hr.x, y: hr.y, w: hr.w, h: hr.h, bw: hr.bw || hr.w, bh: hr.bh || hr.h, held: true, keepSize: true, face0: hr.face });'));
-t('U4: nothing rises or grows under the hold', C.includes("if (!hold && typeof D.settle === 'function'") && C.includes("if (!hold && typeof D.grow === 'function'"));
+t('U4: nothing rises or grows under the hold', C.includes("if (!hold && !modeLaid && typeof D.settle === 'function'") && C.includes("if (!hold && !modeLaid && typeof D.grow === 'function'"));
 t('U4: a card given back to the arrangement ends the hold', C.includes('this._deskPosSet(it.dataset.key, null); this._holdEnd(); this._placeNow();') && C.includes("{ w: u.w, h: u.h, face: u.face, free: true } : null); this._holdEnd(); return this._placeNow(); }"));
 /* U1 - neighbours make room during a resize */
 t('U1: the desk is placed about every 90 ms while the grip is held', C.includes('if (now - (this._rzPlacedAt || 0) >= 90) { this._rzPlacedAt = now;')  && !C.includes('if (this._rz === r) { try { this._placeNow(); } catch (e) { /* optional */ } } }, 220)'));

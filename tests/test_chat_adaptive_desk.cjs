@@ -14,7 +14,7 @@ test('the desk is the new default while held and strict remain selectable',
   src.includes('<option value="strict">Strict — level with the turn</option>'));
 test('all adaptive desk choices are explicit persisted canvas settings',
   ["cfgCvBack:['back','column']", "cfgCvPanel:['panel-layer','beside']", "cfgCvBring:['bring-in','on']",
-   "cfgCvArrange:['desk-arrange','orbit']", "cfgCvRoom:['panel-room','on']"].every((s) => src.includes(s)));
+   "cfgCvArrange:['desk-arrange','auto']", "cfgCvRoom:['panel-room','on']"].every((s) => src.includes(s)));
 test('the floating chat has a visible grip and deterministic dock targets',
   src.includes('id="chatGrip"') && src.includes('id="chatDockHint"') &&
   src.includes("d.hint=(e.clientX-d.c.left<60)?'left':((d.c.right-e.clientX<60)?'right':'')"));
