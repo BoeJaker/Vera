@@ -21929,7 +21929,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
             _fu_text = f"{(_fu or {}).get('title', '')} {(_fu or {}).get('goal', '')}" \
                 if isinstance(_fu, dict) else str(_fu or "")
             _fu_files = _v6_extract_paths(_fu_text)
-            if _fu_files and not any(f in _goal_files_fu for f in _fu_files):
+            if _fu_files and not _v6_claim_grounded(_fu_files, _goal_files_fu):
                 log.info("v6 gate: dropped a hallucinated follow-up step not grounded "
                          "in the goal: %r", _fu_text[:200])
                 continue
@@ -22026,6 +22026,62 @@ def _v6_extract_paths(text: str, *, include_bare: bool = True) -> List[str]:
     return out[:12]
 
 
+def _v6_missing_fix_step(missing: List[str], goal: str) -> Dict[str, Any]:
+    """One follow-up step that does what the completion gate said is missing."""
+    items = "\n".join("- %s" % str(m)[:300] for m in (missing or [])[:8])
+    return {
+        "title": "Finish what the completion gate found missing",
+        "goal": ("The completion gate checked the run against the goal and found the items "
+                 "below still missing. Do exactly these, in the existing files/answer - do not "
+                 "start over, and do not add anything the goal does not ask for.\n"
+                 "MISSING:\n%s\nGOAL: %s" % (items, goal)),
+        "success": "Every item the completion gate named as missing is done.",
+    }
+
+
+def _v6_needs_missing_fix(gate: Dict[str, Any], follow_up: List[Any], steps_left: int,
+                          already: bool) -> bool:
+    """The gate said NOT complete, gave real reasons, and left nothing to run - the loop used
+    to stop there and record the goal done (16 Oct 2026, operator-family-run34). Once per run,
+    never for a bounded failure (the run already gave up on that on purpose)."""
+    return bool(not follow_up and not already and steps_left > 0 and not gate.get("bounded")
+                and not gate.get("complete") and [m for m in (gate.get("missing") or []) if str(m).strip()])
+
+
+def _v6_path_norm(p: str) -> str:
+    """A path as the goal and a claim can both write it: no /workspace/ root, no ./ or
+    leading slash, no trailing slash."""
+    p = str(p or "").strip().replace("\\", "/")
+    for pre in ("/workspace/", "workspace/", "./"):
+        if p.startswith(pre):
+            p = p[len(pre):]
+    return p.strip("/")
+
+
+def _v6_claim_grounded(claimed: List[str], goal_files: Any) -> bool:
+    """Does any claimed path name a file or folder the GOAL names? Compared as the same file,
+    not the same string (16 Oct 2026, census: the goal's `/workspace/statkit` with `stats.py`
+    made the gate's real `statkit/stats.py` gap read as invented and flipped the verdict to
+    complete; an `operator.run` follow-up for `/workspace/hello.html` written as
+    `localhost:9001/hello.html` was dropped and the run ended without its browser check).
+    Grounded: the same normalised path, the same file name, or a path inside a folder the
+    goal names. A file the goal never names (the `toggle.html` for `lightswitch.html` case)
+    still is not."""
+    goal_norm = {n for n in (_v6_path_norm(g) for g in (goal_files or ())) if n}
+    goal_names = {n.rsplit("/", 1)[-1] for n in goal_norm if "." in n.rsplit("/", 1)[-1]}
+    goal_dirs = {n for n in goal_norm if "." not in n.rsplit("/", 1)[-1]}
+    for c in claimed or ():
+        n = _v6_path_norm(c)
+        if not n:
+            continue
+        if n in goal_norm or n.rsplit("/", 1)[-1] in goal_names:
+            return True
+        parent = "/" + n.rsplit("/", 1)[0] + "/" if "/" in n else ""
+        if parent and any(("/" + d + "/") in parent for d in goal_dirs):
+            return True
+    return False
+
+
 def _v6_ground_missing_claims(items: List[str], goal_text: str) -> Tuple[List[str], List[str]]:
     """Strip a completion-gate `missing`/`follow_up` claim that names a
     specific file NOT actually present anywhere in the real goal text —
@@ -22047,7 +22103,7 @@ def _v6_ground_missing_claims(items: List[str], goal_text: str) -> Tuple[List[st
     dropped: List[str] = []
     for item in items:
         claimed = _v6_extract_paths(str(item or ""))
-        if claimed and not any(c in goal_files for c in claimed):
+        if claimed and not _v6_claim_grounded(claimed, goal_files):
             dropped.append(item)
         else:
             kept.append(item)
@@ -26797,6 +26853,7 @@ async def cap_dag_agent_loop_v6(
     _gate_rounds = 0
     _MAX_GATE_ROUNDS = 3
     _review_done = False                 # deliverable_review runs once per run
+    _missing_fix_done = False            # one step from the gate's own missing list per run
     _gate_last: Dict[str, Any] = {}      # the last verdict, carried to the end
     _gate_ran_after = 0                  # follow-up steps run since that verdict
     while enable_final_gate and executed < hard_cap and _gate_rounds < _MAX_GATE_ROUNDS:
@@ -26844,6 +26901,14 @@ async def cap_dag_agent_loop_v6(
                 follow_up = _v6_coerce_control_steps(
                     [_plan_styles.review_fix_step(_rv.get("note") or "", goal)], max_id, goal,
                     catalog_names, valid_skill_ids)
+        if _v6_needs_missing_fix(gate, follow_up, hard_cap - executed, _missing_fix_done):
+            _missing_fix_done = True
+            follow_up = _v6_coerce_control_steps(
+                [_v6_missing_fix_step(gate.get("missing") or [], goal)], max_id, goal,
+                catalog_names, valid_skill_ids)
+            await emit_event({"type": "agent_loop_v6.gate_missing_fix", "session_id": sid,
+                              "stream_id": stream_id, "missing": gate.get("missing") or [],
+                              "steps": len(follow_up)})
         if not follow_up:
             # Either complete, or the judge/overrides had nothing actionable
             # to add — no follow_up means no more work THIS gate call can
