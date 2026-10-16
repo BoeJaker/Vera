@@ -3136,7 +3136,9 @@
       // the turn in focus (data-focus-mid, set by the host) decides which items have aged; a change repaints
       const fm = this.dataset.focusMid || '';
       if (fm !== this._focusMid) { this._focusMid = fm; if (this._doc && this._doc.mode === 'session') { this.render(this._doc); return; } }
-      if (this.hasAttribute('stage')) this._placeNow();
+      /* on the desk the turns' places on screen do not place anything - only which turns there are: the transcript growing
+         under a streamed reply placed the whole desk on every line (WSU-83) */
+      if (this.hasAttribute('stage')) { if (this.deskAlign()) { const ts = Object.keys(this._turns).sort().join('|'); if (ts === this._turnsSig) return; this._turnsSig = ts; } this._placeNow(); }
     }
     /* WHERE THE TRANSCRIPT IS, WHICH IS NOT WHERE THE COLUMN IS. The host says how far the transcript has scrolled
        and where its top sits; the column places its items level with the turns on screen and keeps its own scroll.
@@ -4487,7 +4489,15 @@
       const layers = this._layers(body);
       const mark = this.canvasId + '\u0000' + html;    // another canvas's identical markup is not this canvas's
       // a code card being edited in place (the kit's editor) keeps the column as it is until the edit ends
+      let patched = false;
       if (this._html !== mark && layers.items.querySelector('.code-card.editing')) this._editHeld = true;
+      /* ONLY THE CARD BEING STREAMED IS DRAWN AGAIN (owner, 2026-10-15, WSU-83: "if code is streaming to the canvas/desk the
+         interactive elements become less responsive, like resize, drag, the controls on the top of elements and the elements
+         themselves"). Every streamed line changed the markup, and the whole column's markup was replaced - every card rebuilt
+         and the desk placed again, many times a second: a button under the pointer was replaced between press and release,
+         a carried card left the hand, and the page was busy most of the time. When only the cards being streamed changed,
+         those cards alone are swapped, each keeping its place, size, state and scroll; nothing is placed again. */
+      else if (this._html !== mark && this._html && layers.items.childElementCount && this._livePatch(layers.items, html, mark)) patched = true;
       else if (this._html !== mark || !layers.items.childElementCount) {
         /* AN ITEM BEING WRITTEN FOLLOWS ITS LAST LINE (owner, 2026-10-03: "it also doesnt auto scroll to the most recent
            line if the user is already scrolled to the bottom or not been scrolled up"). Redrawing the markup put every
@@ -4505,7 +4515,7 @@
           const k = it.dataset.key; const parts = it.querySelectorAll(SCROLLERS);
           parts.forEach((el, j) => { if (el.scrollHeight > el.clientHeight + 2) sc[k + '\u0000' + j] = { top: el.scrollTop, end: el.scrollHeight - el.scrollTop - el.clientHeight < 24, h: el.scrollHeight }; else sc[k + '\u0000' + j] = { top: 0, end: true, h: el.scrollHeight }; });
         });
-        this._html = mark;
+        this._html = mark; this._lastHtml = html;
         layers.items.innerHTML = html;
         /* ON THE DESK THE REDRAWN CARDS START WHERE THEY WERE: fresh markup has no place, so every card showed at a default
            spot and slid back - the flicker when an item joined. Each card that was on the desk takes its last place and
@@ -4536,7 +4546,7 @@
         });
       }
       this._bind(body);
-      if (stage) this._placeNow();
+      if (stage && !patched) this._placeNow();
       /* ⛔ THE COLUMN STAYS WHERE THE READER LEFT IT. Replacing the items' markup empties the stage for a moment, the
          browser clamps the column's scroll to the top, and on the stage nothing ever put it back - so every redraw
          threw the reader to the top: opening an item in place, a new message, the turn in view changing (which is
@@ -5082,7 +5092,45 @@
       if (key == null) { this._liveOv = null; this._liveAt = null; } else { delete this._liveOv[String(key)]; if (this._liveAt) delete this._liveAt[String(key)]; }
       this._liveRedraw();
     }
-    _liveRedraw() { if (!this._liveRaf) this._liveRaf = requestAnimationFrame(() => { this._liveRaf = 0; if (this._doc) this.render(this._doc); }); }
+    /* the streamed cards' new markup swapped in place (see render): true when that was all that changed */
+    _livePatch(items, html, mark) {
+      const live = this._liveOv ? Object.keys(this._liveOv) : []; if (!live.length || !this._lastHtml) return false;
+      /* a markup read once: its cards (key, markup, the node) and what is round them; the last one is kept, not parsed again */
+      const read = (s) => { const T = document.createElement('template'); T.innerHTML = s; const cards = [...T.content.querySelectorAll('.it[data-key]')].filter((x) => !x.parentElement || !x.parentElement.closest('.it[data-key]'));
+        const m = { keys: cards.map((x) => x.dataset.key), mk: cards.map((x) => x.outerHTML), nodes: cards };
+        cards.forEach((x) => x.replaceWith(document.createComment('it'))); m.skel = T.innerHTML; return m; };
+      const old = (this._lastRead && this._lastRead.html === this._lastHtml) ? this._lastRead.m : read(this._lastHtml);
+      const nw = read(html); const cur = [...items.querySelectorAll('.it[data-key]')].filter((x) => !x.parentElement || !x.parentElement.closest('.it[data-key]'));
+      const same = (a, b) => a.length === b.length && a.every((k, i) => k === b[i]);
+      if (!same(nw.keys, old.keys) || !same(nw.keys, cur.map((x) => x.dataset.key))) return false;
+      /* what is round the cards (bands, headings, shelves) must be unchanged too */
+      if (nw.skel !== old.skel) return false;
+      const changed = []; nw.mk.forEach((s, i) => { if (s !== old.mk[i]) changed.push(i); });
+      if (changed.some((i) => live.indexOf(nw.keys[i]) < 0)) return false;
+      const nc = nw.nodes;
+      const KEEP = ['desk-chip', 'desk-icon', 'desk-placed', 'desk-locked', 'desk-win', 'desk-focus', 'pill-open', 'chip-peek', 'desk-dragging', 'resizing', 'sized', 'openin', 'hov', 'maxed', 'cmp-front', 'cmp-behind', 'desk-hold'];
+      const SCROLLERS = '.it-bd, pre, .vc-out, .vc-rr-p, [data-keep-scroll]';
+      changed.forEach((i) => { const old = cur[i], neu = document.importNode(nc[i], true);
+        const st = old.getAttribute('style'); if (st != null) neu.setAttribute('style', st);
+        KEEP.forEach((k) => { if (old.classList.contains(k)) neu.classList.add(k); });
+        if (old.dataset.deskFace != null) neu.dataset.deskFace = old.dataset.deskFace; if (old.dataset.zRest != null) neu.dataset.zRest = old.dataset.zRest;
+        if (old._cpw) neu._cpw = old._cpw;
+        const sc = [...old.querySelectorAll(SCROLLERS)].map((el) => ({ top: el.scrollTop, end: el.scrollHeight - el.scrollTop - el.clientHeight < 24 }));
+        old.replaceWith(neu);
+        [...neu.querySelectorAll(SCROLLERS)].forEach((el, j) => { const s = sc[j]; if (s) el.scrollTop = s.end ? el.scrollHeight : s.top; });
+        if (this._dg && this._dg.el === old) this._dg.el = neu; if (this._rz && this._rz.el === old) this._rz.el = neu; });
+      this._html = mark; this._lastHtml = html; this._lastRead = { html, m: nw }; return true;
+    }
+    /* A STREAM IS DRAWN AT THE PACE THE PAGE AFFORDS (WSU-83): at least twice the last redraw's own time apart (a desk of
+       heavy cards takes ~70 ms to redraw - every frame kept the page busy most of the time), and no faster than every 250 ms
+       while a card is being carried or sized, so the hand always has the page */
+    _liveRedraw() {
+      if (this._liveRaf || this._liveTm) return;
+      const busy = !!(this._rz || (this._dg && this._dg.moved));
+      const gap = Math.max(busy ? 250 : 0, 2 * (this._liveCost || 0)), wait = Math.max(0, (this._liveLast || 0) + gap - Date.now());
+      const go = () => { this._liveTm = 0; this._liveRaf = requestAnimationFrame(() => { this._liveRaf = 0; if (!this._doc) return; const a = performance.now(); this.render(this._doc); this._liveCost = performance.now() - a; this._liveLast = Date.now(); }); };
+      if (wait > 0) this._liveTm = setTimeout(go, wait); else go();
+    }
     _liveExpire() {
       if (this._liveT) return;
       this._liveT = setTimeout(() => {
@@ -5616,23 +5664,31 @@
          screen and the live layer is placed in layout pixels, so every offset was multiplied by the scale and a widget
          drew far from its card (2026-10-07: a slot at 569,1044 drew its widget at 773,1489). Divide by the scale. */
       const k0 = body.offsetWidth ? (B.width / body.offsetWidth) : 1, Z = k0 > 0.2 && k0 < 5 ? k0 : 1;
+      /* READ EVERYTHING, THEN WRITE (WSU-83): each live element read its slot's place after the one before had been
+         written, so the browser laid the whole desk out again for every element - ~40 ms of every placing pass, on every
+         move of a resize and every streamed line. The places are measured first, all of them, then written. */
+      const SL = body.scrollLeft, ST = body.scrollTop, M = {};
+      Object.keys(L).forEach((k) => { const h = body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]'); const m = M[k] = { h };
+        if (!h) return; m.vis = h.getClientRects().length; if (!m.vis) return; m.r = h.getBoundingClientRect(); const card = h.closest('.it'); if (!card) return;
+        m.c = card.getBoundingClientRect(); const stg = card.parentElement; if (stg) { m.S = stg.getBoundingClientRect(); m.cl = stg.clientLeft; m.ct = stg.clientTop; }
+        if (L[k]._at) m.cs = getComputedStyle(card); const grip = card.querySelector(':scope > .rz'); m.grip = !!(grip && grip.getClientRects().length); });
       Object.keys(L).forEach((k) => {
-        const el = L[k]; const h = body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]');
+        const el = L[k]; const m = M[k] || {}; const h = m.h;
         /* a maximised item covers the column - but what is drawn INSIDE it stays: a code item's exploded diagram is a pane of
            the code's card (fused beside it) under its own key, and was hidden with everything else */
         if (this._max && k !== this._max && !(h && h.closest('.it') && h.closest('.it').dataset.key === this._max)) { el.style.display = 'none'; el._at = false; return; }
-        if (!h || !h.getClientRects().length) { el.style.display = 'none'; el._at = false; return; }   // back, it appears in place
-        const r = h.getBoundingClientRect(); const w = Math.max(0, Math.round(r.width / Z)), ht = Math.max(0, Math.round(r.height / Z));
+        if (!h || !m.vis) { el.style.display = 'none'; el._at = false; return; }   // back, it appears in place
+        const r = m.r; const w = Math.max(0, Math.round(r.width / Z)), ht = Math.max(0, Math.round(r.height / Z));
         const card = h.closest('.it');
-        let lx = Math.round((r.left - B.left) / Z + body.scrollLeft), ly = Math.round((r.top - B.top) / Z + body.scrollTop), tr = 'none';
+        let lx = Math.round((r.left - B.left) / Z + SL), ly = Math.round((r.top - B.top) / Z + ST), tr = 'none';
         /* ON THE DESK IT GLIDES WITH ITS CARD, it does not chase it: placed each frame at where the card WAS, it trailed a
            card on the fast start of its glide by up to 150 px (measured). It is placed at the card's destination (the
            card's own left/top, plus where its slot sits in the card) with the card's own transition, so both move as one. */
         if (card && this.deskAlign() && card.style.left && !card.classList.contains('desk-dragging') && !card.classList.contains('resizing')) {
-          const stg = card.parentElement; const S = stg.getBoundingClientRect(); const c0 = card.getBoundingClientRect();
-          lx = Math.round((S.left - B.left) / Z + body.scrollLeft + stg.clientLeft + parseFloat(card.style.left) + (r.left - c0.left) / Z);
-          ly = Math.round((S.top - B.top) / Z + body.scrollTop + stg.clientTop + (parseFloat(card.style.top) || 0) + (r.top - c0.top) / Z);
-          if (el._at) { const cs = getComputedStyle(card); const sp = (s) => String(s || '').split(/,(?![^(]*\))/).map((x) => x.trim());
+          const S = m.S || { left: B.left, top: B.top }; const c0 = m.c;
+          lx = Math.round((S.left - B.left) / Z + SL + (m.cl || 0) + parseFloat(card.style.left) + (r.left - c0.left) / Z);
+          ly = Math.round((S.top - B.top) / Z + ST + (m.ct || 0) + (parseFloat(card.style.top) || 0) + (r.top - c0.top) / Z);
+          if (el._at && m.cs) { const cs = m.cs; const sp = (s) => String(s || '').split(/,(?![^(]*\))/).map((x) => x.trim());
             const P = sp(cs.transitionProperty), Du = sp(cs.transitionDuration), Tf = sp(cs.transitionTimingFunction), De = sp(cs.transitionDelay);
             const of = (p) => { let i = P.indexOf(p); if (i < 0) i = P.indexOf('all'); if (i < 0) return ''; const d = Du[i % Du.length]; return parseFloat(d) > 0 ? p + ' ' + d + ' ' + Tf[i % Tf.length] + ' ' + De[i % De.length] : ''; };
             tr = [of('left'), of('top')].filter(Boolean).join(', ') || 'none'; }
@@ -5651,14 +5707,13 @@
            past a smaller card (a desk face, a capped item) drew over its neighbours (2026-10-07, a checks widget on the
            desk). Each live element is cut to its card's box and stacks with its card. */
         if (card) {
-          const c = card.getBoundingClientRect();
+          const c = m.c;
           const ct = Math.max(0, Math.round((c.top - r.top) / Z)), cl = Math.max(0, Math.round((c.left - r.left) / Z));
           const cr = Math.max(0, Math.round((r.right - c.right) / Z)), cb = Math.max(0, Math.round((r.bottom - c.bottom) / Z));
           let clip = (ct || cl || cr || cb) ? 'inset(' + ct + 'px ' + cr + 'px ' + cb + 'px ' + cl + 'px)' : '';
           /* on the desk the card's corner grip stays reachable: the live element is drawn over the card, so its corner
              is cut away (a widget covered the grip and no widget card could be resized) */
-          const grip = this.deskAlign() && card.querySelector(':scope > .rz');
-          if (grip && grip.getClientRects().length) {
+          if (this.deskAlign() && m.grip) {
             const L0 = cl, T0 = ct, R0 = w - cr, B0 = ht - cb;
             const x1 = Math.min(R0, Math.round((c.right - r.left) / Z)) - 20, y1 = Math.min(B0, Math.round((c.bottom - r.top) / Z)) - 20;
             if (x1 > L0 && y1 > T0 && x1 < R0 + 20 && y1 < B0 + 20)
