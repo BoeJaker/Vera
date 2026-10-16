@@ -687,6 +687,7 @@ def _run_evidence(run: Dict[str, Any]) -> Dict[str, Any]:
                   if error else None),
     }
 async def _run_events(run_id: str = "", session_id: str = "",
+                      workflow_prefix: str = "",
                       limit: int = 60) -> List[Dict[str, Any]]:
     """Project recent Run protocol records into Activity without owning them."""
     try:
@@ -706,6 +707,9 @@ async def _run_events(run_id: str = "", session_id: str = "",
         if not projection:
             continue
         run = projection["run"]
+        workflow_id = str(run.get("workflow_id") or "")
+        if workflow_prefix and not workflow_id.startswith(workflow_prefix):
+            continue
         if session_id and session_id not in {
                 str(run.get("session_id") or ""), str(run.get("trace_id") or "")}:
             continue
@@ -794,22 +798,28 @@ async def _run_events(run_id: str = "", session_id: str = "",
             failed_capabilities.append(first.get("capability") or child.get("kind") or "unknown")
         terminal = sum(1 for child in children if child.get("status") in {
             "completed", "failed", "cancelled", "timed_out", "skipped"})
+        policy = run.get("policy") if isinstance(run.get("policy"), dict) else {}
+        execution_owner = str(policy.get("execution_owner") or "native_dag")
+        intel_owned = execution_owner == "intel.native" or workflow_id.startswith("intel.idle.")
+        native_url = "/intel/panel" if intel_owned else "/workshop/panel"
+        native_label = "Intelligence" if intel_owned else "Native DAG workshop"
         out.append(_ev(
             "run", run.get("ended_at") or run.get("started_at") or run.get("created_at") or "",
             "Run · " + str(run.get("kind") or "execution"),
             summary=(f"{terminal}/{len(children)} child nodes finished" if children
                      else "No child nodes recorded"),
             status=str(run.get("status") or ""),
-            session_id=str(run.get("session_id") or ""), cap="dag.run",
+            session_id=str(run.get("session_id") or ""),
+            cap="intel.job" if intel_owned else "dag.run",
             ref=rid, source="run_protocol",
             ui={"label": "Run activity", "run_id": rid,
                 "session_id": str(run.get("session_id") or ""),
-                "workflow_id": str(run.get("workflow_id") or ""),
-                "native_url": "/workshop/panel"},
+                "workflow_id": workflow_id,
+                "native_url": native_url, "native_label": native_label},
             extra={"run_id": rid, "trace_id": run.get("trace_id"),
-                   "workflow_id": run.get("workflow_id"),
+                   "workflow_id": workflow_id,
                    "task_id": run.get("task_id"),
-                   "authority": "native_dag",
+                   "authority": execution_owner,
                    "projection": "run_protocol_shadow",
                    "run_status": run.get("status"),
                    "progress": run.get("progress"), "children": children,
@@ -953,6 +963,7 @@ async def cap_activity_timeline(scope: str = "all", limit: int = 120,
             events += await _narrator_events(limit=lim)
         elif kind == "intel":
             events += await _intel_events(topic_id=ref, limit=lim)
+            events += await _run_events(workflow_prefix="intel.idle.", limit=lim)
         else:  # all — the master timeline (agentic work only, no cap chatter)
             events += await _dream_events(limit=min(lim, 40))
             events += await _program_events(limit=min(lim, 30))
