@@ -5,10 +5,29 @@
     "title": "Markets overview",
     "icon": "chart",
     "summary": "The tracked universe by group - count, breadth and median moves",
-    "view": { "kind": "table", "views": ["table", "cards", "chart"] },
-    "read": { "cap": "markets.overview", "args": {}, "refresh": { "every_s": 60 } },
-    "related": ["markets.chart", "markets.lookup"],
-    "size": { "default": "m", "min": "s" }
+    "view": {
+      "kind": "table",
+      "views": [
+        "table",
+        "cards",
+        "chart"
+      ]
+    },
+    "read": {
+      "cap": "markets.overview",
+      "args": {},
+      "refresh": {
+        "every_s": 60
+      }
+    },
+    "related": [
+      "markets.chart",
+      "markets.lookup"
+    ],
+    "size": {
+      "default": "m",
+      "min": "s"
+    }
   },
   {
     "id": "markets.symbol",
@@ -16,9 +35,101 @@
     "title": "Symbol",
     "icon": "chart",
     "summary": "One symbol's candles over time",
-    "view": { "kind": "series", "views": ["trace", "area", "column", "table"] },
-    "read": { "cap": "markets.chart", "args": { "symbol": "{arg.symbol}" }, "refresh": { "every_s": 30 } },
-    "related": ["markets.overview", "markets.lookup"],
-    "size": { "default": "l", "min": "m" }
+    "view": {
+      "kind": "series",
+      "views": [
+        "trace",
+        "area",
+        "column",
+        "table"
+      ]
+    },
+    "read": {
+      "cap": "markets.chart",
+      "args": {
+        "symbol": "{arg.symbol}"
+      },
+      "refresh": {
+        "every_s": 30
+      }
+    },
+    "related": [
+      "markets.overview",
+      "markets.lookup"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
+  },
+  {
+    "id": "markets.watchlist",
+    "panel": "markets",
+    "title": "Watchlist",
+    "icon": "chart",
+    "summary": "The assets kept up to date - symbol, exchange, when each was last fetched and its bars",
+    "view": {
+      "kind": "table",
+      "views": [
+        "table",
+        "cards"
+      ]
+    },
+    "read": {
+      "cap": "markets.watchlist.list",
+      "args": {},
+      "refresh": {
+        "every_s": 60
+      }
+    },
+    "actions": [
+      {
+        "id": "add",
+        "label": "Add symbol",
+        "cap": "markets.watchlist.add",
+        "where": "header",
+        "form": "schema",
+        "fields": [
+          {
+            "key": "symbol",
+            "label": "Symbol",
+            "required": true
+          },
+          {
+            "key": "exchange",
+            "label": "Exchange",
+            "default": "binance"
+          }
+        ],
+        "args": {
+          "backfill": true
+        }
+      },
+      {
+        "id": "remove",
+        "label": "Remove",
+        "cap": "markets.watchlist.remove",
+        "where": "row",
+        "confirm": true,
+        "args": {
+          "symbol": "{row.symbol}",
+          "exchange": "{row.exchange}"
+        }
+      }
+    ],
+    "detail": {
+      "app": "markets.symbol",
+      "args": {
+        "symbol": "{row.symbol}"
+      }
+    },
+    "related": [
+      "markets.overview",
+      "markets.chart"
+    ],
+    "size": {
+      "default": "m",
+      "min": "s"
+    }
   }
 ]
