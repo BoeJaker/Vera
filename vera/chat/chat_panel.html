@@ -7385,6 +7385,16 @@ IMPORTANT:
     const c=_cvTopicCache[mid];
     if(c&&Date.now()-c.t<20000){ cv.setTopic(c.keys, c.scores, mid); return; }
     if(_cvTopicWant===mid&&_cvTopicT) return;
+    /* AT ONCE, THEN BETTER (owner, 2026-10-15, WSU-84: "the desk/canvas isnt quick enough to close out of context elements"):
+       the topic waited for the relevance call (a 450 ms pause and a server round trip, seconds when the box is busy) before
+       anything left. A first answer is made here, from what the page already has - the items this turn made or read, and
+       the items whose titles carry the turn's own names - and set straight away; the server's answer replaces it. */
+    if(!c){ try{ const txt0=_cvTurnText(mid); const names=_cvTurnNames(txt0).slice(0,10).filter(w=>w.length>=3);
+        const bl=((cv._doc&&cv._doc.blocks)||[]).filter(b=>b&&b.key!=null&&b.state!=='hidden');
+        const own=b=>(Array.isArray(b.anchors)?b.anchors:[]).some(a=>a&&(a.mid===mid||a.turn===mid));
+        const named=b=>{ const t=String((b.content&&(b.content.title||b.content.caption))||b.key||'').toLowerCase(); return names.some(w=>t.indexOf(w)>=0); };
+        const keys=bl.filter(b=>own(b)||named(b)).map(b=>String(b.key));
+        if(keys.length) cv.setTopic(keys, {}, mid); }catch(_){} }
     _cvTopicWant=mid; clearTimeout(_cvTopicT);
     _cvTopicT=setTimeout(async()=>{ _cvTopicT=null; if(_cvTopicWant!==mid) return;
       /* the TURN's own names, not the context's: the context records are the latest turn's whatever turn is in focus, and

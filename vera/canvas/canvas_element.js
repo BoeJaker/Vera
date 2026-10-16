@@ -3438,15 +3438,31 @@
       const titleOf = (c) => ((c.querySelector(':scope > .it-hd > .t') || {}).textContent || '').replace(/\s+/g, ' ').trim();
       const subjOf = (t) => { const i = t.indexOf(' · '); return (i >= 0 ? t.slice(i + 3) : '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); };
       const prefOf = (t) => { const i = t.indexOf(' · '); return i >= 0 ? t.slice(0, i) : t; };
-      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && FAM[c.dataset.type || ''] && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
-      /* joined by family when they share a turn or a subject */
+      /* GROUPED BY TYPE (owner, 2026-10-15, WSU-84: "they need to group by type ... graphs grouped together, charts in another
+         group, news or web groups together"): a widget's family is what it draws - a chart, a graph or another figure - not
+         just "a widget" */
+      const CHART = /^(candles|area|trace|column|bars|line|spark|sparkline|ohlc|histogram|stacked|step|scatter|waterfall)$/, GRAPH = /^(vgraph|graph|network|tree|sankey|chord)$/;
+      const famOf = (c) => { const t = c.dataset.type || ''; if (t !== 'widget') return FAM[t];
+        const cc = this._contentOf(c.dataset.key || '') || {}; const fm = String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, '');
+        return CHART.test(fm) ? 'charts' : GRAPH.test(fm) ? 'graphs' : /^(reading|news|feed|headlines|articles|sources)$/.test(fm) ? 'reading' : 'widgets'; };   /* news and web read together */
+      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && famOf(c) && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
+      const T0 = this._topic; const inTopic = (c) => !!(T0 && T0.keys && (T0.keys.has(c.dataset.key || '') || c.classList.contains('pinned')));
+      /* joined by family when they share a turn or a subject - or, ACROSS TURNS, when both are in the conversation's context
+         now (WSU-84: "be able to group over turns if they share context") */
       const par = new Map(elig.map((c) => [c, c]));
       const find = (c) => { while (par.get(c) !== c) { par.set(c, par.get(par.get(c))); c = par.get(c); } return c; };
       const by = {};
-      elig.forEach((c) => { const f = FAM[c.dataset.type]; const s = subjOf(titleOf(c));
-        [c.dataset.mid ? f + '|m|' + c.dataset.mid : '', s.length >= 4 ? f + '|s|' + s : ''].filter(Boolean)
+      elig.forEach((c) => { const f = famOf(c); const s = subjOf(titleOf(c));
+        [c.dataset.mid ? f + '|m|' + c.dataset.mid : '', s.length >= 4 ? f + '|s|' + s : '', inTopic(c) ? f + '|t' : ''].filter(Boolean)
           .forEach((b) => { if (by[b]) par.set(find(c), find(by[b])); else by[b] = c; }); });
-      const sets = new Map(); elig.forEach((c) => { const r = find(c); if (!sets.has(r)) sets.set(r, []); sets.get(r).push(c); });
+      const sets0 = new Map(); elig.forEach((c) => { const r = find(c); if (!sets0.has(r)) sets0.set(r, []); sets0.get(r).push(c); });
+      /* ONLY WHAT IS STILL IN CONTEXT STAYS IN A GROUP (WSU-84: "then only the parts that are still in-context stay in the
+         composites and the container remains"): a group with members in the topic keeps those; the others leave it, as
+         cards of their own that the desk sends out of focus. A group with none in the topic stays as it is. */
+      const sets = new Map(); sets0.forEach((list, r) => { if (!T0 || !T0.keys || !T0.keys.size) { sets.set(r, list); return; }
+        const inT = list.filter(inTopic); if (!inT.length || inT.length === list.length) { sets.set(r, list); return; }
+        /* ...and those that left go out of focus together - one pill, not one each */
+        sets.set(r, inT); sets.set({ out: r }, list.filter((c) => !inTopic(c))); });
       const act = this._cmpGet(); let stamped = false; const now = Date.now();
       sets.forEach((list) => {
         for (let i = 0; i < list.length; i += 8) {
@@ -3795,7 +3811,14 @@
           if (farRight && it.x + it.w / 2 > sl - G) { const room = sl - G - 8; if (it.w > room) it.w = Math.max(160, room); it.x = Math.min(it.x, sl - G - it.w / 2); }
           if (!farRight && it.x - it.w / 2 < sr + G) { const room = W - 8 - (sr + G); if (it.w > room) it.w = Math.max(160, room); it.x = Math.max(it.x, sr + G + it.w / 2); } }); }
       const start = plan.map((it) => [it, it.x, it.y, it.w, it.h, it.keepSize]);
-      D.separate(withStrip(plan), R, sepSize, { W: W, H: H });
+      /* THE SMALLER GIVES WAY (owner, 2026-10-15, WSU-85: "smaller elements should not be able to move larger ones (unless the user
+         is dragging them)"): separation keeps the earlier card and moves the later, and the order was relevance - a small chip
+         of a card ranked first pushed a large one aside. Within the same firmness (the card under the hand, then locked, sized,
+         put somewhere by the person) the larger card is now placed first and the smaller moves round it; a card the person
+         carries or has just put down still wins over any size. */
+      const firmOf = (it) => (it.strip ? 16 : 0) + (it.sizing ? 8 : 0) + (it.isLock ? 4 : 0) + (it.fixed ? 2 : 0) + (it.stay ? 1 : 0);
+      const bySize = (list) => list.slice().sort((p, q) => firmOf(q) - firmOf(p) || (q.w * q.h) - (p.w * p.h));
+      D.separate(withStrip(bySize(plan)), R, sepSize, { W: W, H: H });
       /* WINDOW MODE (owner, 2026-10-15: "if it didnt have space it should then transition to a window mode element and the
          elements can raise over each other on click"; "it's about re-sizing when there isn't enough room for the element to
          be the newly set size (user set size)"). A card the person gave a size - being sized now, sized and put down, or
@@ -3819,7 +3842,7 @@
           if (!pick.size) break;
           pick.forEach((it) => { wins.add(it); it.win = true; });
           start.forEach(([it, x, y, w, h, k]) => { it.x = x; it.y = y; it.w = w; it.h = h; it.keepSize = k; });
-          D.separate(withStrip(plan.filter((it) => !wins.has(it))), R, sepSize, { W: W, H: H });
+          D.separate(withStrip(bySize(plan.filter((it) => !wins.has(it)))), R, sepSize, { W: W, H: H });
         }
       } else {
         /* WINDOWS OFF: AS LARGE AS THE ROOM ALLOWS, NEVER A PILL (owner, 2026-10-15, WSU-78: "with window mode off it could
