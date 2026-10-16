@@ -41,6 +41,8 @@
      and any dropdowns of its own (menus, html) - and the item's container draws them: the line beside the title, the rest
      in the item's menu. A body drawn by the shared kit (code, a diagram, a file) is asked for its actions instead
      (VeraOut.barActions). Returns '' so a renderer can declare in an expression. */
+  /* a capability that only reads, by its name - what an app or a widget may call on its own (the chat's rule, _widgetReadable) */
+  const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|sentiment\.map|news\.feed)$|^cal\.events\.list$)/.test(String(cap || ''));
   const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
   if (root.__veraCanvasElement) return;
   root.__veraCanvasElement = true;
@@ -1101,13 +1103,37 @@
       const args = Object.keys(a).slice(0, 4).map((k) => k + '=' + String(typeof a[k] === 'object' ? JSON.stringify(a[k]) : a[k]).slice(0, 40)).join(' \u00b7 ');
       const ms = typeof c.ms === 'number' ? (c.ms >= 1000 ? (c.ms / 1000).toFixed(1) + ' s' : c.ms + ' ms') : '';
       const v = ok ? resultView(c) : null;
-      const head = '<div class="vc-res-h"><i class="dot' + (ok ? ' on' : ' bad') + '"></i><code>' + esc(cap) + '</code><span class="mono">' + esc(args) + '</span><span class="sp"></span>'
-        + (v ? '<span class="vc-badge">' + esc(v.kind === '_many' ? 'items' : v.kind) + '</span>' : '') + (ms ? '<span class="mono">' + esc(ms) + '</span>' : '')
-        + (key ? '<button class="ib" data-act="rerun" title="Run it again - this item updates in place">run again</button>' : '') + '</div>';
+      /* no head of its own (DEEP-29 11A.4): its line - the dot, the capability, its arguments, how long it took - is declared
+         for the item's head; Run again is the container's (the head's own buttons) */
+      declare(el, key, { sub: '<i class="dot' + (ok ? ' on' : ' wait') + '"></i>' + esc(cap) + (args ? ' · ' + esc(args) : '') + (ms ? ' · ' + esc(ms) : ''), acts: [] });
+      const head = '';
       let inner = '';
       if (!ok) inner = '<div class="vc-res-err">' + esc(String(c.error || 'the capability failed')) + '</div>';
       else { const fn = BLOCK[v.kind]; try { inner = fn ? fn(v.content || {}, size, key, el) : jsonTree(c.result, 0); } catch (e) { inner = '<div class="vc-json">' + jsonTree(c.result, 0) + '</div>'; } }
       return '<div class="vc-res" data-as="' + esc(v ? v.kind : 'error') + '" data-w="canvas.result">' + head + inner + '</div>';
+    },
+
+    /* AN APP WINDOW (DESK-SPINE-DESIGN §4.2, DA-05b): an app from the catalogue (vera/apps/*.json, ui.apps.get) as an item.
+       Open: the manifest is resolved, a skeleton drawn, its read called; Draw: the answer through the same renderers as a
+       capability's result; Refresh: on the manifest's every_s only while it is seen on the desk, or on Refresh - one read in
+       flight; Persist: {app, args} is the item's content, so a reload opens it again. A read that is not read-shaped is never
+       run on its own: it waits for Refresh. Its head carries the panel and when it was read, Refresh and Open the panel. */
+    app: (c, size, key, el) => {
+      const id = String(c.app || ''); const st = el && el._apps ? el._apps[key] : null; const m = st && st.manifest;
+      if (!id) return '<div class="vc-dim">no app id</div>';
+      if (el && key && !st && typeof el._appOpen === 'function') el._appOpen(key, c);
+      const ago = st && st.at ? Math.max(0, Math.round((Date.now() - st.at) / 1000)) : null;
+      declare(el, key, { sub: esc((m && m.panel) || 'app') + (st && st.reading ? ' · reading…' : ago != null ? ' · read ' + (ago < 60 ? ago + ' s' : Math.round(ago / 60) + ' min') + ' ago' : ''),
+        acts: [{ act: 'appread', label: 'Refresh', title: 'Read it again now' + (m && m.read && m.read.cap ? ' (' + m.read.cap + ')' : '') }]
+          .concat(m && m.panel ? [{ act: 'appopen', label: 'Open the panel ↗', title: 'Open ' + m.panel + ' - the page this app comes from' }] : []) });
+      if (!st || (st.result === undefined && !st.error)) return `<div class="vc-app vc-app-sk" data-app="${esc(id)}" data-w="canvas.app"><span class="vc-dim">${st && st.waiting ? esc(st.waiting) : 'opening ' + esc((m && m.title) || id) + '…'}</span><i></i><i></i><i></i></div>`;
+      if (st.error) return `<div class="vc-app" data-app="${esc(id)}" data-w="canvas.app"><div class="vc-res-err">${esc(st.error)}</div></div>`;
+      const rc = { cap: st.cap, args: st.args, result: st.result, ok: true };
+      /* the manifest's own view when the generic mapping has nothing better than the raw tree (a calendar's events) */
+      let v = resultView(rc); const mk = m && m.view && m.view.kind; if ((!v || v.kind === 'json') && mk && BLOCK[mk] && mk !== 'app' && st.result && typeof st.result === 'object') v = { kind: mk, content: st.result };
+      let inner = '';
+      try { const fn = v && BLOCK[v.kind]; inner = fn ? fn(v.content || {}, size, key + ':app', el) : '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; } catch (e) { inner = '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; }
+      return `<div class="vc-app" data-app="${esc(id)}" data-as="${esc(v ? v.kind : 'json')}" data-w="canvas.app">${inner}</div>`;
     },
 
     schedule: c => `<div class="vc-stub"><span class="vc-badge">when</span>
@@ -1626,6 +1652,10 @@
   /* while the row shows (hover, focus, locked, full) the head makes room for it, so its own buttons are never under the row */
   :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-n, 0) * 27px + 14px)!important}
   @container (max-width: 320px) { :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-nn, 0) * 27px + 14px)!important} }
+  /* an app opening: a quiet skeleton (DESK-SPINE-DESIGN 8.2) */
+  .vc-app-sk{display:flex;flex-direction:column;gap:7px;padding:10px 4px}
+  .vc-app-sk > i{display:block;height:10px;border-radius:5px;background:color-mix(in srgb,var(--fg,#dce1e8) 7%,transparent)}
+  .vc-app-sk > i:nth-child(3){width:80%}.vc-app-sk > i:nth-child(4){width:55%}
   /* the body's own line (a terminal's host and shell, a cell's notebook, a diagram's size): quiet, beside the title */
   .it-hd > .it-sub{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px/1.2 var(--mono,ui-monospace,monospace);color:var(--dim,#6b7480)}
   .it-hd > .it-sub > .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:var(--dim,#6b7480)}
@@ -2799,7 +2829,7 @@
   const ADD_WHAT = { note: 'adds a note item — pick its shape', terminal: 'adds a terminal item — a live shell on the host you pick; a typed id or a blank one connects later', panel: 'adds a panel item — the panel\'s page in its frame, driven over the bridge', widget: 'adds a widget item — its form, source and size from the WidgetConfig sheet', chart: 'adds a chart — a series form (trace · bars · sparkline…) from the WidgetConfig sheet' };
   const seedName = (k) => k.n === 'chart' ? 'a trace chart' : k.n === 'widget' ? 'a widget frame' : 'a ' + k.n;
   const seedWhat = (k) => k.kind + ' item · ' + Object.keys(k.content || {}).filter((x) => x !== 'title').join(' · ');
-  const KIND_GLYPH = { note: '✎', markdown: 'MD', code: '{}', explode: '✵', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥', result: '\u21b3', json: '{\u2026}', kv: 'KV', chat: '\u275d' };
+  const KIND_GLYPH = { app: '▦', note: '✎', markdown: 'MD', code: '{}', explode: '✵', session: '>_', table: 'TB', widget: 'WG', loop: '⟳', diagram: '◇', image: '▣', schedule: '⏰', html: '<>', suggest: '✦', notebook: 'NB', panel: '▥', result: '\u21b3', json: '{\u2026}', kv: 'KV', chat: '\u275d' };
   const glyphOf = t => KIND_GLYPH[t] || String(t || '?').slice(0, 2).toUpperCase();
   const hhmm = ts => { if (!ts) return ''; const d = new Date(ts); if (isNaN(d.getTime())) return String(ts).slice(0, 5); const p = n => (n < 10 ? '0' : '') + n; return p(d.getHours()) + ':' + p(d.getMinutes()); };
   /* the decision an item carries — what this turn is waiting on: content.ask {question, options, why, answer}, or a
@@ -2925,7 +2955,7 @@
   }
   /* a block's title (pure): the content's own, else — a keyless block of an agent's canvas — its first line, else its kind */
   function blockTitle(b) {
-    const c = (b && b.content) || {}; const own = c.title || c.name || c.goal || c.filename || c.caption || c.widget || c.panel || c.cap;
+    const c = (b && b.content) || {}; const own = c.title || c.name || c.goal || c.filename || c.caption || c.widget || c.panel || c.cap || c.app;
     if (own) return String(own);
     if (b && b._bid) { const first = String(c[textFieldOf(b.type)] || '').split('\n').map(s => s.trim()).find(Boolean) || ''; const line = first.replace(/^#+\s*|^[-*]\s+\[.\]\s*|^[-*]\s+|\*\*/g, '').slice(0, 60); return line || ({ diagram: 'Diagram', explode: 'Explode', table: 'Table', image: 'Image', code: 'Code', markdown: 'Text', note: 'Note', html: 'HTML' }[b.type] || String(b.type || 'block')); }
     /* no title of its own: named by what it holds, never by its key ("m7:code:0", "m9:table:0" read as nothing) - code by
@@ -3868,12 +3898,15 @@
           return { c, id: key, so: {}, fixed: true, sizing: true, x: r.l0 + rw / 2, y: r.t0 + rh / 2, w: rw, h: rh }; }
         const lk = lockOf(key); c.classList.toggle('desk-locked', !!lk);
         /* locked, or sized by the person (its rectangle kept with its place): fixed at exactly that, the others go round */
-        const us = !lk && up[key] && up[key].w > 0 && up[key].h > 0 && isFinite(up[key].fx) && isFinite(up[key].fy) ? up[key] : null;
+        /* minimised to a pill by the person: that wins over where they had put it (kept, for when it opens again) - the pill
+           control did nothing on a card placed or sized by hand; a locked card stays where it is */
+        const pilledKey = !lk && !!this._pillGet()[key];
+        const us = !lk && !pilledKey && up[key] && up[key].w > 0 && up[key].h > 0 && isFinite(up[key].fx) && isFinite(up[key].fy) ? up[key] : null;
         const fx = lk || us;
         if (fx) { const lw = Math.min(W - 16, fx.w), lh = Math.min(H - 8, fx.h); if (us) c.classList.add('desk-placed');
           return { c, id: key, so: {}, fixed: true, lock: fx, isLock: !!lk, x: Math.max(lw / 2, Math.min(W - lw / 2, fx.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, fx.fy * H)), w: lw, h: lh }; }
         const fresh = !userAt(key) && ((freeMode && !(seed && seed[key])) || (hold && !(seed && seed[key]) && !outside.has(key)));
-        const p = userAt(key) || (fresh && slotFor(key)) || pos[key] || [W - 90, H - 30];
+        const p = (!pilledKey && userAt(key)) || (fresh && slotFor(key)) || pos[key] || [W - 90, H - 30];
         if (freeMode && userAt(key)) { const ua = userAt(key); slotted.push({ x: ua[0], y: ua[1], w: 300, h: 200, rel: relByKey[key] || [] }); }
         c.classList.toggle('desk-placed', !!userAt(key));
         /* the person's size: the drag in progress, else what the canvas remembers for the item (this._pw / this._px) -
@@ -5114,6 +5147,51 @@
        chat); the last clicked rises (desktop focus) and goes back to its stack place when it loses focus"). A pill the desk
        had no room for opens, on a click, as a window over the others and stays open; pressing a card brings it to the top,
        pressing another (or the desk) sends it back to its place in the stacking order. Esc, or its pill control, closes it. */
+    /* ── app windows (BLOCK.app) ── */
+    async _appManifest(id) {
+      const M = this._appM || (this._appM = {}); if (M[id]) return M[id];
+      const r = await this.callResult('ui.apps.get', { id }); const m = r && r.ok && r.app ? r.app : null; if (m) M[id] = m; return m;
+    }
+    _appOpen(key, c) {
+      const A = this._apps || (this._apps = {}); if (A[key]) return; const st = A[key] = { opening: true }; const id = String(c.app || '');
+      Promise.resolve().then(() => this._appManifest(id)).then((m) => {
+        if (!m) { st.error = 'no app ' + id + ' in the catalogue'; return this._appDraw(key); }
+        st.manifest = m; const rd = m.read || {};
+        { const b = this._blockOf(key); if (b && b.content && !b.content.title && m.title) b.content.title = m.title; }   /* named by its manifest, not its id */ const a = c.args && typeof c.args === 'object' ? c.args : {}; const miss = [];
+        const fill = (v) => typeof v === 'string' ? v.replace(/\{arg\.([\w.-]+)\}/g, (x, k) => { if (a[k] == null || a[k] === '') { miss.push(k); return ''; } return String(a[k]); }) : v;
+        st.cap = String(rd.cap || ''); st.args = {}; Object.keys(rd.args || {}).forEach((k) => { st.args[k] = fill(rd.args[k]); });
+        if (!st.cap) { st.error = 'the app ' + id + ' has no read'; return this._appDraw(key); }
+        if (miss.length) { st.waiting = m.title + ' needs ' + miss.join(', '); st.result = undefined; return this._appDraw(key); }
+        st.every = Math.max(10, +((rd.refresh || {}).every_s) || 0) || 0;
+        if (readShaped(st.cap)) return this._appRead(key); st.waiting = st.cap + ' is not a read - press Refresh to run it'; this._appDraw(key);
+      }).catch((e) => { st.error = String((e && e.message) || e); this._appDraw(key); });
+      this._appTick();
+    }
+    async _appRead(key, forced) {
+      const st = this._apps && this._apps[key]; if (!st || !st.cap || st.reading) return;
+      if (!forced && !readShaped(st.cap)) return;
+      st.reading = true; this._appDraw(key); const t0 = Date.now();
+      try { const r = await this.callResult(st.cap, st.args || {});
+        if (r && r.ok === false && r.error) { st.error = String(r.error); } else { st.error = null; st.result = r; st.waiting = null; }
+      } catch (e) { st.error = String((e && e.message) || e); }
+      st.reading = false; st.at = Date.now(); st.ms = st.at - t0; this._appDraw(key);
+    }
+    _appDraw(key) { if (!this._doc) return; clearTimeout(this._appDrawT); this._appDrawT = setTimeout(() => { this._html = null; this.render(this._doc); }, 30); }
+    /* refresh only while it is seen: on the desk and open (not a pill, not hidden, not behind another tab of its group), the
+       page visible - never more than one read in flight (_appRead) */
+    _appTick() {
+      if (this._appT) return;
+      this._appT = setInterval(() => {
+        const A = this._apps || {}; const ks = Object.keys(A); if (!ks.length) return;
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+        const cards = [...this.shadowRoot.querySelectorAll('.it[data-key]')];
+        ks.forEach((k) => { const st = A[k]; if (!st.every || !st.at || st.reading || Date.now() - st.at < st.every * 1000) return;
+          const c = cards.find((x) => x.dataset.key === k);
+          if (!c || !c.offsetParent || c.classList.contains('desk-chip') || c.classList.contains('cmp-behind') || c.classList.contains('compact') || c.classList.contains('ufold')) return;
+          this._appRead(k); });
+        if (!this.isConnected) { clearInterval(this._appT); this._appT = null; }
+      }, 5000);
+    }
     _winKeepGet() { if (this._winKeep) return this._winKeep; try { this._winKeep = JSON.parse(localStorage.getItem('vera:canvas:deskwin:' + this.canvasId) || '{}') || {}; } catch (e) { this._winKeep = {}; } return this._winKeep; }
     _winKeepSet(key, at) { const m = this._winKeepGet(); if (at) m[key] = at; else delete m[key];
       try { localStorage.setItem('vera:canvas:deskwin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ }
@@ -5416,6 +5494,11 @@
         || all.find((x) => [...x.querySelectorAll('.fu-p[data-key]')].some((f) => f.dataset.key === key)) || null; }
       if (act === 'lock') return this.toggleLock(key);
       if (act === 'dock') { this._winDock(key); return; }
+      if (act === 'appread') { this._appRead(key, true); return; }
+      if (act === 'appopen') { const st = this._apps && this._apps[key]; const p = st && st.manifest && st.manifest.panel; if (!p) return;
+        try { if (window.veraUI && typeof window.veraUI.openPlace === 'function') { window.veraUI.openPlace(p); return; } } catch (e) { /* the window below */ }
+        try { if (window.top && typeof window.top.openPlace === 'function' && window.top.openPlace(p)) return; } catch (e) { /* another origin */ }
+        try { window.open('/ui/panel/window?id=' + encodeURIComponent(p), 'veraPanel_' + p, 'width=1040,height=820'); } catch (e) { /* blocked */ } return; }
       if (act === 'pill' && this._winKeepGet()[key]) { this._winKeepSet(key, null); delete this._pw[key]; delete this._px[key]; this._deskPosSet(key, null); }
       if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }   /* WSU-55 */
       if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
