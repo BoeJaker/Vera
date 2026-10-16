@@ -288,6 +288,34 @@ def test_effect_inventory_is_read_only_and_reports_attribution_gap(tmp_path):
     assert orch.CALLS == before
 
 
+def test_intel_call_context_attributes_downstream_effect_observations(tmp_path):
+    mod, orch = _load(tmp_path)
+
+    async def probe():
+        return {"source": mod.effect_context.current_source()}
+
+    orch.CAPABILITY_REGISTRY["test.effect.probe"] = {"func": probe, "raw": probe}
+    assert _run(mod._call("test.effect.probe")) == {"source": "intel"}
+    assert mod.effect_context.current_source() == ""
+
+
+def test_effect_inventory_reads_only_intel_attributed_provider_evidence(tmp_path):
+    _mod, orch = _load(tmp_path)
+    seen = []
+
+    async def evidence(family="", source="", limit=0):
+        seen.append((family, source, limit))
+        return {"totals": {"observations": 2 if family == "telegram" else 1},
+                "source_filter": source}
+
+    orch.CAPABILITY_REGISTRY["integration.effect.shadow.evidence"] = {
+        "func": evidence, "raw": evidence}
+    result = _R(orch, "intel.effects")
+    assert seen == [("telegram", "intel", 50), ("email", "intel", 50)]
+    assert result["readiness"]["intel_attributable"] is True
+    assert result["readiness"]["attributed_observations"] == 3
+
+
 def test_the_whole_cycle(tmp_path):
     mod, orch = _load(tmp_path)
     t = _R(orch, "intel.topic.save", name="AI property valuation", brief="AI valuation in UK property",

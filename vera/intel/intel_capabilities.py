@@ -76,6 +76,7 @@ try:
     from Vera.vera.intel import intel_run_projection as intel_run
     from Vera.vera.intel import intel_model_inventory as intel_models
     from Vera.vera.intel import intel_effect_inventory as intel_effects
+    from Vera.vera.integrations import effect_observation_context as effect_context
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -94,6 +95,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_run_projection as intel_run
     from vera.intel import intel_model_inventory as intel_models
     from vera.intel import intel_effect_inventory as intel_effects
+    from vera.integrations import effect_observation_context as effect_context
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -221,7 +223,8 @@ async def _call(name: str, /, **kw) -> Dict[str, Any]:
     except (TypeError, ValueError):
         pass
     try:
-        r = await fn(**kw)
+        with effect_context.attributed("intel"):
+            r = await fn(**kw)
     except Exception as ex:  # noqa: BLE001 - a sibling subsystem failing must not take intel down
         log.warning("intel: %s failed: %s", name, ex)
         return {"error": f"{type(ex).__name__}: {ex}"}
@@ -2924,8 +2927,15 @@ async def cap_channel_list(trace_id=None):
                         "coverage from Intel-attributable evidence and reports unobserved paths. "
                         "Never calls a provider, records synthetic evidence, retries or enforces.")
 async def cap_effects(trace_id=None):
+    evidence = {}
+    for family in ("telegram", "email"):
+        result = await _call("integration.effect.shadow.evidence", family=family,
+                             source="intel", limit=50)
+        evidence[family] = result if not result.get("error") else {
+            "totals": {"observations": 0}, "error": result.get("error")}
     return intel_effects.project(core.CHANNELS, core.ACTIONS,
-                                 available_caps=tuple(CAPABILITY_REGISTRY))
+                                 available_caps=tuple(CAPABILITY_REGISTRY),
+                                 attributed_evidence=evidence)
 
 
 # ── actions: what a report's buttons do ──────────────────────────────────────

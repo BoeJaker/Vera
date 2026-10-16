@@ -31,6 +31,31 @@ def test_unobserved_external_paths_remain_explicit_gaps():
         assert by_id[boundary]["gaps"] == ["portable_effect_observation_missing"]
 
 
+def test_source_filtered_evidence_makes_provider_observations_attributable():
+    result = effects.project(
+        intel_core.CHANNELS, intel_core.ACTIONS,
+        attributed_evidence={
+            "telegram": {"totals": {"observations": 3}, "source_filter": "intel"},
+            "email": {"totals": {"observations": 2}, "source_filter": "intel"},
+        })
+    assert result["readiness"]["intel_attributable"] is True
+    assert result["readiness"]["attributed_observations"] == 5
+    assert result["evidence"]["telegram"]["source_filter"] == "intel"
+    by_id = {row["id"]: row for row in result["boundaries"]}
+    assert by_id["channel.telegram"]["gaps"] == []
+    assert "intel_attribution_missing" not in result["gaps"]
+
+
+def test_available_attribution_with_no_receipts_is_not_misreported_as_coverage():
+    result = effects.project(
+        intel_core.CHANNELS, intel_core.ACTIONS,
+        attributed_evidence={"telegram": {"totals": {"observations": 0},
+                                                   "source_filter": "intel"}})
+    by_id = {row["id"]: row for row in result["boundaries"]}
+    assert by_id["channel.telegram"]["gaps"] == [
+        "provider_family_has_no_intel_observations"]
+
+
 def test_unknown_future_boundary_fails_visible_not_silent():
     result = effects.project({"new-channel": {"cap": "new.send"}}, {})
     row = result["boundaries"][0]
