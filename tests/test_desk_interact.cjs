@@ -22,7 +22,7 @@ t('U1: the release places the desk at once (not after the server refresh)', C.in
 /* U6 / U2 - window mode */
 t('U6: a card the person sized that still overlaps becomes a window', C.includes('const mine = (it) => !it.strip && !!(it.sizing || it.own || (it.fixed && !it.isLock));') && C.includes("pick.forEach((it) => { wins.add(it); it.win = true; });"));
 t('U6: of two that meet, the last touched is the window', C.includes('const tOf = (it) => it.sizing ? Infinity : (actAt[it.id] || 0);') && C.includes('(this._actAt = this._actAt || {})[d.key] = Date.now();'));
-t('U6: the others are placed again without the window', C.includes('D.separate(withStrip(plan.filter((it) => !wins.has(it))), R, sepSize, { W: W, H: H });'));
+t('U6: the others are placed again without the window', C.includes('D.separate(withStrip(bySize(plan.filter((it) => !wins.has(it)))), R, sepSize, { W: W, H: H });'));
 t('U6: a window keeps its size and is over the tiled cards', C.includes("s = it.win ? { w: it.w, h: it.h, face:") && C.includes(': it.win ? 160 : D.stackOrder(s.nd)'));
 t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
 t('U10: windows can be switched off (desk-windows)', C.includes("this.getAttribute('desk-windows') !== 'off'") && C.includes("'desk-fit', 'desk-windows']") && H.includes("cfgCvWindows:['desk-windows','on']") && H.includes("windows:'cfgCvWindows'"));
@@ -56,6 +56,11 @@ t('WSU-83: a swapped card keeps its place, state, scroll and the hand on it', C.
 t('WSU-83: redraws of a stream are paced by their cost, slower while a card is carried or sized', C.includes('const gap = Math.max(busy ? 250 : 0, 2 * (this._liveCost || 0))'));
 t('WSU-83: the desk is not placed again for the transcript growing (setTurns)', C.includes("const ts = Object.keys(this._turns).sort().join('|'); if (ts === this._turnsSig) return;"));
 t('WSU-83: the live layer measures every element before it writes any', C.includes('const SL = body.scrollLeft, ST = body.scrollTop, M = {};') && C.includes("if (!h || !m.vis) { el.style.display = 'none'; el._at = false; return; }") && !/_liveLayout\(\) \{[\s\S]*?const grip = this\.deskAlign\(\) && card\.querySelector/.test(C));
+t('WSU-84: a widget\'s family is what it draws - charts, graphs, news with reading', C.includes("return CHART.test(fm) ? 'charts' : GRAPH.test(fm) ? 'graphs' : /^(reading|news|feed|headlines|articles|sources)$/.test(fm) ? 'reading' : 'widgets'; };"));
+t('WSU-84: items of one family in the context join across turns', C.includes("inTopic(c) ? f + '|t' : ''"));
+t('WSU-84: only the in-context members stay in a group; the rest leave together', C.includes('sets.set(r, inT); sets.set({ out: r }, list.filter((c) => !inTopic(c))); });'));
+t('WSU-84: the chat sets a first topic at once, then the relevance answer', H.includes('if(keys.length) cv.setTopic(keys, {}, mid); }catch(_){} }') && H.includes('const own=b=>(Array.isArray(b.anchors)?b.anchors:[]).some(a=>a&&(a.mid===mid||a.turn===mid));'));
+t('WSU-85: within the same firmness the larger card is separated first - the smaller gives way', C.includes('const bySize = (list) => list.slice().sort((p, q) => firmOf(q) - firmOf(p) || (q.w * q.h) - (p.w * p.h));') && C.includes('D.separate(withStrip(bySize(plan)), R, sepSize, { W: W, H: H });'));
 t('WSU-81: cards near the chat-side edge are flush with it', C.includes('const nearLeft = side !== \'right\', EDGE = 8, REACH = 80;') && C.includes('if (off > 1 && off <= REACH)'));
 
 /* U12 - the last declarations are kept (functional) */

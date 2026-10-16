@@ -18,7 +18,7 @@ test('manual placement is stored as normalized coordinates scoped to the canvas'
   src.includes("'vera:canvas:deskpos:' + this.canvasId") &&
   src.includes('fx: +(d.cx / g.W).toFixed(4)') && src.includes('fy: +(d.cy / g.H).toFixed(4)'));
 test('the layout kernel owns arrangement, collision separation, and responsive sizing',
-  src.includes('D.arrange(mode, R, ranked.map') && src.includes('D.separate(withStrip(plan), R') && src.includes('D.sizeAt(R, it.x, it.y'));
+  src.includes('D.arrange(mode, R, ranked.map') && src.includes('D.separate(withStrip(bySize(plan)), R') && src.includes('D.sizeAt(R, it.x, it.y'));
 test('panel obstacle messages contain normalized rectangles and no panel content',
   src.includes("type: 'vera:desk:obstacles', rects: shares, makeRoom: on") &&
   src.includes('l: +Math.max(0, (r.left - F.left) / F.width).toFixed(4)') &&
