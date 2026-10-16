@@ -350,8 +350,19 @@ details.lp-sub:not([open])>summary{opacity:.8}
 .msg-body .vmd-math{font-family:'Times New Roman',Times,serif;font-size:1.15em;color:var(--text);text-align:center;padding:4px 0;font-style:italic}
 html[data-blocks="off"] .msg-body blockquote,html[data-blocks="off"] .msg-body .vmd-call{background:transparent}
 /* a widget in the reply — a component of the message: the drawing, the record beside it, the actions at its foot */
-.wblk{display:grid;grid-template-columns:1fr 168px;border:1px solid var(--border);border-radius:var(--ui-radius,10px);background:var(--bg1);overflow:hidden;margin:8px 0;white-space:normal;font-style:normal}
-.wblk.xl{grid-template-columns:1fr 200px}
+.wblk{display:grid;grid-template-columns:1fr;border:1px solid var(--border);border-radius:var(--ui-radius,10px);background:var(--bg1);overflow:hidden;margin:8px 0;white-space:normal;font-style:normal}
+.wblk.xl{grid-template-columns:1fr}
+.wblk .wh .wt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wblk .wrow{display:inline-flex;gap:1px;align-items:center;margin-left:6px;opacity:.5;transition:opacity .15s}
+.wblk:is(:hover,:focus-within) .wrow{opacity:1}
+.wblk .whb{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--dim);cursor:pointer;padding:0}
+.wblk .whb:hover{color:var(--text);background:color-mix(in srgb,var(--acc) 14%,transparent)}.wblk .whb.on{color:var(--acc)}
+.wblk .whb:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.wblk.wfold .wb{display:none}
+.wmenu{position:fixed;z-index:var(--z-pop,230);min-width:220px;max-width:340px;padding:6px;border-radius:9px;background:var(--bg2);border:1px solid var(--border2,var(--border));box-shadow:0 10px 28px color-mix(in srgb,var(--bg0) 60%,transparent);display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--text)}
+.wmenu button{text-align:left;border:0;background:none;color:var(--text);padding:5px 8px;border-radius:6px;font:inherit;cursor:pointer}.wmenu button:hover{background:color-mix(in srgb,var(--acc) 14%,transparent)}
+.wmenu .wm-by{padding:0 8px;font-family:var(--mono);font-size:9px;color:var(--dim2)}.wmenu .wm-by b{color:var(--acc2);font-weight:400}
+.wmenu .wm-rec{padding:4px 8px;font-family:var(--mono);font-size:9px;color:var(--dim2);white-space:pre-wrap;word-break:break-word;max-height:120px;overflow:auto;border-top:1px solid var(--border)}
 .wblk .wl{padding:8px 10px;display:flex;flex-direction:column;gap:5px;min-width:0}
 .wblk .wh{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);font-weight:600}
 .wblk .wh b{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--text);font-weight:400;text-transform:none;letter-spacing:0}
@@ -392,7 +403,7 @@ html[data-blocks="off"] .wblk{background:transparent}
   color:var(--dim2);background:none;border:1px dashed var(--border);border-radius:11px;cursor:pointer;max-width:100%;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cv-moved:hover{color:var(--text);border-color:var(--acc,#5a9e8f)}
-@media (max-width:640px){.wblk{grid-template-columns:1fr}.wblk .wr{border-left:none;border-top:1px solid var(--border)}}
+@media (max-width:640px){.wblk{grid-template-columns:1fr}}
 .mtime{font-size:8px;color:var(--dim);margin-top:1px;font-family:var(--mono);padding-left:62px}
 .think-box{font-size:10px;color:var(--acc4);font-style:italic;background:rgba(158,143,160,.04);border-left:2px solid rgba(158,143,160,.3);padding:4px 8px;margin:3px 0 3px 62px;white-space:pre-wrap;word-break:break-word;max-height:120px;overflow-y:auto}
 .sys-msg{font-size:10px;color:var(--dim2);padding:5px 16px;border-bottom:1px solid var(--border);font-family:var(--mono)}
@@ -6835,15 +6846,13 @@ IMPORTANT:
     const id='w'+(++_wSeq); _W_STORE[id]={rec, by, data, xl:false};
     const H=_W_SIZE[rec.draw.size]||70;
     const rowRec={ form:rec.draw.form, source:rec.reads.cap||undefined, args:Object.keys(rec.reads.args||{}).length?rec.reads.args:undefined, refresh:rec.reads.every||undefined, size:rec.draw.size };
-    const recTxt=JSON.stringify(rowRec,null,1).replace(/"(\w+)":/g,'$1:').replace(/\n\s*/g,' ');
+    const recTxt=JSON.stringify(rowRec,null,1).replace(/"(\w+)":/g,'$1:').replace(/\n\s*/g,' '); _W_STORE[id].recTxt=recTxt;
     const drawn=(data!==undefined)?_wFormFor(rec,data):rec.draw.form; if(drawn!==rec.draw.form) _W_STORE[id].drawn=drawn;
     const body=(data!==undefined)?_wDraw(drawn,_widgetData(data,drawn),H)
       : (rec.reads.cap?(_widgetReadable(rec.reads.cap)?'<span class="wempty">reading '+esc(rec.reads.cap)+'…</span>':'<button class="btn xs" onclick="CH._wRead(\''+id+'\',true)" title="This capability is not read-shaped, so it only runs when you ask">Read '+esc(rec.reads.cap)+'</button>'):'<span class="wempty">no source and no data</span>');
     const headline=(data&&typeof data==='object'&&!Array.isArray(data)&&typeof data.value==='number')?_wFmt(data.value)+(typeof data.unit==='string'?data.unit:''):'';
     return `<div class="wblk" id="${id}" data-form="${esc(drawn)}" data-w="widget block · reply">`
-         + `<div class="wl"><span class="wh"><i class="${by==='rule'?'rule':''}"></i>${esc(rec.name)}${rec.reads.args&&rec.reads.args.window?' · '+esc(String(rec.reads.args.window)):''}<b>${esc(headline)}</b></span><div class="wb">${body}</div></div>`
-         + `<div class="wr"><span class="by">${by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>'} · form: ${esc(rec.draw.form)}${drawn!==rec.draw.form?' · drawn as '+esc(drawn)+' (the data\'s shape)':''}</span><span class="rec">${esc(recTxt)}</span>`
-         + `<span class="acts"><button onclick="CH._wPin('${id}',this)" title="A copy of the record onto the canvas — the same key brings the first item back">Pin to canvas</button><button onclick="CH._wXl('${id}',this)" title="A larger drawing, in place">Open at XL</button><button onclick="CH._wForm('${id}')" title="Another form over the same data">Change form</button></span></div></div>`;
+         + `<div class="wl"><span class="wh"><i class="${by==='rule'?'rule':''}"></i><span class="wt">${esc(rec.name)}${rec.reads.args&&rec.reads.args.window?' · '+esc(String(rec.reads.args.window)):''}</span><b>${esc(headline)}</b>${_wRow(id)}</span><div class="wb">${body}</div></div></div>`;
   }
   // the model wrote a ```widget fence: its record (JSON, or key: value lines), drawn — inline data now, a source read
   function _widgetFence(raw){
@@ -6870,9 +6879,34 @@ IMPORTANT:
     const form=w.drawn||w.rec.draw.form;
     const b=el.querySelector('.wb'); if(b) b.innerHTML=_wDraw(form,_widgetData(w.data,form),w.xl?200:(_W_SIZE[w.rec.draw.size]||70));
     const hb=el.querySelector('.wh b'); if(hb){ const d=w.data; hb.textContent=(d&&typeof d==='object'&&!Array.isArray(d)&&typeof d.value==='number')?_wFmt(d.value)+(typeof d.unit==='string'?d.unit:''):''; }
-    el.dataset.form=form; const by=el.querySelector('.wr .by'); if(by) by.innerHTML=(w.by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>')+' · form: '+esc(w.rec.draw.form)+(w.drawn?' · drawn as '+esc(w.drawn)+' (the data\'s shape)':'');
+    el.dataset.form=form; const by=null; if(by) by.innerHTML=(w.by==='rule'?'by <b>rule</b> · the result\'s shape':'chosen by <b>aide</b>')+' · form: '+esc(w.rec.draw.form)+(w.drawn?' · drawn as '+esc(w.drawn)+' (the data\'s shape)':'');
   }
-  function _wXl(id, btn){ const w=_W_STORE[id], el=document.getElementById(id); if(!w||!el) return; w.xl=!w.xl; el.classList.toggle('xl',w.xl); if(btn) btn.textContent=w.xl?'Back to size':'Open at XL'; _wRepaint(id); }
+  function _wXl(id, btn){ const w=_W_STORE[id], el=document.getElementById(id); if(!w||!el) return; w.xl=!w.xl; el.classList.toggle('xl',w.xl);
+    const b=el.querySelector('.wrow [data-wa="xl"]'); if(b){ b.innerHTML=_W_ICON[w.xl?'restore':'max']; b.classList.toggle('on',w.xl); b.title=w.xl?'Back to its size':'Open it at XL - a larger drawing, in place'; } _wRepaint(id); }
+  /* THE REPLY BLOCK'S HEAD IS THE ITEM'S (DEEP-29 11A.4 step 5, owner decision D1 2026-10-16): the same row as a canvas item -
+     view (another form over the same data), pill (it folds to its head line), max (XL, in place), more (put it on the canvas;
+     how it was chosen and its record). The side column of buttons it had is gone. */
+  const _W_ICON=((s)=>{ const o={}; Object.keys(s).forEach(k=>{ o[k]='<svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">'+s[k]+'</svg>'; }); return o; })({
+    view:'<path d="M3 5h8l-2-2M13 11H5l2 2"/>', pill:'<rect x="2.5" y="9.5" width="11" height="4" rx="2"/><path d="M8 2.5v4.5M5.8 5l2.2 2.2L10.2 5"/>',
+    max:'<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/>', restore:'<path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/>',
+    more:'<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>' });
+  function _wRow(id){ const hb=(a,ic,t)=>'<button type="button" class="whb" data-wa="'+a+'" title="'+esc(t)+'" onclick="CH._wAct(\''+id+'\',\''+a+'\',this)">'+_W_ICON[ic]+'</button>';
+    return '<span class="wrow" data-w="reply.item.controls">'+hb('form','view','Another form over the same data')+hb('fold','pill','Fold it to its head line')+hb('xl','max','Open it at XL - a larger drawing, in place')+hb('more','more','More: put it on the canvas, how it was chosen, its record')+'</span>'; }
+  function _wAct(id, a, btn){ const el=document.getElementById(id); if(!el) return;
+    if(a==='form') return _wForm(id);
+    if(a==='xl') return _wXl(id, btn);
+    if(a==='fold'){ const on=el.classList.toggle('wfold'); if(btn){ btn.classList.toggle('on',on); btn.title=on?'Open it again':'Fold it to its head line'; } return; }
+    if(a==='more') return _wMenu(id, btn); }
+  function _wMenu(id, btn){ const had=document.querySelector('.wmenu'); if(had){ had.remove(); if(had.dataset.id===id) return; }
+    const w=_W_STORE[id]; if(!w) return;
+    const m=document.createElement('div'); m.className='wmenu'; m.dataset.id=id; m.dataset.w='reply.item.menu';
+    m.innerHTML='<button onclick="CH._wPin(\''+id+'\',this)" title="A copy of the record onto the canvas — the same key brings the first item back">Pin to canvas</button>'
+      +'<div class="wm-by">'+(w.by==='rule'?'by <b>rule</b> · the result\'s shape':w.by==='you'?'chosen by <b>you</b>':'chosen by <b>aide</b>')+' · form: '+esc(w.rec.draw.form)+(w.drawn?' · drawn as '+esc(w.drawn)+' (the data\'s shape)':'')+'</div>'
+      +'<div class="wm-rec">'+esc(String(w.recTxt||'').replace(/form: ?"?[a-z_]+"?/,'form: "'+w.rec.draw.form+'"'))+'</div>';
+    document.body.appendChild(m); const r=btn.getBoundingClientRect(), pw=m.offsetWidth||240;
+    m.style.left=Math.max(4,Math.min(innerWidth-pw-4,r.right-pw))+'px'; m.style.top=Math.round(r.bottom+4)+'px';
+    const off=(e)=>{ if(m.contains(e.target)||btn.contains(e.target)) return; m.remove(); document.removeEventListener('mousedown',off,true); };
+    setTimeout(()=>document.addEventListener('mousedown',off,true),0); }
   // the next form that can draw THIS data (a trace's points can be a log or a table, never a ring)
   function _wForm(id){
     const w=_W_STORE[id]; if(!w) return;
@@ -6884,7 +6918,7 @@ IMPORTANT:
       if(ok){ w.rec.draw.form=f; break; }
     }
     w.rec.form=w.rec.draw.form; w.rec.kind=_W_KIND[w.rec.draw.form]||'panel'; w.by=w.by==='rule'?'you':w.by; _wRepaint(id);
-    const el=document.getElementById(id); const r=el&&el.querySelector('.wr .rec'); if(r) r.textContent=r.textContent.replace(/form: ?"?[a-z]+"?/,'form: "'+w.rec.draw.form+'"');
+    /* (the record line is read from the store when the block's menu opens) */
   }
   // Pin to canvas: a copy of the record (canvas.append type "widget"); the same key brings the first item back
   // Pin = put the widget's record on the SESSION canvas through the resolver: the same record is one item, so a
@@ -6899,7 +6933,7 @@ IMPORTANT:
       const cv=await _capCall('canvas.session.resolve',{session_id:SID||''});
       const cid=cv&&cv.id; if(!cid) throw new Error((cv&&cv.error)||'no session canvas');
       const content=Object.assign({},w.rec); if(w.rec.reads&&w.rec.reads.cap) delete content.data;   // a record with a source re-reads it; inline data is the record's own
-      const mid=_turnMidOf(btn&&btn.closest('.mwrap'));   // the turn's mid (the question), as the harvest and the scene key it
+      const blk=document.getElementById(id); const mid=_turnMidOf(blk&&blk.closest('.mwrap'));   // the turn's mid (the question), as the harvest and the scene key it - the block's, wherever the button is
       const r=await _capCall('canvas.add',{id:cid,session_id:SID||'',kind:'widget',content,key,size:(w.rec.draw&&w.rec.draw.size)||'m',anchor:{mid,turn:mid}});
       if(!(r&&r.ok)) throw new Error((r&&r.error)||'canvas.add failed');
       try{ if(mid){ (_TURN_LAND[mid]=_TURN_LAND[mid]||[]).push({n:String(w.rec.title||w.rec.form||key).slice(0,60), d:'canvas · '+(r.resolved==='shown'?'already there':'pinned'), col:'var(--acc2)', kind:'widget', key, form:w.rec.draw.form, record:w.rec}); if(_xpl.on) _xplRefresh(); } }catch(_){}   // the scene draws the pinned widget's own face
@@ -22335,7 +22369,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     setDensity,toggleBlocks,
     _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,executeCapInline,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
-    _wRead,_wXl,_wForm,_wPin,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
+    _wRead,_wXl,_wForm,_wPin,_wAct,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,
     _persistMediaCfg,_persistCanvasCfg,_ctxUseNote,_cvLookStep,_cvRelevance,_genThinkPhrases,_resetThinkPhrases,_artPop,
     setAgent:name=>{['agentBarSel','cfgAgent'].forEach(id=>{const el=document.getElementById(id);if(el)el.value=name;});updateAgentMeta();},
