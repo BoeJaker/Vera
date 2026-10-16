@@ -56,8 +56,8 @@ t('the panel rows: open for this session first, then the registry\'s groups', /o
 // ── the diagram item ──
 t('without a page a diagram block is its source', /vc-pre vc-dim"><code>graph TD/.test(B.diagram({ mermaid: 'graph TD\n A-->B' })));
 global.document = {};   // a page: the estate's element draws
-const dg = B.diagram({ mermaid: 'graph TD\n A-->B', title: 'Boot path' }, 'm', 'diagram:d1', { _live: {} });
-t('on a page a keyed diagram is a live slot for the mermaid element with the board\'s actions: Open in the chat · copy · source', /data-live="mermaid" data-key="diagram:d1" data-title="Boot path"/.test(dg) && /data-act="dgopen"/.test(dg) && /data-act="dgcopy"/.test(dg) && /data-act="dgsrc"/.test(dg) && /vc-dgsrc" hidden><code>graph TD/.test(dg) && /mermaid · 2 lines/.test(dg) && /dot wait/.test(dg));
+const eg = { _live: {} }; const dg = B.diagram({ mermaid: 'graph TD\n A-->B', title: 'Boot path' }, 'm', 'diagram:d1', eg); const dgd = (eg._decl || {})['diagram:d1'] || {};
+t('on a page a keyed diagram is a live slot for the mermaid element with the board\'s actions: Open in the chat · copy · source', /data-live="mermaid" data-key="diagram:d1" data-title="Boot path"/.test(dg) && (dgd.acts || []).map((a) => a.act).join() === 'dgopen,dgcopy,dgsrc' && /vc-dgsrc" hidden><code>graph TD/.test(dg) && /mermaid · 2 lines/.test(dgd.sub) && /dot wait/.test(dgd.sub) && !/vc-th/.test(dg));
 t('a plain diagram block holds the element inline, its source as its text', /^<vera-mermaid class="vc-mm" bare title="Diagram">graph TD\n A--&gt;B<\/vera-mermaid>$/.test(B.diagram({ mermaid: 'graph TD\n A->B' })) === false && /^<vera-mermaid class="vc-mm" bare title="Diagram">graph TD\n A--&gt;B<\/vera-mermaid>$/.test(B.diagram({ mermaid: 'graph TD\n A-->B' })));
 t('a diagram with no source says so', /no diagram source yet/.test(B.diagram({}, 'm', 'diagram:d2', {})));
 t('a caption stays', /vc-cap">the boot path/.test(B.diagram({ mermaid: 'graph TD\n A-->B', caption: 'the boot path' }, 'm', 'diagram:d3', {})));

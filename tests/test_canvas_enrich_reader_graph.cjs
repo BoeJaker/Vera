@@ -84,7 +84,7 @@ t('a record reads its page in reader mode', /const rd = await this\._readPage\(S
 t('so does a source item', /open && rdr \? `<div class="vc-src-body rd">\$\{readerHtml\(rdr\)\}<\/div>`/.test(CV));
 
 // ── the fold ──────────────────────────────────────────────────────────────────────────────────────────────────────
-t('every keyed item has a fold on its header', /<span class="fd" data-act="fold"/.test(CV) && /if \(act === 'fold'\) return this\._setFold\(key, !\(it && it\.classList\.contains\('ufold'\)\)\);/.test(CV));
+t('every keyed item has a fold in its head\'s row (the column\'s pill control)', /hb\('fold', 'pill'/.test(CV) && /if \(act === 'fold'\) return this\._setFold\(key, !\(it && it\.classList\.contains\('ufold'\)\)\);/.test(CV));
 t('a folded item is its header line', /const compact = \(wouldFold && !hovered\) \|\| ufold;/.test(CV));
 t('what the canvas brings forth unasked starts folded', /return from === 'enrich' \|\| key\.indexOf\('enrich:'\) === 0;/.test(CV));
 t('your fold is remembered per canvas', /localStorage\.setItem\('vera:canvas:fold:' \+ this\._foldsFor/.test(CV));

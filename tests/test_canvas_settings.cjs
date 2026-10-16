@@ -73,7 +73,7 @@ t('the frame it draws in is the sandboxed one, with no network and no same-origi
 t('the setting decides which way it starts, and the item keeps its own switch either way',
   /const pdef = !el \|\| typeof el\.previewOn !== 'function' \|\| el\.previewOn\(\);/.test(SRC) &&
   /const prev = key \? \(pset \? !!el\._prevOn\[key\] : pdef\) : pdef;/.test(SRC) &&
-  /data-act="cprev"[\s\S]{0,120}Show the source/.test(SRC));
+  /act: 'cprev'[\s\S]{0,120}Show the source/.test(SRC));
 t('a whole-page code block also answers the setting', /const prev = PREVIEWABLE\(c\.lang\) && \(pset \? !!el\._prevOn\[key\] : \(pdef && WHOLE_PAGE\(c\.lang, c\.code\)\)\);/.test(SRC));
 t('an html item with nothing in it says so rather than drawing an empty frame', /nothing to draw yet/.test(SRC));
 

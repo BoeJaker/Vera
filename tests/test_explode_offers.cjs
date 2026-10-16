@@ -37,7 +37,7 @@ const codeBlock = (key, lines, extra) => Object.assign({ key, type: 'code', stat
   t('the item carries the switch, and knows which way round it is',
     /const xplodable = !bid && !!canExplode\(b, this\.explodeOffer\(\)\);/.test(CANVAS) &&
     /const xploded = xplodable && xplodedKeys\.has\(String\(b\.key\)\);/.test(CANVAS) &&
-    /data-act="explode"/.test(CANVAS));
+    /row\('explode'/.test(CANVAS));
   t('taking it builds the bound item, and taking it back removes it',
     /this\.call\('canvas\.add', Object\.assign\(\{ kind: 'explode', key: 'explode:' \+ key, content, at: b\.state === 'pinned' \? 'pinned' : 'now', size: 'l' \}/.test(CANVAS) &&
     /if \(bound\) (?:\{ if \(this\.deskAlign\(\) && this\._max === key\) this\._toggleMax\(key\); )?return this\.call\('canvas\.remove'/.test(CANVAS));

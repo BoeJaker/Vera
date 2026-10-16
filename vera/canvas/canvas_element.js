@@ -36,6 +36,12 @@
                layerFront: 155, flash: 180, drag: 200, pop: 230, menu: 240, chat: 250, sheet: 300 };
   const zOf = (band, n) => { const b = ZB[band]; if (b === undefined) return ZB.tile[0];
     return Array.isArray(b) ? Math.min(b[1], b[0] + Math.max(0, Math.round(n || 0))) : b; };
+  /* A BODY DRAWS NO HEAD (DEEP-29 11A.4 Decision 4). It declares, as it is drawn, what its head used to hold - a line about
+     it (sub, html) and its actions ({act, label, title, on} run through the item's one dispatcher, {href, download} a link)
+     and any dropdowns of its own (menus, html) - and the item's container draws them: the line beside the title, the rest
+     in the item's menu. A body drawn by the shared kit (code, a diagram, a file) is asked for its actions instead
+     (VeraOut.barActions). Returns '' so a renderer can declare in an expression. */
+  const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
   if (root.__veraCanvasElement) return;
   root.__veraCanvasElement = true;
 
@@ -560,27 +566,25 @@
       const fk = VO && vid && typeof VO.fileKind === 'function' ? VO.fileKind(c.lang) : '';
       if (fk && typeof VO.fileCard === 'function') {
         const streaming = !!(el && el._liveOv && el._liveOv[key]);
-        return `<div class="vc-codewrap vc-filewrap">${VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming, title: String(c.title || c.filename || '') })}</div>`;
+        return `<div class="vc-codewrap vc-filewrap">${VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming, title: String(c.title || c.filename || ''), bar: false })}</div>`;
       }
       if (VO && vid && typeof VO.card === 'function') {
         const streaming = !!(el && el._liveOv && el._liveOv[key]);
         const live = prev ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>` : null;
         // autoPrev off: the canvas decides what is drawn - a page it switched to source stays source (owner, 2026-10-03:
         // "the source button on html in the canvas doent open the source": the kit drew the page straight back over it)
-        const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false });
+        const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false, bar: false });
         return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${cardHtml}</div>`;
       }
       // (without the kit on the page: the canvas's own numbered body and Preview switch)
-      const head = `<div class="vc-codehead">${esc(c.filename || c.lang || 'code')}<span class="sp"></span>`
-        + (PREVIEWABLE(c.lang) && key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
-        + '</div>';
+      declare(el, key, { sub: esc(c.lang || ''), acts: PREVIEWABLE(c.lang) && key ? [{ act: 'cprev', label: prev ? 'Source' : 'Preview', title: prev ? 'Show the source' : 'Render it here - a sandboxed frame, no network', on: prev }] : [] });
       const lines = String(c.code || '').replace(/\n$/, '').split('\n');
       let hl = null; const VC = root.VeraCode;
       if (!prev && VC && typeof VC.highlight === 'function') { try { hl = splitHl(VC.highlight(String(c.code || '').replace(/\n$/, ''), c.lang)); if (hl.length !== lines.length) hl = null; } catch (e) { hl = null; } }
       const bodyHtml = prev
         ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>`
         : `<pre class="vc-pre vc-code"><code>${lines.map((l, i) => `<span class="vc-line" data-line="${i + 1}"><i class="vc-lno">${i + 1}</i>${hl ? (hl[i] || ' ') : (esc(l) || ' ')}</span>`).join('')}</code></pre>`;
-      return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${head}${bodyHtml}${codeLintHtml(c, key, el)}</div>`;
+      return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${bodyHtml}${codeLintHtml(c, key, el)}</div>`;
     },
     /* AN EXPLODE ITEM — the structured diagram of something, in the canvas beside what it is a diagram OF
        (EXPLODE.md §8.3). content:
@@ -589,10 +593,10 @@
           path/paths/depth · record/ranges/mode/layers · text+lang · assess · height · title}
        The diagram itself is <vera-graph-embed renderer="struct">, mounted in the column's live layer the way a
        diagram, a widget and a preview are — so its pan, zoom and selection survive a render of the column. */
-    explode: (c, size, key) => {
+    explode: (c, size, key, el) => {
       const src = c.binds ? 'bound to ' + String(c.binds) : (c.record ? 'record ' + String(c.record) : (c.path || (c.paths && [].concat(c.paths).join(', ')) || (c.text ? 'a passage' : (c.code ? 'a snippet' : 'nothing yet'))));
-      const head = `<div class="vc-th"><i class="dot on"></i><b>${esc(c.title || 'Explode')}</b><span class="mono">${esc(String(src).slice(0, 60))}</span><span class="sp"></span>`
-        + (c.binds ? '<button class="ib" data-act="xpsync" title="Light the whole of the bound source again">clear</button>' : '') + '</div>';
+      declare(el, key, { sub: esc(String(src).slice(0, 60)), acts: c.binds ? [{ act: 'xpsync', label: 'Clear the lit spans', title: 'Light the whole of the bound source again' }] : [] });
+      const head = '';
       /* The slot takes what the ITEM can give it. Forcing the asked-for height here made the slot taller than
          the item that holds it (320 in a 242 box, measured in the page), and an item is `overflow:hidden` -- so
          the bottom of every diagram was cut off. An item's height is its SIZE, which is the canvas's own model
@@ -619,11 +623,11 @@
          Source, Pop out, Save, Send to - over the column's live drawing; Pop out is the canvas's own "open in the chat" */
       const VO = root.VeraOut;
       if (key && VO && typeof VO.diagram === 'function') return `<div class="vc-codewrap vc-diagwrap" data-w="canvas.diagram">`
-        + VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit',
+        + VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit', bar: false,
           body: `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div>` }) + `</div>` + cap;
-      if (key) return `<div class="vc-diag" data-w="canvas.diagram"><div class="vc-th"><i class="dot${live ? ' on' : ' wait'}"></i><b>${esc(title)}</b><span class="mono">mermaid · ${src.split('\n').length} lines</span><span class="sp"></span>`
-        + '<button class="ib" data-act="dgopen" title="Open it in the chat — the chat\'s own diagram pop-out">Open in the chat ↗</button><button class="ib" data-act="dgcopy" title="Copy the mermaid source">copy</button><button class="ib" data-act="dgsrc" title="Show the source">source</button></div>'
-        + `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div><pre class="vc-pre vc-dgsrc" hidden><code>${esc(src)}</code></pre></div>` + cap;
+      if (key) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · ' + src.split('\n').length + ' lines', acts: [
+          { act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }] })
+        + `<div class="vc-diag" data-w="canvas.diagram"><div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div><pre class="vc-pre vc-dgsrc" hidden><code>${esc(src)}</code></pre></div>` + cap;
       return `<vera-mermaid class="vc-mm" bare title="${esc(title)}">${esc(src)}</vera-mermaid>` + cap;
     },
 
@@ -882,9 +886,10 @@
       // the known hosts, listed under the connect row once asked for (the list is state on the element, so a render keeps it)
       const hostsOpen = !!(key && el && el._hostsOpen && el._hostsOpen[key]);
       const hosts = hostsOpen ? `<div class="vc-hosts pk" data-w="canvas.terminal.hosts">${el._hosts ? hostListHtml(el._hosts) : '<span class="vc-dim">known hosts — asking the estate…</span>'}</div>` : '';
-      const head = `<div class="vc-th"><i class="dot${attached ? (live ? ' on' : ' wait') : ''}"></i><b>${esc(shown ? (container ? shown + ' / ' + container : shown) : 'no host yet')}</b><span class="mono">${esc(shell || (container ? 'sh' : 'login shell'))}${c.command ? ' · ' + esc(c.command) : ''}</span><span class="sp"></span>`
-        + (attached ? '<button class="ib" data-act="tdetach" title="Detach — the item keeps its host; Attach opens a new shell">detach</button>' : (ws ? '<button class="ib on" data-act="tattach" title="Open a shell on this host">attach</button>' : ''))
-        + (ws ? '<button class="ib" data-act="tshare" title="Copy the terminal\'s address">share</button>' : '') + '</div>';
+      declare(el, key, { sub: '<i class="dot' + (attached ? (live ? ' on' : ' wait') : '') + '"></i>' + esc(shown ? (container ? shown + ' / ' + container : shown) : 'no host yet') + ' · ' + esc(shell || (container ? 'sh' : 'login shell')) + (c.command ? ' · ' + esc(c.command) : ''),
+        acts: (attached ? [{ act: 'tdetach', label: 'Detach', title: 'Detach — the item keeps its host; Attach opens a new shell' }] : ws ? [{ act: 'tattach', label: 'Attach', title: 'Open a shell on this host' }] : [])
+          .concat(ws ? [{ act: 'tshare', label: 'Share', title: "Copy the terminal's address" }] : []) });
+      const head = '';
       /* A COMMAND THAT RAN (a capability's command and its output, no shell open): what was run, where, and what it said -
          not a connect form over it. The form is for opening a shell; "open a shell" still does that, on the same host. */
       if (!attached && c.command && c.output != null) return `<div class="vc-term vc-ran" data-w="canvas.terminal">`
@@ -897,12 +902,13 @@
     },
 
     // a notebook cell as an item: the cell the notebook holds (source · output), Run through the notebook's exec, Open
-    notebook: (c, size, key) => {
+    notebook: (c, size, key, el) => {
       const t = String(c.cell_type || 'markdown'), lang = String(c.lang || ''), src = String(c.content || c.source || '');
       const out = String(c.generated || c.output || '');
       const runnable = t === 'code' || t === 'exec';
-      return `<div class="vc-nb" data-w="canvas.notebook"><div class="vc-th"><span class="vc-badge">${esc(t)}${lang && runnable ? ' · ' + esc(lang) : ''}</span><b>${esc(c.title || 'cell')}</b><span class="mono">${esc(String(c.notebook_id || '').slice(0, 8))}${c.cell_id ? ' · ' + esc(String(c.cell_id).slice(0, 8)) : ''}</span><span class="sp"></span>`
-        + (runnable ? `<button class="ib on" data-act="nbrun" title="Run the cell through the notebook's exec">Run</button>` : '') + `<button class="ib" data-act="nbopen" title="Open the notebook at this cell">Open the notebook ↗</button></div>`
+      declare(el, key, { sub: esc(t) + (lang && runnable ? ' · ' + esc(lang) : '') + ' · ' + esc(String(c.notebook_id || '').slice(0, 8)) + (c.cell_id ? ' · ' + esc(String(c.cell_id).slice(0, 8)) : ''),
+        acts: (runnable ? [{ act: 'nbrun', label: 'Run', title: "Run the cell through the notebook's exec" }] : []).concat([{ act: 'nbopen', label: 'Open the notebook ↗', title: 'Open the notebook at this cell' }]) });
+      return `<div class="vc-nb" data-w="canvas.notebook">`
         + (t === 'markdown' ? `<div class="vc-md">${md(src)}</div>` : `<pre class="vc-pre"><code>${esc(src)}</code></pre>`)
         + `<pre class="vc-pre vc-out vc-nbout"${out ? '' : ' hidden'}><code>${esc(out.slice(0, 8000))}</code></pre></div>`;
     },
@@ -918,8 +924,8 @@
          and, on a panel sent behind, under the other items (owner, 2026-10-07: "i dont see the behind or front buttons") */
       const lay = el && el.deskAlign && el.deskAlign() ? ((el._layer || {})[String(key)] || '') : null;
       const layBtns = lay === null ? '' : `<button class="ib${lay === 'behind' ? ' on' : ''}" data-act="layer-behind" title="Behind the desk: the panel fills the free part of the desk, under the other items - press again to put it back among them">behind</button><button class="ib${lay === 'front' ? ' on' : ''}" data-act="layer-front" title="In front: the panel fills the free part of the desk, over the other items (never over the chat) - press again to put it back among them">front</button>`;
-      return `<div class="vc-panel" data-w="canvas.panel"><div class="vc-th"><i class="dot on"></i><b>${esc(c.title || c.label || id || 'panel')}</b><span class="mono">${esc(id)} · over the bridge</span><span class="sp"></span>`
-        + layBtns + `<button class="ib" data-act="pquery" title="panel.query — what the panel holds">query</button><button class="ib" data-act="pdispatch" title="panel.dispatch — drive it">dispatch</button><button class="ib" data-act="prefresh" title="Reload the panel">refresh</button><button class="ib" data-act="pstand" title="Open it standalone">standalone ↗</button></div>`
+      declare(el, key, { sub: '<i class="dot on"></i>' + esc(id) + ' · over the bridge', acts: [] });
+      return `<div class="vc-panel" data-w="canvas.panel">`
         + (src ? `<div class="vc-live vc-frame" data-live="frame" data-key="${esc(key)}" data-src="${esc(src)}"></div>`
           : !id ? '<div class="vc-dim">no panel id</div>'
           : got == null ? `<div class="vc-dim vc-pwait">opening ${esc(c.title || id)}…</div>`
@@ -1121,9 +1127,8 @@
          tab and the download one press away. */
       const url = String(c.url || '');
       if (!src && url && /^\/[^/]/.test(url)) {
-        const head = `<div class="vc-codehead">${esc(c.title || 'report')}<span class="sp"></span>`
-          + `<a class="ib" href="${esc(url)}" target="_blank" rel="noopener" title="Open the report in its own tab">open</a>`
-          + (c.download_url ? `<a class="ib" href="${esc(c.download_url)}" download title="Download the report">download</a>` : '') + '</div>';
+        declare(el, key, { sub: 'report', acts: [{ href: url, label: 'Open in a tab ↗', title: 'Open the report in its own tab' }].concat(c.download_url ? [{ href: String(c.download_url), download: true, label: 'Download', title: 'Download the report' }] : []) });
+        const head = '';
         const body = key
           ? `<div class="vc-live vc-preview vc-report" data-live="report" data-key="${esc(key)}" data-src="${esc(url)}"><span class="vc-dim">opening the report…</span></div>`
           : `<div class="vc-dim"><a href="${esc(url)}" target="_blank" rel="noopener">open the report</a></div>`;
@@ -1139,9 +1144,8 @@
       const VO = root.VeraOut;
       const send = key && VO && typeof VO.sendMenu === 'function'
         ? VO.sendMenu('cvh-' + key, { getMd: () => '```html\n' + src.replace(/\n$/, '') + '\n```', raw: () => src, title: String(c.title || 'page'), skip: ['podcast'] }) : '';
-      const head = `<div class="vc-codehead">${esc(c.title || 'html')}<span class="sp"></span>`
-        + (key ? `<button class="ib${prev ? ' on' : ''}" data-act="cprev" title="${prev ? 'Show the source' : 'Draw it here - a sandboxed frame, no network'}">${prev ? 'source' : 'preview'}</button>` : '')
-        + send + '</div>';
+      declare(el, key, { sub: 'html', acts: key ? [{ act: 'cprev', label: prev ? 'Source' : 'Preview', title: prev ? 'Show the source' : 'Draw it here - a sandboxed frame, no network', on: prev }] : [], menus: send ? [send] : [] });
+      const head = '';
       const body = prev && key
         ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="html"><span class="vc-dim">drawing…</span></div>`
         : `<pre class="vc-pre vc-code"><code>${esc(src)}</code></pre>`;
@@ -1173,8 +1177,6 @@
   :host([blocks="off"]) .head{background:transparent;border-bottom-color:color-mix(in srgb,var(--border,#2a2f37) 55%,transparent)}
   :host([blocks="off"]) .it{background:transparent;box-shadow:none;border-color:transparent}
   :host([blocks="off"]) .it > .it-hd{border-bottom:1px solid color-mix(in srgb,var(--border,#2a2f37) 45%,transparent)}
-  :host([blocks="off"]) .it > .it-ft{opacity:0;transition:opacity .15s}
-  :host([blocks="off"]) .it:is(:hover,.hov) > .it-ft,:host([blocks="off"]) .it:focus-within > .it-ft{opacity:1}
   /* the states that MEAN something keep their ring: blocks off is about grounds, not about hiding that this turn is
      waiting on you, that you opened an item, or that one is being dragged to a size */
   /* (no ring for the NOW band here either — see the note on .it.now below) */
@@ -1355,7 +1357,7 @@
   /* what Vera can also do: a ghost until one of its suggestions is taken */
   .it.ghost{background:transparent;border:1px dashed var(--dim,#6b7480);box-shadow:none}
   /* compact: the header line only; the body, the rail and the grip held back */
-  .it.compact .it-bd,.it.compact .it-ft,.it.compact .rz{display:none}
+  .it.compact .it-bd,.it.compact .rz{display:none}
   /* A HEADER BELONGS TO FULL. In Hover and Zen an item is its content and nothing else; its name, its key and its
      controls come back when you are on it (owner, 2026-09-24: "they should only be displayed in the full view mode
      the hover and zen should act accordingly"). A FOLDED item is exempt: its header line is the whole item. */
@@ -1366,15 +1368,13 @@
      in when you are on the item; an item's height never changes because you pointed at it. */
   /* (an item is already position:relative - absolute on the stage - so the overlays anchor to it either way) */
   :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
-  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-ft,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-ft{position:absolute;left:0;right:0;bottom:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:0 0 var(--r,8px) var(--r,8px)}
-  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > :is(.it-hd,.it-ft){opacity:1;pointer-events:auto}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > .it-hd{opacity:1;pointer-events:auto}
   /* ...in bands of their own (owner, 2026-10-04: "the top and bottom bar appear over the top of the element instead of
      above and below - sometimes it can block entire parts of the elements"): an overlay at the item's edge covered its
      first and last lines - a short note's header and rail met in the middle and hid it whole. The item keeps their room
      all the time, so they fade in above and below its content, over nothing - and its height still never changes
      because you pointed at it (the reason they are overlays). */
-  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)){padding-top:var(--vc-hd-band,29px)}
-  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}
   /* ONE BAR PER ITEM, ON HOVER (owner, 2026-10-04: "the top bar that appear on mouseover ... makes the static title at
      the top of each element pretty much redundant and those actions could be integrated so the static title is merged
      into the on-hover element and only appears on-hover. i think the canvas should better respect the full hover and zen
@@ -1384,24 +1384,10 @@
      an explode, a terminal, a notebook cell, a panel) that head is the bar, holding its title and its actions, faded in
      with the fold and maximise controls. Each keeps its room, so nothing moves under the pointer. The canvas's own
      toolbar follows the tier too: Hover shows it while the pointer is on the canvas, Zen only while it is on the toolbar. */
-  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > .vc-codewrap > .code-card > .code-bar,
-  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > .vc-codewrap > .vc-codehead,
-  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{opacity:0;transition:opacity .15s}
-  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > .vc-codewrap > .code-card > .code-bar,
-  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > .vc-codewrap > .vc-codehead,
-  :host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{opacity:1}
   :host(:is([data-tier="hover"],[data-tier="zen"])) .it:not(.compact) .vc-rbx > .vc-rbx-top{display:none}
-  /* the item's fold / maximise / open controls sit at the head's right end: the head leaves them room (they lay over
-     its last button, "Send to") */
-  .it.ownhead > .it-bd > .vc-codewrap > .code-card > .code-bar,.it.ownhead > .it-bd > .vc-codewrap > .vc-codehead,
-  .it.ownhead > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel) > :is(.vc-codehead,.vc-th):first-child{padding-right:58px}
   :host([data-tier="full"]) .it:not(.ufold) > .it-hd .fdn{display:none}
-  :host([data-tier="full"]) .it > :is(.fd,.mx,.xp).solo{opacity:.8}
   :host([data-tier="hover"]) .addbar,:host([data-tier="zen"]) .addbar{opacity:0;transition:opacity .2s}
   :host([data-tier="hover"]:hover) .addbar,:host([data-tier="zen"]) .addbar:is(:hover,:focus-within){opacity:1}
-  /* the solo expand of an item whose drawer draws its own head: a corner mark, not a row of its own */
-  .xp.solo{position:absolute;right:4px;top:3px;z-index:3;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;opacity:0;transition:opacity .15s}
-  .it:is(:hover,.hov) > .xp.solo,.it:focus-within > .xp.solo{opacity:.8}
   .it.compact{transition:height .18s ease}
   /* ⛔ OPENED IN PLACE DRAWS NO RING EITHER. A resize marks the item open (it has an explicit height now), so the
      ring appeared the moment you finished dragging and stayed until you clicked the item — "if i resize a canvas
@@ -1442,9 +1428,6 @@
   .stage .it.peek{z-index:var(--z-pop,230);max-height:min(70vh,640px);overflow:auto;transition:none;background:var(--bg1,#16181d);scrollbar-width:thin}
   .stage .it.peek .it-bd{max-height:none}
   /* the header line of an item that draws its own head: hidden while that head shows, the chip when the COLUMN folds it */
-  .it > .it-hd.own-fold{display:none}
-  .stage .it.overfold > .it-hd.own-fold{display:flex}
-  .stage .it.overfold > .solo{display:none}
   .stage .it.overfold.peek .it-bd{display:block}
   /* A FOLDED CHIP SAYS WHAT IT IS (owner, 2026-10-04: "when they are collapsed its hard to tell what each chip is"): its
      line held the kind, the title, the turn, the item's key, a score and two buttons, so the title - the one thing that
@@ -1498,7 +1481,6 @@
   /* a card placed by hand carries its way back to the arrangement (the double click is redrawn away by the first click) */
   .dp{display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-placed > .it-hd > .dp{display:inline-flex;flex:0 0 auto;cursor:pointer;color:var(--acc,#5a9e8f);font-size:11px;padding:0 3px}
-  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-placed > .dp.solo{display:block;position:absolute;right:36px;top:3px;z-index:3;cursor:pointer;color:var(--acc,#5a9e8f);font-size:11px;opacity:.85}
   /* a chip IS its header line: the hover and zen tiers' hidden, unclickable header left a chip blank until hovered */
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd{opacity:1!important;pointer-events:auto!important;background:none}
   /* a panel's chip keeps its two layer controls: a chip has no body to hold them */
@@ -1606,7 +1588,7 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging{transition:width .12s,height .12s!important;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.5);outline:1px solid var(--acc,#5a9e8f)}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
   /* while it moves, a card shows what it is, not its controls: the footer rail and the grip popped in under the pointer */
-  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging > :is(.it-ft,.rz,.mx,.xp,.dp){display:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging > :is(.rz,.dp){display:none!important}
   @keyframes vcDeskFlash{0%,100%{box-shadow:0 0 0 0 transparent}40%{box-shadow:0 0 0 3px var(--acc,#5a9e8f),0 0 26px color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent)}}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-flash{animation:vcDeskFlash .8s ease-in-out 2}
   /* the end of a chat run on the desk: the run stops at the desk's edge and its item carries the theme's mark */
@@ -1615,38 +1597,27 @@
      the Hover and Zen tiers hide a card's header until it is hovered and make it unclickable - on the desk that left
      widget and table cards nameless, with nothing to take hold of. On the desk the header is always there, in the card's
      flow, and it is the handle. */
-  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not(.ownhead) > .it-hd{position:relative!important;inset:auto!important;opacity:1!important;pointer-events:auto!important;visibility:visible!important}
-  /* ONE ROW OF CONTROLS, AT THE TOP (see the render's .hda): on the desk the footer rail, the header's own corner icons,
-     the item's key and turn label, and a panel's second bar (its title again and six buttons) are not drawn. A panel
-     card shows the shared header like every other card; the bands the hover tier keeps for a header and a rail that
-     float over the body are given back to the body. */
-  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > :is(.it-ft,.solo){display:none!important}
-  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd > :is(.dp,.mx,.xp,.k,.src,.fdn){display:none!important}
-  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-bd > .vc-panel > .vc-th{display:none!important}
-  /* ONE CONTAINER FOR EVERY DESK CARD (owner, 2026-10-10: "code on the desk doesnt act like the other elements and cant be
-     dragged its menu options need integrating into the canonical element container"). Kinds that draw a head of their own
-     (code, a page, a terminal, a notebook cell, a diagram, an explode, a panel) showed only that head on the desk - in the
-     hover tier unseen until hovered, never a handle, with its own buttons: on the desk they take the shared header (the
-     handle, the title, the one row of controls) and their own head is not drawn; its buttons are in the card's ⋯ menu. */
-  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-hd.own-fold{display:flex!important;position:relative!important;inset:auto!important;opacity:1!important;pointer-events:auto!important}
-  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar,
-  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .vc-codehead,
-  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :is(.vc-xp,.vc-term,.vc-nb,.vc-panel,.vc-diag) > :is(.vc-codehead,.vc-th):first-child{display:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd{position:relative!important;inset:auto!important;opacity:1!important;pointer-events:auto!important;visibility:visible!important}
+  /* ONE HEAD AND ONE ROW OF CONTROLS ON EVERY SURFACE (DEEP-29 11A.4 Decision 4; owner decision D1, 2026-10-16 - see the render):
+     no kind draws a head of its own, there is no footer rail and no corner icon, so nothing is hidden here any more. On the
+     desk the turn label and the count are left out of the head (the pill carries them); the head leaves the row its room. */
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd > :is(.dp,.src,.fdn){display:none!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip){padding-top:0!important;padding-bottom:0!important}
-  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd,
-  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :first-child > :is(.vc-codehead,.vc-th,.code-bar):first-child,
-  :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:250px!important}
+  .it:not(.desk-chip) > .it-hd{padding-right:calc(var(--hda-n, 0) * 27px + 14px)}
   @container (max-width: 320px) {
-    :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda > .hb:is([data-act="ctx"],[data-act="explode"],[data-act="edit"]){display:none}
-    :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .it-hd,
-    :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > :first-child > :is(.vc-codehead,.vc-th,.code-bar):first-child,
-    :host([align="desk"]:not([desk-narrow])) .stage .it.ownhead:not(.desk-chip) > .it-bd > .vc-codewrap > .code-card > .code-bar{padding-right:168px!important} }   /* view · lock · fill · more · drop */
+    .it:not(.desk-chip) > .hda > .hb:is([data-act="hdview"],[data-act="max"]){display:none}
+    .it:not(.desk-chip) > .it-hd{padding-right:calc(var(--hda-nn, 0) * 27px + 14px)} }   /* lock · pill · more · drop */
   .hda{display:none}
-  :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
+  .it:not(.desk-chip):not(.ghost) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
+  /* the body's own line (a terminal's host and shell, a cell's notebook, a diagram's size): quiet, beside the title */
+  .it-hd > .it-sub{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px/1.2 var(--mono,ui-monospace,monospace);color:var(--dim,#6b7480)}
+  .it-hd > .it-sub > .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:var(--dim,#6b7480)}
+  .it-hd > .it-sub > .dot.on{background:var(--ok,#7bc47f)}
+  .it-hd > .it-sub > .dot.wait{background:var(--warn,#d6b25e)}
   /* A PILL OPEN UNDER THE POINTER HAS ONE MENU (owner, 2026-10-15, WSU-79: "it can be hard to grab a pill as its menu items
      appear, can this be combined into a single menu in pill mode so the pill can still be grabbed"): only ⋯ shows; its
      menu holds the rest (see _hdMenu), and the header stays free to grab */
-  :host([align="desk"]:not([desk-narrow])) .stage .it.pill-open:not(.desk-win) > .hda > :is(.hb:not([data-act="hdmore"]),.xvw){display:none}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.pill-open:not(.desk-win) > .hda > .hb:not([data-act="hdmore"]){display:none}
   /* a mode's lane or cluster heading (board, map): a quiet label over its column */
   :host([align="desk"]) .stage > .desk-lane{position:absolute;z-index:var(--z-back,1);pointer-events:none;display:flex;align-items:center;gap:6px;padding:3px 2px 4px;font:600 9.5px/1.2 var(--mono,ui-monospace,monospace);letter-spacing:.06em;text-transform:uppercase;color:var(--dim2,#8a7e70);border-bottom:1px solid color-mix(in srgb,var(--acc,#5a9e8f) 28%,transparent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   :host([align="desk"]) .stage > .desk-lane > i{font-style:normal;font-weight:400;color:var(--dim,#6c645a)}
@@ -1659,13 +1630,10 @@
   .vc-wid.vc-mchart-w > .vc-live{flex:1 1 auto;min-height:220px}
   /* (a pill never shows its body: the fused code + explode body's display rule above now leaves pills out - a strip of line
      numbers showed in the pill column; found with WSU-80, also on the edge before it) */
-  :host([align="desk"]:not([desk-narrow])) .stage .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
+  .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
   /* the card's own controls, big enough to hit (owner, 2026-10-11: "the controls of the desk items on the top bar need to be a bit bigger") */
   /* the code explode's view switch (WSU-54): three words in the header row; the pane not shown is out, the structure the
      larger half when both are */
-  .hda > .xvw{display:inline-flex;gap:2px;margin-right:6px;padding:2px;border-radius:7px;background:color-mix(in srgb,var(--bg2,#1c2026) 70%,transparent)}
-  .hda > .xvw > .hb.xvb{width:auto;height:22px;padding:0 7px;font-size:10px;letter-spacing:.02em}
-  .hda > .xvw > .hb.xvb.on{color:var(--acc,#5a9e8f);background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent)}
   .it.xv-both > .it-bd.fu-beside > :not(.fu-p){flex:2 1 0!important}
   .it.xv-both > .it-bd.fu-beside > .fu-p{flex:3 1 0!important}
   .it.xv-code > .it-bd.fu > .fu-p{display:none!important}
@@ -1681,15 +1649,15 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:default!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .hda > .hb[data-act="lock"]{opacity:1}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .hda{opacity:1}
-  .stage > .hd-pop{position:absolute;z-index:var(--z-pop,230);display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:9px;
+  .hd-pop{position:absolute;z-index:var(--z-pop,230);display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:9px;
     background:var(--bg2,#1d2128);border:1px solid var(--border2,#3a3f48);box-shadow:0 10px 28px rgba(0,0,0,.45)}
-  .stage > .hd-pop > .ib{display:block;width:100%;text-align:left;border:0;background:none;color:var(--fg,#dce1e8);padding:5px 9px;border-radius:6px;font:inherit;font-size:11.5px;cursor:pointer}
-  .stage > .hd-pop > .ib:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
-  .stage > .hd-pop > .ib.on{color:var(--acc,#5a9e8f)}
-  .stage > .hd-pop > hr{border:0;border-top:1px solid var(--border,#2a2f37);margin:4px 2px}
-  .stage > .hd-pop > .ib.vrow{display:flex;align-items:center;gap:8px}.stage > .hd-pop > .ib.vrow .vic{display:inline-flex;color:var(--dim,#8b93a1)}
-  .stage > .hd-pop > .ib.vrow.on .vic{color:var(--acc,#5a9e8f)}
-  .stage > .hd-pop{min-width:0}.stage > .hd-pop:not([data-kind="view"]){min-width:170px}
+  .hd-pop > .ib{display:block;width:100%;text-align:left;border:0;background:none;color:var(--fg,#dce1e8);padding:5px 9px;border-radius:6px;font:inherit;font-size:11.5px;cursor:pointer}
+  .hd-pop > .ib:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .hd-pop > .ib.on{color:var(--acc,#5a9e8f)}
+  .hd-pop > hr{border:0;border-top:1px solid var(--border,#2a2f37);margin:4px 2px}
+  .hd-pop > .ib.vrow{display:flex;align-items:center;gap:8px}.hd-pop > .ib.vrow .vic{display:inline-flex;color:var(--dim,#8b93a1)}
+  .hd-pop > .ib.vrow.on .vic{color:var(--acc,#5a9e8f)}
+  .hd-pop{min-width:0}.hd-pop:not([data-kind="view"]){min-width:170px}
   /* the header's View button is the desk's one view switch: the records item's own switch would be a second */
   :host([align="desk"]:not([desk-narrow])) .vc-rbx-seg.seg-view{display:none}
   /* resizing follows the hand: no size animation while the grip is held */
@@ -1720,7 +1688,7 @@
   .stage .it.capped .it-bd{max-height:none;overflow:auto}
   /* folded because the COLUMN ran out of room, not because the tier folds it: the header line alone, and it opens
      again the moment there is room. The weakest hold folds first, so what you are reading stays whole. */
-  .stage .it.overfold .it-bd,.stage .it.overfold .it-ft,.stage .it.overfold .rz{display:none}
+  .stage .it.overfold .it-bd,.stage .it.overfold .rz{display:none}
   .stage .it.overfold{cursor:pointer}
   :host([stage]) .body{position:relative;padding-top:0}
   :host([stage]) .band.pinned{padding-top:6px}
@@ -2022,8 +1990,6 @@
   .it-hd .fd{flex:0 0 auto;width:14px;text-align:center;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;user-select:none}
   .it-hd .fd:hover{color:var(--fg,#dce1e8)}
   .it-hd .fdn{flex:0 0 auto;font-family:ui-monospace,Consolas,monospace;font-size:9px;color:var(--dim,#6b7480);background:var(--bg2,#272421);border-radius:8px;padding:0 6px}
-  .fd.solo{position:absolute;right:36px;top:3px;z-index:3;font-size:10px;color:var(--dim,#6b7480);cursor:pointer;opacity:0;transition:opacity .15s}
-  .it:is(:hover,.hov) > .fd.solo,.it:focus-within > .fd.solo{opacity:.8}
   /* a records item as a GRAPH: the slot the live layer draws the Vera graph over, sized with the item */
   .vc-rbx-graph{display:flex;flex-direction:column;gap:3px}
   .vc-rbx-graph .vc-live{height:300px}
@@ -2145,7 +2111,6 @@
   @container (max-width: 420px){.it-bd.fu-beside{flex-direction:column}
     .it-bd.fu-beside>.fu-p{border-left:0;padding-left:0;border-top:1px solid rgba(255,255,255,.055);padding-top:6px}}
   /* the edit rail — the canvas is a document you can change */
-  .it-ft{display:flex;align-items:center;gap:4px;padding:3px 6px 5px;margin-top:auto;border-top:1px solid rgba(255,255,255,.04);flex:0 0 auto}
   /* what this turn is waiting on: the decision, its answers */
   .askb{display:flex;flex-direction:column;gap:6px;padding:2px 0 4px}
   .askb .why,.sugb .why{font-size:9px;color:var(--dim,#6b7480);line-height:1.4}
@@ -2239,8 +2204,6 @@
   /* MAXIMISED: the item takes the canvas and stays there, fixed, until it is restored */
   .mx{font-size:10px;color:var(--dim,#6b7480);flex:0 0 auto;cursor:pointer;padding:0 2px}
   .it:is(:hover,.hov) .it-hd .mx{color:var(--fg,#dce1e8)}.mx.on{color:var(--acc,#5a9e8f)!important}
-  .mx.solo{position:absolute;right:20px;top:3px;z-index:3;opacity:0;transition:opacity .15s}
-  .it:is(:hover,.hov) > .mx.solo,.it:focus-within > .mx.solo,.it.maxed > .mx.solo{opacity:.8}
   .it.maxed{z-index:8!important;display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15181d))!important;box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px var(--acc,#5a9e8f)!important;transition:none!important;border-radius:8px}
   .it.maxed > .it-bd{max-height:none!important;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto}
   .it.maxed > .it-bd > *{flex:1 1 auto;min-height:0}
@@ -2352,13 +2315,13 @@
   :host(:not([data-tier="full"])) .it:not(:focus-within):not(.maxed) .vc-rbx > .vc-rbx-facets{display:none}
   :host(:not([data-tier="full"])) .it:is(:focus-within,.maxed) .vc-rbx > .vc-rbx-tools + .vc-rbx-facets{margin-top:38px}  :host(:not([data-tier="full"])) .it :is(.vc-rbx-foot,.vc-rr-tabs){opacity:0;transition:opacity .15s}
   :host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.maxed) :is(.vc-rbx-foot,.vc-rr-tabs){opacity:1}
-  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip) > .hda{opacity:0}
+  :host(:not([data-tier="full"])) .it:not(.desk-chip) > .hda{opacity:0}
   /* THE TITLE HAS THE HEADER WHILE THE CONTROLS ARE HIDDEN (WSU-69, the owner's desk 2026-10-11: titles cut to "C…", "N…"):
      the header kept 168-250 px for controls that are invisible until hover in these tiers. At rest the title takes the
      header; on hover the controls come in over its end on their own ground, faded at the left - nothing reflows. */
-  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip):not(.ownhead) > .it-hd{padding-right:12px!important}
-  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:not(.desk-chip) > .hda{padding-left:22px;background:linear-gradient(to right, transparent, var(--bg1,#16181d) 20px);border-radius:0 6px 0 0}
-  :host([align="desk"]:not([desk-narrow]):not([data-tier="full"])) .stage .it:is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .hda{opacity:1}
+  :host(:not([data-tier="full"])) .it:not(.desk-chip) > .it-hd{padding-right:12px!important}
+  :host(:not([data-tier="full"])) .it:not(.desk-chip) > .hda{padding-left:22px;background:linear-gradient(to right, transparent, var(--bg1,#16181d) 20px);border-radius:0 6px 0 0}
+  :host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .hda{opacity:1}
   /* ...and a drawing's own chrome (a graph's caption of counts, its view menu, explode's caption with its enlarge) shows
      when the drawing is pointed at; a combined card's tabs when the card is */
   :host(:not([data-tier="full"])) #live .lv :is(.vge-note,.vg-layer){opacity:0;transition:opacity .15s}
@@ -3060,7 +3023,6 @@
   const LAYER_KEY = 'vera:canvas:layers';
   function layersLoad() { try { const m = JSON.parse(localStorage.getItem(LAYER_KEY) || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; } }
   function layersSave(m) { try { localStorage.setItem(LAYER_KEY, JSON.stringify(m)); } catch (e) { /* kept for this page */ } }
-  const OWN_HEAD = new Set(['code', 'html', 'explode', 'session', 'diagram', 'notebook', 'panel']);
 
   class VeraCanvas extends (typeof HTMLElement !== 'undefined' ? HTMLElement : class {}) {
     /* align · preview · explode-offer are the canvas's SETTINGS (the owner's four decisions, 2026-09-23), handed down
@@ -3407,48 +3369,70 @@
     }
     /* the ⋯ menu of a desk card: what is not worth a place in its one row of controls. On the stage (a card clips what is
        inside it), under the button, closed by its own use, a second ⋯ or a press anywhere else. */
+    /* where an item's menu is drawn: on the stage (a card clips what is inside it), or - in a column with no stage - over the
+       page, fixed under its button */
+    _popHost() { return this.shadowRoot.getElementById('stage') || this.shadowRoot; }
+    _popPlace(pop, btn, c) {
+      const st = this._popHost(); st.appendChild(pop);
+      const r = (btn || c).getBoundingClientRect(), pw = pop.offsetWidth || 180;
+      if (st === this.shadowRoot) { pop.style.position = 'fixed'; pop.style.left = Math.max(4, Math.min(innerWidth - pw - 4, r.right - pw)) + 'px'; pop.style.top = (r.bottom + 4) + 'px'; return; }
+      const S = st.getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
+      let left = Math.round((r.right - S.left) / Z - pw); left = Math.max(4, Math.min(st.clientWidth - pw - 4, left));
+      pop.style.left = left + 'px'; pop.style.top = Math.round((r.bottom - S.top) / Z + 4) + 'px';
+    }
+    /* the shared kit's card in an item's body (or in one fused pane of it): the lead's own is the one not inside a pane */
+    _kitCard(host, lead) { if (!host) return null; return [...host.querySelectorAll('.code-card[data-cb]')].find((x) => !lead || !x.closest('.fu-p')) || null; }
+    /* THE ITEM'S MENU (DEEP-29 11A.4 Decision 4, owner decision D1 2026-10-16): what is not in the head's one row - in the
+       ADR's order: park, pin, size, back to the arrangement, open in place, fold, group / separate, explode, edit, in
+       context, run again, the deep dives, the panel's own, then the body's own actions (declared by it as it was drawn,
+       or the shared kit's for its card) and its dropdowns (Send to, Download). A fused pane's own actions follow under
+       its name. Closed by its own use, a second ⋯ or a press anywhere else. */
     _hdMenu(key, btn) {
-      const st = this.shadowRoot.getElementById('stage'); if (!st || !key) return;
+      const st = this._popHost(); if (!st || !key) return;
       const had = st.querySelector(':scope > .hd-pop'); if (had) { had.remove(); if (had.dataset.key === key && had.dataset.kind !== 'view') return; }
-      const c = [...st.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!c) return;
-      const b = this._blockOf(key) || {}; const k = esc(key); const L = (this._layer || {})[key] || '';
-      const row = (act, label, title, on) => `<button class="ib${on ? ' on' : ''}" data-act="${act}" data-layer-key="${k}" title="${esc(title || label)}">${esc(label)}</button>`;
-      /* a narrow card's row keeps lock, fill, ⋯ and drop: its other icons are here instead (never in both) */
-      const narrow = c.offsetWidth <= 320; const hd = (a) => c.querySelector(':scope > .hda > .hb[data-act="' + a + '"]');
-      /* a pill open under the pointer shows only ⋯ (WSU-79): every control of its row is here instead */
-      const peek = c.classList.contains('pill-open') && !c.classList.contains('desk-win');
-      let h = (peek ? (hd('hdview') ? row('hdview', 'View…', hd('hdview').title) : '')
-          + (hd('lock') ? row('lock', hd('lock').classList.contains('on') ? 'Unlock' : 'Lock it where it is', hd('lock').title, hd('lock').classList.contains('on')) : '')
-          + (hd('max') ? row('max', 'Open it full', hd('max').title) : '') : '')
-        + ((narrow || peek) && hd('explode') ? row('explode', hd('explode').classList.contains('on') ? 'Back to the source' : 'Explode', hd('explode').title) : '')
-        + ((narrow || peek) && hd('edit') ? row('edit', 'Edit', hd('edit').title) : '')
-        + ((narrow || peek) && hd('ctx') ? row('ctx', hd('ctx').classList.contains('on') ? '✓ In context' : 'Put in context', hd('ctx').title, hd('ctx').classList.contains('on')) : '')
-        + row('park', 'Park', 'Park it below the flow') + row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size')
-        + (this._deskPosGet()[key] ? row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement') : '')
-        + row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line')
-        + (c.classList.contains('cmp-front') ? row('cmpsep', 'Take it out of the group', 'Show it as a card of its own; the group keeps its other tabs')
-          : this._sepGet()[key] ? row('cmpjoin', 'Combine with similar items', 'Put it back with the items of its kind on its topic, as a tab') : '');
+      const c = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!c) return;
+      const b = this._blockOf(key) || {}; const k = esc(key); const L = (this._layer || {})[key] || ''; const desk = this.deskAlign(); const bid = this._bidOf(key);
+      const row = (act, label, title, on, kk) => `<button class="ib${on ? ' on' : ''}" data-act="${act}" data-layer-key="${kk == null ? k : esc(kk)}" title="${esc(title || label)}">${esc(label)}</button>`;
+      const hd = (a) => c.querySelector(':scope > .hda > .hb[data-act="' + a + '"]');
+      const ca = (this._cardActs && this._cardActs[key]) || {};
+      /* a narrow card's row keeps lock, pill, ⋯ and drop, and a pill open under the pointer shows only ⋯ (WSU-79): the row's
+         other controls are here instead (never in both) */
+      const narrow = c.offsetWidth <= 320; const peek = c.classList.contains('pill-open') && !c.classList.contains('desk-win');
+      let h = '';
+      if ((narrow || peek) && hd('hdview')) h += row('hdview', 'View…', hd('hdview').title);
+      if (peek && hd('lock')) h += row('lock', hd('lock').classList.contains('on') ? 'Unlock' : 'Lock it where it is', hd('lock').title, hd('lock').classList.contains('on'));
+      if ((narrow || peek) && hd('max')) h += row('max', c.classList.contains('maxed') ? 'Restore' : desk ? 'Fill the free desk' : 'Maximise it', hd('max').title);
+      if (!bid) h += row('park', 'Park', 'Park it below the flow') + row('pin', b.state === 'pinned' ? 'Unpin' : 'Pin above the flow', b.state === 'pinned' ? 'Unpin - back into the flow' : 'Pin it above the flow', b.state === 'pinned');
+      h += row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size');
+      if (bid) h += row('up', 'Move up', 'Move it up - canvas.move') + row('down', 'Move down', 'Move it down - canvas.move');
+      if (desk && this._deskPosGet()[key]) h += row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement');
+      if (!desk && !bid) h += row('open', c.classList.contains('openin') ? 'Fold it back' : 'Open in place', c.classList.contains('openin') ? 'Fold it back' : 'Open in place - the column makes room');
+      if (desk && !bid) h += row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line');
+      h += c.classList.contains('cmp-front') ? row('cmpsep', 'Take it out of the group', 'Show it as a card of its own; the group keeps its other tabs')
+        : this._sepGet()[key] ? row('cmpjoin', 'Combine with similar items', 'Put it back with the items of its kind on its topic, as a tab') : '';
+      if (ca.explode) h += row('explode', ca.explode.on ? 'Back to the source' : 'Explode', ca.explode.on ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', ca.explode.on);
+      if (ca.edit) h += row('edit', ca.edit.on ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', ca.edit.on);
+      if (ca.ctx) h += row('ctx', ca.ctx.on ? '✓ In context' : 'Put in context', ca.ctx.on ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ca.ctx.on);
+      if (b.type === 'result' && b.content && b.content.cap) h += row('rerun', 'Run again', 'Run ' + b.content.cap + ' again with the same arguments');
       if (peek) h += row('remove', 'Take it off the desk', 'Take it off the desk');
-      /* the card's own head's buttons (a code item's copy · preview · edit · run, a terminal's, a diagram's): that head is not
-         drawn on the desk, so its buttons are listed here and a row presses the original - one container, nothing lost */
-      /* the head's own buttons only - not the entries of a dropdown inside it (Send to's targets), and not one the header row
-         already has (explode) */
-      const inMenu = (x) => { for (let e = x.parentElement; e && !(e.classList && e.classList.contains('it-bd')); e = e.parentElement) { const cl = String(e.className || ''); if (/(^|[\s_-])(menu|pop|popup|dropdown|drop|list)([\s_-]|$)/i.test(cl) || e.getAttribute('role') === 'menu' || e.tagName === 'DETAILS') return true; } return false; };
-      const rowHas = new Set([...c.querySelectorAll(':scope > .hda > .hb')].map((x) => x.dataset.act));
-      const own = [...c.querySelectorAll(':scope > .it-bd :is(.code-bar,.vc-codehead,.vc-th) :is(button,[role=button],a.btn)')].filter((x) => !x.closest('.hda') && !inMenu(x) && (x.textContent || x.title || '').trim()
-        && !(rowHas.has('explode') && /^explode$/i.test((x.textContent || '').trim())));
-      if (own.length && b.type !== 'panel') { c._ownBtns = own; h += '<hr>' + own.slice(0, 10).map((x, i) => `<button class="ib" data-act="ownbtn" data-own="${i}" data-layer-key="${k}" title="${esc(x.title || '')}">${esc(((x.textContent || '').trim() || x.title || 'action').slice(0, 40))}</button>`).join(''); }
-      if (b.type === 'panel') h += '<hr>' + row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front')
+      if (b.type === 'panel') h += '<hr>' + (desk ? row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front') : '')
         + row('pquery', 'Query', 'panel.query - what the panel holds') + row('pdispatch', 'Dispatch…', 'panel.dispatch - drive it') + row('prefresh', 'Refresh', 'Reload the panel') + row('pstand', 'Open standalone ↗', 'Open it in a tab of its own');
       /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
       { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
         if (dv.length) h += '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
           return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-layer-key="${k}" title="${esc((on ? 'Close ' : 'Open ') + d.label.toLowerCase() + (d.note ? ' - ' + d.note : '') + ' (a widget beside it)')}">${esc(d.label)}</button>`; }).join(''); }
+      /* the body's own: what it declared as it was drawn, or the kit's actions for its card - never one the menu has above */
+      const SKIP_VO = new Set(['explode', 'canvas']);
+      const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; let o = '';
+        (d.acts || []).forEach((x) => { o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
+        const card = this._kitCard(host, lead); const VO = root.VeraOut; const kit = card && VO && typeof VO.barActions === 'function' ? VO.barActions(card) : { acts: [], menus: [] };
+        kit.acts.filter((x) => !SKIP_VO.has(x.vo)).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
+        return o + (d.menus || []).concat(kit.menus).map((m) => `<div class="hd-dd">${m}</div>`).join(''); };
+      const mine = own(key, c, true); if (mine) h += '<hr>' + mine;
+      c.querySelectorAll('.fu-p[data-key]').forEach((f) => { const o = own(f.dataset.key, f, false); const t = f.querySelector('.fu-t > b');
+        if (o) h += `<hr><div class="hd-lbl">${esc(t ? t.textContent : f.dataset.key)}</div>` + o; });
       const pop = document.createElement('div'); pop.className = 'hd-pop'; pop.dataset.key = key; pop.dataset.w = 'canvas.item.menu'; pop.innerHTML = h;
-      const S = st.getBoundingClientRect(), r = (btn || c).getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
-      st.appendChild(pop);
-      const pw = pop.offsetWidth || 180; let left = Math.round((r.right - S.left) / Z - pw), top = Math.round((r.bottom - S.top) / Z + 4);
-      left = Math.max(4, Math.min(st.clientWidth - pw - 4, left)); pop.style.left = left + 'px'; pop.style.top = top + 'px';
+      this._popPlace(pop, btn, c);
       const doc = this.ownerDocument || document;
       const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true);
         /* a pill's peek kept open for its menu (WSU-79) closes once the menu has, unless the pointer is back on it */
@@ -3457,15 +3441,17 @@
     }
     /* the item's views, under its View button: one row each, the one shown lit; a choice redraws the item that way */
     _viewMenu(key, btn) {
-      const st = this.shadowRoot.getElementById('stage'); if (!st || !key) return;
+      const st = this._popHost(); if (!st || !key) return;
       const had = st.querySelector(':scope > .hd-pop'); if (had) { had.remove(); if (had.dataset.key === key && had.dataset.kind === 'view') return; }
-      const b = this._blockOf(key); if (!b) return; const vw = viewsOf(b, this); if (vw.views.length < 2) return;
+      const b = this._blockOf(key); if (!b) return; const vw = viewsOf(b, this);
+      const c = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
+      const xv = c && (/(?:^|\s)xv-(code|both|structure)(?:\s|$)/.exec(c.className) || [])[1];
+      if (!xv && vw.views.length < 2) return;
       const pop = document.createElement('div'); pop.className = 'hd-pop'; pop.dataset.key = key; pop.dataset.kind = 'view'; pop.dataset.w = 'canvas.item.views';
-      pop.innerHTML = vw.views.map((v) => `<button class="ib vrow${v === vw.cur ? ' on' : ''}" data-act="setview" data-view="${v}" data-layer-key="${esc(key)}"><span class="vic">${HDI[v] || ''}</span>${esc(VIEW_LABEL[v] || v)}</button>`).join('');
-      const S = st.getBoundingClientRect(), r = (btn || st).getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
-      st.appendChild(pop);
-      const pw = pop.offsetWidth || 140; let left = Math.round((r.right - S.left) / Z - pw); left = Math.max(4, Math.min(st.clientWidth - pw - 4, left));
-      pop.style.left = left + 'px'; pop.style.top = Math.round((r.bottom - S.top) / Z + 4) + 'px';
+      pop.innerHTML = xv ? [['code', 'The code alone'], ['both', 'The code and its structure'], ['structure', 'The structure alone']]
+          .map(([v, l]) => `<button class="ib vrow${v === xv ? ' on' : ''}" data-act="xview" data-view="${v}" data-layer-key="${esc(key)}" aria-pressed="${v === xv}">${l}</button>`).join('')
+        : vw.views.map((v) => `<button class="ib vrow${v === vw.cur ? ' on' : ''}" data-act="setview" data-view="${v}" data-layer-key="${esc(key)}"><span class="vic">${HDI[v] || ''}</span>${esc(VIEW_LABEL[v] || v)}</button>`).join('');
+      this._popPlace(pop, btn, c || st);
       const doc = this.ownerDocument || document;
       const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true); };
       setTimeout(() => doc.addEventListener('mousedown', off, true), 0);
@@ -4225,7 +4211,7 @@
         cards.forEach((c, i) => { if (hs[i] > capH && !asked(c)) { c.style.maxHeight = capH + 'px'; c.classList.add('capped'); } }); }
       else cards.forEach((c) => { if (c.classList.contains('capped')) { c.style.maxHeight = ''; c.classList.remove('capped'); } });
       this._fullH = this._fullH || {};
-      const items = cards.map((c, ci) => { const k = c.dataset.key || ''; const hd = c.querySelector(':scope > .it-hd:not(.own-fold)') || c.querySelector(':scope > .it-hd');
+      const items = cards.map((c, ci) => { const k = c.dataset.key || ''; const hd = c.querySelector(':scope > .it-hd');
         // a folded item being previewed is still its folded line to the column: its preview lies over the items below
         const isFolded = c.classList.contains('overfold'); const measured = c.classList.contains('peek') && c._peekH ? c._peekH : c.offsetHeight;
         if (!isFolded) this._fullH[k] = measured;                              // what it is when OPEN: the placer judges on that, so folding cannot oscillate
@@ -4489,12 +4475,9 @@
         const kitEdits = !!(root.VeraOut && key && (b.type === 'code' || b.type === 'markdown'));
         const editable = EDITABLE.includes(b.type) && !kitEdits;
         const bid = b._bid ? String(b.id) : '';   // a keyless block: addressed by its id (canvas.update · canvas.remove · canvas.move)
-        /* ONE HEADER PER ITEM. Several kinds draw a head of their own — a code item its filename and its preview
-           switch, a terminal its host and its dot, an explode item what it is bound to — and the card drew ANOTHER
-           one above it with the same name. Two rows saying what a thing is, one of them with the controls (owner,
-           2026-09-24: "canvas items have 2 header elements ... combine them"). The card's own header is dropped for
-           those kinds: the drawer's head IS the header, and it is the one with the controls on it. */
-        const ownHead = OWN_HEAD.has(b.type);
+        /* ONE HEADER PER ITEM (owner, 2026-09-24: "canvas items have 2 header elements ... combine them"): no kind draws a head
+           of its own any more - the container draws the one head for every kind (DEEP-29 11A.4, owner decision D1 2026-10-16),
+           and what a kind's head held is declared by its body (declare) and drawn by the container. */
         /* the switch into the exploded view, ON THE ITEM it is about — no ghost card in the band offering it. It is
            the same bound explode item as before (keyed explode:<key>, bound by span both ways); the difference is
            that the offer lives where the thing does, and reads as a view of it rather than another card. */
@@ -4509,49 +4492,40 @@
         // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
-        const cls = 'it ' + esc(b.state || 'now') + fcls + (xv ? ' xv-' + xv : '') + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (ownHead ? ' ownhead' : '') + (maxed ? ' maxed' : '') + (maxed && this._autoMax === key ? ' reading' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '') + (this.deskAlign() && this._lockGet()[key] ? ' desk-locked' : '');
+        const cls = 'it ' + esc(b.state || 'now') + fcls + (xv ? ' xv-' + xv : '') + (panes.length ? ' fused' : '') + (fresh ? ' fresh' : '') + (wouldFold ? ' foldable' : '') + (compact ? ' compact' : '') + (wouldFold && hovered ? ' hovopen' : '') + (open ? ' openin' : '') + (aged ? ' aged' : '') + (dec ? ' now' : '') + (isNow ? ' waiting' : '') + (px ? ' sized' : '') + (maxed ? ' maxed' : '') + (maxed && this._autoMax === key ? ' reading' : '') + (ufold ? ' ufold' : '') + (this._hovKey === key ? ' hov' : '') + (this.deskAlign() && this._lockGet()[key] ? ' desk-locked' : '');
         return `<div class="${cls}" data-key="${esc(b.key)}" data-size="${size}" data-type="${esc(b.type)}"${panes.length ? ' data-fuse="' + esc(g.layout) + '" data-fused="' + esc(panes.map(p => p.key).join(' ')) + '"' : ''}${mid ? ' data-mid="' + esc(mid) + '"' : ''}${from ? ' data-from="' + esc(from) + '"' : ''}${anchorMids.length ? ' data-anchors="' + esc(anchorMids.join(' ')) + '"' : ''}${beside ? ' data-beside="' + esc(beside) + '"' : ''}${scoreTxt ? ' data-score="' + esc(scoreTxt) + '"' : ''}${px && !compact ? ' style="height:' + Math.round(px) + 'px"' : ''}${pw && !compact ? ' data-pw="' + Math.round(pw) + '"' : ''}>
-          ${ownHead && !compact && !bid ? `<span class="fd solo" data-act="fold" title="Fold it to its header line - it stays folded until you open it">\u25be</span>` : ''}${ownHead && !compact ? `<span class="dp solo" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx solo${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp solo" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span>` : ''}${
-            /* the header line is drawn for EVERY item. An item whose drawer has its own head shows it only when the COLUMN
-               folds it (its body, and that head inside it, hidden): it used to be nothing but three hover-only icons,
-               0 px tall (owner, 2026-10-04: "if collapsed some canvas elements are only appearing on hover") */ ''}${
-              `<div class="it-hd${ownHead && !compact ? ' own-fold' : ''}">${bid ? '' : `<span class="fd" data-act="fold" title="${ufold ? 'Open it' : 'Fold it to its header line - it stays folded until you open it'}">${ufold ? '\u25b8' : '\u25be'}</span>`}<span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>${b.type === 'panel' && this.deskAlign() ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : ''}${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : ''}${scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : ''}
-            ${mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : ''}<span class="k">${esc(bid ? b.type : b.key)}</span>
-            ${panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : ''}<span class="dp" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span><span class="mx${maxed ? ' on' : ''}" data-act="max" title="${maxed ? 'Restore it to its place in the column' : 'Maximise it in the canvas - it stays there, fixed, until you restore it'}">${maxed ? '\u2750' : '\u26f6'}</span><span class="xp" data-act="open" title="${open ? 'Fold it back' : 'Open in place — the column makes room'}">${open ? '⤡' : '⤢'}</span></div>`}
-          ${this.deskAlign() ? (() => {
-            /* THE DESK CARD'S ONE ROW OF CONTROLS (owner, 2026-10-09: "the controls should mostly be at the top and some like
-               panels have multiple layer of controls and duplicated ones"): a panel card carried its header, the panel's own
-               bar with the title again and six buttons, and a footer rail of five more. On the desk: the few that matter,
-               as icons at the top right; everything else in the ⋯ menu. The footer and the panel's bar are not drawn. */
-            const locked = !!this._lockGet()[key]; const ctxOn = inF && (F || b.state === 'pinned');
-            const hb = (act, ic, title, on) => `<span class="hb${on ? ' on' : ''}" data-act="${act}" role="button" tabindex="0" title="${esc(title)}">${HDI[ic]}</span>`;
-            const vw = viewsOf(b, this);
-            return `<div class="hda" data-w="canvas.item.controls">`
-              + (vw.views.length > 1 ? hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')) : '')
-              + hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked)
-              + (xcode ? '<span class="xvw" role="group" aria-label="Show">' + [['code', 'code', 'The code alone'], ['both', 'both', 'The code and its structure side by side'], ['structure', 'structure', 'The structure alone']]
-                  .map(([v, l, t]) => `<span class="hb xvb${xv === v ? ' on' : ''}" data-act="xview" data-view="${v}" role="button" tabindex="0" aria-pressed="${xv === v}" title="${t}">${l}</span>`).join('') + '</span>' : '')
-              + (xplodable ? hb('explode', xploded ? 'source' : 'explode', xploded ? 'Back to the source alone' : 'See it as a structured diagram', xploded) : '')
-              + (editable ? hb('edit', 'edit', editing ? 'Editing' : 'Edit its text', editing) : '')
-              + (bid ? '' : hb('ctx', 'ctx', ctxOn ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ctxOn))
-              + (maxed ? '' : hb('pill', 'pill', 'Minimise it to a pill on the border - a click on the pill opens it again'))
-              + hb('max', maxed ? 'restore' : 'max', maxed ? 'Restore it' : 'Fill the free desk with it', maxed)
-              + hb('hdmore', 'more', 'More: park, size, back to the arrangement' + (b.type === 'panel' ? ', behind / front, query, refresh, standalone' : ''))
-              + hb('remove', 'drop', 'Take it off the desk')
-              + `</div>`; })() : ''}
+          ${(() => {
+            /* THE ITEM'S ONE HEAD (DEEP-29 11A.4 Decision 4; owner decision D1, 2026-10-16), on every surface of the canvas - the
+               column and the desk - and for every kind. The whole head is the handle: the kind's glyph, the title from the content
+               (never the key), the body's own line (declare), the badges. Then the standard row: view (when there is more than one),
+               lock (on the desk), pill (on the desk; in the column it folds the item to this line), max / restore, more, drop.
+               Everything else - park, pin, size, open in place, in context, explode, edit, run again, the deep dives, the body's
+               own actions - is in the more menu (_hdMenu). A kind's own head, the footer rail and the corner icons are gone. */
+            const desk = this.deskAlign(); const locked = desk && !!this._lockGet()[key]; const d = (this._decl && this._decl[key]) || {};
+            const ctxOn = inF && (F || b.state === 'pinned');
+            (this._cardActs || (this._cardActs = {}))[key] = { explode: xplodable ? { on: xploded } : null, edit: editable ? { on: editing } : null, ctx: bid ? null : { on: ctxOn } };
+            const hb = (act, ic, ttl, on) => `<span class="hb${on ? ' on' : ''}" data-act="${act}" role="button" tabindex="0" title="${esc(ttl)}">${HDI[ic]}</span>`;
+            const vw = viewsOf(b, this); const XV = { code: 'the code alone', both: 'the code and its structure side by side', structure: 'the structure alone' };
+            const ctl = [];
+            if (xcode) ctl.push(hb('hdview', 'source', 'View: ' + XV[xv] + ' - choose another'));
+            else if (vw.views.length > 1) ctl.push(hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')));
+            if (desk) ctl.push(hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked));
+            if (!maxed && !bid) ctl.push(desk ? hb('pill', 'pill', 'Minimise it to a pill on the border - a click on the pill opens it again')
+              : hb('fold', 'pill', ufold ? 'Open it again' : 'Fold it to this line - it stays folded until you open it', ufold));
+            ctl.push(hb('max', maxed ? 'restore' : 'max', maxed ? 'Restore it' : desk ? 'Fill the free desk with it' : 'Maximise it in the canvas - it stays there until you restore it', maxed));
+            ctl.push(hb('hdmore', 'more', 'More: park, pin, size, in context' + (xplodable ? ', explode' : '') + (editable ? ', edit' : '') + ' and its own actions'));
+            ctl.push(hb('remove', 'drop', desk ? 'Take it off the desk' : 'Take it off the canvas'));
+            const nn = ctl.length - (xcode || vw.views.length > 1 ? 1 : 0) - 1;   /* below 320 px the row keeps lock, pill, more, drop */
+            return `<div class="it-hd" style="--hda-n:${ctl.length};--hda-nn:${nn}"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>`
+              + (d.sub ? `<span class="it-sub">${d.sub}</span>` : '')
+              + (b.type === 'panel' && desk ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : '')
+              + (Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : '')
+              + (scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : '')
+              + (mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : '')
+              + (panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : '')
+              + '<span class="dp" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span></div>'
+              + `<div class="hda" data-w="canvas.item.controls">${ctl.join('')}</div>`; })()}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
-          <div class="it-ft" data-w="canvas.item.rail"><span class="it-a">
-              ${xplodable ? `<button data-act="explode" class="${xploded ? 'on' : ''}" title="${xploded ? 'Back to the source alone — the diagram goes' : 'See it as a structured diagram, bound to this item by span'}">${xploded ? 'source' : 'graph'}</button>` : ''}
-              ${editable ? `<button data-act="edit" class="${editing ? 'on' : ''}" title="Edit its text — saved through canvas.update">${editing ? 'Editing' : 'Edit'}</button>` : ''}
-              ${(() => { const vw = viewsOf(b, this); if (vw.views.length < 2 || this.deskAlign()) return ''; const nx = vw.views[(vw.views.indexOf(vw.cur) + 1) % vw.views.length];
-                return `<button data-act="setview" data-view="${nx}" title="Seen as ${esc((VIEW_LABEL[vw.cur] || vw.cur).toLowerCase())} - click for ${esc(VIEW_LABEL[nx].toLowerCase())}">${esc(VIEW_LABEL[vw.cur] || vw.cur)} ↻</button>`; })()}
-              ${plainDoc ? '<button data-act="up" title="Move it up — canvas.move">↑</button><button data-act="down" title="Move it down — canvas.move">↓</button>' : ''}
-              ${bid ? '' : `<button data-act="pin" class="${b.state === 'pinned' ? 'on' : ''}" title="${b.state === 'pinned' ? 'Unpin — back into the flow' : 'Pin above the flow'}">${b.state === 'pinned' ? 'unpin' : 'pin'}</button>
-              <button data-act="park" title="Park it below the flow">park</button>`}
-              <button data-act="size" title="Size: ${size} — click for the next">${size}</button>
-              <button data-act="remove" title="Take it off the canvas">drop</button>
-              ${bid ? '' : `<button data-act="ctx" class="ctx ${inF && (F || b.state === 'pinned') ? 'on' : ''}" title="${b.state === 'pinned' ? 'Pinned — always in context; click to release it' : inF && F ? 'In focus now — pin it to keep it in context' : 'Put it in context — pins it, so it never leaves focus'}">${inF && (F || b.state === 'pinned') ? '✓ In context' : 'In context'}</button>`}
-            </span></div>
           <div class="rz" data-w="canvas.size" title="Drag to resize — it is saved as the item's size"></div></div>`;
       };
       // what Vera can also do — a ghost item in the NOW band; each suggestion becomes an item here when taken
@@ -5314,7 +5288,8 @@
       const key = btn.dataset.layerKey || (pane ? pane.dataset.key : it ? it.dataset.key : '');   /* a layered panel's pill is outside its card */
       /* the desk's ⋯ menu sits on the stage, outside its card: it acts on its card, and goes once one of its entries is used */
       const pop = btn.closest('.hd-pop'); if (pop) pop.remove();
-      if (!it && key) it = [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].find((x) => x.dataset.key === key) || null;
+      if (!it && key) { const all = [...this.shadowRoot.querySelectorAll('.it[data-key]')]; it = all.find((x) => x.dataset.key === key)
+        || all.find((x) => [...x.querySelectorAll('.fu-p[data-key]')].some((f) => f.dataset.key === key)) || null; }
       if (act === 'lock') return this.toggleLock(key);
       if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }   /* WSU-55 */
       if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
@@ -5326,7 +5301,9 @@
       if (act === 'hdmore') return this._hdMenu(key, btn);
       if (act === 'xview') { (this._xpView = this._xpView || {})[key] = btn.dataset.view || 'both'; if (this._doc) this.render(this._doc); return; }   /* WSU-54 */
       if (act === 'hdview') return this._viewMenu(key, btn);
-      if (act === 'ownbtn') { const o = it && it._ownBtns && it._ownBtns[+btn.dataset.own]; if (o) { try { o.click(); } catch (e) { /* its own handler */ } } return; }   /* a card's own head's button, from its ⋯ menu */
+      /* a body drawn by the shared kit (code, a diagram, a file): its own action, run by the kit on its card (VeraOut.actOn) */
+      if (act === 'vo') { const fu = it && [...it.querySelectorAll('.fu-p[data-key]')].find((f) => f.dataset.key === key);
+        const card = this._kitCard(fu || it, !fu); const VO = root.VeraOut; if (card && VO && typeof VO.actOn === 'function') VO.actOn(card, btn.dataset.voAct); return; }
       /* a view chosen (see VIEWS): a records item keeps it with its browsing state, any other kind in the view store */
       if (act === 'setview') { const v = btn.dataset.view; const b = this._blockOf(key); if (!v || !b) return;
         if (b.type === 'records') { const st = recState(this, key); st.view = v; st.page = 0; } else viewSet(this, key, v);

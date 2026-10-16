@@ -19,7 +19,7 @@ t('a redraw on the stage puts the column back where it was',
 t('the turn in view changing still redraws (it is the redraw that must not move the column)', /if \(fm !== this\._focusMid\) \{ this\._focusMid = fm;/.test(SRC));
 
 // ── maximise ────────────────────────────────────────────────────────────────────────────────────────────────────
-t('every item carries the maximise control, in both heads', (SRC.match(/data-act="max"/g) || []).length === 2);
+t('every item carries the maximise control, in its one head', SRC.includes("ctl.push(hb('max', maxed ? 'restore' : 'max'") && !SRC.includes('class="mx'));
 t('the control reaches the dispatcher', /if \(act === 'max'\) return this\._toggleMax\(key\);/.test(SRC));
 t('the choice is kept per canvas', /'vera:canvas:max:' \+ this\.canvasId/.test(SRC));
 t('a maximised item is open', /const open = this\._open\.has\(key\) \|\| editing \|\| this\._max === key;/.test(SRC));

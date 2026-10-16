@@ -49,7 +49,7 @@ t("a card's Send menu opens over the page, under its button, put right if an anc
 t('the outline kind never wraps', K.includes('.code-card .vo-ol-k{flex:0 0 auto;min-width:64px;white-space:nowrap;'));
 
 // the canvas
-t('the canvas keeps a page on source when the reader switches it', C.includes("cls: 'vc-kit', incomplete: streaming, autoPrev: false });"));
+t('the canvas keeps a page on source when the reader switches it', C.includes("cls: 'vc-kit', incomplete: streaming, autoPrev: false, bar: false });"));
 t('a canvas diagram is the kit\'s diagram card over the live drawing', C.includes("+ VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit',") && C.includes('.vc-diagwrap .vc-live{height:var(--dh,150px);max-height:400px}'));
 t('a canvas html item carries Send to', C.includes("VO.sendMenu('cvh-' + key, { getMd: () => '```html\\n' + src.replace(/\\n$/, '') + '\\n```', raw: () => src,"));
 
