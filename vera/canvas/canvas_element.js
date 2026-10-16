@@ -473,6 +473,29 @@
      answer's order; the filter keeps the rows with it in any shown cell; columns can be hidden; Copy puts the rows shown
      on the clipboard as tab-separated text, CSV downloads them. The reader's state is the element's, per item, never
      written (like the JSON lens and a records item's browsing). */
+  /* the long document's reading state (DU-E-markdown): find, its place among the matches, the rail, the width - the
+     element's, per item, never written. Find marks the drawn text in place (no redraw, so typing keeps its box). */
+  const mdUi = (el, key) => { if (!el || !key) return { q: '', i: 0, rail: true, wide: false }; const m = el._mdUi || (el._mdUi = {}); return m[key] || (m[key] = { q: '', i: 0, rail: true, wide: false }); };
+  function mdMark(wrap, q) {
+    const md = wrap && wrap.querySelector('.vc-md'); if (!md) return 0;
+    md.querySelectorAll('mark.vc-mdhit').forEach((m) => { const t = m.ownerDocument.createTextNode(m.textContent); m.replaceWith(t); }); md.normalize();
+    const n = wrap.querySelector('.vc-mdn'); q = String(q || '').trim(); if (!q) { if (n) n.textContent = ''; return 0; }
+    const low = q.toLowerCase(); const doc = md.ownerDocument; const walk = doc.createTreeWalker(md, 4); const hits = []; let t;
+    while ((t = walk.nextNode())) { if (t.parentElement && t.parentElement.closest('script,style')) continue; const s = t.nodeValue.toLowerCase(); let i = s.indexOf(low); while (i >= 0) { hits.push([t, i]); i = s.indexOf(low, i + low.length); } }
+    for (let k = hits.length - 1; k >= 0; k--) { const [node, i] = hits[k]; const after = node.splitText(i); after.splitText(q.length); const m = doc.createElement('mark'); m.className = 'vc-mdhit'; after.replaceWith(m); m.appendChild(after); }
+    if (n) n.textContent = hits.length ? hits.length + (hits.length === 1 ? ' match' : ' matches') : 'none';
+    return hits.length;
+  }
+  /* bring a node into view inside its card - the card's own scroller, never the desk */
+  function mdShow(node) {
+    let sc = node && node.parentElement; while (sc && !(sc.scrollHeight > sc.clientHeight + 2 && /auto|scroll/.test(getComputedStyle(sc).overflowY))) { if (sc.classList && sc.classList.contains('it')) { sc = null; break; } sc = sc.parentElement; }
+    if (!sc) return; const r = node.getBoundingClientRect(), s = sc.getBoundingClientRect(); sc.scrollTop += r.top - s.top - sc.clientHeight / 4;
+  }
+  function mdStep(wrap, ui, d) {
+    const ms = wrap ? [...wrap.querySelectorAll('mark.vc-mdhit')] : []; if (!ms.length) return;
+    ui.i = ((ui.i || 0) + d + ms.length) % ms.length; ms.forEach((m, k) => m.classList.toggle('cur', k === ui.i)); mdShow(ms[ui.i]);
+    const n = wrap.querySelector('.vc-mdn'); if (n) n.textContent = (ui.i + 1) + ' of ' + ms.length;
+  }
   const tblUi = (el, key) => { if (!el || !key) return { sort: -1, dir: 1, q: '', hide: {}, cols: false }; const m = el._tblUi || (el._tblUi = {}); return m[key] || (m[key] = { sort: -1, dir: 1, q: '', hide: {}, cols: false }); };
   const tblNum = (v) => { const s = String(v == null ? '' : v).replace(/[,%$£€\s]/g, ''); return s !== '' && isFinite(+s) ? +s : null; };
   /* the rows the bar shows, in its order: [index into the answer's rows, row] */
@@ -560,7 +583,20 @@
         row = VO.proseMenu('cvp-' + key, { md, canvas: false, explode: false,
           extra: own('edit', 'edit', 'Edit', 'Edit this text - the item keeps your version') + own('explode', 'explode', 'Explode', 'A structured diagram of this text, beside it') });
       }
-      return `<div class="vc-md">${body}</div>` + (row ? `<div class="vc-prose-row">${row}</div>` : '');
+      /* A LONG DOCUMENT (DU-E-markdown, ESTATE-UI-REVIEW §6: "outline rail, find, reading width"): its headings as an
+         outline that jumps, find in the text (marked in place, step through), and a reading width it can leave. A short
+         one is drawn as before. */
+      const heads = []; let hi = 0;
+      const marked = body.replace(/<h([1-4])(\b[^>]*)>([\s\S]*?)<\/h\1>/g, (m, lv, at, inner) => { const i = hi++; heads.push({ lv: +lv, i, text: String(inner).replace(/<[^>]+>/g, '').trim() }); return '<h' + lv + at + ' data-mdh="' + i + '">' + inner + '</h' + lv + '>'; });
+      if (shown.length < 1500 && heads.length < 3) return `<div class="vc-md">${body}</div>` + (row ? `<div class="vc-prose-row">${row}</div>` : '');
+      const ui = mdUi(el, key); const ico = (s) => `<span aria-hidden="true">${s}</span>`;
+      const bar = `<div class="vc-mdbar"><input class="vc-mdq" data-md-q="${esc(key || '')}" placeholder="find in the text" value="${esc(ui.q || '')}" spellcheck="false"><span class="vc-mdn"></span>`
+        + `<button class="ib" data-act="mdprev" title="The match before">${ico('\u2191')}</button><button class="ib" data-act="mdnext" title="The next match (Enter)">${ico('\u2193')}</button>`
+        + (heads.length >= 3 ? `<button class="ib${ui.rail ? ' on' : ''}" data-act="mdrail" title="The headings, to jump to">outline</button>` : '')
+        + `<button class="ib${ui.wide ? ' on' : ''}" data-act="mdwidth" title="${ui.wide ? 'Back to a reading width' : 'Use the whole card'}">${ui.wide ? 'reading width' : 'full width'}</button></div>`;
+      const rail = heads.length >= 3 && ui.rail ? `<nav class="vc-mdrail">` + heads.map((h) => `<button class="l${h.lv}" data-act="mdgo" data-h="${h.i}" title="${esc(h.text)}">${esc(h.text)}</button>`).join('') + `</nav>` : '';
+      return `<div class="vc-mdwrap${ui.wide ? ' wide' : ''}" data-md-key="${esc(key || '')}">` + bar + `<div class="vc-mdmain">` + rail + `<div class="vc-md">${marked}</div></div></div>`
+        + (row ? `<div class="vc-prose-row">${row}</div>` : '');
     },
 
     /* A MONTH, WITH WHAT IS ON IT. Backed by the diary rather than by a copy of it: the month buttons and a day
@@ -2431,6 +2467,20 @@
   .vc-json details{margin-left:2px}.vc-json summary{cursor:pointer;color:var(--dim,#6b7480);list-style:none}.vc-json summary::before{content:'\u25b8 ';font-size:9px}.vc-json details[open] > summary::before{content:'\u25be '}
   .vc-json .j-row{display:flex;gap:6px;padding-left:12px;min-width:0}.vc-json .j-k{color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-json .j-k::after{content:':'}
   .vc-json .j-str{color:var(--acc2,#8fb87a);word-break:break-word}.vc-json .j-num{color:var(--acc3,#c9955a)}.vc-json .j-null,.vc-json .j-more{color:var(--dim,#6b7480)}
+  /* the long document (DU-E-markdown) */
+  .vc-mdwrap{container-type:inline-size;display:flex;flex-direction:column;min-height:0}
+  .vc-mdbar{display:flex;align-items:center;gap:5px;padding:0 0 6px;opacity:.6;transition:opacity .15s}.it:is(:hover,:focus-within) .vc-mdbar,.vc-mdbar:has(.vc-mdq:not(:placeholder-shown)){opacity:1}
+  .vc-mdq{flex:1 1 auto;min-width:60px;max-width:260px;font:11px system-ui,sans-serif;padding:2px 6px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit}
+  .vc-mdn{font:10px system-ui,sans-serif;color:var(--dim,#6b7480);white-space:nowrap;min-width:0}.vc-mdbar .ib{font-size:10px;padding:1px 6px}.vc-mdbar .ib.on{color:var(--acc,#5a9e8f)}
+  .vc-mdmain{display:flex;gap:14px;min-height:0;align-items:flex-start}.vc-mdmain > .vc-md{flex:1 1 auto;min-width:0}
+  /* the long document scrolls inside its card: the body clips (a 1346 px report showed 963 px, the rest unreachable) */
+  .it-bd > .vc-mdwrap{flex:1 1 auto;min-height:0}.vc-mdwrap > .vc-mdmain{flex:1 1 auto;min-height:0;overflow:auto;overscroll-behavior:contain}
+  .vc-mdwrap:not(.wide) .vc-mdmain > .vc-md{max-width:72ch;margin:0 auto}
+  .vc-mdrail{flex:0 0 160px;position:sticky;top:0;max-height:70vh;overflow:auto;border-right:1px solid var(--line,#2a2f36);padding-right:6px;font:11px/1.5 system-ui,sans-serif}
+  .vc-mdrail button{all:unset;display:block;cursor:pointer;padding:1px 4px;color:var(--dim,#8b93a1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;box-sizing:border-box;border-radius:3px}
+  .vc-mdrail button:hover{color:var(--fg,#dce1e8);background:color-mix(in srgb,var(--fg,#dce1e8) 6%,transparent)}.vc-mdrail .l1{font-weight:600}.vc-mdrail .l3{padding-left:12px}.vc-mdrail .l4{padding-left:20px}
+  @container (max-width: 520px){ .vc-mdrail{display:none} }
+  mark.vc-mdhit{background:color-mix(in srgb,var(--acc3,#c9955a) 35%,transparent);color:inherit;border-radius:2px}mark.vc-mdhit.cur{background:color-mix(in srgb,var(--acc3,#c9955a) 75%,transparent);outline:1px solid var(--acc3,#c9955a)}
   /* the table bar (DU-E-table) */
   .vc-tbarwrap{display:flex;flex-direction:column;min-height:0}
   .vc-tbar{display:flex;align-items:center;gap:6px;padding:0 0 4px;position:sticky;left:0;top:0;z-index:2;background:var(--s1,var(--bg1,#15181d))}
@@ -5322,6 +5372,12 @@
         if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); this._rzLetGo = key; try { this._placeNow(); } catch (e) { /* optional */ } finally { this._rzLetGo = null; } }
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage') && !this.deskAlign()) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.mdQ == null) return;   /* find in a long document (DU-E-markdown) */
+        const ui = mdUi(this, q.dataset.mdQ); ui.q = String(q.value || ''); ui.i = -1; clearTimeout(this._mdQT);
+        this._mdQT = setTimeout(() => { const wrap = q.closest('.vc-mdwrap'); if (mdMark(wrap, ui.q)) mdStep(wrap, ui, 1); }, 150); });
+      body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.mdQ == null || ev.key !== 'Enter') return; ev.preventDefault();
+        mdStep(q.closest('.vc-mdwrap'), mdUi(this, q.dataset.mdQ), ev.shiftKey ? -1 : 1); });
+      this.addEventListener('vera:canvas:placed', () => { try { this._mdAgain(); } catch (e) { /* optional */ } });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.tblQ == null) return;   /* the table bar's filter (DU-E-table) */
         const key = q.dataset.tblQ; tblUi(this, key).q = String(q.value || ''); clearTimeout(this._tblQT);
         this._tblQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
@@ -5781,6 +5837,9 @@
       return this.__voh;
     }
     _ref(key) { const bid = this._bidOf(key); return bid ? { block_id: bid } : { key }; }
+    /* the long documents' finds, marked again after a redraw rebuilt their text (DU-E-markdown) */
+    _mdAgain() { const sr = this.shadowRoot; if (!sr || !this._mdUi) return;
+      sr.querySelectorAll('.vc-mdwrap[data-md-key]').forEach((w) => { const ui = this._mdUi[w.dataset.mdKey]; if (ui && ui.q && !w.querySelector('mark.vc-mdhit')) { mdMark(w, ui.q); if (ui.i >= 0) { ui.i -= 1; mdStep(w, ui, 1); } } }); }
     /* every action on the column — the old per-item controls (pin · park · size · remove) and the board's new ones
        (add · open · edit · answer · take · in context) — one dispatcher */
     _act(btn, ev) {
@@ -5812,6 +5871,12 @@
         else this._sepSet(key, act === 'cmpsep');
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
+      /* the long document (DU-E-markdown): step through the matches, jump to a heading, the rail and the width */
+      if (act === 'mdprev' || act === 'mdnext' || act === 'mdgo' || act === 'mdrail' || act === 'mdwidth') { const ui = mdUi(this, key); const wrap = btn.closest('.vc-mdwrap');
+        if (act === 'mdprev' || act === 'mdnext') { mdStep(wrap, ui, act === 'mdnext' ? 1 : -1); return; }
+        if (act === 'mdgo') { const h = wrap && wrap.querySelector('[data-mdh="' + btn.dataset.h + '"]'); if (h) mdShow(h); return; }
+        if (act === 'mdrail') ui.rail = !ui.rail; else ui.wide = !ui.wide;
+        if (this._doc) this.render(this._doc); this._mdAgain(); return; }
       /* the table bar (DU-E-table): sort by a header (again: the other way; a third time: the answer's order), the column
          picker and a column in it, copy (tab-separated) and CSV of the rows shown */
       if (act === 'tblsort' || act === 'tblcols' || act === 'tblcol' || act === 'tblcopy' || act === 'tblcsv') { const ui = tblUi(this, key); const c = this._contentOf(key) || {};
