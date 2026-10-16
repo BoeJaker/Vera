@@ -9,19 +9,16 @@ const path = require('path');
 const S = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'vera-dashboard.js'), 'utf8');
 let n = 0; const t = (name, fn) => { fn(); n++; console.log('ok -', name); };
 
+/* owner 2026-10-16: the head keeps the controls of what is in it - the tile's own buttons stay visible, no more menu */
 t('every wired tile gets the item head', () => { assert(S.includes('      addPopButtons(w);\n      itemHead(w);\n    }')); });
 t('the row is the item row, in order; a section divider keeps more and drop', () => {
   const i = S.indexOf('function itemHead(w)'); const B = S.slice(i, i + 2000);
-  const o = ["hb('pill'", "hb('max'", "hb('more'", "hb('drop'"].map((x) => B.indexOf(x)); assert(o.every((x) => x > 0)); assert.deepStrictEqual(o, o.slice().sort((a, b) => a - b));
+  const o = ["hb('pill'", "hb('max'", "hb('drop'"].map((x) => B.indexOf(x)); assert(o.every((x) => x > 0)); assert.deepStrictEqual(o, o.slice().sort((a, b) => a - b)); assert(!B.includes("hb('more'"));
   assert(B.includes("(sec ? '' :"));
 });
-t('the tile\'s own buttons are never drawn in the head; the row shows on hover, focus, arranging, floating', () => {
-  assert(S.includes("'.widget > .w-head > .w-actions{display:none!important}',"));
+t('the tile\'s own buttons stay in its head (its hide button is the drop control\'s twin); the row shows on hover, focus, arranging, floating', () => {
+  assert(S.includes("'.widget > .w-head > .w-actions > .vd-dup{display:none!important}',") && S.includes("if (isHideBtn(x)) x.classList.add('vd-dup');") && !S.includes('function tileMenu('));
   assert(S.includes("'.widget:is(:hover,:focus-within,.floating,.vd-full,.vd-pill) > .w-head > .vd-row,.dash-grid.editing .widget > .w-head > .vd-row{display:inline-flex}',"));
-});
-t('the more menu shows the tile\'s own buttons and puts them back', () => {
-  assert(S.includes('function tileMenu(w, btn)') && S.includes('row.appendChild(b);') && S.includes('pop._close = function () { back.forEach('));
-  assert(S.includes("filter(function (b) { return !(b.tagName === 'BUTTON' && isHideBtn(b)); })"), 'hide is the drop control, not a menu entry');
 });
 t('pill folds to the head line and is kept; max fills the view in page pixels and Esc restores; drop docks a floating tile', () => {
   assert(S.includes("'.dash-grid .widget.vd-pill{grid-row:span 1!important;") && S.includes("faceSet(w.dataset.wid, on ? 'pill' : '');") && S.includes("if (faces()[w.dataset.wid] === 'pill' && !sec) pillToggle(w, true);"));

@@ -358,6 +358,8 @@ html[data-blocks="off"] .msg-body blockquote,html[data-blocks="off"] .msg-body .
 .wblk .whb{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:0;border-radius:6px;background:transparent;color:var(--dim);cursor:pointer;padding:0}
 .wblk .whb:hover{color:var(--text);background:color-mix(in srgb,var(--acc) 14%,transparent)}.wblk .whb.on{color:var(--acc)}
 .wblk .whb:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.wblk .whx{border:0;background:transparent;color:var(--dim2);font:500 10px/1 var(--f-ui,var(--sans,system-ui,sans-serif));text-transform:none;letter-spacing:0;padding:4px 7px;border-radius:5px;cursor:pointer;white-space:nowrap}
+.wblk .whx:hover{color:var(--text);background:color-mix(in srgb,var(--acc) 14%,transparent)}.wblk .whx:disabled{opacity:.6}
 .wblk.wfold .wb{display:none}
 .wmenu{position:fixed;z-index:var(--z-pop,230);min-width:220px;max-width:340px;padding:6px;border-radius:9px;background:var(--bg2);border:1px solid var(--border2,var(--border));box-shadow:0 10px 28px color-mix(in srgb,var(--bg0) 60%,transparent);display:flex;flex-direction:column;gap:6px;font-size:11px;color:var(--text)}
 .wmenu button{text-align:left;border:0;background:none;color:var(--text);padding:5px 8px;border-radius:6px;font:inherit;cursor:pointer}.wmenu button:hover{background:color-mix(in srgb,var(--acc) 14%,transparent)}
@@ -6891,7 +6893,8 @@ IMPORTANT:
     max:'<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/>', restore:'<path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/>',
     more:'<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>' });
   function _wRow(id){ const hb=(a,ic,t)=>'<button type="button" class="whb" data-wa="'+a+'" title="'+esc(t)+'" onclick="CH._wAct(\''+id+'\',\''+a+'\',this)">'+_W_ICON[ic]+'</button>';
-    return '<span class="wrow" data-w="reply.item.controls">'+hb('form','view','Another form over the same data')+hb('fold','pill','Fold it to its head line')+hb('xl','max','Open it at XL - a larger drawing, in place')+hb('more','more','More: put it on the canvas, how it was chosen, its record')+'</span>'; }
+    /* its own control first, labelled: Pin to canvas (owner 2026-10-16: the head shows what is relevant to what is in it) */
+    return '<span class="wrow" data-w="reply.item.controls"><button type="button" class="whx" onclick="CH._wPin(\''+id+'\',this)" title="A copy of the record onto the canvas — the same key brings the first item back">Pin to canvas</button>'+hb('form','view','Another form over the same data')+hb('fold','pill','Fold it to its head line')+hb('xl','max','Open it at XL - a larger drawing, in place')+hb('more','more','More: how it was chosen, its record')+'</span>'; }
   function _wAct(id, a, btn){ const el=document.getElementById(id); if(!el) return;
     if(a==='form') return _wForm(id);
     if(a==='xl') return _wXl(id, btn);
@@ -6900,8 +6903,7 @@ IMPORTANT:
   function _wMenu(id, btn){ const had=document.querySelector('.wmenu'); if(had){ had.remove(); if(had.dataset.id===id) return; }
     const w=_W_STORE[id]; if(!w) return;
     const m=document.createElement('div'); m.className='wmenu'; m.dataset.id=id; m.dataset.w='reply.item.menu';
-    m.innerHTML='<button onclick="CH._wPin(\''+id+'\',this)" title="A copy of the record onto the canvas — the same key brings the first item back">Pin to canvas</button>'
-      +'<div class="wm-by">'+(w.by==='rule'?'by <b>rule</b> · the result\'s shape':w.by==='you'?'chosen by <b>you</b>':'chosen by <b>aide</b>')+' · form: '+esc(w.rec.draw.form)+(w.drawn?' · drawn as '+esc(w.drawn)+' (the data\'s shape)':'')+'</div>'
+    m.innerHTML='<div class="wm-by">'+(w.by==='rule'?'by <b>rule</b> · the result\'s shape':w.by==='you'?'chosen by <b>you</b>':'chosen by <b>aide</b>')+' · form: '+esc(w.rec.draw.form)+(w.drawn?' · drawn as '+esc(w.drawn)+' (the data\'s shape)':'')+'</div>'
       +'<div class="wm-rec">'+esc(String(w.recTxt||'').replace(/form: ?"?[a-z_]+"?/,'form: "'+w.rec.draw.form+'"'))+'</div>';
     document.body.appendChild(m); const r=btn.getBoundingClientRect(), pw=m.offsetWidth||240;
     m.style.left=Math.max(4,Math.min(innerWidth-pw-4,r.right-pw))+'px'; m.style.top=Math.round(r.bottom+4)+'px';

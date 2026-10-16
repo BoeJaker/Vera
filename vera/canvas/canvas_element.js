@@ -1612,6 +1612,20 @@
   .it:focus{outline:none}
   .it:focus-visible,.hda > .hb:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:1px}
   .it:not(.desk-chip):not(.ghost) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
+  /* the item's own actions in its head (owner 2026-10-16): small labelled buttons after the title; a narrow card keeps the
+     most used (data-pri), the rest are in its more menu */
+  .it-hd > .it-acts{display:inline-flex;flex:0 1 auto;min-width:0;gap:2px;align-items:center;margin-left:6px;overflow:hidden}
+  .it-hd > .it-acts > .hx{flex:0 0 auto;display:inline-flex;align-items:center;height:20px;padding:0 7px;border:0;border-radius:5px;background:transparent;font:500 10px/1 var(--f-ui,var(--sans,system-ui,sans-serif));color:var(--dim2,#8a92a0);cursor:pointer;text-decoration:none;white-space:nowrap}
+  .it-hd > .it-acts > .hx:hover{color:var(--fg,#dce1e8);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .it-hd > .it-acts > .hx.on{color:var(--acc,#5a9e8f)}
+  .it-hd > .it-acts > .hx:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:1px}
+  @container (max-width: 640px) { .it-hd > .it-acts > .hx:not([data-pri="0"]):not([data-pri="1"]):not([data-pri="2"]):not([data-pri="3"]){display:none} }
+  @container (max-width: 460px) { .it-hd > .it-acts > .hx:not([data-pri="0"]):not([data-pri="1"]){display:none} }
+  @container (max-width: 340px) { .it-hd > .it-acts{display:none} }
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-chip > .it-hd > .it-acts{display:none!important}
+  /* while the row shows (hover, focus, locked, full) the head makes room for it, so its own buttons are never under the row */
+  :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-n, 0) * 27px + 14px)!important}
+  @container (max-width: 320px) { :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-nn, 0) * 27px + 14px)!important} }
   /* the body's own line (a terminal's host and shell, a cell's notebook, a diagram's size): quiet, beside the title */
   .it-hd > .it-sub{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px/1.2 var(--mono,ui-monospace,monospace);color:var(--dim,#6b7480)}
   .it-hd > .it-sub > .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:var(--dim,#6b7480)}
@@ -3437,6 +3451,9 @@
       const row = (act, label, title, on, kk) => `<button class="ib${on ? ' on' : ''}" data-act="${act}" data-layer-key="${kk == null ? k : esc(kk)}" title="${esc(title || label)}">${esc(label)}</button>`;
       const hd = (a) => c.querySelector(':scope > .hda > .hb[data-act="' + a + '"]');
       const ca = (this._cardActs && this._cardActs[key]) || {};
+      /* what the head already shows is not repeated here: a head button that fits (data-pri) is visible; one a narrow card
+         hides is listed */
+      const inHead = (sel) => { const x = c.querySelector(':scope > .it-hd > .it-acts > ' + sel); return !!(x && x.offsetParent !== null && getComputedStyle(x).display !== 'none'); };
       /* a narrow card's row keeps lock, pill, ⋯ and drop, and a pill open under the pointer shows only ⋯ (WSU-79): the row's
          other controls are here instead (never in both) */
       const narrow = c.offsetWidth <= 320; const peek = c.classList.contains('pill-open') && !c.classList.contains('desk-win');
@@ -3452,12 +3469,12 @@
       if (desk && !bid) h += row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line');
       h += c.classList.contains('cmp-front') ? row('cmpsep', 'Take it out of the group', 'Show it as a card of its own; the group keeps its other tabs')
         : this._sepGet()[key] ? row('cmpjoin', 'Combine with similar items', 'Put it back with the items of its kind on its topic, as a tab') : '';
-      if (ca.explode) h += row('explode', ca.explode.on ? 'Back to the source' : 'Explode', ca.explode.on ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', ca.explode.on);
-      if (ca.edit) h += row('edit', ca.edit.on ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', ca.edit.on);
+      if (ca.explode && !inHead('[data-act="explode"]')) h += row('explode', ca.explode.on ? 'Back to the source' : 'Explode', ca.explode.on ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', ca.explode.on);
+      if (ca.edit && !inHead('[data-act="edit"]')) h += row('edit', ca.edit.on ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', ca.edit.on);
       if (ca.ctx) h += row('ctx', ca.ctx.on ? '✓ In context' : 'Put in context', ca.ctx.on ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ca.ctx.on);
-      if (b.type === 'result' && b.content && b.content.cap) h += row('rerun', 'Run again', 'Run ' + b.content.cap + ' again with the same arguments');
+      if (b.type === 'result' && b.content && b.content.cap && !inHead('[data-act="rerun"]')) h += row('rerun', 'Run again', 'Run ' + b.content.cap + ' again with the same arguments');
       if (peek) h += row('remove', 'Take it off the desk', 'Take it off the desk');
-      if (b.type === 'panel') h += '<hr>' + (desk ? row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front') : '')
+      if (b.type === 'panel' && !inHead('[data-act="prefresh"]')) h += '<hr>' + (desk ? row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front') : '')
         + row('pquery', 'Query', 'panel.query - what the panel holds') + row('pdispatch', 'Dispatch…', 'panel.dispatch - drive it') + row('prefresh', 'Refresh', 'Reload the panel') + row('pstand', 'Open standalone ↗', 'Open it in a tab of its own');
       /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
       { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
@@ -3466,9 +3483,9 @@
       /* the body's own: what it declared as it was drawn, or the kit's actions for its card - never one the menu has above */
       const SKIP_VO = new Set(['explode', 'canvas']);
       const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; let o = '';
-        (d.acts || []).forEach((x) => { o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
+        (d.acts || []).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
         const card = this._kitCard(host, lead); const VO = root.VeraOut; const kit = card && VO && typeof VO.barActions === 'function' ? VO.barActions(card) : { acts: [], menus: [] };
-        kit.acts.filter((x) => !SKIP_VO.has(x.vo)).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
+        kit.acts.filter((x) => !SKIP_VO.has(x.vo) && (kk !== key || !inHead('[data-vo-act="' + x.vo + '"]'))).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
         return o + (d.menus || []).concat(kit.menus).map((m) => `<div class="hd-dd">${m}</div>`).join(''); };
       const mine = own(key, c, true); if (mine) h += '<hr>' + mine;
       c.querySelectorAll('.fu-p[data-key]').forEach((f) => { const o = own(f.dataset.key, f, false); const t = f.querySelector('.fu-t > b');
@@ -4569,9 +4586,29 @@
             if (!maxed && !bid) ctl.push(desk ? hb('pill', 'pill', 'Minimise it to a pill on the border - a click on the pill opens it again')
               : hb('fold', 'pill', ufold ? 'Open it again' : 'Fold it to this line - it stays folded until you open it', ufold));
             ctl.push(hb('max', maxed ? 'restore' : 'max', maxed ? 'Restore it' : desk ? 'Fill the free desk with it' : 'Maximise it in the canvas - it stays there until you restore it', maxed));
-            ctl.push(hb('hdmore', 'more', 'More: park, pin, size, in context' + (xplodable ? ', explode' : '') + (editable ? ', edit' : '') + ' and its own actions'));
+            ctl.push(hb('hdmore', 'more', 'More: park, pin, size, the arrangement, in context, deep dives - and what does not fit in the head'));
             ctl.push(hb('remove', 'drop', desk ? 'Take it off the desk' : 'Take it off the canvas'));
             const nn = ctl.length - (xcode || vw.views.length > 1 ? 1 : 0) - 1;   /* below 320 px the row keeps lock, pill, more, drop */
+            /* THE CONTROLS OF WHAT IS IN IT, IN ITS HEAD (owner, 2026-10-16: "the unified header should have controls relevant to
+               whatever is in it not the same controls for everything - i dont want everything to be chucked into the ⋯ menu"):
+               after the title, the item's own actions as buttons - a code card's Copy, Run, Edit, Preview; a terminal's Attach
+               and Share; a panel's Refresh and Query; a result's Run again; Edit and Explode where they apply - most used first.
+               A narrow card shows the first few (data-pri); only what does not fit is in the more menu. */
+            const ax = []; const hx = (attrs, label, title, on) => ax.push(`<button type="button" class="hx${on ? ' on' : ''}" ${attrs} title="${esc(title || label)}">${esc(label)}</button>`);
+            let kit = null; const VO = root.VeraOut;
+            if (typeof document !== 'undefined' && document.createElement && VO && typeof VO.barActions === 'function' && /class="code-card/.test(inner)) {
+              try { const tp = document.createElement('template'); tp.innerHTML = inner; const kc = tp.content.querySelector('.code-card[data-cb]'); if (kc) kit = VO.barActions(kc); } catch (e) { kit = null; } }
+            const RANK = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'];
+            if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane').sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
+              .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
+            (d.acts || []).forEach((a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"`, a.label, a.title, a.on); });
+            if (b.type === 'panel') { if (desk) { const L0 = (this._layer || {})[key] || ''; hx('data-act="layer-behind"', 'Behind', 'Fill the free desk, under the other items', L0 === 'behind'); hx('data-act="layer-front"', 'Front', 'Fill the free desk, over the other items', L0 === 'front'); }
+              hx('data-act="prefresh"', 'Refresh', 'Reload the panel'); hx('data-act="pquery"', 'Query', 'panel.query - what the panel holds'); hx('data-act="pdispatch"', 'Dispatch', 'panel.dispatch - drive it'); hx('data-act="pstand"', 'Standalone ↗', 'Open it in a tab of its own'); }
+            if (b.type === 'result' && c.cap) hx('data-act="rerun"', 'Run again', 'Run ' + c.cap + ' again with the same arguments');
+            if (editable && !kit) hx('data-act="edit"', editing ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', editing);
+            if (xplodable && !xcode) hx('data-act="explode"', xploded ? 'Source' : 'Explode', xploded ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', xploded);
+            else if (xcode) hx('data-act="explode"', 'Source', 'Back to the source alone - the diagram goes', true);
+            const acts = ax.length ? '<span class="it-acts" data-w="canvas.item.actions">' + ax.map((x, i) => x.replace(/^<(button|a) /, '<$1 data-pri="' + i + '" ')).join('') + '</span>' : '';
             return `<div class="it-hd" style="--hda-n:${ctl.length};--hda-nn:${nn}"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>`
               + (d.sub ? `<span class="it-sub">${d.sub}</span>` : '')
               + (b.type === 'panel' && desk ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : '')
@@ -4579,6 +4616,7 @@
               + (scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : '')
               + (mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : '')
               + (panes.length ? '<span class="fu-w" title="' + esc(panes.length + ' fused: ' + g.why) + '">+' + panes.length + '</span>' : '')
+              + acts
               + '<span class="dp" data-act="desk-auto" title="Placed by hand on the desk - back to the arrangement">⤺</span></div>'
               + `<div class="hda" data-w="canvas.item.controls">${ctl.join('')}</div>`; })()}
           <div class="it-bd${panes.length ? ' fu fu-' + esc(g.layout) : ''}">${inner}${panes.map(paneHtml).join('')}</div>
@@ -5391,7 +5429,9 @@
       if (act === 'hdview') return this._viewMenu(key, btn);
       /* a body drawn by the shared kit (code, a diagram, a file): its own action, run by the kit on its card (VeraOut.actOn) */
       if (act === 'vo') { const fu = it && [...it.querySelectorAll('.fu-p[data-key]')].find((f) => f.dataset.key === key);
-        const card = this._kitCard(fu || it, !fu); const VO = root.VeraOut; if (card && VO && typeof VO.actOn === 'function') VO.actOn(card, btn.dataset.voAct); return; }
+        const card = this._kitCard(fu || it, !fu); const VO = root.VeraOut; if (card && VO && typeof VO.actOn === 'function') { Promise.resolve(VO.actOn(card, btn.dataset.voAct)).finally(() => {
+          if (!btn.isConnected || !btn.classList.contains('hx')) return; const k = card.querySelector(':scope > .code-bar [data-vo="' + btn.dataset.voAct + '"]'); const sp = k && k.querySelector('span');
+          if (sp && sp.textContent.trim()) btn.textContent = sp.textContent.trim(); }); } return; }
       /* a view chosen (see VIEWS): a records item keeps it with its browsing state, any other kind in the view store */
       if (act === 'setview') { const v = btn.dataset.view; const b = this._blockOf(key); if (!v || !b) return;
         if (b.type === 'records') { const st = recState(this, key); st.view = v; st.page = 0; } else viewSet(this, key, v);
