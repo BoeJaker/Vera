@@ -71,7 +71,7 @@ t('the canvas lays a mode out by the kernel, cells sizing the cards; rise and gr
   assert(C.includes('if (!hold && !modeLaid && typeof D.grow'));
 });
 t('a newcomer is placed by the score; the hold survives arrivals', () => {
-  assert(C.includes('const gone = (this._hold.keys || []).some((k) => !now.has(k));') && C.includes('const p = (!pilledKey && userAt(key)) || (fresh && slotFor(key)) || pos[key]'));
+  assert(C.includes("(this._hold.keys || []).forEach((k) => { if (!now.has(k) && this._hold.rects) delete this._hold.rects[k]; });") && C.includes('const p = (!pilledKey && userAt(key)) || (fresh && slotFor(key)) || pos[key]'));
 });
 t('lanes and the proposal are drawn on the desk', () => {
   assert(C.includes("el.className = 'desk-lane';") && C.includes('    _propose(st, mode, info, T, W) {') && C.includes("this._propUndo = { from: this.getAttribute('desk-arrange') || 'auto'"));
