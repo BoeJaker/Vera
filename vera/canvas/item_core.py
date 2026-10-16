@@ -29,7 +29,7 @@ FACES = ("pill", "tile", "window", "full")
 SIZES = ("xs", "s", "m", "l", "xl")
 LAYERS = ("among", "behind", "front")
 PLACED_BY = ("auto", "person")
-VIEWS = ("list", "cards", "table", "graph", "code", "structure", "both")
+VIEWS = ("list", "cards", "table", "graph", "chart", "chips", "fields", "code", "structure", "both")
 
 # the fields canvas.item.set may change, one call, one event (Decision 2)
 SETTABLE = ("face", "place", "view", "size", "locked", "folded", "group", "state")
