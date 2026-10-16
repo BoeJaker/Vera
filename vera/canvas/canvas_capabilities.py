@@ -290,22 +290,114 @@ async def _load(canvas_id: str) -> Optional[Dict[str, Any]]:
     if not raw:
         return None
     try:
-        return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        doc = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
     except Exception:
         return None
+    _remember_base(doc)
+    return doc
+
+
+# ── TWO WRITERS, ONE DOCUMENT (B1; DEEP-29 11A.4 Decision 2). A canvas is saved whole, and every write is read - change -
+#    save with awaits between, so two writes at once (two items set from one page, a turn's items landing while the person
+#    drags) each saved what they had read and the later lost the earlier's change (found 2026-10-16: a lock and a pill sent
+#    together kept only the pill). Each save now knows what it read (the base): when the stored document moved on since,
+#    the save is a three-way merge - its own changed, added and removed items over the stored ones, the other writer's left
+#    as they are; the timeline and the removed list keep both; a document field it did not change keeps the stored value.
+#    The read-merge-write of one canvas is serialised in this process. Same format as before, so nothing that reads a
+#    canvas changes; per-item storage (a HASH per canvas) can follow on the same merge rule. ──────────────────────────
+_BASES: Dict[int, Any] = {}          # id(doc) -> (doc, base): the document a write loaded and what it was when loaded
+_BASES_MAX = 256
+_SAVE_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+def _ident(b: Dict[str, Any]) -> str:
+    return str(b.get("key") or b.get("id") or "")
+
+
+def _dump(v: Any) -> str:
+    return json.dumps(v, sort_keys=True, default=str)
+
+
+def _snapshot(doc: Dict[str, Any]) -> Dict[str, Any]:
+    return {"rev": int(doc.get("revision") or 0),
+            "blocks": {_ident(b): _dump(b) for b in doc.get("blocks", []) if isinstance(b, dict)},
+            "order": [_ident(b) for b in doc.get("blocks", []) if isinstance(b, dict)],
+            "fields": {k: _dump(v) for k, v in doc.items() if k not in ("blocks", "timeline", "removed", "revision", "updated")},
+            "removed": {_dump(x) for x in (doc.get("removed") or [])}}
+
+
+def _remember_base(doc: Dict[str, Any]) -> None:
+    if len(_BASES) >= _BASES_MAX:
+        for k in list(_BASES)[: _BASES_MAX // 4]:
+            _BASES.pop(k, None)
+    _BASES[id(doc)] = (doc, _snapshot(doc))
+
+
+def _merge(cur: Dict[str, Any], mine: Dict[str, Any], base: Dict[str, Any]) -> Dict[str, Any]:
+    """Three-way merge of a write (mine, read at base) over the stored document (cur). Pure."""
+    mb = [b for b in mine.get("blocks", []) if isinstance(b, dict)]
+    mine_map = {_ident(b): b for b in mb}
+    bb = base["blocks"]
+    changed = {k for k, b in mine_map.items() if bb.get(k) != _dump(b)}
+    removed = set(bb) - set(mine_map)
+    reordered = [k for k in base["order"] if k in mine_map] != [_ident(b) for b in mb if _ident(b) in bb]
+    cur_blocks = [b for b in cur.get("blocks", []) if isinstance(b, dict) and _ident(b) not in removed]
+    cur_map = {_ident(b): b for b in cur_blocks}
+    if reordered:   # my order wins for the items I knew; the other writer's new ones follow
+        out = [mine_map[k] if k in changed or k not in cur_map else cur_map[k] for k in (_ident(b) for b in mb) if k in cur_map or k in changed]
+        known = {_ident(b) for b in out}
+        out += [b for b in cur_blocks if _ident(b) not in known]
+    else:
+        out = [mine_map[k] if k in changed else b for k, b in ((_ident(b), b) for b in cur_blocks)]
+        known = {_ident(b) for b in out}
+        out += [mine_map[k] for k in (_ident(b) for b in mb) if k in changed and k not in known]
+    merged = dict(cur)
+    for k, v in mine.items():
+        if k in ("blocks", "timeline", "removed", "revision", "updated"):
+            continue
+        if base["fields"].get(k) != _dump(v):
+            merged[k] = v
+    merged["blocks"] = out
+    tl = list(cur.get("timeline") or [])
+    tl += [e for e in (mine.get("timeline") or []) if isinstance(e, dict) and int(e.get("rev") or 0) > base["rev"]]
+    merged["timeline"] = tl[-_MAX_TIMELINE:]
+    rem = list(cur.get("removed") or [])
+    rem += [x for x in (mine.get("removed") or []) if _dump(x) not in base["removed"]]
+    merged["removed"] = rem[-REMOVED_KEEP:]
+    merged["revision"] = int(cur.get("revision") or 0)
+    return merged
 
 
 async def _save(doc: Dict[str, Any]) -> None:
     r = _redis()
     if not r:
         return
-    doc["updated"] = now_iso()
-    doc["revision"] = int(doc.get("revision") or 0) + 1
-    try:
-        await r.set(KEY_CANVAS + doc["id"], json.dumps(doc))
-        await r.zadd(KEY_CANVAS_INDEX, {doc["id"]: _now_epoch()})
-    except Exception:
-        pass
+    cid = doc["id"]
+    lock = _SAVE_LOCKS.setdefault(cid, asyncio.Lock())
+    async with lock:
+        held = _BASES.get(id(doc))
+        base = held[1] if held and held[0] is doc else None
+        if base is not None:
+            try:
+                raw = await r.get(KEY_CANVAS + cid)
+                cur = json.loads(raw.decode() if isinstance(raw, bytes) else raw) if raw else None
+            except Exception:
+                cur = None
+            if cur and int(cur.get("revision") or 0) != base["rev"]:
+                mine_new = [e for e in (doc.get("timeline") or []) if isinstance(e, dict) and int(e.get("rev") or 0) > base["rev"]]
+                merged = _merge(cur, doc, base)
+                for e in mine_new:                                 # my entries carry the revision they now land at
+                    e["rev"] = int(merged.get("revision") or 0) + 1
+                doc.clear()
+                doc.update(merged)
+        doc["updated"] = now_iso()
+        doc["revision"] = int(doc.get("revision") or 0) + 1
+        try:
+            await r.set(KEY_CANVAS + cid, json.dumps(doc))
+            await r.zadd(KEY_CANVAS_INDEX, {cid: _now_epoch()})
+        except Exception:
+            pass
+        _remember_base(doc)
 
 
 async def _emit(canvas_id: str, op: str, **extra) -> None:
