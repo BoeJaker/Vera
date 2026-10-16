@@ -1104,6 +1104,14 @@ if _CAP_AVAILABLE:
             return HTMLResponse(p.read_text(encoding="utf-8"))
         return HTMLResponse("<p style='color:red'>markets_panel.html not found</p>")
 
+    # the one markets chart (WSU-75): the panel's chart pieces and <vera-mkt-chart>, shared by the panel and the desk
+    @APP.get("/markets/chart.js", include_in_schema=False)
+    async def _markets_chart_js():
+        from fastapi.responses import Response
+        p = _HERE / "markets_chart.js"
+        return Response(p.read_text(encoding="utf-8") if p.exists() else "/* markets_chart.js not found */",
+                        media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
     # ONE Markets panel: the Quant Studio is the whole tab (single left-rail
     # navigation — no sub-tab bar). The classic panel is no longer navigable
     # on its own; it stays served at /markets/panel solely so the studio can

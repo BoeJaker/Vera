@@ -1,0 +1,253 @@
+/* ONE MARKETS CHART (WSU-75, owner 2026-10-16: "Full parity, shared code").
+   The Markets panel's chart pieces - the library loader, the chart options, the series adapters for both library
+   versions, the time-synced panes, the indicator drawing and the signal markers - live here once. The panel uses them
+   for its chart; <vera-mkt-chart> is the same chart for the desk: candles and volume, the indicators as toggles (EMA,
+   SMA, Bollinger, VWAP on the price; RSI, MACD in their own time-synced panes), a crosshair read-out of the bar under
+   the pointer (O H L C V), wheel zoom and drag pan with fit, the timeframes the asset's provider has (each re-reads its
+   bars), and its last candle kept live (every 15 s) while it is on screen. Data comes the way the panel's does:
+   /markets/bars and /markets/indicators (computed on the server). Served at /markets/chart.js. */
+(function (root) {
+  'use strict';
+  const M = root.VeraMktChart = root.VeraMktChart || {};
+
+  /* ── the panel's helpers, shared ─────────────────────────────────────────────────────────────────────────── */
+  let loading = null;
+  M.ensureLw = function () {
+    if (root.LightweightCharts) return Promise.resolve(true);
+    if (loading) return loading;
+    loading = new Promise((res) => {
+      const urls = ['https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js',
+                    'https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js'];
+      (function go(i) { if (i >= urls.length) { res(false); return; }
+        const s = document.createElement('script'); s.src = urls[i];
+        s.onload = () => res(!!root.LightweightCharts); s.onerror = () => go(i + 1);
+        document.head.appendChild(s); })(0);
+    });
+    return loading;
+  };
+  M.TFS = ['1m', '5m', '15m', '30m', '1h', '4h', '1d', '1w'];
+  M.YAHOO_TFS = ['1m', '5m', '15m', '30m', '1h', '1d', '1w'];
+  M.OVERLAY_COLORS = ['#7aa2f7', '#e8b34d', '#b48ead', '#5ec9b8', '#d1848b', '#8fb87a'];
+  M.CHART_OPTS = {
+    /* attributionLogo:false - the TV logo repeated on every indicator sub-pane reads as a watermark; a single credit
+       lives in the status bar instead. */
+    layout: { background: { color: 'transparent' }, textColor: '#8a7e70', fontSize: 10, attributionLogo: false },
+    grid: { vertLines: { color: 'rgba(56,51,47,.25)' }, horzLines: { color: 'rgba(56,51,47,.25)' } },
+    rightPriceScale: { borderColor: 'rgba(56,51,47,.6)' },
+    timeScale: { borderColor: 'rgba(56,51,47,.6)', timeVisible: true, secondsVisible: false },
+    crosshair: { mode: 0 },
+  };
+  M.lwCandle = (c, o) => (c.addCandlestickSeries ? c.addCandlestickSeries(o) : c.addSeries(root.LightweightCharts.CandlestickSeries, o));
+  M.lwHist = (c, o) => (c.addHistogramSeries ? c.addHistogramSeries(o) : c.addSeries(root.LightweightCharts.HistogramSeries, o));
+  M.lwLine = (c, o) => (c.addLineSeries ? c.addLineSeries(o) : c.addSeries(root.LightweightCharts.LineSeries, o));
+  /* whitespace items for nulls keep logical indices aligned across panes */
+  M.seriesData = (t, vals) => t.map((tt, i) => (vals[i] == null ? { time: tt } : { time: tt, value: vals[i] }));
+  M.hexA = function (hex, a) { const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return hex; const n = parseInt(m[1], 16);
+    return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')'; };
+  M.ribbonColor = function (i, n) { /* sequential teal→blue ramp by period order */ const t = n <= 1 ? 0 : i / (n - 1); return 'hsl(' + (170 - 40 * t) + ' 45% ' + (62 - 26 * t) + '%)'; };
+  M.paramStr = (p) => Object.entries(p || {}).filter(([k]) => k !== 'periods').map(([k, v]) => k + '=' + v).join(' ').slice(0, 40);
+  M.slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'asset';
+  M.dsId = (prov, sym, tf) => 'mkt.' + prov + '.' + M.slug(sym) + '.' + tf;
+  M.candleOpts = { upColor: '#3fd0a4', downColor: '#e0705a', borderUpColor: '#3fd0a4', borderDownColor: '#e0705a', wickUpColor: '#3fd0a4', wickDownColor: '#e0705a' };
+  M.volumeData = (B) => B.t.map((t, i) => ({ time: t, value: B.v[i] || 0, color: B.c[i] >= B.o[i] ? 'rgba(63,208,164,.4)' : 'rgba(224,112,90,.4)' }));
+  /* the panes keep one visible range: any of them scrolled or zoomed, the others follow */
+  M.syncGroup = function (charts, after) { let busy = false;
+    const from = (src) => { if (busy) return; busy = true;
+      try { const range = src.getVisibleLogicalRange(); if (range) charts().forEach((c) => { const ts = c.timeScale(); if (ts !== src) { try { ts.setVisibleLogicalRange(range); } catch (e) { /* not drawn yet */ } } }); }
+      finally { busy = false; } if (after) after(); };
+    return (chart) => chart.timeScale().subscribeVisibleLogicalRangeChange(() => from(chart.timeScale())); };
+  /* the signal markers on the price series (library v4 and v5) */
+  M.setMarkers = function (series, entries, exits, holder) {
+    if (!series) return holder || null;
+    const mk = [...(entries || []).map((t) => ({ time: t, position: 'belowBar', color: '#3fd0a4', shape: 'arrowUp' })),
+                ...(exits || []).map((t) => ({ time: t, position: 'aboveBar', color: '#e0705a', shape: 'arrowDown' }))].sort((a, b) => a.time - b.time);
+    try { if (typeof series.setMarkers === 'function') { series.setMarkers(mk); return holder || null; }
+      if (root.LightweightCharts && root.LightweightCharts.createSeriesMarkers) { if (holder && holder.setMarkers) { holder.setMarkers(mk); return holder; } return root.LightweightCharts.createSeriesMarkers(series, mk); } }
+    catch (e) { /* markers are optional */ }
+    return holder || null;
+  };
+  /* /markets/indicators' answer drawn: overlays on the price chart, the rest in panes made by addSub(id, labelHtml).
+     ctx = { main, bars (columnar), result, addSub, overlays (array the overlay series go in), esc }. */
+  M.drawIndicators = function (ctx) {
+    const B = ctx.bars, r = ctx.result, esc = ctx.esc || ((s) => String(s));
+    const tmap = {}; (r.t || []).forEach((t, i) => { tmap[t] = i; });
+    const val = (arr) => B.t.map((t) => { const i = tmap[t]; return i == null ? null : arr[i]; });
+    let ci = 0; const range = ctx.main.timeScale().getVisibleLogicalRange(); const seen = new Set();
+    for (const ind of (r.indicators || [])) {
+      if (ind.error || seen.has(ind.id)) continue;
+      seen.add(ind.id);
+      const custom = ind.custom === true, baseCol = ind.color || '';
+      if (ind.pane === 'main') {
+        const names = Object.keys(ind.series || {}), ribbon = ind.kind === 'ribbon';
+        names.forEach((nm, k) => {
+          const col = ribbon ? M.ribbonColor(k, names.length) : (ind.kind === 'bbands' ? M.hexA(baseCol || '#7aa2f7', nm === 'bb_mid' ? 0.9 : 0.45) : (baseCol || M.OVERLAY_COLORS[ci % M.OVERLAY_COLORS.length]));
+          const s = M.lwLine(ctx.main, { color: col, lineWidth: ribbon ? 1 : 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, lineStyle: (ind.kind === 'bbands' && nm !== 'bb_mid') ? 2 : 0 });
+          s.setData(M.seriesData(B.t, val(ind.series[nm]))); ctx.overlays.push(s);
+          if (!ribbon) ci++;
+        });
+        if (ribbon) ci++;
+      } else {
+        const title = custom ? (ind.label || ind.kind) : ind.kind.toUpperCase();
+        const sub = ctx.addSub(ind.id, '<b>' + esc(title) + '</b> ' + esc(M.paramStr(ind.params)));
+        if (ind.kind === 'macd') {
+          const hs = M.lwHist(sub.chart, { priceLineVisible: false, lastValueVisible: false }); const hv = val(ind.series.macd_hist);
+          hs.setData(B.t.map((t, i) => (hv[i] == null ? { time: t } : { time: t, value: hv[i], color: hv[i] >= 0 ? 'rgba(63,208,164,.55)' : 'rgba(224,112,90,.55)' })));
+          M.lwLine(sub.chart, { color: baseCol || '#7aa2f7', lineWidth: 2, priceLineVisible: false, lastValueVisible: false }).setData(M.seriesData(B.t, val(ind.series.macd)));
+          M.lwLine(sub.chart, { color: '#e8b34d', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(M.seriesData(B.t, val(ind.series.macd_signal)));
+        } else if (ind.kind === 'stoch') {
+          const k = M.lwLine(sub.chart, { color: baseCol || '#7aa2f7', lineWidth: 2, priceLineVisible: false, lastValueVisible: false }); k.setData(M.seriesData(B.t, val(ind.series.stoch_k)));
+          M.lwLine(sub.chart, { color: '#e8b34d', lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(M.seriesData(B.t, val(ind.series.stoch_d)));
+          [20, 80].forEach((lv) => k.createPriceLine({ price: lv, color: 'rgba(138,126,112,.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false }));
+        } else if (ind.kind === 'rsi') {
+          const s = M.lwLine(sub.chart, { color: baseCol || '#b48ead', lineWidth: 2, priceLineVisible: false, lastValueVisible: false }); s.setData(M.seriesData(B.t, val(ind.series.rsi)));
+          [30, 70].forEach((lv) => s.createPriceLine({ price: lv, color: 'rgba(138,126,112,.5)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false }));
+        } else {
+          Object.keys(ind.series || {}).forEach((nm, k) => {
+            M.lwLine(sub.chart, { color: k === 0 ? (baseCol || '#5ec9b8') : M.OVERLAY_COLORS[k % M.OVERLAY_COLORS.length], lineWidth: k === 0 ? 2 : 1, priceLineVisible: false, lastValueVisible: false })
+              .setData(M.seriesData(B.t, val(ind.series[nm])));
+          });
+        }
+        if (range) { try { sub.chart.timeScale().setVisibleLogicalRange(range); } catch (e) { /* follows on the next sync */ } }
+      }
+    }
+  };
+
+  /* ── <vera-mkt-chart symbol provider tf> - the chart on the desk ─────────────────────────────────────────────── */
+  const IND = [
+    { id: 'ema20', label: 'EMA 20', kind: 'ema', params: { n: 20 } },
+    { id: 'sma50', label: 'SMA 50', kind: 'sma', params: { n: 50 } },
+    { id: 'bb', label: 'Bollinger', kind: 'bbands', params: { n: 20, k: 2 } },
+    { id: 'vwap', label: 'VWAP', kind: 'vwap', params: { n: 0 } },
+    { id: 'rsi', label: 'RSI', kind: 'rsi', params: { n: 14 } },
+    { id: 'macd', label: 'MACD', kind: 'macd', params: { fast: 12, slow: 26, signal: 9 } },
+  ];
+  const ON_KEY = 'vera:mktchart:ind';
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  const fmt = (v) => (v == null || !isFinite(v) ? '—' : Math.abs(v) >= 1000 ? v.toFixed(2) : Math.abs(v) >= 1 ? v.toFixed(3) : v.toPrecision(4));
+  const fmtV = (v) => (v == null ? '—' : v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v)));
+  /* a theme colour as the chart library can read it: the theme's names may be color-mix(...) expressions, which it cannot
+     parse - one pixel painted with it says what it is */
+  const plainColor = (css, fallback) => { try { const cv = document.createElement('canvas'); cv.width = cv.height = 1; const x = cv.getContext('2d'); x.fillStyle = fallback; x.fillStyle = css; x.fillRect(0, 0, 1, 1);
+      const p = x.getImageData(0, 0, 1, 1).data; return 'rgba(' + p[0] + ',' + p[1] + ',' + p[2] + ',' + (p[3] / 255).toFixed(2) + ')'; } catch (e) { return fallback; } };
+  const api = async (path, body) => { try { const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}); return await r.json(); } catch (e) { return { error: String(e) }; } };
+
+  class VeraMktChart extends HTMLElement {
+    static get observedAttributes() { return ['symbol', 'provider', 'tf']; }
+    constructor() { super(); this.attachShadow({ mode: 'open' }); this._subs = []; this._overlays = []; this._seq = 0; }
+    connectedCallback() {
+      if (this._built) return; this._built = true;
+      let on = null; try { on = JSON.parse(localStorage.getItem(ON_KEY) || 'null'); } catch (e) { on = null; }
+      this._on = new Set(Array.isArray(on) ? on : ['ema20', 'rsi']); this._vol = true;
+      this.shadowRoot.innerHTML = `<style>
+        :host{display:block;width:100%;height:100%;min-height:120px}
+        /* the layout is the wrapper's: the page round the element may set its display (the canvas's live layer does) */
+        .wrap{display:flex;flex-direction:column;width:100%;height:100%;font:11px/1.3 var(--mono,ui-monospace,monospace);color:var(--t2,#b9aea0);background:var(--bg1,#15181d)}   /* its own ground: nothing shows through the chart */
+        .hd{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;padding:2px 2px 3px}
+        .note{color:var(--dim,#6c645a);font-size:9px}
+        .hd b{color:var(--t1,#e8e0d4);font-size:12px}
+        .px{color:var(--t1,#e8e0d4)} .up{color:var(--ok,#3fd0a4)} .dn{color:var(--err,#e0705a)}
+        .rd{color:var(--dim2,#8a7e70);flex:1 0 100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}
+        .bar{display:flex;gap:3px;flex-wrap:wrap;align-items:center;padding:0 2px 4px}
+        .bar button{font:inherit;font-size:9.5px;padding:0 5px;border-radius:5px;border:1px solid var(--bd,rgba(127,127,127,.25));background:transparent;color:var(--dim2,#8a7e70);cursor:pointer}
+        .bar button.on{color:var(--acc,#5a9e8f);border-color:color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent);background:color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent)}
+        .bar .sp{width:8px}
+        .stack{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:2px}
+        .pane{position:relative;min-height:0;overflow:hidden} .pane.main{flex:3 1 0} .pane.sub{flex:1 1 0;border-top:1px solid var(--bd,rgba(127,127,127,.18))}
+        .pl{position:absolute;left:4px;top:2px;z-index:3;font-size:9.5px;color:var(--dim2,#8a7e70);pointer-events:none}
+        .msg{padding:12px;color:var(--dim2,#8a7e70)}
+      </style>
+      <div class="wrap"><div class="hd"><b class="sym"></b><span class="px"></span><span class="ch"></span><span class="rd"></span></div>
+      <div class="bar"><span class="tfs"></span><span class="sp"></span><span class="inds"></span><span class="sp"></span><button data-a="vol" title="Volume under the candles">Vol</button><button data-a="fit" title="Fit the whole history">Fit</button><span class="note"></span></div>
+      <div class="stack"><div class="pane main"></div></div></div>`;
+      this.shadowRoot.addEventListener('click', (ev) => { const b = ev.target.closest && ev.target.closest('button[data-a]'); if (!b) return; ev.stopPropagation(); this._act(b.dataset.a, b.dataset.v); });
+      /* live only while seen: a chart scrolled away, behind a tab or in a pill does not poll */
+      this._io = new IntersectionObserver((es) => { this._seen = es.some((e) => e.isIntersecting); this._livePlan(); }); this._io.observe(this);
+      /* grown past (or shrunk under) the size that has room for the panes: drawn again for it */
+      this._ro = new ResizeObserver(() => { this._fit(); const small = (this.clientHeight || 0) < 420; if (this._B && this._small !== undefined && small !== this._small) { clearTimeout(this._rsT); this._rsT = setTimeout(() => this._draw(false), 250); } }); this._ro.observe(this);
+      document.addEventListener('visibilitychange', this._vis = () => this._livePlan());
+      this._load(true);
+    }
+    disconnectedCallback() { clearTimeout(this._liveT); try { this._io.disconnect(); this._ro.disconnect(); } catch (e) { /* gone */ } document.removeEventListener('visibilitychange', this._vis); this._teardown(); this._built = false; }
+    attributeChangedCallback(name) { if (name !== 'tf') this._tfsOf = null; if (this._built) this._load(true); }
+    get _sym() { return this.getAttribute('symbol') || ''; } get _prov() { return this.getAttribute('provider') || 'yahoo'; }
+    get _tf() { return this.getAttribute('tf') || '1d'; }
+    _act(a, v) {
+      if (a === 'tf') { this.setAttribute('tf', v); return; }
+      if (a === 'ind') { if (this._on.has(v)) this._on.delete(v); else this._on.add(v); try { localStorage.setItem(ON_KEY, JSON.stringify([...this._on])); } catch (e) { /* this page only */ } this._draw(false); return; }
+      if (a === 'vol') { this._vol = !this._vol; this._draw(false); return; }
+      if (a === 'fit') { try { this._main && this._main.timeScale().fitContent(); } catch (e) { /* not drawn */ } }
+    }
+    _teardown() { try { this._main && this._main.remove(); } catch (e) { /* gone */ } this._subs.forEach((s) => { try { s.chart.remove(); } catch (e) { /* gone */ } try { s.el.remove(); } catch (e) { /* gone */ } });
+      this._main = null; this._candle = null; this._subs = []; this._overlays = []; }
+    _bars(r) { return r && !r.error && r.count ? { t: r.t, o: r.o, h: r.h, l: r.l, c: r.c, v: r.v || [] } : null; }
+    async _load(fit) {
+      const seq = ++this._seq; const sr = this.shadowRoot;
+      /* the timeframes the asset has stored (its watchlist row); every one its provider offers when that is not known */
+      if (!this._tfsOf) { const w = await api('/markets/watchlist'); const row = ((w && w.watchlist) || []).find((x) => x && (x.id === this._prov + ':' + this._sym || (x.symbol === this._sym && x.exchange === this._prov)));
+        this._tfsOf = row && Array.isArray(row.timeframes) && row.timeframes.length ? row.timeframes : null; if (seq !== this._seq) return; }
+      const tfs = this._tfsOf || (this._prov === 'yahoo' ? M.YAHOO_TFS : (this._prov === 'custom' ? ['1d'] : M.TFS));
+      sr.querySelector('.sym').textContent = this._sym; sr.querySelector('.tfs').innerHTML = tfs.map((tf) => `<button data-a="tf" data-v="${tf}" class="${tf === this._tf ? 'on' : ''}">${tf}</button>`).join('');
+      sr.querySelector('.inds').innerHTML = IND.map((d) => `<button data-a="ind" data-v="${d.id}" class="${this._on.has(d.id) ? 'on' : ''}" title="${esc(d.kind)} ${esc(M.paramStr(d.params))}">${esc(d.label)}</button>`).join('');
+      const ok = await M.ensureLw(); if (seq !== this._seq) return;
+      if (!ok) { this._msg('The chart library did not load (offline?)'); return; }
+      const r = await api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(this._prov, this._sym, this._tf)) + '&limit=2000'); if (seq !== this._seq) return;
+      this._B = this._bars(r);
+      if (!this._B) { this._teardown(); this._msg(r && r.error ? 'Error: ' + r.error : 'No stored bars for ' + this._sym + ' · ' + this._tf); return; }
+      this._draw(fit);
+    }
+    _msg(t) { const st = this.shadowRoot.querySelector('.stack'); st.innerHTML = `<div class="msg">${esc(t)}</div>`; }
+    async _draw(fit) {
+      const B = this._B; if (!B) return; const seq = ++this._seq; const sr = this.shadowRoot;
+      sr.querySelectorAll('.inds button').forEach((b) => b.classList.toggle('on', this._on.has(b.dataset.v)));
+      const vb = sr.querySelector('button[data-a="vol"]'); if (vb) vb.classList.toggle('on', this._vol);
+      /* A CARD SHOWS THE PRICE, FULL SIZE SHOWS IT ALL (the plan: card = candles + volume; max = the indicator panes too): under
+         420 px the panes of their own (RSI, MACD) wait for room; the overlays on the price stay */
+      this._small = (this.clientHeight || 0) < 420; const PANE = { rsi: 1, macd: 1 };
+      const want = IND.filter((d) => this._on.has(d.id) && !(this._small && PANE[d.kind])).map((d) => ({ id: d.id, kind: d.kind, params: d.params }));
+      const noteEl = sr.querySelector('.note'); if (noteEl) noteEl.textContent = this._small && IND.some((d) => this._on.has(d.id) && PANE[d.kind]) ? 'panes when larger' : '';
+      const r = want.length ? await api('/markets/indicators', { dataset_id: M.dsId(this._prov, this._sym, this._tf), indicators: want, limit: 2000 }) : null;
+      if (seq !== this._seq) return;
+      const keep = this._main ? this._main.timeScale().getVisibleLogicalRange() : null;
+      this._teardown();
+      const st = sr.querySelector('.stack'); st.innerHTML = '<div class="pane main"></div>';
+      const mainEl = st.querySelector('.pane.main'); const L = root.LightweightCharts;
+      const tc = plainColor(getComputedStyle(this).getPropertyValue('--dim2').trim() || M.CHART_OPTS.layout.textColor, M.CHART_OPTS.layout.textColor);
+      /* each chart takes its pane's size and follows it (the panes had no height yet when the charts were made: they drew over each other) */
+      const opts = () => Object.assign({}, M.CHART_OPTS, { layout: Object.assign({}, M.CHART_OPTS.layout, { textColor: tc }), autoSize: true });
+      const charts = () => [this._main].concat(this._subs.map((s) => s.chart)).filter(Boolean);
+      const sync = M.syncGroup(charts);
+      this._main = L.createChart(mainEl, opts()); sync(this._main);
+      this._candle = M.lwCandle(this._main, M.candleOpts);
+      this._candle.setData(B.t.map((t, i) => ({ time: t, open: B.o[i], high: B.h[i], low: B.l[i], close: B.c[i] })));
+      if (this._vol && B.v.some((x) => x > 0)) { this._volS = M.lwHist(this._main, { priceFormat: { type: 'volume' }, priceScaleId: 'vol' }); this._main.priceScale('vol').applyOptions({ scaleMargins: { top: 0.84, bottom: 0 } }); this._volS.setData(M.volumeData(B)); } else this._volS = null;
+      const addSub = (id, labelHtml) => { const el = document.createElement('div'); el.className = 'pane sub'; el.innerHTML = '<div class="pl">' + labelHtml + '</div>'; st.appendChild(el);
+        const chart = L.createChart(el, opts()); sync(chart); const s = { el, chart, id }; this._subs.push(s); return s; };
+      if (r && !r.error) M.drawIndicators({ main: this._main, bars: B, result: r, addSub, overlays: this._overlays, esc });
+      this._markers = M.setMarkers(this._candle, this._entries, this._exits, null);
+      /* the bar under the pointer, in words */
+      this._main.subscribeCrosshairMove((p) => { const i = p && p.time != null ? B.t.indexOf(p.time) : -1; this._readout(i >= 0 ? i : B.t.length - 1); });
+      this._readout(B.t.length - 1); this._head();
+      requestAnimationFrame(() => { this._fit(); if (keep && !fit) { try { this._main.timeScale().setVisibleLogicalRange(keep); } catch (e) { /* refit */ } } else { try { this._main.timeScale().fitContent(); } catch (e) { /* not drawn */ } } });
+      this._livePlan();
+    }
+    _head() { const B = this._B, sr = this.shadowRoot; if (!B) return; const n = B.c.length; const last = B.c[n - 1], prev = n > 1 ? B.c[n - 2] : last; const ch = prev ? (last - prev) / prev * 100 : 0;
+      sr.querySelector('.px').textContent = fmt(last); const c = sr.querySelector('.ch'); c.textContent = (ch >= 0 ? '+' : '') + ch.toFixed(2) + '%'; c.className = 'ch ' + (ch >= 0 ? 'up' : 'dn'); }
+    _readout(i) { const B = this._B; if (!B || i < 0) return; const d = new Date(B.t[i] * 1000);
+      this.shadowRoot.querySelector('.rd').textContent = d.toISOString().slice(0, this._tf.endsWith('d') || this._tf.endsWith('w') ? 10 : 16).replace('T', ' ') + '  O ' + fmt(B.o[i]) + ' H ' + fmt(B.h[i]) + ' L ' + fmt(B.l[i]) + ' C ' + fmt(B.c[i]) + ' V ' + fmtV(B.v[i]); }
+    _fit() { /* the charts size themselves to their panes (autoSize) */ }
+    /* the last candle grows while the chart is seen: the newest bars every 15 s, the last updated in place */
+    _livePlan() { clearTimeout(this._liveT); if (!this._seen || document.visibilityState === 'hidden' || !this._B) return; this._liveT = setTimeout(() => this._tick(), 15000); }
+    async _tick() {
+      const B = this._B; if (!B || !this._candle) return this._livePlan();
+      const r = await api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(this._prov, this._sym, this._tf)) + '&limit=3'); const N = this._bars(r);
+      if (N) N.t.forEach((t, j) => { const bar = { time: t, open: N.o[j], high: N.h[j], low: N.l[j], close: N.c[j] };
+        const i = B.t.indexOf(t); if (i < 0 && t < B.t[B.t.length - 1]) return;
+        if (i >= 0) { B.o[i] = N.o[j]; B.h[i] = N.h[j]; B.l[i] = N.l[j]; B.c[i] = N.c[j]; B.v[i] = N.v[j]; } else { B.t.push(t); B.o.push(N.o[j]); B.h.push(N.h[j]); B.l.push(N.l[j]); B.c.push(N.c[j]); B.v.push(N.v[j]); }
+        try { this._candle.update(bar); if (this._volS) this._volS.update({ time: t, value: N.v[j] || 0, color: N.c[j] >= N.o[j] ? 'rgba(63,208,164,.4)' : 'rgba(224,112,90,.4)' }); } catch (e) { /* older than the last bar */ } });
+      this._head(); this._livePlan();
+    }
+    /* signals from a backtest or a strategy: entries and exits as unix times */
+    setSignals(entries, exits) { this._entries = entries || []; this._exits = exits || []; if (this._candle) this._markers = M.setMarkers(this._candle, this._entries, this._exits, this._markers); }
+  }
+  if (root.customElements && !root.customElements.get('vera-mkt-chart')) root.customElements.define('vera-mkt-chart', VeraMktChart);
+})(window);
