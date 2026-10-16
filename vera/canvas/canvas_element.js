@@ -837,6 +837,13 @@
            source's page body and the calendar's month do. The button appears only when there IS a source: a
            widget drawn from inline data has nothing to go back to. */
         const rcap = (rec.reads && rec.reads.cap) ? String(rec.reads.cap) : '';
+        /* A PRICE CHART IS THE MARKETS CHART (WSU-75, owner 2026-10-16: "full parity, shared code"): a candles record that names
+           its symbol (a markets.chart answer) is drawn by <vera-mkt-chart> - the Markets panel's own chart pieces: axes and
+           volume, indicators as toggles in time-synced panes, the bar under the pointer, zoom and pan, the timeframes, its
+           last candle live while seen - not 16 bars */
+        const md = rec.data && typeof rec.data === 'object' && !Array.isArray(rec.data) ? rec.data : null;
+        if (form === 'candles' && md && md.symbol) { const prov = md.provider || String(md.key || '').split(':')[0] || 'yahoo';
+          return `<div class="vc-wid vc-mchart-w" data-w="canvas.chart"><div class="vc-live" data-live="mchart" data-key="${esc(key)}" data-symbol="${esc(md.symbol)}" data-provider="${esc(prov)}" data-tf="${esc(md.timeframe || '1d')}"><span class="vc-dim">opening the ${esc(md.symbol)} chart…</span></div></div>`; }
         return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || (rec.draw && rec.draw.size) || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ' · sample'}${rcap ? `<button class="vc-wid-b" data-wid-act="refresh" data-wid-key="${esc(key)}" title="Read ${esc(rcap)} again and redraw">refresh</button>` : ''}</div></div>`;
       }
       /* `root` rather than a bare `window`: the module is loaded as a script in the page AND required directly by
@@ -1634,6 +1641,9 @@
      appear, can this be combined into a single menu in pill mode so the pill can still be grabbed"): only ⋯ shows; its
      menu holds the rest (see _hdMenu), and the header stays free to grab */
   :host([align="desk"]:not([desk-narrow])) .stage .it.pill-open:not(.desk-win) > .hda > :is(.hb:not([data-act="hdmore"]),.xvw){display:none}
+  /* the markets chart takes its card's room (WSU-75) */
+  .vc-wid.vc-mchart-w{display:flex;flex-direction:column;min-height:220px;height:100%}
+  .vc-wid.vc-mchart-w > .vc-live{flex:1 1 auto;min-height:220px}
   /* (a pill never shows its body: the fused code + explode body's display rule above now leaves pills out - a strip of line
      numbers showed in the pill column; found with WSU-80, also on the edge before it) */
   :host([align="desk"]:not([desk-narrow])) .stage .it:is(:hover,.hov,:focus-within) > .hda{opacity:1}
@@ -5430,6 +5440,9 @@
           else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); inner.setAttribute('item-drawer', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = '';
             // a chip-faced widget is as wide as its face: the card takes that width and the rest of the row is free
             inner.addEventListener('widget:rendered', () => this._widgetFit(key, inner)); }
+          else if (kind === 'mchart') { inner = document.createElement('vera-mkt-chart'); h.textContent = '';   /* the Markets chart (WSU-75) */
+            inner.setAttribute('symbol', h.dataset.symbol || ''); inner.setAttribute('provider', h.dataset.provider || 'yahoo'); inner.setAttribute('tf', h.dataset.tf || '1d');
+            ensureLib('/markets/chart.js', 'vera-mkt-chart'); }
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           // a code item previews its code; an html item previews the page it IS (its content field is `html`)
@@ -5455,6 +5468,7 @@
           else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
+        } else if (kind === 'mchart') { if (h.textContent) h.textContent = '';   /* a redrawn slot under a chart already drawn: no placeholder over it */
         } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
           this._widgetFit(key, inner);   // a re-rendered slot is a fresh face: its own width again
         } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; try { if (this.deskAlign()) el.firstChild.setAttribute('max-scale', '2'); else el.firstChild.removeAttribute('max-scale'); } catch (e) {}   /* on the desk a diagram grows with its card (WSU-44) */
