@@ -3982,12 +3982,16 @@
          the way are pushed aside; nothing rises or grows. During a resize the cards start where they were when it began, so
          a neighbour pushed aside comes back when the card is made smaller again. The hold ends when what is on the desk,
          the topic, the desk's size or its arrangement settings change - the desk is dealt afresh then. */
-      const sigBase = [W, H, mode, this.getAttribute('desk-fill') || '', this.getAttribute('desk-settle') || '', T ? (T.order || []).join(',') : ''].join('#');
+      /* the topic is not in it (owner 2026-10-16: "nothing enters the desk but items move"): a topic change re-placed every card -
+         up to 8 of 9 moved that neither joined nor left it. Now only those that did move (see setTopic) */
+      const sigBase = [W, H, mode, this.getAttribute('desk-fill') || '', this.getAttribute('desk-settle') || ''].join('#');
       const sig = sigBase + '#' + sigKeys;
       /* A NEW ITEM DOES NOT RE-DEAL THE DESK (DR-01): the hold ends when an item goes, or the desk's size, mode or topic
          change; an item that arrives is placed by the placement score in the room there is, and the rest stay */
-      if (this._hold) { const now = new Set(sigKeys.split('|')); const gone = (this._hold.keys || []).some((k) => !now.has(k));
-        if ((this._hold.sb ? this._hold.sb !== sigBase : this._hold.sig !== sig) || gone) this._hold = null; else this._hold.sig = sig; }
+      if (this._hold) { const now = new Set(sigKeys.split('|'));
+        /* an item that went leaves the hold; the rest stay where they are (it used to re-deal the whole desk) */
+        (this._hold.keys || []).forEach((k) => { if (!now.has(k) && this._hold.rects) delete this._hold.rects[k]; });
+        if (this._hold.sb ? this._hold.sb !== sigBase : this._hold.sig !== sig) { if (this._hold.sb && this._hold.sb !== sigBase) this._hold = null; else this._hold.sig = sig; } else this._hold.sig = sig; }
       const hold = this._hold, seed = hold ? ((this._rz && hold.base) || hold.rects) : null;
       /* where a card the arrangement does not place goes (free mode; a newcomer under the hold): the best free slot round
          what is already there */
@@ -4088,6 +4092,8 @@
       pills.forEach(toStrip);
       const stripW = cols ? cols * (CHW + SGAP) + SGAP : 0;
       const stripBox = stripW ? { id: '__strip', fixed: true, strip: true, x: farRight ? W - stripW / 2 : stripW / 2, y: H / 2, w: stripW, h: H } : null;
+      /* where a carried card becomes a pill at once: over the strip, or the column where the first pills would go */
+      { const sw = Math.max(stripW, CHW + 2 * SGAP); this._stripZone = farRight ? { l: W - sw, r: W } : { l: 0, r: sw }; }
       const withStrip = (list) => (stripBox ? [stripBox].concat(list) : list);
       /* ...and nothing reaches into it: a card sized, placed or carried by the person is fixed where it is, so separation
          would not move it off the pills - it is moved out of the strip here, and made narrower only when the free desk is */
@@ -4121,7 +4127,7 @@
          has no room for it - then it is KEPT a window (with the item: face window) until the person sends it back to the desk
          (its head's dock control, or Esc). No other pass makes or unmakes a window. */
       const keptWin = this._winKeepGet();
-      if (this.getAttribute('desk-windows') !== 'off') plan.forEach((it) => { if (keptWin[it.id] && !it.strip) { wins.add(it); it.win = true;
+      if (this.getAttribute('desk-windows') !== 'off') plan.forEach((it) => { if (keptWin[it.id] && !it.strip && !it.sizing && it.id !== this._rzLetGo) { wins.add(it); it.win = true;
         const k = keptWin[it.id]; if (k.w > 0 && k.h > 0) { it.w = Math.min(W - 16, k.w); it.h = Math.min(H - 8, k.h); }
         if (isFinite(k.fx) && isFinite(k.fy)) { it.x = Math.max(it.w / 2, Math.min(W - it.w / 2, k.fx * W)); it.y = Math.max(it.h / 2, Math.min(H - it.h / 2, k.fy * H)); } } });
       if (wins.size) D.separate(withStrip(bySize(plan.filter((it) => !wins.has(it)))), R, sepSize, { W: W, H: H });
@@ -4269,7 +4275,12 @@
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
       /* what this pass laid out, for the hold (U4): centre and size of each card it placed */
       { const rects = {}; out.forEach((o) => { if (!o.behind && !/^layer-/.test(o.face || '')) rects[o.key] = { x: o.x + o.w / 2, y: o.y + o.h / 2, w: o.w, h: o.h, bw: o.bw || o.w, bh: o.bh || o.h, face: o.face }; });
-        this._lastPlan = { sig, sb: sigBase, keys: sigKeys.split('|'), rects }; if (this._hold) { this._hold.rects = rects; this._hold.keys = sigKeys.split('|'); } }
+        this._lastPlan = { sig, sb: sigBase, keys: sigKeys.split('|'), rects }; if (this._hold) { this._hold.rects = rects; this._hold.keys = sigKeys.split('|'); }
+        /* THE DESK RESTS HELD (owner 2026-10-16): a dealt desk is held once it has settled - 2.5 s with no new deal, so the cards
+           have measured what they hold - and from then on only what is in the way, what joins or leaves the topic and what
+           arrives moves. Tidy, the desk's size, its mode or its fill / settle settings deal it afresh. */
+        else if (!this._rz && !this._dg) { clearTimeout(this._autoHoldT); this._autoHoldT = setTimeout(() => { const lp = this._lastPlan; if (!this._hold && lp && !this._rz && !this._dg) {
+          const base = {}; Object.keys(lp.rects).forEach((k) => { base[k] = Object.assign({}, lp.rects[k]); }); this._hold = { sig: lp.sig, sb: lp.sb, keys: lp.keys, rects: base, base }; } }, 2500); } }
       /* a mode's lanes and clusters say what they are: their headings on the desk (board: to do, running, needs you, done;
          map: what each cluster shares) */
       st.querySelectorAll(':scope > .desk-lane').forEach((x) => x.remove());
@@ -4544,6 +4555,11 @@
       if (sig === this._topicSig) return false; this._topicSig = sig;
       this._topic = ks ? { keys: new Set(ks), order: ks.slice().sort((a, b) => val(b) - val(a)), mid: mid || '' } : null;
       this._topicAt = Date.now();   /* a combined card's tab picked after this wins over the topic's choice (WSU-71) */
+      /* only the cards that joined or left the topic move: those leave the hold (a card that left goes to the border, one that
+         joined to the best free room beside what it relates to); every other card keeps its place and its size */
+      if (this._hold && this._hold.rects) { const now = new Set(ks || []), was = this._topicWas || now;
+        Object.keys(this._hold.rects).forEach((k) => { if (was.has(k) !== now.has(k)) delete this._hold.rects[k]; }); }
+      this._topicWas = new Set(ks || []);
       if (this.deskAlign()) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
       try { this.dispatchEvent(new CustomEvent('vera:canvas:topic', { bubbles: true, detail: { mid: mid || '', keys: ks || [] } })); } catch (e) { /* no listener */ }
       return true;
@@ -5102,7 +5118,13 @@
            get the 'from the fabric' desk element to turn into a pill by dragging it away from chat"; code with its explode
            open "wont turn back into a chip if dragged to the far edge"): a kept size, or the person's width, held it big. Let
            go there, it is a pill and its kept size goes. */
-        const bare = D.sizeAt(g.R, px, py, {}, g.desk);
+        let bare = D.sizeAt(g.R, px, py, {}, g.desk);
+        /* OVER THE PILL STRIP IT IS A PILL (owner 2026-10-16: "any element dragged to the pill area is not always becoming a pill -
+           it often snaps back"): the face followed the distance to the chat with a margin against flicker, and a card carried in
+           from the desk kept its card face inside that margin - often right where the pills are. Over the strip (or where its
+           first pills would go) it is a pill at once. */
+        const Z0 = this._stripZone; const onStrip = !!(Z0 && px >= Z0.l - 10 && px <= Z0.r + 10);
+        if (onStrip && bare.face !== 'chip' && bare.face !== 'icon') bare = Object.assign({}, bare, { face: 'chip', w: 150, h: 34, t: 0 });
         if (bare.face === 'chip' || bare.face === 'icon') own = null;
         const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : ((bare.face === 'chip' || bare.face === 'icon') ? bare : D.sizeAt(g.R, px, py, so, g.desk)), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
         const ox = (d.cx0 - d.sx) / d.w0, oy = (d.cy0 - d.sy) / d.h0;
@@ -5112,7 +5134,8 @@
            forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
         const TH = { chip: 0.25, card: 0.6 }, M = 0.05, cur = d.el.dataset.deskFace || s.face;
         let face = s.face;
-        if (cur === 'chip' && face !== 'chip' && s.t < TH.chip + M) face = 'chip';
+        if (onStrip) face = 'chip';
+        else if (cur === 'chip' && face !== 'chip' && s.t < TH.chip + M) face = 'chip';
         else if (cur === 'card' && face === 'chip' && s.t > TH.chip - M) face = 'card';
         else if (cur === 'card' && face === 'max' && s.t < TH.card + M) face = 'card';
         else if (cur === 'max' && face === 'card' && s.t > TH.card - M) face = 'max';
@@ -5133,7 +5156,9 @@
         const asChip = /^(chip|icon)$/.test(d.el.dataset.deskFace || '');
         const g = this._deskGeo;
         if (g && d.cx != null) {
-          if (asChip) this._deskPosSet(d.key, { chip: true });
+          if (asChip) { if (this._winKeepGet()[d.key]) { this._winKeepSet(d.key, null); delete this._pw[d.key]; delete this._px[d.key]; } this._deskPosSet(d.key, { chip: true });
+            /* ...and the hold lets it go: a held card keeps its place, so one let go as a pill went back where it was */
+            if (this._hold && this._hold.rects) { delete this._hold.rects[d.key]; if (this._hold.base) delete this._hold.base[d.key]; } }
           else {
             /* let go in a gap: fitted into it (WSU-73) - no larger than the gap, no larger than the card was, kept inside
                it round the drop point; a gap too small to hold a usable card leaves the drop as before */
@@ -5169,6 +5194,9 @@
         else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
+        /* a window let go after a resize is decided again: made small enough to fit, it is a card on the desk again (owner
+           2026-10-16: "you cant shrink it again so that it goes back to default mode"); still no room, a window at the new size */
+        if (this._winKeepGet()[key]) this._winKeepSet(key, null);
         /* on the desk a card you sized stays where it is: grown, it was separated outward into the chip zone and came back
            a chip. Its place is pinned as a drag pins it; the others move round it. */
         const g = this._deskGeo;

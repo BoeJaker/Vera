@@ -10,7 +10,14 @@ let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL '
 
 /* U4 - the hold */
 t('U4: a hold starts when the person moves or sizes a card', C.includes('    _holdStart(key) {') && C.includes("this._holdStart(it.dataset.key); this._rzPlacedAt = 0;") && C.includes('this._holdStart(d.key); }'));
-t('U4: the hold ends when the desk is dealt afresh (its signature changes)', C.includes('if ((this._hold.sb ? this._hold.sb !== sigBase : this._hold.sig !== sig) || gone) this._hold = null;'));
+t('U4: the hold ends when the desk is dealt afresh (its size, mode or fill change) - not when the topic changes or an item goes', C.includes("if (this._hold.sb ? this._hold.sb !== sigBase : this._hold.sig !== sig) { if (this._hold.sb && this._hold.sb !== sigBase) this._hold = null;")
+  && C.includes("(this._hold.keys || []).forEach((k) => { if (!now.has(k) && this._hold.rects) delete this._hold.rects[k]; });") && !/T \? \(T\.order \|\| \[\]\)\.join\(','\) : ''\]\.join\('#'\)/.test(C));
+/* owner 2026-10-16: "the layout still tends to jump about a lot when there is no need to" - the desk rests held, and a topic change
+   moves only the cards that joined or left it */
+t('the desk rests held once it has settled; a topic change frees only the cards whose membership changed', C.includes('this._autoHoldT = setTimeout(() => { const lp = this._lastPlan; if (!this._hold && lp && !this._rz && !this._dg) {')
+  && C.includes("Object.keys(this._hold.rects).forEach((k) => { if (was.has(k) !== now.has(k)) delete this._hold.rects[k]; }); }"));
+t('a window let go after a resize is decided again (shrunk to fit, a card); one carried onto the strip is a pill', C.includes('if (this._winKeepGet()[key]) this._winKeepSet(key, null);')
+  && C.includes("if (keptWin[it.id] && !it.strip && !it.sizing && it.id !== this._rzLetGo)") && C.includes("if (asChip) { if (this._winKeepGet()[d.key]) { this._winKeepSet(d.key, null);"));
 t('U4: held cards start where they are, at their size', C.includes('if (hr) Object.assign(o, { x: hr.x, y: hr.y, w: hr.w, h: hr.h, bw: hr.bw || hr.w, bh: hr.bh || hr.h, held: true, keepSize: true, face0: hr.face });'));
 t('U4: nothing rises or grows under the hold', C.includes("if (!hold && !modeLaid && typeof D.settle === 'function'") && C.includes("if (!hold && !modeLaid && typeof D.grow === 'function'"));
 t('U4: a card given back to the arrangement ends the hold', C.includes('this._deskPosSet(it.dataset.key, null); this._holdEnd(); this._placeNow();') && C.includes("{ w: u.w, h: u.h, face: u.face, free: true } : null); this._holdEnd(); return this._placeNow(); }"));
@@ -33,7 +40,7 @@ t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includ
 t('U10: windows can be switched off (desk-windows)', C.includes("this.getAttribute('desk-windows') !== 'off'") && C.includes("'desk-fit', 'desk-windows']") && H.includes("cfgCvWindows:['desk-windows','on']") && H.includes("windows:'cfgCvWindows'"));
 t('U2: a drop in a gap keeps a rectangle only when the gap made it smaller', C.includes('!d.own && (gw < d.el.offsetWidth - 2 || gh < d.el.offsetHeight - 2)'));
 /* U3 - by the hand */
-t('U3: a carried card is read where the pointer is', C.includes('const bare = D.sizeAt(g.R, px, py, {}, g.desk);') && C.includes('const ox = (d.cx0 - d.sx) / d.w0, oy = (d.cy0 - d.sy) / d.h0;'));
+t('U3: a carried card is read where the pointer is', C.includes('let bare = D.sizeAt(g.R, px, py, {}, g.desk);') && C.includes('const ox = (d.cx0 - d.sx) / d.w0, oy = (d.cy0 - d.sy) / d.h0;'));
 t('U3: a carried pill window goes on at its size', C.includes("if (this._wins && this._wins.delete(d.key)) { d.winOwn = { w: d.w0, h: d.h0, face: 'card' };"));
 /* U7 - a pill window opened after the hover */
 t('U7: a click after the hover still makes the window', C.includes("if (it._cpw && it._cpw.open) { const win = !!(this._wins && this._wins.has(it.dataset.key)); it.classList.toggle('desk-win', win);"));
