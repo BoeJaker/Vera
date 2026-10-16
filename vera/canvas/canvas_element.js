@@ -41,6 +41,48 @@
      and any dropdowns of its own (menus, html) - and the item's container draws them: the line beside the title, the rest
      in the item's menu. A body drawn by the shared kit (code, a diagram, a file) is asked for its actions instead
      (VeraOut.barActions). Returns '' so a renderer can declare in an expression. */
+  /* THE ROWS OF AN ANSWER (DA-05c): an array of records, or the one array of records an answer holds under a usual name */
+  function appRows(res) {
+    const recs = (a) => Array.isArray(a) && a.length && a.every((x) => x && typeof x === 'object' && !Array.isArray(x)) ? a : null;
+    if (Array.isArray(res)) return recs(res) || (res.length ? null : []);
+    if (!res || typeof res !== 'object') return null;
+    for (const k of ['rows', 'items', 'results', 'entries', 'events', 'records', 'data', 'values', 'sources', 'symbols', 'groups', 'list']) {
+      if (Array.isArray(res[k])) return recs(res[k]) || (res[k].length ? null : []); }
+    const arrs = Object.keys(res).map((k) => res[k]).filter((v) => recs(v)); return arrs.length === 1 ? arrs[0] : null;
+  }
+  const appCell = (v) => v == null ? '' : typeof v === 'number' ? (Number.isInteger(v) ? String(v) : String(+v.toPrecision(5))) : typeof v === 'object' ? JSON.stringify(v).slice(0, 80) : String(v);
+  /* the columns a list shows (scalars first seen, at most 8), the rows the filter keeps, in the order asked */
+  function appView(rows, ui) {
+    const cols = []; rows.slice(0, 50).forEach((x) => Object.keys(x).forEach((k) => { if (cols.length < 8 && cols.indexOf(k) < 0 && (x[k] == null || typeof x[k] !== 'object')) cols.push(k); }));
+    const q = String((ui && ui.q) || '').trim().toLowerCase(); const words = q ? q.split(/\s+/) : [];
+    let list = rows.map((x, i) => ({ x, i }));
+    if (words.length) list = list.filter(({ x }) => { const t = cols.map((k) => appCell(x[k])).join(' ').toLowerCase(); return words.every((w) => t.indexOf(w) >= 0); });
+    const so = ui && ui.sort; if (so && so[0]) { const k = so[0], d = so[1] === 'desc' ? -1 : 1;
+      list.sort((a, b) => { const p = a.x[k], q2 = b.x[k]; if (p == null && q2 == null) return 0; if (p == null) return 1; if (q2 == null) return -1;
+        return (typeof p === 'number' && typeof q2 === 'number' ? p - q2 : String(p).localeCompare(String(q2), undefined, { numeric: true })) * d; }); }
+    return { cols, list, total: rows.length };
+  }
+  const appCsv = (cols, list) => [cols.join(',')].concat(list.map(({ x }) => cols.map((k) => { const v = appCell(x[k]); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }).join(','))).join('\n');
+  /* the rows part of an app: the list in its view, and the drawer of the row opened */
+  function appRowsHtml(st, view) {
+    const ui = st.ui || {}; const { cols, list, total } = appView(st.rows || [], ui); const sel = ui.sel;
+    const shown = list.slice(0, 200);
+    let body;
+    if (!total) body = '<div class="vc-app-empty">Nothing to show' + (st.manifest && st.manifest.summary ? ' - ' + esc(st.manifest.summary) : '') + '</div>';
+    else if (!list.length) body = '<div class="vc-app-empty">No row has "' + esc(ui.q) + '"</div>';
+    else if (view === 'cards') body = '<div class="vc-app-cards">' + shown.map(({ x, i }) => '<div class="vc-app-c' + (sel === i ? ' sel' : '') + '" data-app-row="' + i + '"><b>' + esc(appCell(x[cols[0]])) + '</b>'
+        + cols.slice(1, 4).map((k) => '<span><i>' + esc(k) + '</i>' + esc(appCell(x[k])) + '</span>').join('') + '</div>').join('') + '</div>';
+    else body = '<table class="vc-table vc-app-t"><thead><tr>' + cols.map((k) => { const so = ui.sort && ui.sort[0] === k ? (ui.sort[1] === 'desc' ? ' \u25be' : ' \u25b4') : '';
+        return '<th data-app-sort="' + esc(k) + '" title="Sort by ' + esc(k) + '">' + esc(k) + so + '</th>'; }).join('') + '</tr></thead><tbody>'
+      + shown.map(({ x, i }) => '<tr data-app-row="' + i + '"' + (sel === i ? ' class="sel"' : '') + '>' + cols.map((k) => '<td>' + esc(appCell(x[k])) + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+    if (list.length > shown.length) body += '<div class="vc-app-more">' + (list.length - shown.length) + ' more - filter to find them</div>';
+    const d = ui.detail != null && st.rows ? st.rows[ui.detail] : null; const dm = st.manifest && st.manifest.detail;
+    const drawer = d ? '<div class="vc-app-dt" data-w="canvas.app.detail"><div class="vc-app-dh"><b>' + esc(appCell(d[cols[0]]) || 'row') + '</b>'
+        + (dm && dm.app ? '<button type="button" class="hx" data-app-detail="1" title="Open ' + esc(dm.app) + ' for this row on the desk">Open ' + esc(dm.app) + '</button>' : '')
+        + '<button type="button" class="hx" data-app-x="1" title="Close (Esc)">\u2715</button></div><div class="vc-app-kv">'
+        + Object.keys(d).map((k) => '<span><i>' + esc(k) + '</i>' + esc(appCell(d[k])) + '</span>').join('') + '</div></div>' : '';
+    return { html: body + drawer, count: list.length === total ? total + ' rows' : list.length + ' of ' + total };
+  }
   /* a capability that only reads, by its name - what an app or a widget may call on its own (the chat's rule, _widgetReadable) */
   const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|sentiment\.map|news\.feed)$|^cal\.events\.list$)/.test(String(cap || ''));
   const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
@@ -1123,11 +1165,20 @@
       if (!id) return '<div class="vc-dim">no app id</div>';
       if (el && key && !st && typeof el._appOpen === 'function') el._appOpen(key, c);
       const ago = st && st.at ? Math.max(0, Math.round((Date.now() - st.at) / 1000)) : null;
-      declare(el, key, { sub: esc((m && m.panel) || 'app') + (st && st.reading ? ' · reading…' : ago != null ? ' · read ' + (ago < 60 ? ago + ' s' : Math.round(ago / 60) + ' min') + ' ago' : ''),
+      const stale = st && st.every && st.at && Date.now() - st.at > st.every * 2500;
+      declare(el, key, { sub: esc((m && m.panel) || 'app') + (st && st.reading ? ' · reading…' : ago != null ? ' · read ' + (ago < 60 ? ago + ' s' : Math.round(ago / 60) + ' min') + ' ago' + (stale ? ' · stale' : '') : ''),
         acts: [{ act: 'appread', label: 'Refresh', title: 'Read it again now' + (m && m.read && m.read.cap ? ' (' + m.read.cap + ')' : '') }]
+          .concat(st && appRows(st.result) && appRows(st.result).length ? [{ act: 'appcsv', label: 'Copy CSV', title: 'Copy the rows shown, as CSV' }] : [])
           .concat(m && m.panel ? [{ act: 'appopen', label: 'Open the panel ↗', title: 'Open ' + m.panel + ' - the page this app comes from' }] : []) });
       if (!st || (st.result === undefined && !st.error)) return `<div class="vc-app vc-app-sk" data-app="${esc(id)}" data-w="canvas.app"><span class="vc-dim">${st && st.waiting ? esc(st.waiting) : 'opening ' + esc((m && m.title) || id) + '…'}</span><i></i><i></i><i></i></div>`;
       if (st.error) return `<div class="vc-app" data-app="${esc(id)}" data-w="canvas.app"><div class="vc-res-err">${esc(st.error)}</div></div>`;
+      /* THE APP MINIMUM (DA-05c, DESK-SPINE-DESIGN §4.3): an answer that is a list of records is drawn as a list the person
+         works - filter (/), sort (a column's head), its views (table, cards, or the drawing its kind gives), a row opened in a
+         drawer (Enter, Esc closes) with the app's detail app for it, Copy CSV in the head, ↑↓ through the rows */
+      st.rows = appRows(st.result);
+      const avw = el && typeof viewsOf === 'function' ? viewsOf({ type: 'app', key, content: c }, el) : { cur: 'drawn' };
+      if (st.rows && avw.cur !== 'drawn') { st.ui = st.ui || { q: '', sort: null, sel: null, detail: null }; const rh = appRowsHtml(st, avw.cur);
+        return `<div class="vc-app vc-app-rowsapp" data-app="${esc(id)}" data-as="rows" data-w="canvas.app"><div class="vc-app-tb"><input class="vc-app-q" data-app-q="1" type="search" placeholder="Filter ( / )" value="${esc(st.ui.q || '')}" spellcheck="false"><span class="vc-app-n">${esc(rh.count)}</span></div><div class="vc-app-rows" tabindex="0">${rh.html}</div></div>`; }
       const rc = { cap: st.cap, args: st.args, result: st.result, ok: true };
       /* the manifest's own view when the generic mapping has nothing better than the raw tree (a calendar's events) */
       let v = resultView(rc); const mk = m && m.view && m.view.kind; if ((!v || v.kind === 'json') && mk && BLOCK[mk] && mk !== 'app' && st.result && typeof st.result === 'object') v = { kind: mk, content: st.result };
@@ -1652,6 +1703,24 @@
   /* while the row shows (hover, focus, locked, full) the head makes room for it, so its own buttons are never under the row */
   :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-n, 0) * 27px + 14px)!important}
   @container (max-width: 320px) { :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-nn, 0) * 27px + 14px)!important} }
+  /* an app's list (DA-05c): the filter row, the rows (a table or cards), the drawer of the row opened */
+  .vc-app-rowsapp{display:flex;flex-direction:column;min-height:0;height:100%;gap:6px}
+  .vc-app-tb{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+  .vc-app-q{flex:1 1 auto;min-width:0;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--border,#2a2f37);background:var(--bg0,#0e0f12);color:var(--fg,#dce1e8);font:11.5px var(--f-ui,var(--sans,system-ui,sans-serif))}
+  .vc-app-q:focus{outline:none;border-color:var(--acc,#5a9e8f)}
+  .vc-app-n{flex:0 0 auto;font:10px var(--mono,ui-monospace,monospace);color:var(--dim,#6b7480)}
+  .vc-app-rows{flex:1 1 auto;min-height:0;overflow:auto;outline:none}
+  .vc-app-t th{cursor:pointer;user-select:none;position:sticky;top:0;background:var(--bg1,#15181d)}
+  .vc-app-t tbody tr{cursor:pointer}.vc-app-t tbody tr:hover td{background:color-mix(in srgb,var(--acc,#5a9e8f) 7%,transparent)}
+  .vc-app-t tbody tr.sel td{background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent)}
+  .vc-app-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:6px}
+  .vc-app-c{display:flex;flex-direction:column;gap:2px;padding:7px 9px;border-radius:7px;border:1px solid var(--border,#2a2f37);cursor:pointer;font-size:11px}
+  .vc-app-c.sel,.vc-app-c:hover{border-color:var(--acc,#5a9e8f)}.vc-app-c i,.vc-app-kv i{font-style:normal;color:var(--dim,#6b7480);margin-right:6px}
+  .vc-app-dt{flex:0 0 auto;max-height:45%;overflow:auto;border-top:1px solid var(--border,#2a2f37);padding-top:6px}
+  .vc-app-dh{display:flex;align-items:center;gap:6px;margin-bottom:4px}.vc-app-dh b{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vc-app-dh .hx{border:0;background:transparent;color:var(--dim2,#8a92a0);cursor:pointer;font-size:10.5px;padding:2px 6px;border-radius:5px}.vc-app-dh .hx:hover{color:var(--fg,#dce1e8);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .vc-app-kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:3px 12px;font-size:11px}
+  .vc-app-empty,.vc-app-more{padding:10px 4px;color:var(--dim,#6b7480);font-size:11px}
   /* an app opening: a quiet skeleton (DESK-SPINE-DESIGN 8.2) */
   .vc-app-sk{display:flex;flex-direction:column;gap:7px;padding:10px 4px}
   .vc-app-sk > i{display:block;height:10px;border-radius:5px;background:color-mix(in srgb,var(--fg,#dce1e8) 7%,transparent)}
@@ -2996,7 +3065,7 @@
      A kind that can be seen more than one way says how: records (graph · list · cards · table), a table (table · cards ·
      list · chart when a column is numbers), the names a reply mentions (chips · list). The choice is the reader's, per
      item, kept in this browser; a records item's lives with its other browsing state. */
-  const VIEW_LABEL = { list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips', fields: 'Fields' };
+  const VIEW_LABEL = { drawn: 'Its own view', list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips', fields: 'Fields' };
   const viewStore = (el) => { if (el._views) return el._views; try { el._views = JSON.parse(localStorage.getItem('vera:canvas:views:' + el.canvasId) || '{}') || {}; } catch (e) { el._views = {}; } return el._views; };
   const viewOf = (el, key, dflt) => (el && key && viewStore(el)[key]) || dflt;
   const viewSet = (el, key, v) => { const m = viewStore(el); m[key] = v; try { localStorage.setItem('vera:canvas:views:' + el.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } if (el._itemSet) el._itemSet(key, { view: v }); };
@@ -3007,6 +3076,9 @@
   const recCanGraph = (c, el, key) => { if (c.kind === 'memory' || c.view === 'graph') return true; const ents = (el && el._recEnts && el._recEnts[String(key)]) || {}; const n = {}; Object.keys(ents).forEach((id) => (ents[id] || []).forEach((e) => { n[e[0]] = (n[e[0]] || 0) + 1; })); return Object.keys(n).some((k) => n[k] >= 2); };
   /* the views an item offers, and the one it shows: [] when it has only one way to be seen */
   const viewsOf = (b, el) => { const c = (b && b.content) || {}, key = String((b && b.key) || '');
+    if (b.type === 'app') { const st = el && el._apps && el._apps[key]; if (!st || !appRows(st.result)) return { views: [], cur: 'drawn' };
+      const kind = st.manifest && st.manifest.view && st.manifest.view.kind; const v = ['table', 'cards'].concat(kind && kind !== 'table' && kind !== 'records' ? ['drawn'] : []);
+      return { views: v, cur: viewOf(el, key, kind && kind !== 'table' && kind !== 'records' ? 'drawn' : 'table') }; }
     if (b.type === 'records') { const v = (recCanGraph(c, el, key) ? ['graph'] : []).concat(['list', 'cards', 'table']); return { views: v, cur: recState(el, key).view || 'list' }; }
     if (b.type === 'table' && Array.isArray(c.rows) && c.rows.length) { const v = ['table', 'cards', 'list'].concat(numCol(c) > 0 ? ['chart'] : [], tableCats(c).length ? ['graph'] : []); return { views: v, cur: viewOf(el, key, tableDefault(c, el)) }; }
     if (b.type === 'entities' && Array.isArray(c.groups) && c.groups.length) return { views: ['chips', 'list', 'graph'], cur: viewOf(el, key, 'chips') };
@@ -4815,6 +4887,26 @@
         od.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && closeAdd()) ev.stopPropagation(); }, true);
         /* a press in another frame (the harness, the chat's menu) never reaches this document: the window losing focus is it */
         try { (od.defaultView || window).addEventListener('blur', () => { closeAdd(); }); } catch (e) { /* no window */ } }
+      /* an app's list (DA-05c): a column's head sorts (again: the other way, a third time: as read), a row opens its drawer,
+         the drawer's own controls */
+      body.addEventListener('click', (ev) => { const t = ev.target; if (!t || !t.closest || !t.closest('.vc-app-rowsapp')) return; const a = this._appUi(t); if (!a) return;
+        const th = t.closest('[data-app-sort]'), row = t.closest('[data-app-row]');
+        if (th) { const k = th.dataset.appSort, so = a.ui.sort; a.ui.sort = !so || so[0] !== k ? [k, 'asc'] : so[1] === 'asc' ? [k, 'desc'] : null; }
+        else if (t.closest('[data-app-x]')) a.ui.detail = null;
+        else if (t.closest('[data-app-detail]')) { this._appDetailOpen(a.key); return; }
+        else if (row) { const i = +row.dataset.appRow; a.ui.sel = i; a.ui.detail = a.ui.detail === i ? null : i; }
+        else return;
+        ev.stopPropagation(); this._appPaint(a.key); }, true);
+      body.addEventListener('input', (ev) => { const t = ev.target; if (!t || !t.matches || !t.matches('[data-app-q]')) return; const a = this._appUi(t); if (!a) return;
+        a.ui.q = t.value; a.ui.sel = null; a.ui.detail = null; this._appPaint(a.key); });
+      body.addEventListener('keydown', (ev) => { const t = ev.target; if (!t || !t.closest || !t.closest('.vc-app-rowsapp') || ev.ctrlKey || ev.metaKey || ev.altKey) return; const a = this._appUi(t); if (!a) return;
+        const q = t.matches('[data-app-q]'); const box = t.closest('.vc-app-rowsapp');
+        if (ev.key === '/' && !q) { ev.preventDefault(); const i = box.querySelector('[data-app-q]'); if (i) i.focus(); return; }
+        if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); if (a.ui.detail != null) a.ui.detail = null; else if (a.ui.q) { a.ui.q = ''; const i = box.querySelector('[data-app-q]'); if (i) i.value = ''; } else { const it = t.closest('.it[data-key]'); if (it) it.focus(); return; } this._appPaint(a.key); return; }
+        if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); const L = appView(a.st.rows, a.ui).list; if (!L.length) return; const at = L.findIndex((x) => x.i === a.ui.sel);
+          const nx = L[Math.max(0, Math.min(L.length - 1, at < 0 ? 0 : at + (ev.key === 'ArrowDown' ? 1 : -1)))]; a.ui.sel = nx.i; if (a.ui.detail != null) a.ui.detail = nx.i; this._appPaint(a.key);
+          const rws = box.querySelector('.vc-app-rows'); if (q && rws) rws.focus(); return; }
+        if (ev.key === 'Enter' && a.ui.sel != null) { ev.preventDefault(); a.ui.detail = a.ui.detail === a.ui.sel ? null : a.ui.sel; this._appPaint(a.key); } }, true);
       body.addEventListener('click', (ev) => {
         const t = ev.target; if (!t || !t.closest) return;
         if (t.closest('textarea')) return;
@@ -5176,6 +5268,24 @@
       } catch (e) { st.error = String((e && e.message) || e); }
       st.reading = false; st.at = Date.now(); st.ms = st.at - t0; this._appDraw(key);
     }
+    /* the rows of an app, drawn again in place - never the whole desk (the filter box keeps its caret) */
+    _appPaint(key) {
+      const st = this._apps && this._apps[key]; if (!st || !st.rows) return;
+      const c = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); const box = c && c.querySelector('.vc-app-rowsapp'); if (!box) return;
+      const vw = viewsOf({ type: 'app', key }, this); const rh = appRowsHtml(st, vw.cur);
+      const rows = box.querySelector('.vc-app-rows'), n = box.querySelector('.vc-app-n'); if (rows) rows.innerHTML = rh.html; if (n) n.textContent = rh.count;
+      const s = rows && rows.querySelector('[data-app-row].sel'); if (s && s.scrollIntoView) { try { s.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engines */ } }
+    }
+    _appUi(t) { const it = t.closest && t.closest('.it[data-key]'); const key = it && it.dataset.key; const st = key && this._apps && this._apps[key];
+      return st && st.rows ? { key, st, ui: st.ui || (st.ui = { q: '', sort: null, sel: null, detail: null }) } : null; }
+    /* a row's detail app (manifest.detail.app; its {row.x} filled from the row) - put on the desk beside this one */
+    _appDetailOpen(key) {
+      const st = this._apps && this._apps[key]; const dm = st && st.manifest && st.manifest.detail; const row = st && st.ui && st.ui.detail != null && st.rows ? st.rows[st.ui.detail] : null;
+      if (!dm || !dm.app || !row) return;
+      const args = {}; Object.keys(dm.args || {}).forEach((k) => { const v = dm.args[k]; args[k] = typeof v === 'string' ? v.replace(/\{row\.([\w.-]+)\}/g, (x, f) => (row[f] == null ? '' : String(row[f]))) : v; });
+      const sig = Object.keys(args).sort().map((k) => k + '=' + args[k]).join('&');
+      return this.call('canvas.add', { kind: 'app', key: 'app:' + dm.app + (sig ? ':' + sig : ''), content: { app: dm.app, args } });
+    }
     _appDraw(key) { if (!this._doc) return; clearTimeout(this._appDrawT); this._appDrawT = setTimeout(() => { this._html = null; this.render(this._doc); }, 30); }
     /* refresh only while it is seen: on the desk and open (not a pill, not hidden, not behind another tab of its group), the
        page visible - never more than one read in flight (_appRead) */
@@ -5495,6 +5605,8 @@
       if (act === 'lock') return this.toggleLock(key);
       if (act === 'dock') { this._winDock(key); return; }
       if (act === 'appread') { this._appRead(key, true); return; }
+      if (act === 'appcsv') { const st = this._apps && this._apps[key]; const rows = st && appRows(st.result); if (!rows) return; const v = appView(rows, st.ui || {});
+        try { navigator.clipboard.writeText(appCsv(v.cols, v.list)); btn.textContent = 'Copied ' + v.list.length; setTimeout(() => { try { btn.textContent = 'Copy CSV'; } catch (e) { /* redrawn */ } }, 1600); } catch (e) { /* no clipboard */ } return; }
       if (act === 'appopen') { const st = this._apps && this._apps[key]; const p = st && st.manifest && st.manifest.panel; if (!p) return;
         try { if (window.veraUI && typeof window.veraUI.openPlace === 'function') { window.veraUI.openPlace(p); return; } } catch (e) { /* the window below */ }
         try { if (window.top && typeof window.top.openPlace === 'function' && window.top.openPlace(p)) return; } catch (e) { /* another origin */ }
@@ -6719,7 +6831,7 @@
     }
   }
 
-  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
+  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
