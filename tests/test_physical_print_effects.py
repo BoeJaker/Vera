@@ -3,6 +3,7 @@ import sys
 import pytest
 
 import Vera.vera.business.thermal_printer_capabilities as printer
+from Vera.vera import capability_orchestration as orchestration
 from Vera.vera.business.printer_effects import (
     observe_physical_print_effect, plan_physical_print_effect)
 from Vera.vera.integrations.effect_observation_context import attributed
@@ -46,6 +47,12 @@ def test_printing_has_separate_source_attributable_evidence_family(monkeypatch, 
     assert summary["totals"]["observations"] == 1
     assert summary["recent"][0]["source"] == "intel"
     assert "private-port" not in str(summary)
+
+
+def test_intel_print_entry_capability_redacts_content_and_returned_bytes():
+    cap = orchestration.CAPABILITY_REGISTRY["print.text"]
+    assert set(cap["redact_args"]) == {"text", "printer_id", "title"}
+    assert cap["redact_result"] is True
 
 
 @pytest.mark.asyncio

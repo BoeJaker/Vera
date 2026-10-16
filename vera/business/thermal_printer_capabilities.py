@@ -771,6 +771,7 @@ if _CAP_AVAILABLE:
     @capability(
         "print.text", http_method="POST", http_path="/print/text",
         http_tags=["print"],
+        redact_args=["text", "printer_id", "title"], redact_result=True,
         schema=enum_schema(align=["left", "center", "right"]),
         description="Print plain text on a thermal printer. Input: text (str!), "
                     "printer_id (str — omit for default/webserial), title (str — "
