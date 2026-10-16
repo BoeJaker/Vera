@@ -168,6 +168,16 @@
   }
 
   /* ── injected CSS (once) ─────────────────────────────────────────────── */
+  /* THE WINDOWS OF A PAGE (DEEP-29 11A.4 Decision 6): a tile popped out of its grid is a window - over the page's items, under
+     its menus, drawers and sheets - in the item z band 130-149, the last one pressed on top. One stack per page, shared by
+     every grid and by the harness's floating solo views (window.VeraWindows). */
+  var WSTACK = [];
+  function winRaise(el) {
+    if (!el) return; WSTACK = WSTACK.filter(function (x) { return x !== el && x.isConnected; }); WSTACK.push(el);
+    var n = WSTACK.length; WSTACK.forEach(function (x, i) { x.style.zIndex = String(130 + Math.max(0, Math.min(19, 19 - (n - 1 - i)))); });
+  }
+  function winDrop(el) { WSTACK = WSTACK.filter(function (x) { return x !== el; }); if (el) el.style.zIndex = ''; }
+  window.VeraWindows = window.VeraWindows || { raise: winRaise, drop: winDrop };
   function injectCSS() {
     if (document.getElementById('vera-dash-css')) return;
     var s = document.createElement('style');
@@ -177,7 +187,7 @@
       // <body>, outside any page that scopes .widget/.w-* CSS (e.g. dream's
       // "#sec-overview .widget"). Widgets with inline padding:0 (.w-body.flush)
       // keep it — inline style outranks this rule.
-      '.widget.floating{position:fixed;z-index:9000;resize:both;overflow:hidden;',
+      '.widget.floating{position:fixed;z-index:var(--z-window,130);resize:both;overflow:hidden;',
       'min-width:280px;min-height:180px;display:flex;flex-direction:column;',
       'border:1px solid var(--acc);border-radius:var(--radius-lg,8px);',
       'box-shadow:0 18px 60px rgba(0,0,0,.65);background:var(--bg2)}',
@@ -1415,6 +1425,8 @@
       w.style.width = Math.max(300, r.width) + 'px';
       w.style.height = Math.max(200, r.height) + 'px';
       document.body.appendChild(w);   // escape the tab panel so the float survives tab switches
+      window.VeraWindows.raise(w);
+      if (!w._vdRaise) { w._vdRaise = function () { if (w.classList.contains('floating')) window.VeraWindows.raise(w); }; w.addEventListener('mousedown', w._vdRaise, true); }
       var pb = w.querySelector('.vd-pop'); if (pb) { pb.classList.add('on'); pb.title = 'Dock back into the grid'; }
       w.querySelector('.w-head').addEventListener('mousedown', floatStart);
       // The header's own × button is every widget's normal "hide from the
@@ -1442,7 +1454,7 @@
     }
     function dock(w) {
       w.querySelector('.w-head').removeEventListener('mousedown', floatStart);
-      w.classList.remove('floating');
+      w.classList.remove('floating'); window.VeraWindows.drop(w);
       w.style.left = w.style.top = w.style.width = w.style.height = '';
       var ph = w._vdPh || grid.querySelector('[data-vd-ph="' + w.dataset.wid + '"]');
       if (ph && ph.parentNode) { ph.parentNode.insertBefore(w, ph); ph.remove(); }
