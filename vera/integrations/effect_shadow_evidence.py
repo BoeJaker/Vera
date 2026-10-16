@@ -25,7 +25,7 @@ READINESS_THRESHOLDS = {
 }
 EVIDENCE_FAMILIES = frozenset({
     "integration_api", "telegram", "email", "commerce", "infrastructure",
-    "homeassistant", "n8n"})
+    "homeassistant", "n8n", "repository"})
 
 
 def evaluate_enforcement_readiness(summary: Mapping[str, Any]) -> dict[str, Any]:
