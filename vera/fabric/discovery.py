@@ -171,6 +171,21 @@ def _ingest():
 def _sqlite_conn():
     return _df()._sqlite_conn()
 
+def _ingress_receipt(url: str, resp, ms: int, caller: str, purpose: str = "crawl") -> None:
+    """A fetch made here (not through web_client) still leaves its receipt in the web map (web-ingress WI-3b)."""
+    try:
+        import sys as _sys
+        ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+        if ing is None or resp is None:
+            return
+        ct = str(resp.headers.get("content-type", "") or "")
+        ing.record_response(url, status=int(resp.status_code), content_type=ct, body=resp.text or "",
+                            elapsed_ms=int(ms), caller=caller, purpose=purpose, final_url=str(resp.url),
+                            headers=dict(resp.headers))
+    except Exception as e:  # noqa: BLE001
+        log.debug("ingress receipt %s: %s", url, e)
+
+
 def _get_graph(name: str = "fabric"):
     try:
         graphs = _df().GRAPHS
@@ -2418,7 +2433,9 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                     if _crawl_rotate and not _crawl_ua:
                         _ph = _browser_headers(custom_ua=_ua_for(urlparse(page_url).netloc),
                                                referer=parent_url or page_url)
+                    _t_get = time.monotonic()
                     resp = await client.get(page_url, headers=_ph) if _ph else await client.get(page_url)
+                    _ingress_receipt(page_url, resp, int((time.monotonic() - _t_get) * 1000), "fabric.discover.crawl")
                 if resp.status_code >= 400:
                     return
                 ct = resp.headers.get("content-type", "").lower()
@@ -3197,7 +3214,9 @@ async def discover_ingest_page(
         try:
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
                                           headers=_HTTP_HEADERS) as c:
+                _t_get = time.monotonic()
                 resp = await c.get(url)
+            _ingress_receipt(url, resp, int((time.monotonic() - _t_get) * 1000), "fabric.discover.ingest_page", "page")
             if resp.status_code >= 400:
                 return {"error": f"HTTP {resp.status_code}", "url": url, "dataset_id": ds_id}
             html = resp.text
@@ -7791,7 +7810,9 @@ async def cap_discover_scrape_page(
     try:
         async with _httpx.AsyncClient(timeout=20, follow_redirects=True,
                                        headers=_HTTP_HEADERS) as client:
+            _t_get = time.monotonic()
             resp = await client.get(url)
+        _ingress_receipt(url, resp, int((time.monotonic() - _t_get) * 1000), "fabric.discover.scrape_page", "page")
         if resp.status_code >= 400:
             return {"error": f"HTTP {resp.status_code}", "url": url}
         ct = resp.headers.get("content-type", "").lower()

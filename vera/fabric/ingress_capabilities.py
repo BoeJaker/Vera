@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import random
 import sys
 import time
 from typing import Any, Dict, List, Optional
 
-from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability
+import Vera.vera.capability_orchestration as _orch
+from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability, schedule
 
 try:
     from Vera.vera.fabric import ingress_core as ic
@@ -30,12 +33,16 @@ except ImportError:                       # loaded from its file under a stand-i
 log = logging.getLogger("vera.ingress")
 
 SWITCH = "ingress.recording"
+SWITCH_THROTTLE = "ingress.shared_throttle"
 SWITCH_TTL_S = 15.0
+HOST_INTERVAL_S = float(os.environ.get("VERA_WEB_DOMAIN_INTERVAL", "1.0") or 1.0)
+HOST_JITTER_S = float(os.environ.get("VERA_WEB_DOMAIN_JITTER", "0.6") or 0.6)
+THROTTLE_KEY = "vera:ingress:host:"
 DEFAULT_BUDGET_GB = 20.0
 #: estate hosts the configuration names on top of ingress_core's rules (Redis-free: an env/config list later)
 INTERNAL_HOSTS: List[str] = []
 
-_SW: Dict[str, Any] = {"at": 0.0, "mode": "off", "task": None}
+_SW: Dict[str, Any] = {"at": 0.0, "mode": "off", "throttle": "off", "task": None}
 
 
 def _has(name: str) -> bool:
@@ -82,8 +89,10 @@ def mode() -> str:
 async def _refresh() -> None:
     try:
         eff = await _call("minds.effective")
-        m = str(((eff or {}).get("modes") or {}).get(SWITCH) or "off")
+        modes = (eff or {}).get("modes") or {}
+        m = str(modes.get(SWITCH) or "off")
         _SW["mode"] = m if m in ("off", "meta", "on") else "off"
+        _SW["throttle"] = "on" if str(modes.get(SWITCH_THROTTLE) or "off") == "on" else "off"
     except Exception as ex:  # noqa: BLE001
         log.debug("ingress switch read: %s", ex)
 
@@ -134,7 +143,113 @@ if record_fetch_result not in _wc.FETCH_HOOKS:
     _wc.FETCH_HOOKS.append(record_fetch_result)
 
 
+# ── the shared per-host slot (WI-3b) ─────────────────────────────────────────
+
+async def shared_wait(domain: str) -> Optional[float]:
+    """web_client's THROTTLE_HOOK: the seconds to wait by the host's record in the coordination Redis, or None
+    (switch off, or Redis unavailable) so the per-process throttle decides."""
+    mode()                                        # keeps the cached switch fresh
+    if _SW["throttle"] != "on" or not domain:
+        return None
+    try:
+        r = _orch.COORD_REDIS or await _orch._ensure_coord_redis()
+    except Exception:  # noqa: BLE001
+        r = None
+    if r is None:
+        return None
+    key = THROTTLE_KEY + str(domain).lower()
+    try:
+        stored = await r.get(key)
+        wait, new_next = ic.next_slot(time.time(), float(stored or 0.0), HOST_INTERVAL_S,
+                                      random.uniform(0.0, HOST_JITTER_S))
+        await r.set(key, repr(new_next), ex=120)
+    except Exception as e:  # noqa: BLE001
+        log.debug("shared throttle %s: %s", domain, e)
+        return None
+    return wait
+
+
+_wc.THROTTLE_HOOK = shared_wait
+
+
+# ── robots.txt: stored per host, not obeyed (owner, 11 Oct) ──────────────────
+
+ROBOTS_BATCH = 3
+ROBOTS_UA = "Vera intelligence/1.0 (https://github.com/BoeJaker/Vera)"
+_ROBOTS = {"running": False}
+
+
+async def _robots_tick() -> None:
+    """Fetch and store robots.txt for hosts the map has not seen one for (a few per minute, never on a request
+    path). Informational: nothing reads it to refuse a fetch."""
+    if _ROBOTS["running"] or mode() == "off":
+        return
+    pool = _pool()
+    if pool is None:
+        return
+    _ROBOTS["running"] = True
+    try:
+        async with pool.acquire() as conn:
+            hosts = [r[0] for r in await conn.fetch(
+                "SELECT host FROM web_hosts WHERE robots_at IS NULL ORDER BY fetches DESC LIMIT $1", ROBOTS_BATCH)]
+        for h in hosts:
+            if ic.is_internal("https://" + h, INTERNAL_HOSTS):
+                text, note = "", "internal"
+            else:
+                text, note = await _fetch_robots(h)
+            summ = ic.robots_summary(text) if text else {}
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE web_hosts SET robots = $2, robots_at = NOW(), crawl_delay = $3, note = $4 WHERE host = $1",
+                    h, text[:ic.ROBOTS_MAX_BYTES] if text else None, summ.get("crawl_delay"), note or None)
+    except Exception as e:  # noqa: BLE001
+        log.debug("robots tick: %s", e)
+    finally:
+        _ROBOTS["running"] = False
+
+
+async def _fetch_robots(host: str):
+    import httpx
+    last = ""
+    for scheme in ("https", "http"):
+        try:
+            async with httpx.AsyncClient(timeout=6.0, follow_redirects=True, headers={"User-Agent": ROBOTS_UA}) as c:
+                r = await c.get(f"{scheme}://{host}/robots.txt")
+        except Exception as e:  # noqa: BLE001
+            last = f"robots {scheme}: {str(e)[:60]}"
+            continue
+        if r.status_code == 200 and "html" not in (r.headers.get("content-type") or "").lower():
+            return r.text[:ic.ROBOTS_MAX_BYTES], f"robots {scheme} 200"
+        if r.status_code in (404, 410):
+            return "", f"robots {r.status_code}"
+        last = f"robots {scheme} {r.status_code}"
+    return "", last
+
+
+schedule(_robots_tick, 60, name="ingress.robots", skip_in_sandbox=True, singleton=True)
+
+
 # ── capabilities ─────────────────────────────────────────────────────────────
+
+@capability("fabric.ingress.fetch", http_method="POST", http_path="/fabric/ingress/fetch", http_tags=["fabric", "ingress"],
+            memory="off",
+            description="The one door for a public page: the hardened fetch (API switchover, rewrites, the shared "
+                        "per-host slot, block detection, reader fallback) with its receipt in the web map. Input: url "
+                        "(str!), purpose (str, default 'page'), caller (str), max_chars (int, default 16000), want "
+                        "('text' default | 'html'). Output: fetch_page's result (text, title, status, final_url, "
+                        "content_type, via, elapsed_ms, error) without html unless asked, plus key.")
+async def cap_ingress_fetch(url: str = "", purpose: str = "page", caller: str = "", max_chars: int = 16000,
+                            want: str = "text", trace_id=None):
+    if not url:
+        return {"error": "url required"}
+    fp = await _wc.fetch_page(url, max_chars=max(500, min(int(max_chars or 16000), 400_000)),
+                              caller=caller or "fabric.ingress.fetch", purpose=purpose or "page")
+    out = dict(fp)
+    if want != "html":
+        out.pop("html", None)
+    out["key"] = ic.url_key(fp.get("final_url") or url)
+    return out
+
 
 @capability("fabric.ingress.status", http_method="GET", http_path="/fabric/ingress/status", http_tags=["fabric", "ingress"],
             memory="off", silent=True,

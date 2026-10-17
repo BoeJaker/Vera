@@ -270,10 +270,26 @@ _domain_next:  Dict[str, float] = {}
 _domain_locks: Dict[str, asyncio.Lock] = {}
 
 
+#: A shared per-host slot (web-ingress WI-3b): the ingress gateway sets this to a coroutine that takes the domain
+#: and returns the seconds to wait by the record every Vera process shares, or None to fall back to the
+#: per-process throttle below.
+THROTTLE_HOOK: Optional[Callable[[str], Awaitable[Optional[float]]]] = None
+
+
 async def throttle_domain(domain: str) -> None:
     """Wait until this domain is allowed another request."""
     if not domain or _MIN_INTERVAL <= 0:
         return
+    if THROTTLE_HOOK is not None:
+        try:
+            wait = await THROTTLE_HOOK(domain)
+        except Exception as e:  # noqa: BLE001 - a shared record that fails leaves the local throttle in charge
+            log.debug("shared throttle %s: %s", domain, e)
+            wait = None
+        if wait is not None:
+            if wait > 0:
+                await asyncio.sleep(min(float(wait), 30.0))
+            return
     lock = _domain_locks.setdefault(domain, asyncio.Lock())
     async with lock:
         wait = _domain_next.get(domain, 0.0) - time.monotonic()

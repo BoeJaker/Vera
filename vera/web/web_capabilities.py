@@ -562,6 +562,13 @@ async def cap_web_search(
                         log.debug("web.search bg fetch %s: %s", u, e)
             _spawn(_bg_fetch())
 
+    try:    # the web map keeps the searches Vera sends (owner, 11 Oct; web-ingress WI-3b) - never on the hot path
+        _ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+        if _ing is not None:
+            _ing.record_query(query, engine=str(used or ""), caller="web.search",
+                              result_urls=[str(r.get("url") or "") for r in results if r.get("url")])
+    except Exception as _e:  # noqa: BLE001
+        log.debug("web.search receipt: %s", _e)
     await emit_event({
         "type":         "web.search.done",
         "query":        query[:100],

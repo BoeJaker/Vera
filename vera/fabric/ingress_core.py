@@ -433,3 +433,46 @@ def archive_member_ok(stored: int, inflated: int, depth: int = 0) -> bool:
     if stored <= 0:
         return inflated == 0
     return inflated / max(1, stored) <= MAX_INFLATE_RATIO and inflated <= MAX_BYTES["zip"]
+
+
+# ── politeness: one shared slot per host ──────────────────────────────────────
+
+def next_slot(now: float, stored_next: float, interval: float, jitter: float = 0.0) -> Tuple[float, float]:
+    """The per-host throttle as a shared record: given the host's stored next-allowed time, (how long this caller
+    waits, the new next-allowed time to store). With every process reading and writing the same record, however
+    many fetchers run, one host sees at most one request per interval (PLAN §3.1; web_client's throttle was
+    per process)."""
+    now, nxt = float(now or 0.0), float(stored_next or 0.0)
+    wait = max(0.0, nxt - now)
+    new_next = max(now, nxt) + max(0.0, float(interval or 0.0)) + max(0.0, float(jitter or 0.0))
+    return wait, new_next
+
+
+ROBOTS_MAX_BYTES = 64 * 1024
+
+
+def robots_summary(text: str) -> Dict[str, object]:
+    """What the map keeps of a robots.txt (stored, not obeyed - owner, 11 Oct 2026): the crawl-delay for '*' if
+    any, the sitemap URLs, and how many Disallow lines there are."""
+    delay: Optional[float] = None
+    sitemaps: List[str] = []
+    disallows = 0
+    agent_all = False
+    for raw in str(text or "")[:ROBOTS_MAX_BYTES].splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        k, v = line.split(":", 1)
+        k, v = k.strip().lower(), v.strip()
+        if k == "user-agent":
+            agent_all = (v == "*")
+        elif k == "crawl-delay" and agent_all:
+            try:
+                delay = float(v)
+            except ValueError:
+                pass
+        elif k == "sitemap" and v:
+            sitemaps.append(v)
+        elif k == "disallow" and v:
+            disallows += 1
+    return {"crawl_delay": delay, "sitemaps": sitemaps[:20], "disallows": disallows}

@@ -155,6 +155,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "and fetches (status, bytes, caller), never a body; 'on' = plus content hashes and links for external pages "
        "(the owner's 11 Oct decision: external pages in full, internal hosts never, private APIs meta only).",
        owner="web-ingress"),
+    _f("ingress.shared_throttle", ("off", "on"), "web", "WI-3",
+       "The per-host politeness slot web_client keeps: 'off' (default) = per process, as today; 'on' = one record "
+       "per host in the coordination Redis, so prod, the sandboxes and node fetchers together never exceed one "
+       "request per interval on a host (two Redis round trips per fetch; Redis down = per process).",
+       owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),
