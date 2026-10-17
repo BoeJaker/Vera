@@ -639,7 +639,7 @@ async def cap_web_fetch(
     t0 = time.monotonic()
     # Shared hardened fetch: platform-API switchover → domain rewrite →
     # throttled browser-fingerprint fetch → block detection → reader fallback.
-    fp = await _wc.fetch_page(url, timeout=timeout, max_chars=max_chars)
+    fp = await _wc.fetch_page(url, timeout=timeout, max_chars=max_chars, caller="web.fetch", purpose="page")
     if fp.get("error"):
         await emit_event({"type": "web.fetch.error", "url": url,
                           "error": fp["error"][:120]})

@@ -520,7 +520,7 @@ async def reader_read(url: str, *, max_chars: int = 60_000, fresh: bool = False,
     if mode in ("auto", "fetch"):
         page_html, title = html, ""
         if not page_html:
-            fp = await _wc.fetch_page(url, timeout=10.0, max_chars=200_000)
+            fp = await _wc.fetch_page(url, timeout=10.0, max_chars=200_000, caller="reader.page", purpose="read")
             if fp.get("error") or fp.get("status") in (404, 410):
                 why = fp.get("error") or "HTTP %s" % fp.get("status")
             elif fp.get("block_reason"):
