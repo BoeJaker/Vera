@@ -799,7 +799,9 @@
     const paras = (s) => String(s || '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{1,}/g, '\n\n').trim();
     const title = (r) => r.url ? `<a class="vc-rbx-t" href="${esc(r.url)}" target="_blank" rel="noopener" data-rec-stop="1">${esc(r.title || r.url)}</a>` : `<span class="vc-rbx-t">${esc(r.title || r.id)}</span>`;
     const score = (r) => r.score != null ? `<span class="vc-rbx-sc" title="relevance ${esc(r.score)}"><i style="width:${Math.round(Math.max(0, Math.min(1, +r.score)) * 100)}%"></i></span>` : '';
-    return { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score };
+    /* WHAT WAS READ (DU-E-records: unread marks): a record opened here is read - kept per canvas in this browser (_recSeenOf) */
+    const seen = (el && typeof el._recSeenOf === 'function' ? el._recSeenOf(key) : null) || {};
+    return { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score, seen };
   }
   function recOpened(x, r) {
     const { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score } = x;
@@ -855,12 +857,12 @@
     else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list; a name, the pages that name it</div></div>`;
     else if (st.view === 'table') {
       body = `<div class="vc-tablewrap"><table class="vc-table vc-rbx-tbl"><thead><tr><th>title</th><th>source</th><th>when</th>${all.some((r) => r.score != null) ? '<th>score</th>' : ''}</tr></thead><tbody>`
-        + shown.map((r) => `<tr class="${(st.open || {})[r.id] ? 'on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}"><td>${title(r)}</td><td class="mono">${esc(r.domain || (r.meta && (r.meta.dataset_id || r.meta.engine)) || '')}</td><td class="mono">${esc(r.when ? ago(r.when) : '')}</td>${all.some((x) => x.score != null) ? `<td>${score(r)}</td>` : ''}</tr>` + ((st.open || {})[r.id] ? `<tr class="vc-rbx-tr-open"><td colspan="4">${opened(r)}</td></tr>` : '')).join('')
+        + shown.map((r) => `<tr class="${(st.open || {})[r.id] ? 'on' : ''}${x.seen[r.id] ? ' seen' : ''}${st.cur === r.id ? ' cur' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}"><td>${title(r)}</td><td class="mono">${esc(r.domain || (r.meta && (r.meta.dataset_id || r.meta.engine)) || '')}</td><td class="mono">${esc(r.when ? ago(r.when) : '')}</td>${all.some((x) => x.score != null) ? `<td>${score(r)}</td>` : ''}</tr>` + ((st.open || {})[r.id] ? `<tr class="vc-rbx-tr-open"><td colspan="4">${opened(r)}</td></tr>` : '')).join('')
         + `</tbody></table></div>`;
     } else {
       body = `<div class="vc-rbx-${st.view === 'cards' ? 'cards' : 'list'}">` + shown.map((r) => {
         const on = !!(st.open || {})[r.id];
-        return `<div class="vc-rbx-row${on ? ' on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}">`
+        return `<div class="vc-rbx-row${on ? ' on' : ''}${x.seen[r.id] ? ' seen' : ''}${st.cur === r.id ? ' cur' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}">`
           + `<div class="vc-rbx-hd">${badge(r)}<div class="vc-rbx-tt">${title(r)}${entsOf(r).length ? `<div class="vc-rbx-ents">${entsOf(r).slice(0, 3).map((e) => `<span title="${esc(e[1])}">${esc(e[0])}</span>`).join('')}</div>` : ''}<div class="vc-rbx-sub">${r.domain ? `<span>${esc(r.domain)}</span>` : ''}${r.when ? `<span>${esc(ago(r.when))}</span>` : ''}${r.meta && r.meta.engine ? `<span>${esc(r.meta.engine)}</span>` : ''}${r.meta && r.meta.dataset_id ? `<span>${esc(r.meta.dataset_id)}</span>` : ''}${score(r)}</div></div></div>`
           + (!on && r.snippet ? `<div class="vc-rbx-s">${esc(String(r.snippet).slice(0, 400))}</div>` : '')
           + (on ? opened(r) : '') + `</div>`;
@@ -911,7 +913,7 @@
     const from = rows.length ? page * per + 1 : 0, to = Math.min(rows.length, page * per + per);
     const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
     return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
-      + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
+      + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${(() => { const u = all.filter((r) => !x.seen[r.id]).length; return u < all.length && u > 0 ? ' · ' + u + ' unread' : ''; })()}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
       + evHead + glance
       + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">`
       /* WHAT THE PAGES NAME AND WHERE THEY CAME FROM, BEHIND A MENU (owner, 2026-10-11: "it has a list of names and counts
@@ -2152,6 +2154,9 @@
   /* while the row shows (hover, focus, locked, full) the head makes room for it, so its own buttons are never under the row */
   :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-n, 0) * 27px + 14px)!important}
   @container (max-width: 320px) { :host(:not([data-tier="full"])) .it:not(.desk-chip):is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .it-hd:has(> .it-acts){padding-right:calc(var(--hda-nn, 0) * 27px + 14px)!important} }
+  /* the records browser: a record already read is quieter; the keys' cursor is a bar at its edge */
+  .vc-rbx-row.seen .vc-rbx-t,.vc-rbx-tbl tr.seen .vc-rbx-t{color:var(--dim2,#8a92a0);font-weight:400}
+  .vc-rbx-row.cur,.vc-rbx-tbl tr.cur td:first-child{box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
   /* an app's bar: an action's form, its question, its answer */
   .vc-app-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 7px;border-radius:7px;background:color-mix(in srgb,var(--acc,#5a9e8f) 9%,transparent);font-size:11px;flex:0 0 auto}
   .vc-app-bar.warn{background:color-mix(in srgb,var(--warn,#d6b25e) 14%,transparent)}.vc-app-bar.bad{background:color-mix(in srgb,var(--err,#e06c6c) 14%,transparent)}
@@ -5947,6 +5952,16 @@
       /* THE ITEM BY KEYBOARD (DEEP-29 11A.4 Decision 4): an item takes focus (Tab); Enter opens it as a press on its head does,
          Esc restores a full one, F fills / restores, P makes it a pill (in the column: folds it), the arrows move between items;
          a control in the head's row answers Enter and Space as a press. Never while typing, never with a modifier. */
+      /* THE RECORDS BY KEYBOARD (DU-E-records): on a focused records card (not while typing in its filter), j and k move a cursor
+         through the rows shown, o opens or closes the row under it */
+      body.addEventListener('keydown', (ev) => { const t = ev.target; if (!t || !t.closest || ev.ctrlKey || ev.metaKey || ev.altKey || !/^[jko]$/.test(ev.key)) return;
+        if (t.matches && t.matches('input,textarea,select,[contenteditable]')) return;
+        const it = t.closest('.it[data-key]'); const rbx = it && it.querySelector('.vc-rbx'); if (!rbx) return; const key = it.dataset.key;
+        const ids = [...rbx.querySelectorAll('[data-rec-act="open"][data-rec-arg]')].map((x) => x.dataset.recArg); if (!ids.length) return;
+        ev.preventDefault(); const st = recState(this, key); const at = ids.indexOf(st.cur);
+        if (ev.key === 'o') { this._recAct(key, 'open', st.cur || ids[0]); st.cur = st.cur || ids[0]; return; }
+        st.cur = ids[Math.max(0, Math.min(ids.length - 1, at < 0 ? 0 : at + (ev.key === 'j' ? 1 : -1)))]; if (this._doc) this.render(this._doc);
+        const row = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); const cr = row && row.querySelector('.vc-rbx .cur'); if (cr && cr.scrollIntoView) { try { cr.scrollIntoView({ block: 'nearest' }); } catch (e) { /* old engines */ } } });
       body.addEventListener('keydown', (ev) => {
         const t = ev.target; if (!t || !t.classList || ev.ctrlKey || ev.metaKey || ev.altKey) return;
         if (t.classList.contains('hb') && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); t.click(); return; }
@@ -7231,6 +7246,12 @@
       if (!any && this._autoMax === key) { this._autoMax = null; if (this._max === key) this._toggleMax(key); return true; }
       return false;
     }
+    /* the records read on this canvas, per item: {key: {id: 1}}, in this browser (at most 400 per item) */
+    _recSeenOf(key) { if (!this._recSeen) { try { this._recSeen = JSON.parse(localStorage.getItem('vera:canvas:recseen:' + this.canvasId) || '{}') || {}; } catch (e) { this._recSeen = {}; } }
+      return this._recSeen[String(key)] || {}; }
+    _recSeenAdd(key, id) { this._recSeenOf(key); const m = this._recSeen[String(key)] = this._recSeen[String(key)] || {}; if (m[id]) return; m[id] = 1;
+      const ks = Object.keys(m); if (ks.length > 400) ks.slice(0, ks.length - 400).forEach((k) => { delete m[k]; });
+      try { localStorage.setItem('vera:canvas:recseen:' + this.canvasId, JSON.stringify(this._recSeen)); } catch (e) { /* this page only */ } }
     async _recAct(key, act, arg) {
       const b = this._blockOf(key); const c = (b && b.content) || null; if (!c) return;
       const st = recState(this, key); const items = Array.isArray(c.items) ? c.items : [];
@@ -7248,14 +7269,14 @@
       if (act === 'rrlay') { try { localStorage.setItem('vera:canvas:rrlay', arg === 'below' ? 'below' : 'right'); } catch (e) { /* this page only */ } return redraw(); }
       if (act === 'ent') { st.ent = st.ent === arg ? '' : arg; st.page = 0; return redraw(); }
       if (act === 'goto') return this._rgNode(key, { id: 'r:' + arg });   // a timeline dot: its page, opened, wherever it sits
-      if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key);
+      if (act === 'open') { if (it) { st.open[it.id] = !st.open[it.id]; this._open && this._open.add && this._open.add(key); if (st.open[it.id]) this._recSeenAdd(key, it.id);
           if (!st.open[it.id] && this._readerFollow(key, false)) return;
           // a fabric record opened is READ at once: its facts, its source, its text - the depth is the point of opening it
           const cur = st.body[it.id] || {};
           if (st.open[it.id] && it.ref && it.ref.record_id && !cur.text && !cur.busy && !cur.err) { redraw(); return this._recAct(key, 'rec', arg); } }
         return redraw(); }
       if (act === 'read' && it && it.url) {
-        st.open[it.id] = true; st.body[it.id] = { busy: 'reading the page (reader mode)' }; if (!this._readerFollow(key)) redraw();
+        st.open[it.id] = true; this._recSeenAdd(key, it.id); st.body[it.id] = { busy: 'reading the page (reader mode)' }; if (!this._readerFollow(key)) redraw();
         const rd = await this._readPage(String(it.url));
         st.body[it.id] = rd.reader ? { reader: rd.reader } : rd.text ? { text: rd.text } : { err: rd.err || 'the page gave nothing back' };
         /* a page read here names things too: its names join the list's name filters and its graph, as a cached reading's do */

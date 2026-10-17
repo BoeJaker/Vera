@@ -28,4 +28,18 @@ t('a lookup\'s evidence is the evidence part: its head over the pages, its foot 
   const h = draw({ kind: 'evidence', items: items.slice(0, 3).map((r, i) => Object.assign({ n: i + 1 }, r)), evidence: { question: 'q?', subject: 's', need: 'news', answerable: true, checked: ['web'], gaps: ['one'] } });
   assert(h.indexOf('vc-ev') < h.indexOf('vc-rbx-row') && h.indexOf('vc-ev-foot') > h.indexOf('vc-rbx-row'));
 });
+t('a record already read is marked, the head counts what is unread, and the keys\' cursor is marked', () => {
+  const el = { _recUi: { k: { page: 0, q: '', sort: 'rank', view: 'list', dom: '', ent: '', open: {}, body: {}, cur: 'u2' } }, _recSeenOf: () => ({ u0: 1, u1: 1 }) };
+  const h = V.BLOCK.records({ title: 'Web', kind: 'web', items }, 'm', 'k', el);
+  assert.strictEqual((h.match(/class="vc-rbx-row[^"]* seen/g) || []).length, 2, 'two read');
+  assert(/ · 10 unread/.test(h), 'unread count');
+  assert(/class="vc-rbx-row[^"]* cur"[^>]*data-rec-arg="u2"/.test(h), 'cursor on u2');
+  const tb = V.BLOCK.records({ kind: 'web', items }, 'm', 'k', Object.assign({}, el, { _recUi: { k: Object.assign({}, el._recUi.k, { view: 'table' }) } }));
+  assert(/<tr class=" seen"/.test(tb) && /<tr class=" cur"/.test(tb));
+  assert(!/unread/.test(draw({ kind: 'web', items })), 'nothing read: no count');
+});
+t('opening a record reads it; j / k / o move and open on a focused records card', () => {
+  assert(/if \(st\.open\[it\.id\]\) this\._recSeenAdd\(key, it\.id\)/.test(S));
+  assert(/vera:canvas:recseen:/.test(S) && /\/\^\[jko\]\$\/\.test\(ev\.key\)/.test(S));
+});
 console.log(n + ' passed');
