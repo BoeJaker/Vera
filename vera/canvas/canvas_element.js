@@ -4546,16 +4546,16 @@
          cards it will place (not locked, placed, pilled, windowed, layered or out of the topic), and the cards that share a slot are
          made one card with tabs (_deskGroups) in this same pass - an arrival joins its composite before it is shown. A tab the person
          took out (its separate mark) never joins one. */
-      this._slotUnion = null;
+      this._slotUnion = null; this._slotPills = null;
       if (D.modeOf && D.modeOf(this.getAttribute('desk-arrange')) === 'slots' && typeof D.fitLayout === 'function' && this.getAttribute('desk-combine') !== 'off') {
-        const up0 = this._deskPosGet(), lk0 = this._lockGet(), pl0 = this._pillGet(), wk0 = this._winKeepGet(), sp0 = this._sepGet(), T0 = this._topic;
+        const up0 = this._deskPosGet(), lk0 = this._lockGet(), pl0 = this._pillGet(), wk0 = this._winKeepGet(), sp0 = this._sepGet(), T0 = this._topic, want0 = this._slotWant || {};
         const tAt0 = {}; if (T0 && T0.order) T0.order.forEach((k, i) => { tAt0[k] = i; });
         const cand = cards.filter((c) => { const k = c.dataset.key || ''; return k && !lk0[k] && !pl0[k] && !wk0[k] && !(up0[k] && (isFinite(up0[k].fx) || up0[k].chip))
-          && !(this._rz && this._rz.el === c) && !layOf(c) && (!T0 || !T0.keys || !T0.keys.size || T0.keys.has(k) || c.classList.contains('pinned')); });
+          && !(this._rz && this._rz.el === c) && !layOf(c) && (!T0 || !T0.keys || !T0.keys.size || T0.keys.has(k) || c.classList.contains('pinned') || !!want0[k]); });
         const F0 = D.freeRegion(R, desk, W < 760 ? 46 : 170);
-        const L0 = D.fitLayout(cand.map((c, i) => ({ id: c.dataset.key, aspect: this._aspectOf(c, c.dataset.key) || 'square', rank: tAt0[c.dataset.key] != null ? tAt0[c.dataset.key] : 100 + i })),
+        const L0 = D.fitLayout(cand.map((c, i) => ({ id: c.dataset.key, aspect: this._aspectOf(c, c.dataset.key) || 'square', rank: want0[c.dataset.key] ? -1 : (tAt0[c.dataset.key] != null ? tAt0[c.dataset.key] : 100 + i) })),
           F0, { near: F0.farRight ? 'left' : 'right', current: this._lastPlan ? this._lastPlan.rects : {}, noComposite: sp0 });
-        const un = {}; L0.slots.forEach((sl) => sl.ids.slice(1).forEach((m) => { un[m] = sl.ids[0]; })); this._slotUnion = un;
+        const un = {}; L0.slots.forEach((sl) => sl.ids.slice(1).forEach((m) => { un[m] = sl.ids[0]; })); this._slotUnion = un; this._slotFit = L0; this._slotPills = new Set(L0.pills);   /* (kept for a look: canvas._slotFit) */
       }
       const grp = this._deskGroups(cards);
       cards = cards.filter((c) => !grp.behind.has(c));
@@ -4612,7 +4612,7 @@
         const ownTurn = (c) => !!T.mid && (c.dataset.mid === T.mid || c.dataset.from === T.mid || (c.dataset.anchors || '').split(' ').indexOf(T.mid) >= 0);
         /* a composite card is in the topic when any of its tabs is, and ranks as its best one */
         const mem = (x) => grp.membersOf.get(x.c) || [x.c];
-        const inT = (x) => mem(x).some((c) => tAt[c.dataset.key || ''] != null || c.classList.contains('pinned') || ownTurn(c));
+        const inT = (x) => mem(x).some((c) => tAt[c.dataset.key || ''] != null || c.classList.contains('pinned') || ownTurn(c) || !!(this._slotWant && this._slotWant[c.dataset.key || '']));
         const rk = (x) => Math.min.apply(null, mem(x).map((c) => (tAt[c.dataset.key] != null ? tAt[c.dataset.key] : -1)));
         const lead = ranked.filter(inT).sort((a, b) => rk(a) - rk(b));
         const rest = ranked.filter((x) => !inT(x)); rest.forEach((x) => outside.add(x.c.dataset.key || ''));
@@ -4654,7 +4654,9 @@
       const statusOf = (c) => { if (c.classList.contains('waiting')) return 'needs'; const cc = this._contentOf(c.dataset.key || '') || {}; const st = String(cc.status || cc.state || '').toLowerCase();
         return /run|live|stream|pending|queued|writ/.test(st) ? 'running' : /done|complete|error|fail|^ok$/.test(st) ? 'done' : 'todo'; };
       const info = ranked.map((x) => { const age = x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null;
-        return { id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '', age, t: age == null ? 0 : 1000 - age, border: outside.has(x.c.dataset.key || ''), rel: relOf(x.c), status: statusOf(x.c), aspect: this._aspectOf(x.c, x.c.dataset.key || '') }; });
+        /* the slots arrangement follows its pre-pass: what it sent to the pills stays a pill, a card opened from a pill ranks first */
+        const kx = x.c.dataset.key || '', slotOut = !!(this._slotPills && this._slotPills.has(kx)), wantR = this._slotWant && this._slotWant[kx] ? -1 : null;
+        return { id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '', age, t: age == null ? 0 : 1000 - age, border: outside.has(kx) || slotOut, rank: wantR, rel: relOf(x.c), status: statusOf(x.c), aspect: this._aspectOf(x.c, x.c.dataset.key || '') }; });
       const relByKey = {}; info.forEach((x) => { relByKey[x.id] = x.rel; });
       const pos = D.arrange('orbit', R, info, desk);
       const ML = mode !== 'auto' && D.layoutMode ? D.layoutMode(mode, R, info, desk, { strip: W < 760 ? 46 : 170, current: this._lastPlan ? this._lastPlan.rects : {}, noComposite: this._sepGet() }) : null;
@@ -4757,7 +4759,7 @@
         const nwm = user || kind === 'chart' || kind === 'table' ? null : (this._natW || {})[key]; const nw = kind === 'chart' || kind === 'table' ? null : nwm ? Math.min(nw0 || Infinity, nwm) : (user ? null : nw0);
         /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
         const mh = (this._minH || {})[key];
-        const o = { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || (kind === 'table' && ksz ? ksz.w : undefined),   /* a table no wider than its columns need, whatever the fill */ minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
+        const o = { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || (kind === 'table' && ksz ? ksz.w : undefined),   /* a table no wider than its columns need, whatever the fill */ minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */, pilled: pilledKey };
         /* EACH KIND GROWS THE WAY IT READS (owner 2026-10-17: "if they scale well in a particular direction then they should be
            expanded in that direction"; "the elements that are lists of results should be taller by default rather than wider ...
            tables should be more square and time-series ohlcv should be wider"): into the free desk (D.grow) a list grows down and
@@ -4772,7 +4774,8 @@
            (userAt) has its own place already */
         /* a card shorter than its mode's cell (fitted to what it holds) keeps the cell's top - no gap above it */
         if (msz && !user && o.h < msz.h - 2) o.y = p[1] - msz.h / 2 + o.h / 2;
-        const hr = seed && !userAt(key) ? (seed[key] || (grp.membersOf.get(c) || []).map((m) => seed[m.dataset.key || '']).find(Boolean) || null) : null;   /* a group's new front tab takes the group's place */
+        /* ...but a card the person sent to the pills goes there: held, it kept its place and card face and the pill control did nothing */
+        const hr = seed && !userAt(key) && !pilledKey ? (seed[key] || (grp.membersOf.get(c) || []).map((m) => seed[m.dataset.key || '']).find(Boolean) || null) : null;   /* a group's new front tab takes the group's place */
         if (hr) Object.assign(o, { x: hr.x, y: hr.y, w: hr.w, h: hr.h, bw: hr.bw || hr.w, bh: hr.bh || hr.h, held: true, keepSize: true, face0: hr.face });
         return o;
       });
@@ -4815,7 +4818,8 @@
       /* a narrow desk keeps its width for the cards: its strip is of icons (the pill's mark, its title on hover), not pills */
       const iconStrip = W < 760;
       const CHW = iconStrip ? 34 : 150, CHH = 34, SGAP = 6, perCol = Math.max(1, Math.floor((H - SGAP) / (CHH + SGAP)));
-      const pillish = (it) => { if (it.fixed || it.sizing || it.own) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
+      /* the person's pill wins over a size they gave it (a resized card sent to the pills stayed open: own was never a pill) */
+      const pillish = (it) => { if (it.pilled && !it.isLock && !it.sizing) return true; if (it.fixed || it.sizing || it.own) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
         const f = D.sizeAt(R, it.x, it.y, it.so, desk).face; return f === 'chip' || f === 'icon'; };
       const pills = plan.filter(pillish);
       const cols = pills.length ? Math.min(Math.max(1, Math.floor((W * 0.45) / (CHW + SGAP))), Math.ceil(pills.length / perCol)) : 0;
@@ -5351,6 +5355,9 @@
       if (ks && !ks.length && this._topic) return false;
       const sig = (mid || '') + '|' + (ks ? ks.join(',') : '-');
       if (sig === this._topicSig) return false; this._topicSig = sig;
+      /* LV-5: what was opened from a pill leaves with its turn (principle 6: out of context, out of the composites) - a new turn, not the
+         same turn's topic being refined (the chat sets a first topic, then the relevance answer replaces it) */
+      if (this._wantMid !== undefined && this._wantMid !== (mid || '')) this._slotWant = null; this._wantMid = mid || '';
       /* PRE-TURN ITEMS RANK LAST AND LEAVE FIRST (LV-9 / WSU-87; VeraDesk.topicOrder, preTurnOut): in the topic every reply
          item comes before every item the chat put round the reply (enrich:, pre:), so a topic with more than the room beside
          the chat drops those first; one the topic has moved past goes to the strip even if it was placed by hand (_pillGet) */
@@ -5790,6 +5797,12 @@
         const wc = t.closest('.stage .it[data-key]');
         if (wc && this.deskAlign() && body.contains(wc) && !this._pillReal()[wc.dataset.key] && !(this._wins && this._wins.has(wc.dataset.key))
             && (wc.classList.contains('desk-chip') || wc.classList.contains('pill-open')) && !t.closest('[data-act]:not(.it-hd):not(.t)')) {
+          /* THE SLOTS ARRANGEMENT (LV-5; owner 2026-10-17: "if there is limited space on the desk, opening an element from pill mode should
+             combine it into any already open element with a matching preferred aspect as a composite"): the pill is wanted - the next
+             pass gives it a slot of its aspect, or makes it the front of that aspect's composite - not a window over the desk */
+          if (wc.classList.contains('desk-chip') && root.VeraDesk && root.VeraDesk.modeOf && root.VeraDesk.modeOf(this.getAttribute('desk-arrange')) === 'slots') { ev.stopPropagation(); const k = wc.dataset.key;
+            (this._slotWant = this._slotWant || {})[k] = Date.now(); const m = this._cmpGet(); m[k] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[k] = Date.now();
+            (this._actAt = this._actAt || {})[k] = Date.now(); this._holdEnd(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
           const was = wc.classList.contains('desk-chip'); this._winOpen(wc); if (was) { ev.stopPropagation(); return; } }   /* WSU-55 */
         const pc = t.closest('.stage .it.desk-chip[data-key]');
         if (pc && body.contains(pc) && this._pillGet()[pc.dataset.key] && !t.closest('[data-act]:not(.it-hd):not(.t)')) { ev.stopPropagation(); this._pillSet(pc.dataset.key, false); this._html = null; if (this._doc) this.render(this._doc); return; }
@@ -6761,7 +6774,9 @@
         try { window.open('/ui/panel/window?id=' + encodeURIComponent(p), 'veraPanel_' + p, 'width=1040,height=820'); } catch (e) { /* blocked */ } return; }
       if (act === 'pill' && this._winKeepGet()[key]) { this._winKeepSet(key, null); delete this._pw[key]; delete this._px[key]; this._deskPosSet(key, null); }
       if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }   /* WSU-55 */
-      if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
+      /* a card sent to the pills changes nothing else (owner 2026-10-17: "sending something to the pill section affects/changes the layout of
+         open element - this should not be possible"): the desk is held first, so the open cards keep their places */
+      if (act === 'pill') { if (!this._hold) this._holdStart(key); this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
       if ((act === 'cmptab' || act === 'cmpsep') && this._tabDragAt && Date.now() - this._tabDragAt < 400) return;   /* the release of a tab carried out (LV-6) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {

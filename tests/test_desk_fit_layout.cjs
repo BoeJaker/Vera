@@ -47,4 +47,6 @@ const slotOf = (L, id) => L.slots.find((s) => s.ids.includes(id));
 { const items = ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'].map((x, i) => it(x, 'portrait', i)).concat([it('c', 'landscape', 6), it('s1', 'square', 7), it('s2', 'square', 8)]);
   const L = D.fitLayout(items, REG, {}); const mixed = L.slots.filter((s) => s.ids.length > 1 && new Set(s.ids.map((id) => items.find((x) => x.id === id).aspect)).size > 1);
   t('a composite is always of one aspect (many lists: list columns with tabs, never lists as tabs of a table)', mixed.length === 0 && L.slots.some((s) => s.aspect === 'portrait'), L); }
+{ const L = D.fitLayout(Array.from({ length: 11 }, (_, i) => it('l' + i, 'portrait', i)).concat([it('c', 'landscape', 11), it('s', 'square', 12)]), { l: 0, t: 0, r: 1100, b: 1000 }, {});
+  t('a card holds at most 8 tabs; past that a pill of its own', L.slots.every((s) => s.ids.length <= 8) && L.pills.length >= 1, L); }
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);
