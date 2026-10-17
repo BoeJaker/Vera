@@ -679,6 +679,28 @@
      single figures wrap short; wider was an empty band. Charts, tables, maps, graphs and calendars are not capped. */
   const DESK_FORM_MAXW = { checklist: 420, list: 440, links: 440, notices: 460, people: 460, kv: 520, pills: 480, string: 460, announcement: 460,
     counter: 380, hero: 400, ring: 360, radial: 360, dial: 360, gauge: 420, meter: 420, level: 380, glance: 460, numbers: 520, status: 480, stepper: 640, files: 520 };
+  /* EVERY ELEMENT HAS A PREFERRED ASPECT (DESK-ARRANGEMENT 7.1 principle 1, LV-1; owner 2026-10-17: "each widget and element could
+     have an 'aspect' preference - these could be portrait (tall), landscape 'wide', and squarish, plus maybe another one for smaller
+     tiles like widgets and small charts"). Read in order (see _aspectOf): what the item declares (aspect on the item, its content,
+     its record or its draw), its widget form below, the form's data shape (VeraWidget.forms), the old kind guess, its type below. */
+  const ASPECTS = new Set(['portrait', 'landscape', 'square', 'tile']);
+  const FORM_ASPECT = {};
+  [['landscape', 'candles ohlcv trace area lines line series scope horizon slope bump step small-multiples timeline lane gantt column histogram waterfall pipeline conveyor sweep comet terminal'],
+   ['portrait', 'list checklist feed links people notices log files rail activity pulse reading news headlines articles sources markdown code notebook library pages wiki stepper approvals'],
+   ['square', 'table rows cards temps kv json form matrix heat dots treemap donut stacks radar scatter globe graph vgraph structgraph context_graph topology diagram city flow calendar month schedule calnav agenda board gallery carousel cellmap compare tabs'],
+   ['tile', 'counter radial ring rings gauge dial meter level hero tank thermo bar bullet numbers glance status string ticker turbine progress spark sparkline pills minigraph announcement split-flap frame node slider']]
+    .forEach(([a, l]) => l.split(' ').forEach((f) => { FORM_ASPECT[f] = a; }));
+  const SHAPE_ASPECT = { series: 'landscape', ohlcv: 'landscape', items: 'portrait', events: 'portrait', stages: 'portrait', string: 'portrait', level: 'tile', rate: 'tile',
+    values: 'square', matrix: 'square', parts: 'square', points: 'square', graph: 'square', calendar: 'square', panel: 'square', composite: 'square' };
+  const TYPE_ASPECT = { records: 'portrait', source: 'portrait', entities: 'portrait', markdown: 'portrait', note: 'portrait', code: 'portrait', notebook: 'portrait',
+    loop: 'portrait', session: 'portrait', activity: 'portrait', research: 'landscape', explode: 'landscape', terminal: 'landscape', timeline: 'landscape',
+    table: 'square', kv: 'square', diagram: 'square', panel: 'square', html: 'square', image: 'square', graph: 'square' };
+  /* the order, as a pure function: declared, form, shape, kind (chart / table / list), type */
+  function aspectFor(o) { o = o || {}; const own = String(o.own || ''); if (ASPECTS.has(own)) return own;
+    const f = String(o.form || '').replace(/@iso$/, ''); if (f && FORM_ASPECT[f]) return FORM_ASPECT[f];
+    if (o.shape && SHAPE_ASPECT[o.shape]) return SHAPE_ASPECT[o.shape];
+    if (o.kind) return { chart: 'landscape', table: 'square', list: 'portrait' }[o.kind] || '';
+    return TYPE_ASPECT[o.type || ''] || ''; }
   async function panelSrc(id) {
     id = String(id || ''); if (!id) return ''; if (PANEL_SRC[id] != null) return PANEL_SRC[id];
     const base = (root._veraBase || '').replace(/\/$/, '');
@@ -4578,7 +4600,7 @@
       const slotFor = (key) => { const s0 = D.sizeAt(R, (side === 'right' ? W - 300 : 300), H / 2, {}, desk); const w = Math.min(s0.w, 460), h = Math.min(s0.h, 340);
         const bs = D.bestSlot ? D.bestSlot({ w, h, rel: relByKey[key] || [] }, slotted, R, desk, { strip: W < 760 ? 46 : 170 }) : null;
         if (!bs) return null; const p = [bs.x, bs.y]; p.size = { w: bs.w, h: bs.h }; slotted.push({ x: bs.x, y: bs.y, w: bs.w, h: bs.h, rel: relByKey[key] || [] }); return p; };
-      const listOpen = ranked.slice(0, 9).some((x) => !outside.has(x.c.dataset.key || '') && this._kindOf(x.c, x.c.dataset.key || '') === 'list');
+      const listOpen = ranked.slice(0, 9).some((x) => !outside.has(x.c.dataset.key || '') && this._aspectOf(x.c, x.c.dataset.key || '') === 'portrait');
       const plan = ranked.map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i);
         /* the card under the hand's resize: its top-left where it was, its size the hand's; the others go round it */
@@ -4612,13 +4634,16 @@
         /* the size its kind asks for (see _kindOf): a chart the free width (less a column when a list card is open beside it),
            a table what its table measures, a list tall and narrow - asked, not kept: the person's size and a mode's cell win,
            and the distance from the chat still makes a far card a pill */
-        const kind = this._kindOf(c, key); let ksz = null;
+        /* its aspect (LV-1, _aspectOf) gives the size it asks for: landscape as a chart, square as a table (by its rows and columns when
+           it has them), portrait as a list, a tile small */
+        const asp = this._aspectOf(c, key); c.dataset.aspect = asp || ''; const kind = { landscape: 'chart', square: 'table', portrait: 'list', tile: 'tile' }[asp] || ''; let ksz = null;
         if (!user && !msz && kind) { const FR = D.freeRegion ? D.freeRegion(R, desk, W < 760 ? 46 : 170) : { l: 8, r: W - 8 }; const FW = Math.max(240, FR.r - FR.l - 16);
           if (kind === 'chart') ksz = { w: Math.max(Math.min(FW, 480), FW - (listOpen ? 470 : 0)), h: Math.round(Math.max(340, Math.min(600, H * 0.5))) };
           /* a table by its columns and rows (it stretches to its card, so its own width says nothing): about 120 px a column, 26 a row */
           else if (kind === 'table') { const tb = c.querySelector('.it-bd table'); const nc = tb && tb.rows[0] ? tb.rows[0].cells.length : 0, nr = tb ? tb.rows.length : 0;
             ksz = nc ? { w: Math.round(Math.max(300, Math.min(FW, nc * 120 + 40))), h: Math.round(Math.max(160, Math.min(H * 0.7, nr * 26 + 70))) } : { w: Math.round(Math.min(FW, 560)), h: Math.round(Math.min(H * 0.55, 380)) }; }
-          else if (kind === 'list') ksz = { w: Math.round(Math.max(380, Math.min(520, FW * 0.32))), h: Math.round(Math.max(360, Math.min(H - 16, H * 0.5))) }; }   /* half the desk to start: it grows down into what is left (D.grow, its own aspect) - asking for 3/4 left a chart no room at all */
+          else if (kind === 'list') ksz = { w: Math.round(Math.max(380, Math.min(520, FW * 0.32))), h: Math.round(Math.max(360, Math.min(H - 16, H * 0.5))) };
+          else if (kind === 'tile') ksz = { w: Math.round(Math.min(FW, 280)), h: 180 }; }   /* half the desk to start: it grows down into what is left (D.grow, its own aspect) - asking for 3/4 left a chart no room at all */
         const so = { size: user || msz || ksz, pinned: (!!user && c.classList.contains('pinned')) || (!user && !!msz), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
         /* a card is no taller than what it holds (see _deskFit): its measured height caps its face and its growth */
@@ -4648,6 +4673,8 @@
         if (!user && kind === 'list') { o.maxW = Math.min(o.maxW || Infinity, Math.max(o.w, 560)); o.ratio = 3.2; }
         else if (!user && kind === 'chart') { o.maxH = Math.min(o.maxH || Infinity, 600); o.ratio = 4.5; }
         else if (!user && kind === 'table' && ksz) { o.maxH = Math.min(o.maxH || Infinity, Math.max(o.h, ksz.h)); o.ratio = 3; }
+        /* a tile stays small: it grows a little, never into a page (principle 4: widgets tile as small elements) */
+        else if (!user && kind === 'tile') { o.maxW = Math.min(o.maxW || Infinity, 380); o.maxH = Math.min(o.maxH || Infinity, 260); o.ratio = 2; }
         /* held (U4): a card the arrangement placed starts where it is now, at the size it has; one the person put somewhere
            (userAt) has its own place already */
         /* a card shorter than its mode's cell (fitted to what it holds) keeps the cell's top - no gap above it */
@@ -6291,6 +6318,15 @@
        at least take the full width available (given any vertically favoured elements open). tables would be on a rung below
        this and suitable to be any size that fits the number of rows and columns"; lists and cards "should be longer"):
        chart · table · list, or '' for the rest */
+    _aspectOf(c, key) {
+      if (!c) return ''; const b = this._blockOf(key) || {}; const cc = this._contentOf(key) || {}; const rec = cc.record && typeof cc.record === 'object' ? cc.record : cc;
+      const own = String(b.aspect || cc.aspect || rec.aspect || (rec.draw && rec.draw.aspect) || '');
+      const f = String(rec.form || cc.form || cc.widget || (rec.draw && rec.draw.form) || '').replace(/@iso$/, '');
+      if (ASPECTS.has(own) || (f && FORM_ASPECT[f])) return aspectFor({ own, form: f });
+      if (f && !this._shapeOf && root.VeraWidget && typeof root.VeraWidget.forms === 'function') { try { this._shapeOf = {}; root.VeraWidget.forms().forEach((x) => { this._shapeOf[x.id] = x.shape; }); } catch (e) { this._shapeOf = null; } }
+      const sh = f && this._shapeOf ? this._shapeOf[f] : '';
+      return aspectFor({ shape: sh, kind: SHAPE_ASPECT[sh] ? '' : this._kindOf(c, key), type: c.dataset.type || '' });
+    }
     _kindOf(c, key) {
       if (!c) return ''; const t = c.dataset.type || ''; const cc = this._contentOf(key) || {}; const rec = cc.record && typeof cc.record === 'object' ? cc.record : cc;
       const f = String(rec.form || cc.form || cc.widget || (rec.draw && rec.draw.form) || '').replace(/@iso$/, '');
@@ -7987,7 +8023,7 @@
     }
   }
 
-  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
+  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
