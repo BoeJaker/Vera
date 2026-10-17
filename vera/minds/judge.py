@@ -344,6 +344,13 @@ async def cap_decide_shadow_knn(question_id: str = "loop.step_verify", limit: in
             for it in items if it["vec"] and it["live"].get("answer") in (JC.QUESTIONS[question_id]["labels"].values())]
     # FM-9.1: the neighbours are found on an NLP node; the index is this question's labelled decisions
     index_id, version = f"decisions:{question_id}", DD.index_version([r["id"] for r in pool])
+    # the live kNN student (student.ask_knn) asks the node for this same index by this version
+    r_ = getattr(_orch, "REDIS", None)
+    if r_ is not None and pool:
+        try:
+            await r_.set(KNN_VERSION_KEY + question_id, version, ex=7 * 86400)
+        except Exception as e:
+            log.debug("knn version: %s", e)
 
     async def _push_rows():
         return [{"id": r["id"], "vec": r["vec"], "run": r["run"] or "", "payload": r["answer"]} for r in pool]
@@ -376,6 +383,33 @@ async def cap_decide_shadow_knn(question_id: str = "loop.step_verify", limit: in
         res = await L.append(JC.shadow_decision(it["live"], answer, p, JC.KNN_IMPL, mass=1.0))
         scored += 1 if res.get("ok") else 0
     return {"ok": True, "question_id": question_id, "scored": scored, "skipped": skipped, "pool": len(pool)}
+
+
+KNN_VERSION_KEY = "vera:decide:knn:version:"
+
+
+async def knn_rows(question_id: str) -> List[Dict[str, Any]]:
+    """The question's labelled live decisions with their stored vectors, as the node index rows ({id, vec, run,
+    payload}) - what the live kNN student pushes when a node lacks the index. Stored vectors only: nothing is
+    embedded here (the nightly judge embeds the missing ones)."""
+    pool_db = getattr(_orch, "PG_POOL", None)
+    if pool_db is None or question_id not in JC.QUESTIONS:
+        return []
+    labels = set(JC.QUESTIONS[question_id]["labels"].values())
+    async with pool_db.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT s.decision_id, l.row, v.vec FROM decision_states s
+               JOIN decision_ledger l ON l.decision_id = s.decision_id
+               JOIN decision_vectors v ON v.decision_id = s.decision_id
+               WHERE s.question_id = $1 AND COALESCE(l.mode, '') <> 'shadow'
+               ORDER BY s.ts DESC LIMIT 3000""", question_id)
+    out = []
+    for r in rows:
+        live = json.loads(r["row"]) if isinstance(r["row"], str) else (r["row"] or {})
+        vec = json.loads(r["vec"]) if isinstance(r["vec"], str) else r["vec"]
+        if vec and live.get("answer") in labels:
+            out.append({"id": r["decision_id"], "vec": vec, "run": live.get("run_id") or "", "payload": live["answer"]})
+    return out
 
 
 _CARD_VECS: Dict[str, Dict[str, List[float]]] = {}

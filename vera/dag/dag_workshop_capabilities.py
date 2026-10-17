@@ -14720,13 +14720,17 @@ class _StudentHook:
         self._task = None
 
     @classmethod
-    async def start(cls, question_id: str, system: str, prompt: str) -> "_StudentHook":
+    async def start(cls, question_id: str, system: str, prompt: str,
+                    inputs: Optional[Dict[str, Any]] = None) -> "_StudentHook":
         h = cls()
         try:
             mode = _student.mode(question_id) if _student is not None else "off"
             if mode != "shadow" and not _student.is_first(mode):
                 return h
-            call = _student.ask(question_id, _judge_core.student_system(system, question_id), prompt)
+            # inputs: the decision's own inputs (as the ledger stores them), so a kNN student embeds the text its
+            # index was built from (four-minds FM-2.5, every question)
+            call = _student.ask(question_id, _judge_core.student_system(system, question_id), prompt,
+                                inputs=inputs)
             if _student.is_first(mode):
                 h._answer = await call
                 if _student.decides(question_id, h._answer, mode):

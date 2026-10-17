@@ -20,6 +20,8 @@ evicts the 9B - measured 2026-10-10, the next big call took 36.5 s against 18.3 
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
 import random
@@ -34,7 +36,59 @@ except Exception:                       # worktree / app-free import
 log = logging.getLogger("vera.minds.student")
 DEFAULT_MODEL = "qwen3:1.7b"
 FEATURE = {"loop.step_verify": "decide.student.step_verify",
-           "loop.controller_action": "decide.student.controller_action"}
+           "loop.controller_action": "decide.student.controller_action",
+           # every question at once (owner, 17 Oct): each has a switch; which student answers it, and from what
+           # confidence, comes from the cascade plan (decide.cascade.plan / cascade_core), not from settings here
+           "loop.step_done": "decide.student.step_done",
+           "loop.prestep_needed": "decide.student.prestep_needed",
+           "loop.intent": "decide.student.intent",
+           "loop.tier": "decide.student.tier"}
+#: the two questions that had their own settings before the plan (an LLM student, VERA_DECIDE_STUDENT_TAU and the
+#: label lists below) keep them, so their switches mean what they meant
+LEGACY = frozenset({"loop.step_verify", "loop.controller_action"})
+PLAN_KEY = "vera:decide:cascade:plan"
+PLAN_TTL_S = 600.0
+KNN_VERSION_KEY = "vera:decide:knn:version:"
+PLAN: Dict[str, Any] = {"plan": {}, "at": -1e9}
+
+
+def set_plan(plan: Optional[Dict[str, Any]]) -> None:
+    PLAN.update(plan=dict(plan or {}), at=time.monotonic())
+
+
+async def load_plan() -> Dict[str, Any]:
+    """The cascade plan, from Redis at most every 10 min; {} (the LLM student, the default tau) when unreadable."""
+    if time.monotonic() - PLAN["at"] < PLAN_TTL_S:
+        return PLAN["plan"]
+    try:
+        import Vera.vera.capability_orchestration as _orch
+        r = getattr(_orch, "REDIS", None)
+        raw = await r.get(PLAN_KEY) if r is not None else None
+        if raw:
+            set_plan(json.loads(raw))
+            return PLAN["plan"]
+    except Exception as e:
+        log.debug("cascade plan: %s", e)
+    PLAN["at"] = time.monotonic()
+    return PLAN["plan"]
+
+
+def impl_for(question_id: str) -> str:
+    """'knn' or 'llm': the plan's student for this question (an LLM for the legacy two)."""
+    if question_id in LEGACY:
+        return "llm"
+    p = (PLAN["plan"] or {}).get(question_id) or {}
+    return "knn" if str(p.get("impl") or "") == JC.KNN_IMPL else "llm"
+
+
+def tau_for(question_id: str) -> float:
+    """The confidence the plan found the student matches the live model from; the default tau otherwise."""
+    if question_id in LEGACY:
+        return tau()
+    p = (PLAN["plan"] or {}).get(question_id) or {}
+    if p.get("eligible") and p.get("tau") is not None:
+        return max(0.5, min(1.0, float(p["tau"])))
+    return tau()
 
 
 def model() -> str:
@@ -78,6 +132,8 @@ def allowed(question_id: str, mode_name: str = "") -> List[str]:
     if question_id == "loop.controller_action":
         raw = os.environ.get("VERA_DECIDE_STUDENT_CONTROLLER_LABELS", "continue")
         return [x.strip() for x in raw.split(",") if x.strip()]
+    if question_id in FEATURE:          # a planned question: any of its labels, at the plan's threshold
+        return list(((JC.QUESTIONS.get(question_id) or {}).get("labels") or {}).values())
     return []
 
 
@@ -100,11 +156,16 @@ def mode(question_id: str) -> str:
 
 
 async def ask(question_id: str, system: str, user: str, *, model_name: str = "",
-              timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
-    """{answer, p, confidence, mass, ms, impl, model} or None. One token, thinking off, interactive priority."""
+              timeout: Optional[float] = None, inputs: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """{answer, p, confidence, mass, ms, impl, model} or None. The plan's student for the question: the kNN vote
+    (inputs: the decision's stored inputs, so the text matches the index), else one LLM token, thinking off."""
     q = JC.QUESTIONS.get(question_id)
     if not q or not user:
         return None
+    if question_id not in LEGACY and not model_name:
+        await load_plan()
+        if impl_for(question_id) == "knn":
+            return await ask_knn(question_id, inputs, user, timeout=timeout)
     m = (model_name or model()).strip()
     node = instance()
     meta: Dict[str, Any] = {}
@@ -129,9 +190,58 @@ async def ask(question_id: str, system: str, user: str, *, model_name: str = "",
 
 
 def decides(question_id: str, result: Optional[Dict[str, Any]], mode_name: str = "") -> bool:
-    """Under a first mode: may this answer stand without the big model?"""
-    return bool(result) and JC.takes(question_id, result.get("answer"), result.get("p"), tau(),
+    """Under a first mode: may this answer stand without the big model? A planned question only when the plan
+    found its student eligible - otherwise 'first' is a shadow."""
+    if question_id not in LEGACY and not ((PLAN["plan"] or {}).get(question_id) or {}).get("eligible"):
+        return False
+    return bool(result) and JC.takes(question_id, result.get("answer"), result.get("p"), tau_for(question_id),
                                      allowed(question_id, mode_name))
+
+
+async def ask_knn(question_id: str, inputs: Optional[Dict[str, Any]], text: str = "",
+                  timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """The kNN judge, live: the decision's text (built from its inputs exactly as the nightly index was) embedded
+    on an NLP node and voted by its nearest labelled past decisions there. None (the big model decides) without a
+    nightly index version, an embedding or enough neighbours. Never raises."""
+    t0 = time.monotonic()
+    try:
+        body = JC.user_message(question_id, inputs) if isinstance(inputs, dict) and inputs else text
+        if not body:
+            return None
+        import sys
+        import Vera.vera.capability_orchestration as _orch
+        try:
+            from Vera.vera.minds import decide_dispatch as DD
+        except Exception:               # worktree / app-free import
+            from vera.minds import decide_dispatch as DD  # type: ignore
+        r = getattr(_orch, "REDIS", None)
+        version = await r.get(KNN_VERSION_KEY + question_id) if r is not None else None
+        version = version.decode() if isinstance(version, bytes) else version
+        emb = (_orch.CAPABILITY_REGISTRY.get("nlp.embed") or {}).get("func")
+        if not version or not emb:
+            return None
+        e = await asyncio.wait_for(emb(texts=[str(body)[:2000]]), timeout or timeout_s())
+        vec = ((e or {}).get("embeddings") or [None])[0]
+        if not vec:
+            return None
+        judge = sys.modules.get("judge") or sys.modules.get("Vera.vera.minds.judge")
+
+        async def _rows():
+            return await judge.knn_rows(question_id) if judge is not None and hasattr(judge, "knn_rows") else []
+        res = await DD.knn(f"decisions:{question_id}", str(version), _rows, vector=JC._unit(vec), k=JC.KNN_K)
+        if not res.get("ok"):
+            return None
+        answer, p, n = JC.vote_from_neighbours(
+            question_id, [(x["score"], x.get("payload")) for x in res.get("neighbours") or []],
+            int(res.get("eligible") or 0))
+        if not answer:
+            return None
+        return {"answer": answer, "p": p, "confidence": JC.confidence(question_id, answer, p), "mass": 1.0,
+                "ms": int((time.monotonic() - t0) * 1000), "impl": JC.KNN_IMPL, "model": "minilm",
+                "neighbours": n}
+    except Exception as e:
+        log.debug("student knn %s: %s", question_id, e)
+        return None
 
 
 def cosigned(rng=random.random) -> bool:
