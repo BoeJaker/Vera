@@ -51,7 +51,9 @@ t('any item fills the desk in front or behind (its menu; its head while it fills
 t('under the hold each card goes back to where it was whenever that is clear; one pressed only by the card under the hand is trimmed on that side, not moved',
   C.includes("if (clearOf(it, cand)) { Object.assign(it, cand, { keepSize: true, face0: r.face, held: true, restored: true }); back++; return; }")
   && C.includes("if (!hits.length || !hits.every(handOn) || (chatBox && ovl(cand, chatBox, -1))) return;")
-  && C.includes(".filter((q) => q.r - q.l >= 220 && q.b - q.t >= 120).sort(") && !C.includes('_rdbg'));t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
+  && C.includes(".filter((q) => q.r - q.l >= 220 && q.b - q.t >= 120).sort(") && !C.includes('_rdbg'));/* owner 2026-10-17 (WSU-91): the proposal ("Keep your arrangement?") sat on a card's title */
+t('the desk proposal goes to the first place along the top (then the bottom) clear of every open card, placed again each pass',
+  C.includes('_proposePlace(st) {') && C.includes("for (const y of [6, Math.max(6, H - h - 6)])") && C.includes('st.appendChild(el); this._proposePlace(st);') && C.includes('this._propose(st, mode, info, T, W); this._proposePlace(st);'));t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
 t('U10: windows can be switched off (desk-windows)', C.includes("this.getAttribute('desk-windows') !== 'off'") && C.includes("'desk-fit', 'desk-windows']") && H.includes("cfgCvWindows:['desk-windows','on']") && H.includes("windows:'cfgCvWindows'"));
 t('U2: a drop in a gap keeps a rectangle only when the gap made it smaller', C.includes('!d.own && (gw < d.el.offsetWidth - 2 || gh < d.el.offsetHeight - 2)'));
 /* U3 - by the hand */
