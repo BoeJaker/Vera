@@ -6090,14 +6090,18 @@
         if (!m) { st.error = 'no app ' + id + ' in the catalogue'; return this._appDraw(key); }
         st.manifest = m; const rd = m.read || {};
         { const b = this._blockOf(key); if (b && b.content && !b.content.title && m.title) b.content.title = m.title; }   /* named by its manifest, not its id */ const a = c.args && typeof c.args === 'object' ? c.args : {}; const miss = [];
-        const fill = (v) => typeof v === 'string' ? v.replace(/\{arg\.([\w.-]+)\}/g, (x, k) => { if (a[k] == null || a[k] === '') { miss.push(k); return ''; } return String(a[k]); }) : v;
+        /* {arg.x} must be given; {arg.x?} may be: not given, its argument is left out of a single read and its part out of a composite */
+        let skip = false; const optMiss = [];
+        const fill = (v) => typeof v === 'string' ? v.replace(/\{arg\.([\w.-]+)(\?)?\}/g, (x, k, o) => { if (a[k] == null || a[k] === '') { if (o) { skip = true; optMiss.push(k); } else miss.push(k); return ''; } return String(a[k]); }) : v;
+        const fillArgs = (src) => { const out = {}; let left = false; Object.keys(src || {}).forEach((k) => { skip = false; const v = fill(src[k]); if (skip) left = true; else out[k] = v; }); return { args: out, left }; };
         if (Array.isArray(m.read)) {   /* a composite (DA-07a): its parts, each with its own read, side by side */
-          st.parts = m.read.filter((r) => r && r.cap).map((r) => { const args = {}; Object.keys(r.args || {}).forEach((k) => { args[k] = fill(r.args[k]); }); return { as: String(r.as || r.cap), cap: String(r.cap), args }; });
+          st.parts = m.read.filter((r) => r && r.cap).map((r) => { const f = fillArgs(r.args); return f.left ? null : { as: String(r.as || r.cap), cap: String(r.cap), args: f.args }; }).filter(Boolean);
+          if (!st.parts.length && optMiss.length && !miss.length) { st.waiting = m.title + ' needs ' + [...new Set(optMiss)].join(', '); return this._appDraw(key); }
           if (!st.parts.length) { st.error = 'the app ' + id + ' has no read'; return this._appDraw(key); }
           if (miss.length) { st.waiting = m.title + ' needs ' + [...new Set(miss)].join(', '); return this._appDraw(key); }
           const evs = m.read.map((r) => +((r && r.refresh) || {}).every_s).filter((n) => n > 0);
           st.every = evs.length ? Math.max(10, Math.min(...evs)) : 0; return this._appRead(key); }
-        st.cap = String(rd.cap || ''); st.args = {}; Object.keys(rd.args || {}).forEach((k) => { st.args[k] = fill(rd.args[k]); });
+        st.cap = String(rd.cap || ''); st.args = fillArgs(rd.args).args;   /* an optional argument not given is left out, not sent as '' */
         if (!st.cap) { st.error = 'the app ' + id + ' has no read'; return this._appDraw(key); }
         if (miss.length) { st.waiting = m.title + ' needs ' + miss.join(', '); st.result = undefined; return this._appDraw(key); }
         st.every = Math.max(10, +((rd.refresh || {}).every_s) || 0) || 0;
