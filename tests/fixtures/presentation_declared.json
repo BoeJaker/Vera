@@ -1,6 +1,9 @@
 {
  "autonomous.status": {
-  "kind": "kv"
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
  },
  "backup.status": {
   "draw": {
@@ -181,10 +184,14 @@
   "kind": "graph"
  },
  "ha.health": {
+  "form": "status",
   "kind": "status"
  },
  "ide.git.diff": {
-  "kind": "diff"
+  "kind": "diff",
+  "map": {
+   "diff": "diff"
+  }
  },
  "loop.ci.board": {
   "form": "ci-board",
@@ -235,7 +242,10 @@
   "kind": "graph"
  },
  "n8n.config.get": {
-  "kind": "kv"
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
  },
  "netscan.graph": {
   "draw": {
@@ -332,10 +342,16 @@
   }
  },
  "pydanticai.status": {
-  "kind": "kv"
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
  },
  "smolagents.status": {
-  "kind": "kv"
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
  },
  "syslog.errors": {
   "form": "log",

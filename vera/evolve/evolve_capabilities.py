@@ -6914,7 +6914,7 @@ async def _autonomous_state() -> Dict[str, Any]:
                         "the real mainline (main/master) is UNCONDITIONALLY refused (no sentinel, "
                         "no force) — the hard prod lockout for autonomous operation. Output: "
                         "{ok, engaged, mode, reason, since, by}.",
-            contract={"presentation": {"kind": "kv"}})
+            contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}})
 async def autonomous_status(trace_id=None):
     from Vera.vera.evolve.autonomous_lock_core import is_engaged
     st = await _autonomous_state()
