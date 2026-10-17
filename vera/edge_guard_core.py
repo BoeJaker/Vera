@@ -25,7 +25,9 @@ Rules, in order:
              refused for state-changing requests and WebSockets.
 4. read:     a cross-site or same-site GET/HEAD that is not a top-level
              navigation and not a static asset is refused, so a foreign page
-             cannot trigger GET side effects or probe the API.
+             cannot trigger GET side effects or probe the API. Reads whose
+             Origin is one of this machine's own host names (any port) pass:
+             Vera's panels in sandboxes and mirrors read prod that way.
 
 Everything else is allowed.
 """
@@ -158,7 +160,16 @@ def decide(*, kind: str, method: str, path: str, headers: Mapping[str, str],
         return ALLOW            # no Origin, no Sec-Fetch-*: a non-browser caller
 
     if m in ("GET", "HEAD") and site in CROSS and mode != "navigate" and not is_static_path(path):
-        if origin is not None and origin.strip().lower().rstrip("/") in extra:
-            return ALLOW
+        if origin is not None:
+            o = origin.strip().lower().rstrip("/")
+            if o in extra:
+                return ALLOW
+            # Vera's own panels served by a sandbox or mirror on another port of
+            # this machine read prod's API by design (evolve_panel.html `_PROD`,
+            # capability_orchestration.html `ask`). Reads from this machine's own
+            # host names are allowed; cross-port WRITES stay refused above.
+            oh, _, _ = origin_hostport(o)
+            if oh and host_allowed(oh, allowed_hosts):
+                return ALLOW
         return Verdict(False, "read", f"cross-site {mode or 'subresource'} read")
     return ALLOW
