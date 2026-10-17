@@ -42,7 +42,8 @@ def test_ledger_is_bounded_newest_first_and_returns_copies():
         value["fixture_id"] = f"fixture-{index}"
         ledger.record_benchmark(value)
     snap = ledger.snapshot()
-    assert snap["counts"] == {"routes": 0, "benchmarks": 2}
+    assert snap["counts"] == {"routes": 0, "benchmarks": 2,
+                              "research_shadows": 0}
     assert [value["fixture_id"] for value in snap["benchmarks"]] == [
         "fixture-2", "fixture-1"]
     snap["benchmarks"][0]["fixture_id"] = "forged"
