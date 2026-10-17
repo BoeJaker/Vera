@@ -4135,6 +4135,21 @@
     }
     /* the desk dealt afresh: a card given back to the arrangement goes to its place, and the others with it */
     _holdEnd() { this._hold = null; }
+    /* LAYOUTS WALK BACKWARDS (DESK-ARRANGEMENT 7 principle 8, LV-7; owner 2026-10-17: "layouts should be able to walk backwards if actions
+       are undone i.e. i split a composite and some elements move away from the chat area and shrink to make space - if i then re-combine
+       to the composite the layout should be able to go back as it was"). Before a card is taken out of its composite or sent to the
+       pills, the desk as it is (every card's rectangle, and that card's own place) is kept; when the opposite follows for the same card
+       (put back in, opened from the pill) the desk goes back to exactly that - it is held at the kept rectangles. The last 20, an hour. */
+    _histPush(kind, key) { const lp = this._hold && this._hold.rects ? this._hold.rects : (this._lastPlan && this._lastPlan.rects); if (!lp || !key) return;
+      const rects = {}; Object.keys(lp).forEach((k) => { rects[k] = Object.assign({}, lp[k]); });
+      const pos = this._deskPosGet()[key]; (this._hist = this._hist || []).push({ kind, key: String(key), rects, pos: pos ? Object.assign({}, pos) : null, at: Date.now() });
+      if (this._hist.length > 20) this._hist.shift(); }
+    _histBack(kind, key) { const inv = { cmpjoin: 'cmpsep', unpill: 'pill' }[kind]; const h = this._hist || []; key = String(key || '');
+      for (let i = h.length - 1; i >= 0; i--) { const e = h[i]; if (Date.now() - e.at > 3600e3) break; if (e.key !== key) continue; if (e.kind !== inv) return false;
+        h.splice(i, 1); this._deskPosSet(key, e.pos); const lp = this._lastPlan || {};
+        const copy = () => { const o = {}; Object.keys(e.rects).forEach((k) => { o[k] = Object.assign({}, e.rects[k]); }); return o; };
+        this._hold = { sig: lp.sig, sb: lp.sb, keys: Object.keys(e.rects), rects: copy(), base: copy() }; this._walkedBack = { key, at: Date.now() }; return true; }
+      return false; }
     /* WHERE THE PERSON PUT THE CARDS on the desk: {key: {fx, fy}}, shares of the desk, per canvas, kept in this browser */
     _deskPosGet() {
       if (this._deskPos) return this._deskPos;
@@ -5805,7 +5820,7 @@
             (this._actAt = this._actAt || {})[k] = Date.now(); this._holdEnd(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
           const was = wc.classList.contains('desk-chip'); this._winOpen(wc); if (was) { ev.stopPropagation(); return; } }   /* WSU-55 */
         const pc = t.closest('.stage .it.desk-chip[data-key]');
-        if (pc && body.contains(pc) && this._pillGet()[pc.dataset.key] && !t.closest('[data-act]:not(.it-hd):not(.t)')) { ev.stopPropagation(); this._pillSet(pc.dataset.key, false); this._html = null; if (this._doc) this.render(this._doc); return; }
+        if (pc && body.contains(pc) && this._pillGet()[pc.dataset.key] && !t.closest('[data-act]:not(.it-hd):not(.t)')) { ev.stopPropagation(); this._histBack('unpill', pc.dataset.key); this._pillSet(pc.dataset.key, false); this._html = null; if (this._doc) this.render(this._doc); return; }
         const act = t.closest('[data-act]');
         if (act && body.contains(act)) { ev.stopPropagation(); this._act(act, ev); return; }
         // a source's own two buttons: read the page, see the page
@@ -5897,7 +5912,7 @@
         const far = d.sr ? Math.max(d.sr.top - ev.clientY, ev.clientY - d.sr.bottom, d.sr.left - ev.clientX, ev.clientX - d.sr.right) : Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0);
         if (!d.out && far > 28) { d.out = true; d.tab.classList.add('tab-out'); } });
       tdoc.addEventListener('mouseup', (ev) => { const d = this._tabDrag; this._tabDrag = null; if (!d) return; d.tab.classList.remove('tab-out'); if (!d.out) return;
-        this._tabDragAt = Date.now(); const stg = this.shadowRoot.getElementById('stage'); this._sepSet(d.key, true);
+        this._tabDragAt = Date.now(); const stg = this.shadowRoot.getElementById('stage'); this._histPush('cmpsep', d.key); this._sepSet(d.key, true);
         if (stg) { const b = stg.getBoundingClientRect(), Z = stg.offsetWidth ? (b.width / stg.offsetWidth) || 1 : 1, W0 = stg.clientWidth || 1, H0 = stg.clientHeight || 1;
           const x = (ev.clientX - b.left) / Z, y = (ev.clientY - b.top) / Z; if (x > 0 && y > 0 && x < W0 && y < H0) this._deskPosSet(d.key, { fx: +(x / W0).toFixed(4), fy: +(y / H0).toFixed(4) }); }
         (this._actAt = this._actAt || {})[d.key] = Date.now(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); });
@@ -6776,12 +6791,12 @@
       if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }   /* WSU-55 */
       /* a card sent to the pills changes nothing else (owner 2026-10-17: "sending something to the pill section affects/changes the layout of
          open element - this should not be possible"): the desk is held first, so the open cards keep their places */
-      if (act === 'pill') { if (!this._hold) this._holdStart(key); this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
+      if (act === 'pill') { if (!this._hold) this._holdStart(key); this._histPush('pill', key); this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
       if ((act === 'cmptab' || act === 'cmpsep') && this._tabDragAt && Date.now() - this._tabDragAt < 400) return;   /* the release of a tab carried out (LV-6) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
         if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
-        else this._sepSet(key, act === 'cmpsep');
+        else { if (act === 'cmpsep') this._histPush('cmpsep', key); else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
       /* a command that ran (DU-E-session): run again - asked first, in place; then the same capability with the same
