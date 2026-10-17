@@ -1666,6 +1666,7 @@ async def _pull_worker(rec: dict, url: str) -> None:
                                              ("id", "model", "instance_id", "state",
                                               "status", "pct", "speed_bps", "eta_s",
                                               "total_bytes", "completed_bytes")}})
+                        await _pull_step(rec, "downloading")   # its call's run item (DA-04c)
                     if status == "success":
                         rec["state"] = "done"
         if rec["state"] != "done":
@@ -1711,9 +1712,31 @@ async def _pull_finalise(rec: dict) -> None:
                       "model": rec["model"], "instance_id": rec["instance_id"],
                       "ok": bool(rec.get("ok")), "state": rec["state"],
                       "error": rec.get("error", "")})
+    await _pull_step(rec, "done" if rec.get("ok") else "error")
 
 
-async def _pull_start(model: str, instance_id: str, hf_id: str = "") -> dict:
+async def _pull_step(rec: dict, stage: str) -> None:
+    """The pull as steps of the call that started it (DA-04c - the run element): the desk's item for that call follows
+    its trace from 'queued' through the download to 'done' / 'error'. Nothing when no call is following."""
+    tid = rec.get("_trace")
+    if not tid:
+        return
+    try:
+        from Vera.vera.run_steps import emit_step
+    except Exception:
+        return
+    total = int(rec.get("total_bytes") or 0)
+    done = int(rec.get("completed_bytes") or 0)
+    sp = rec.get("speed_bps") or 0
+    text = str(rec.get("model") or "") + (" · %.1f MB/s" % (sp / 1e6) if sp else "") \
+        + (" · %s s left" % rec["eta_s"] if rec.get("eta_s") else "") \
+        + (" · " + str(rec.get("error"))[:200] if stage == "error" and rec.get("error") else "")
+    await emit_step("catalog.pull.start", tid, stage, done=done if total else None, total=total or None, text=text,
+                    model=rec.get("model"), instance_id=rec.get("instance_id"), node=rec.get("node_label"),
+                    pull_id=rec.get("id"), pct=rec.get("pct"), total_bytes=total or None)
+
+
+async def _pull_start(model: str, instance_id: str, hf_id: str = "", trace_id=None) -> dict:
     """Kick off a streamed pull in the background; returns the progress record."""
     base = _all_nodes().get(instance_id)
     if not base:
@@ -1726,6 +1749,9 @@ async def _pull_start(model: str, instance_id: str, hf_id: str = "") -> dict:
     for rec in PULLS.values():
         if (rec["instance_id"] == instance_id and rec["model"] == model
                 and rec["state"] in _ACTIVE_STATES):
+            if trace_id:                   # the call that joins it follows it from here (DA-04c)
+                rec["_trace"] = trace_id
+                await _pull_step(rec, "downloading")
             return rec                     # already downloading here — join it
     # The same ref may be in flight on another Vera instance; a second /api/pull
     # would fight it over the same partial blob. Orphans from a restart look
@@ -1753,12 +1779,14 @@ async def _pull_start(model: str, instance_id: str, hf_id: str = "") -> dict:
         "layers_done": 0, "layers_total": 0,
         "started_at": now_iso(), "updated_at": now_iso(), "finished_at": "",
         "_rate_at": time.time(), "_rate_bytes": 0, "_persisted": 0.0,
+        "_trace": trace_id or "",       # the call that started it: its steps go on that trace (DA-04c)
     }
     PULLS[rec["id"]] = rec
     _prune_pulls()
     await _pull_persist(rec, force=True)
     await emit_event({"type": "catalog.pull.start", "id": rec["id"],
                       "model": model, "instance_id": instance_id})
+    await _pull_step(rec, "queued")    # before the call answers, so its run item is there for the receipt
     _PULL_TASKS[rec["id"]] = asyncio.create_task(_pull_worker(rec, url))
     return rec
 
@@ -1787,7 +1815,7 @@ async def cap_catalog_pull_start(model: str, instance_id: str, trace_id=None):
     await _hydrate()
     if not (model or "").strip():
         return {"error": "model required"}
-    rec = await _pull_start(model.strip(), instance_id)
+    rec = await _pull_start(model.strip(), instance_id, trace_id=trace_id)
     if rec.get("error"):
         return rec
     return {"ok": True, "pull_id": rec["id"], "pull": _pull_public(rec)}
