@@ -110,5 +110,20 @@ def test_forwarded_host_only_from_trusted_proxy():
     assert not not_trusted.allow and not_trusted.rule == "origin"
 
 
+def test_own_host_other_port_read_allowed_but_write_refused():
+    # the Loop Lab panel served by a sandbox on :8998 reads prod's /ci/branch (observed 17 Oct)
+    hdr = {"host": "llm.int:8999", "origin": "https://llm.int:8998",
+           "sec-fetch-site": "same-site", "sec-fetch-mode": "cors"}
+    assert d(method="GET", path="/ci/branch", headers=hdr).allow
+    w = d(method="POST", path="/mcp/call", headers=hdr)
+    assert not w.allow and w.rule == "origin"
+
+
+def test_foreign_host_read_still_refused():
+    hdr = {"origin": "https://evil.example", "sec-fetch-site": "cross-site", "sec-fetch-mode": "cors"}
+    v = d(method="GET", path="/ci/branch", headers=hdr)
+    assert not v.allow and v.rule == "read"
+
+
 def test_plain_get_without_fetch_metadata_allowed():
     assert d(method="GET", path="/health", headers={}).allow
