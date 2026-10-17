@@ -1,4 +1,7 @@
 {
+ "autonomous.status": {
+  "kind": "kv"
+ },
  "backup.status": {
   "draw": {
    "columns": [
@@ -123,6 +126,15 @@
    "t": "hour"
   }
  },
+ "evolve.audit.list": {
+  "kind": "log",
+  "map": {
+   "events": "audit",
+   "kind": "action",
+   "t": "ts",
+   "text": "summary"
+  }
+ },
  "evolve.pipeline.diff": {
   "form": "diff",
   "kind": "diff"
@@ -168,6 +180,12 @@
   "form": "vgraph",
   "kind": "graph"
  },
+ "ha.health": {
+  "kind": "status"
+ },
+ "ide.git.diff": {
+  "kind": "diff"
+ },
  "loop.ci.board": {
   "form": "ci-board",
   "kind": "status"
@@ -183,6 +201,15 @@
  "loop.ci.race": {
   "form": "race-green",
   "kind": "status"
+ },
+ "markets.alerts.list": {
+  "kind": "log",
+  "map": {
+   "events": "alerts",
+   "kind": "direction",
+   "t": "created_at",
+   "text": "message"
+  }
  },
  "markets.chart": {
   "form": "candles",
@@ -206,6 +233,9 @@
  "mesh.topology": {
   "form": "vgraph",
   "kind": "graph"
+ },
+ "n8n.config.get": {
+  "kind": "kv"
  },
  "netscan.graph": {
   "draw": {
@@ -301,6 +331,12 @@
    "values": "events"
   }
  },
+ "pydanticai.status": {
+  "kind": "kv"
+ },
+ "smolagents.status": {
+  "kind": "kv"
+ },
  "syslog.errors": {
   "form": "log",
   "kind": "log",
@@ -309,6 +345,15 @@
    "kind": "cap_group",
    "t": "ts",
    "text": "message"
+  }
+ },
+ "syslog.status": {
+  "kind": "log",
+  "map": {
+   "events": "recent_errors",
+   "kind": "cap",
+   "t": "ts",
+   "text": "msg"
   }
  },
  "sysmon.history": {
