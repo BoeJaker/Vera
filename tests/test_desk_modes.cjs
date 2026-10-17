@@ -67,7 +67,7 @@ const C = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_e
 const H = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
 t('the canvas lays a mode out by the kernel, cells sizing the cards; rise and grow only in auto', () => {
   assert(C.includes("const mode = D.modeOf ? D.modeOf(this.getAttribute('desk-arrange')) : 'auto';") && C.includes("const ML = mode !== 'auto' && D.layoutMode ? D.layoutMode(mode, R, info, desk"));
-  assert(C.includes("const so = { size: user || msz, pinned: (!!user && c.classList.contains('pinned')) || (!user && !!msz)"));
+  assert(C.includes("const so = { size: user || msz || ksz, pinned: (!!user && c.classList.contains('pinned')) || (!user && !!msz)"));
   assert(C.includes('if (!hold && !modeLaid && typeof D.grow'));
 });
 t('a newcomer is placed by the score; the hold survives arrivals', () => {

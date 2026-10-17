@@ -184,16 +184,25 @@
       const seq = ++this._seq; const sr = this.shadowRoot;
       /* the timeframes the asset has stored (its watchlist row); every one its provider offers when that is not known */
       if (!this._tfsOf) { const w = await api('/markets/watchlist'); const row = ((w && w.watchlist) || []).find((x) => x && (x.id === this._prov + ':' + this._sym || (x.symbol === this._sym && x.exchange === this._prov)));
-        this._tfsOf = row && Array.isArray(row.timeframes) && row.timeframes.length ? row.timeframes : null; if (seq !== this._seq) return; }
+        this._tfsOf = row && Array.isArray(row.timeframes) && row.timeframes.length ? row.timeframes : null; if (seq !== this._seq) return;
+        /* NOT ON THE WATCHLIST: only the timeframes that have bars (owner 2026-10-16: "the controls in the revised ohlcv element dont
+           work" - a symbol the watchlist does not hold offered every timeframe its provider has; most had no bars, and one pressed
+           tore the chart down, so the indicators, Vol and Fit had nothing to draw on). One bar read for each, once. */
+        if (!this._tfsOf) { const cands = this._prov === 'yahoo' ? M.YAHOO_TFS : (this._prov === 'custom' ? ['1d'] : M.TFS);
+          const got = await Promise.all(cands.map((tf) => api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(this._prov, this._sym, tf)) + '&limit=1').then((x) => (x && !x.error && x.count ? tf : null))));
+          if (seq !== this._seq) return; const have = got.filter(Boolean); this._tfsOf = have.length ? have : null; } }
       const tfs = this._tfsOf || (this._prov === 'yahoo' ? M.YAHOO_TFS : (this._prov === 'custom' ? ['1d'] : M.TFS));
       sr.querySelector('.sym').textContent = this._sym; sr.querySelector('.tfs').innerHTML = tfs.map((tf) => `<button data-a="tf" data-v="${tf}" class="${tf === this._tf ? 'on' : ''}">${tf}</button>`).join('');
       sr.querySelector('.inds').innerHTML = IND.map((d) => `<button data-a="ind" data-v="${d.id}" class="${this._on.has(d.id) ? 'on' : ''}" title="${esc(d.kind)} ${esc(M.paramStr(d.params))}">${esc(d.label)}</button>`).join('');
       const ok = await M.ensureLw(); if (seq !== this._seq) return;
       if (!ok) { this._msg('The chart library did not load (offline?)'); return; }
       const r = await api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(this._prov, this._sym, this._tf)) + '&limit=2000'); if (seq !== this._seq) return;
-      this._B = this._bars(r);
+      const B = this._bars(r);
+      /* a timeframe with no bars never leaves the chart empty: it stays on the last that drew, and says so */
+      if (!B && this._B && this._goodTf && this._goodTf !== this._tf) { const tf = this._tf; this.setAttribute('tf', this._goodTf); const n = sr.querySelector('.note'); if (n) n.textContent = 'no ' + tf + ' bars stored'; return; }
+      this._B = B;
       if (!this._B) { this._teardown(); this._msg(r && r.error ? 'Error: ' + r.error : 'No stored bars for ' + this._sym + ' · ' + this._tf); return; }
-      this._draw(fit);
+      this._goodTf = this._tf; this._draw(fit);
     }
     _msg(t) { const st = this.shadowRoot.querySelector('.stack'); st.innerHTML = `<div class="msg">${esc(t)}</div>`; }
     async _draw(fit) {
