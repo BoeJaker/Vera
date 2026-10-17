@@ -222,3 +222,70 @@ def test_fetch_page_calls_the_hooks_with_the_result():
     finally:
         wc.FETCH_HOOKS.pop()
     assert out["status"] == 200 and not out.get("error")                               # a raising hook never hurts
+
+
+# ── WI-3b: the shared slot, robots, and the callers that record ───────────────
+
+def test_next_slot_serialises_a_host_across_processes():
+    from vera.fabric import ingress_core as ic
+    wait, nxt = ic.next_slot(100.0, 0.0, 1.0, 0.25)
+    assert wait == 0.0 and nxt == 101.25                       # first caller goes now, books the next slot
+    wait2, nxt2 = ic.next_slot(100.2, nxt, 1.0, 0.0)
+    assert abs(wait2 - 1.05) < 1e-9 and nxt2 == 102.25         # second caller (any process) waits for it
+    wait3, nxt3 = ic.next_slot(200.0, nxt2, 1.0, 0.0)
+    assert wait3 == 0.0 and nxt3 == 201.0                      # an old record does not punish a later caller
+
+
+def test_robots_summary_reads_what_the_map_keeps():
+    from vera.fabric import ingress_core as ic
+    s = ic.robots_summary(site.ROBOTS.decode())
+    assert s == {"crawl_delay": 1.0, "sitemaps": ["/sitemap.xml"], "disallows": 1}
+    assert ic.robots_summary("User-agent: Googlebot\nCrawl-delay: 9\nUser-agent: *\nDisallow:\n") == \
+        {"crawl_delay": None, "sitemaps": [], "disallows": 0}
+    assert ic.robots_summary("") == {"crawl_delay": None, "sitemaps": [], "disallows": 0}
+
+
+def test_throttle_domain_uses_the_shared_hook_and_falls_back(monkeypatch):
+    from vera.web import web_client as wc
+    slept, calls = [], []
+
+    async def fake_sleep(s):
+        slept.append(s)
+
+    monkeypatch.setattr(wc.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(wc, "_MIN_INTERVAL", 1.0)
+
+    async def hook(domain):
+        calls.append(domain)
+        return 0.4 if domain == "slow.example" else None
+
+    monkeypatch.setattr(wc, "THROTTLE_HOOK", hook)
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(wc.throttle_domain("slow.example"))
+    assert calls == ["slow.example"] and slept == [0.4]                 # the shared record decides
+    wc._domain_next.pop("local.example", None)
+    loop.run_until_complete(wc.throttle_domain("local.example"))
+    loop.run_until_complete(wc.throttle_domain("local.example"))
+    assert calls[-2:] == ["local.example", "local.example"] and len(slept) == 2 and slept[-1] > 0   # None: local
+
+    async def broken(domain):
+        raise RuntimeError("redis gone")
+
+    monkeypatch.setattr(wc, "THROTTLE_HOOK", broken)
+    wc._domain_next.pop("other.example", None)
+    loop.run_until_complete(wc.throttle_domain("other.example"))        # a failing hook never blocks a fetch
+    assert len(slept) == 2
+
+
+def test_the_other_callers_record_their_fetches():
+    import ast
+    disc = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    assert disc.count("_ingress_receipt(") >= 4                          # the helper + crawl, ingest_page, scrape_page
+    web = (ROOT / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    tree = ast.parse(web)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_web_search")
+    assert "record_query" in ast.dump(fn)
+    caps = (ROOT / "vera" / "capabilities" / "capabilities.py").read_text(encoding="utf-8")
+    assert "record_response" in caps
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["ingress.recording"].default == "off" and SB.REGISTRY["ingress.shared_throttle"].default == "off"
