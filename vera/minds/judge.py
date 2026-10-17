@@ -31,6 +31,10 @@ try:                                     # pragma: no cover - import-shape only
 except Exception:                        # worktree / app-free import
     from vera.minds import judge_core as JC   # type: ignore
 try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import shadow_plan_core as SP
+except Exception:                        # worktree / app-free import
+    from vera.minds import shadow_plan_core as SP   # type: ignore
+try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import decide_dispatch as DD
 except Exception:                        # worktree / app-free import
     from vera.minds import decide_dispatch as DD   # type: ignore
@@ -468,15 +472,9 @@ async def _night_job() -> None:
         if r is None or await r.get(KEY_NIGHT + night):
             return
         cap = int(os.environ.get("VERA_DECIDE_SHADOW_NIGHT_CAP", "40") or 40)
-        jobs = [("decide.shadow.score", f"shadow judge: {qid} ({model})",
-                 {"question_id": qid, "model": model, "limit": cap, "since_hours": 48}, f"{qid}|{model}")
-                for model in _models() for qid in JC.QUESTIONS]
-        # the kNN judge: embeddings only, every question, beside the LLM judge
-        jobs.append(("decide.shadow.knn", "shadow judge: kNN, all questions",
-                     {"question_id": "all", "limit": 400, "since_hours": 48}, "knn"))
-        # the card judge (FM-2.1 stage-0): after the kNN judge, which stores the decision vectors it reads
-        jobs.append(("decide.shadow.cards", "shadow judge: label cards, all questions",
-                     {"question_id": "all", "limit": 400, "since_hours": 48}, "cards"))
+        # the judges from their model bindings (B3): the LLM judge per model and question, then the others by
+        # tier - the kNN judge before the card judge, which reads the decision vectors kNN stores
+        jobs = SP.plan(SP.judge_bindings(_orch.CAPABILITY_REGISTRY), list(JC.QUESTIONS), _models(), cap)
         queued, failed = 0, []
         for name, title, args, key in jobs:
             jid = "shadow-" + night + "-" + "".join(c if c.isalnum() else "-" for c in key)[:60]
