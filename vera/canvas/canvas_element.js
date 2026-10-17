@@ -205,6 +205,10 @@
   /* a capability that only reads, by its name - what an app or a widget may call on its own (the chat's rule, _widgetReadable) */
   const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|quotes|sentiment\.map|news\.feed)$|^cal\.events\.list$|^ollama\.instances$|^syslog\.errors$|^evolve\.sandbox\.(logs|diff)$|^netscan\.graph$)/.test(String(cap || ''));   /* the last five: the reads of the first composites (DA-07c) and the network map (DA-04c (d)), by name */
   const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
+  /* WHERE AN ITEM CAME FROM (WSU-58 S3) - VeraItem.normalise's rule (/ui/vera-item.js, item_core.py): its own source, else a
+     result's capability call. Any item with a capability behind it gets the head's Refresh (it runs that call again). */
+  const sourceOf = (b) => { b = b || {}; if (b.source && typeof b.source === 'object') return b.source;
+    const c = b.content; return b.type === 'result' && c && c.cap ? { cap: c.cap, args: c.args || {} } : {}; };
   if (root.__veraCanvasElement) return;
   root.__veraCanvasElement = true;
 
@@ -1451,11 +1455,14 @@
       const got = id && PANEL_SRC[id] != null ? PANEL_SRC[id] : null; const src = c.src || got || '';
       if (!c.src && id && got == null && el && el._panelResolve) el._panelResolve(id);
       const q = el && el._pq && el._pq[key];
-      /* behind / front live in the panel's own head, always drawn: in the item's footer rail they were hidden until hover
-         and, on a panel sent behind, under the other items (owner, 2026-10-07: "i dont see the behind or front buttons") */
+      /* its actions, declared like every kind's (WSU-58 S3): on the desk Behind / Front, always shown in its head (owner,
+         2026-10-07: "i dont see the behind or front buttons"), then the bridge's Refresh, Query, Dispatch, Standalone */
       const lay = el && el.deskAlign && el.deskAlign() ? ((el._layer || {})[String(key)] || '') : null;
-      const layBtns = lay === null ? '' : `<button class="ib${lay === 'behind' ? ' on' : ''}" data-act="layer-behind" title="Behind the desk: the panel fills the free part of the desk, under the other items - press again to put it back among them">behind</button><button class="ib${lay === 'front' ? ' on' : ''}" data-act="layer-front" title="In front: the panel fills the free part of the desk, over the other items (never over the chat) - press again to put it back among them">front</button>`;
-      declare(el, key, { sub: '<i class="dot on"></i>' + esc(id) + ' · over the bridge', acts: [] });
+      declare(el, key, { sub: '<i class="dot on"></i>' + esc(id) + ' · over the bridge',
+        acts: (lay === null ? [] : [{ act: 'layer-behind', label: 'Behind', title: 'Fill the free desk, under the other items', on: lay === 'behind' },
+          { act: 'layer-front', label: 'Front', title: 'Fill the free desk, over the other items', on: lay === 'front' }]).concat([
+          { act: 'prefresh', label: 'Refresh', title: 'Reload the panel' }, { act: 'pquery', label: 'Query', title: 'panel.query - what the panel holds' },
+          { act: 'pdispatch', label: 'Dispatch', title: 'panel.dispatch - drive it' }, { act: 'pstand', label: 'Standalone ↗', title: 'Open it in a tab of its own' }]) });
       return `<div class="vc-panel" data-w="canvas.panel">`
         + (src ? `<div class="vc-live vc-frame" data-live="frame" data-key="${esc(key)}" data-src="${esc(src)}"></div>`
           : !id ? '<div class="vc-dim">no panel id</div>'
@@ -1655,7 +1662,7 @@
       }
       const v = ok ? resultView(c) : null;
       /* no head of its own (DEEP-29 11A.4): its line - the dot, the capability, its arguments, how long it took - is declared
-         for the item's head; Run again is the container's (the head's own buttons) */
+         for the item's head; no actions of its own - Refresh (run it again) is the container's, for any item with a source (sourceOf) */
       declare(el, key, { sub: '<i class="dot' + (ok ? ' on' : ' wait') + '"></i>' + esc(cap) + (args ? ' · ' + esc(args) : '') + (ms ? ' · ' + esc(ms) : ''), acts: [] });
       const head = '';
       let inner = '';
@@ -2176,7 +2183,7 @@
   /* a desk card that is not a chip keeps its corner grip: a compact card's rule hid it, so no desk card could be resized */
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not([data-desk-face^="layer-"]) > .rz{display:block}
   /* a card is moved by its header on the desk; while it moves it follows the pointer exactly and rides above the rest */
-  :host([align="desk"]:not([desk-narrow])) .stage .it:not([data-desk-face^="layer-"]) > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:grab}
+  :host([align="desk"]:not([desk-narrow])) .stage .it:not([data-desk-face^="layer-"]) > .it-hd{cursor:grab}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging{transition:width .12s,height .12s!important;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.5);outline:1px solid var(--acc,#5a9e8f)}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
   /* while it moves, a card shows what it is, not its controls: the footer rail and the grip popped in under the pointer */
@@ -2330,7 +2337,7 @@
   .hda > .hb[data-act="remove"]:hover{color:var(--err,#e06c6c)}
   /* locked: no grip, no handle; its lock shows lit */
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .rz{display:none!important}
-  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > :is(.it-hd,.it-bd > .vc-panel > .vc-th){cursor:default!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .it-hd{cursor:default!important}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .hda > .hb[data-act="lock"]{opacity:1}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-locked > .hda{opacity:1}
   .hd-pop{position:absolute;z-index:var(--z-pop,230);display:flex;flex-direction:column;min-width:170px;padding:4px;border-radius:9px;
@@ -2996,14 +3003,6 @@
   #live .lv > iframe.vc-pnext{position:absolute;left:0;top:0;opacity:0;pointer-events:none}
 #live .lv[data-kind="widget"]{background:transparent}#live .lv vera-widget{display:block;width:100%;height:100%}
 .vc-wid{display:flex;flex-direction:column;gap:4px}.vc-wid .vc-cap{font-size:9.5px;color:var(--t3,var(--dim,#6b7480))}
-  .vc-th{display:flex;align-items:center;gap:8px;min-height:24px;padding:2px 0 6px;font-size:11px;color:var(--t1,var(--fg,#dce1e8))}
-  .vc-th b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
-  .vc-th .mono{font-family:var(--f-mono,ui-monospace,SFMono-Regular,Consolas,monospace);font-size:9.5px;color:var(--t3,var(--dim,#6b7480));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-  .vc-th .sp{flex:1}
-  .vc-th .dot{width:7px;height:7px;border-radius:50%;background:var(--t3,var(--dim,#6b7480));flex:0 0 auto}
-  .vc-th .dot.on{background:var(--ac2,var(--acc2,#8fb87a));box-shadow:0 0 0 3px color-mix(in srgb,var(--ac2,var(--acc2,#8fb87a)) 22%,transparent)}
-  .vc-th .dot.wait{background:var(--ac3,var(--acc3,#c9955a));animation:vcp 1.4s infinite}
-  .vc-th .ib{height:22px;padding:0 8px;font-size:10px}
   .ib.on{color:var(--ac,var(--acc,#5a9e8f));border-color:color-mix(in srgb,var(--ac,var(--acc,#5a9e8f)) 45%,transparent)}
   .ti{height:24px;padding:0 8px;border:1px solid var(--bd,var(--border,#2a2f37));border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1c2026));color:var(--t1,var(--fg,#dce1e8));font:inherit;font-size:10.5px;min-width:0;flex:1 1 120px}
   .ti.sm{flex:0 1 84px}.ti:focus{outline:none;border-color:var(--ac,var(--acc,#5a9e8f))}
@@ -4288,8 +4287,8 @@
     _kitCard(host, lead) { if (!host) return null; return [...host.querySelectorAll('.code-card[data-cb]')].find((x) => !lead || !x.closest('.fu-p')) || null; }
     /* THE ITEM'S MENU (DEEP-29 11A.4 Decision 4, owner decision D1 2026-10-16): what is not in the head's one row - in the
        ADR's order: park, pin, size, back to the arrangement, open in place, fold, group / separate, explode, edit, in
-       context, run again, the deep dives, the panel's own, then the body's own actions (declared by it as it was drawn,
-       or the shared kit's for its card) and its dropdowns (Send to, Download). A fused pane's own actions follow under
+       context, refresh (an item with a source: sourceOf), the deep dives, then the body's own actions (declared by it as it
+       was drawn - a panel's bridge actions among them - or the shared kit's for its card) and its dropdowns (Send to, Download). A fused pane's own actions follow under
        its name. Closed by its own use, a second ⋯ or a press anywhere else. */
     _hdMenu(key, btn) {
       const st = this._popHost(); if (!st || !key) return;
@@ -4320,14 +4319,12 @@
       if (ca.explode && !inHead('[data-act="explode"]')) h += row('explode', ca.explode.on ? 'Back to the source' : 'Explode', ca.explode.on ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', ca.explode.on);
       if (ca.edit && !inHead('[data-act="edit"]')) h += row('edit', ca.edit.on ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', ca.edit.on);
       if (ca.ctx) h += row('ctx', ca.ctx.on ? '✓ In context' : 'Put in context', ca.ctx.on ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ca.ctx.on);
-      if (b.type === 'result' && b.content && b.content.cap && !inHead('[data-act="rerun"]')) h += row('rerun', 'Run again', 'Run ' + b.content.cap + ' again with the same arguments');
+      const src = sourceOf(b); if (src.cap && !inHead('[data-act="rerun"]')) h += row('rerun', 'Refresh', 'Run ' + src.cap + ' again with the same arguments');
       if (peek) h += row('remove', 'Take it off the desk', 'Take it off the desk');
       /* FULL SIZE, IN FRONT OR BEHIND - ANY ITEM (owner 2026-10-17: "like the ui panels on the desk id like to be able to send full
          screen to the front and back"): a chart, a table, a list fills the free desk over the other items or under them, as a
          panel does; pressed again it goes back among them */
       if (desk && !inHead('[data-act="layer-behind"]')) h += '<hr>' + row('layer-behind', 'Full size, behind', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'Full size, in front', 'Fill the free desk, over the other items', L === 'front' || this._max === key);
-      if (b.type === 'panel' && !inHead('[data-act="prefresh"]')) h += '<hr>'
-        + row('pquery', 'Query', 'panel.query - what the panel holds') + row('pdispatch', 'Dispatch…', 'panel.dispatch - drive it') + row('prefresh', 'Refresh', 'Reload the panel') + row('pstand', 'Open standalone ↗', 'Open it in a tab of its own');
       /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
       { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
         if (dv.length) h += '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
@@ -4335,7 +4332,7 @@
       /* the body's own: what it declared as it was drawn, or the kit's actions for its card - never one the menu has above */
       const SKIP_VO = new Set(['explode', 'canvas']);
       const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; let o = '';
-        (d.acts || []).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : x.aid ? '[data-app-action="' + x.aid + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { if (x.aid) { o += `<button class="ib" data-act="appact" data-app-action="${esc(x.aid)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label)}</button>`; return; } o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
+        (d.acts || []).filter((x) => kk !== key || !(x.act && !x.aid && h.includes('data-act="' + x.act + '"'))).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : x.aid ? '[data-app-action="' + x.aid + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { if (x.aid) { o += `<button class="ib" data-act="appact" data-app-action="${esc(x.aid)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label)}</button>`; return; } o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
         const card = this._kitCard(host, lead); const VO = root.VeraOut; const kit = card && VO && typeof VO.barActions === 'function' ? VO.barActions(card) : { acts: [], menus: [] };
         const repl = new Set((d.acts || []).map((x) => x.replaces).filter(Boolean));   /* a declared action standing for a kit one (replaces) */
         kit.acts.filter((x) => !SKIP_VO.has(x.vo) && !repl.has(x.vo) && (kk !== key || !inHead('[data-vo-act="' + x.vo + '"]'))).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
@@ -5774,7 +5771,7 @@
             /* THE CONTROLS OF WHAT IS IN IT, IN ITS HEAD (owner, 2026-10-16: "the unified header should have controls relevant to
                whatever is in it not the same controls for everything - i dont want everything to be chucked into the ⋯ menu"):
                after the title, the item's own actions as buttons - a code card's Copy, Run, Edit, Preview; a terminal's Attach
-               and Share; a panel's Refresh and Query; a result's Run again; Edit and Explode where they apply - most used first.
+               and Share; a panel's Refresh and Query; Refresh on an item with a source (a result's call); Edit and Explode where they apply - most used first.
                A narrow card shows the first few (data-pri); only what does not fit is in the more menu. */
             const ax = []; const hx = (attrs, label, title, on) => ax.push(`<button type="button" class="hx${on ? ' on' : ''}" ${attrs} title="${esc(title || label)}">${esc(label)}</button>`);
             let kit = null; const VO = root.VeraOut;
@@ -5789,17 +5786,18 @@
             if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane' && !repl.has(a.vo)).sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
               .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
             (d.acts || []).filter((a) => !a.lead).forEach(dact);
-            if (b.type !== 'panel' && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];
+            /* an item filling the desk (layered or maximised) gains Behind / Front - unless it declared its own (a panel always shows them) */
+            const dLay = (d.acts || []).some((a) => a.act === 'layer-behind');
+            if (!dLay && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];
               hx('data-act="layer-behind"', 'Behind', 'Behind the other items, still filling the free desk - again to put it back among them', L1 === 'behind'); hx('data-act="layer-front"', 'Front', 'Over the other items, filling the free desk - again to put it back among them', L1 === 'front'); }
-            if (b.type === 'panel') { if (desk) { const L0 = (this._layer || {})[key] || ''; hx('data-act="layer-behind"', 'Behind', 'Fill the free desk, under the other items', L0 === 'behind'); hx('data-act="layer-front"', 'Front', 'Fill the free desk, over the other items', L0 === 'front'); }
-              hx('data-act="prefresh"', 'Refresh', 'Reload the panel'); hx('data-act="pquery"', 'Query', 'panel.query - what the panel holds'); hx('data-act="pdispatch"', 'Dispatch', 'panel.dispatch - drive it'); hx('data-act="pstand"', 'Standalone ↗', 'Open it in a tab of its own'); }
-            if (b.type === 'result' && c.cap) hx('data-act="rerun"', 'Run again', 'Run ' + c.cap + ' again with the same arguments');
+            /* an item with a capability behind it (sourceOf - a result's call) runs it again */
+            const src = sourceOf(b); if (src.cap) hx('data-act="rerun"', 'Refresh', 'Run ' + src.cap + ' again with the same arguments');
             if (editable && !kit) hx('data-act="edit"', editing ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', editing);
             if (xplodable) hx('data-act="explode"', xploded ? 'Source' : 'Explode', xploded ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', xploded);
             const acts = ax.length ? '<span class="it-acts" data-w="canvas.item.actions">' + ax.map((x, i) => x.replace(/^<(button|a) /, '<$1 data-pri="' + i + '" ')).join('') + '</span>' : '';
             return `<div class="it-hd" style="--hda-n:${ctl.length};--hda-nn:${nn}"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>`
               + (d.sub ? `<span class="it-sub">${d.sub}</span>` : '')
-              + (b.type === 'panel' && desk ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : '')
+              + (dLay && desk ? '<span class="ly" data-act="layer-behind" title="Send it behind the other items, filling the free desk">⇣</span><span class="ly" data-act="layer-front" title="Bring it over the other items, filling the free desk">⇡</span>' : '')
               + (Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : '')
               + (scoreTxt ? '<span class="sc" title="' + esc('relevance ' + scoreTxt + (why ? ' — ' + why : '')) + '">' + esc(scoreTxt) + '</span>' : '')
               + (mid ? '<span class="src" title="the turn using it">' + esc(mid) + '</span>' : yours ? '<span class="src" title="added by you — it relates to no turn">you</span>' : '')
@@ -6128,7 +6126,7 @@
          back to the arrangement. A control in the header (data-act, a field) is never a handle. */
       const deskHandle = (ev) => { if (!this.deskAlign() || ev.button !== 0) return null; const t = ev.target; if (!t || !t.closest) return null;
         if (t.closest('[data-act],.rz,input,textarea,select,button,a,.lay-pill')) return null;
-        const hd = t.closest('.it-hd,.vc-th'); const it = hd && hd.closest('.stage .it[data-key]');
+        const hd = t.closest('.it-hd'); const it = hd && hd.closest('.stage .it[data-key]');
         /* a card filling the room (maximised, or reading) is a handle too: carried, it goes back to the desk (see below) */
         if (it && it.dataset.deskFace === 'layer-front' && this._max === it.dataset.key) return it;
         if (!it || it.dataset.deskFace === 'layer-behind' || it.dataset.deskFace === 'layer-front' || it.classList.contains('desk-locked')) return null; return it; };
@@ -7198,7 +7196,7 @@
          again; its width and height stay (kept in the entry, so a reload keeps them too) */
       if (act === 'desk-auto') { const u = this._deskPosGet()[key]; this._deskPosSet(key, u && u.w > 0 && u.h > 0 ? { w: u.w, h: u.h, face: u.face, free: true } : null); this._holdEnd(); return this._placeNow(); }
       if (act === 'layer-behind' || act === 'layer-front') return this.setLayer(key, this._layer[key] === act.slice(6) ? '' : act.slice(6));
-      if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026';
+      if (act === 'rerun') { const c = sourceOf(this._blockOf(key)); if (!c.cap) return;   /* Refresh: the item's source call again */ btn.textContent = 'running\u2026';
         /* its steps on this item while it runs, as a chat call's run item (DA-04c (e)); the answer replaces them */
         const run = { state: 'running', started: Date.now() };
         return this._traceSteps((m) => { ['stage', 'done', 'total', 'found', 'text'].forEach((k) => { if (m[k] != null && m[k] !== '') run[k] = m[k]; }); this.liveUpdate(key, { running: true, run: Object.assign({}, run) }); })

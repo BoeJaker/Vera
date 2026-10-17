@@ -44,9 +44,12 @@ const mod = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element
   /* with its page (the chat or the canvas's own resolver gives it: WSU-67, /ui/panels/<id> is not a route) */
   const h = mod.BLOCK.panel({ panel: 'calendar-panel', title: 'Calendar', src: '/cal/panel' }, 'l', 'panel:calendar-panel', null);
   t('live in its frame', /data-live="frame"/.test(h) && /calendar-panel/.test(h) && /data-src="\/cal\/panel"/.test(h));
-  t('with query and dispatch over the bridge', cv.includes("row('pquery'") && cv.includes("row('pdispatch'"));
+  /* WSU-58 S3: declared for the item's head like every kind's actions (the menu lists what does not fit) */
+  const pe = { _pq: {}, _pdOpen: {} }; mod.BLOCK.panel({ panel: 'calendar-panel', src: '/cal/panel' }, 'l', 'panel:c', pe);
+  const pacts = ((pe._decl || {})['panel:c'] || {}).acts || []; const pa = pacts.map((a) => a.act);
+  t('with query and dispatch over the bridge', pa.includes('pquery') && pa.includes('pdispatch'));
   t('a console to drive it by hand', /data-f="action"/.test(h) && /data-f="payload"/.test(h));
-  t('and a way out to the standalone page', cv.includes("row('pstand'"));
+  t('and a way out to the standalone page', pa.includes('pstand'));
   t('the bridge is the capability, not a private channel', /panel\.dispatch/.test(cv) && /panel\.query/.test(cv));
 }
 
