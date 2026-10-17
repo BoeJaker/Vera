@@ -8001,6 +8001,9 @@ IMPORTANT:
     const widget=(r)=>({ kind:'widget', n:String(r.title||title).slice(0,52), k:'widget', col:'var(--dv5, #a78bfa)', d:'widget · '+r.form,
       content:Object.assign({}, r, { widget:r.form, form:r.form, title:r.title||title, record:r }) });
     const rowsOf=(v)=>Array.isArray(v)?v:(v&&typeof v==='object'?(Array.isArray(v.rows)?v.rows:[]):[]);
+    /* the list in an answer: the answer itself, or its list under a usual name - a declaration that names a form hands over
+       the whole answer ({events:[...]}), and a calendar of six events became nothing (D10 measurement, 2026-10-17) */
+    const listOf=(v, keys)=>Array.isArray(v)?v:(v&&typeof v==='object'?(keys.map((k)=>v[k]).find(Array.isArray)||[]):[]);
     /* A FORM IT NAMES IS THE FORM IT GETS (review 2026-10-15 U11): a table or record whose declaration names its own widget
        form (docker.ps containers, sysmon.status numbers, obs.node_temps temps, evolve.sandbox.list sandboxes, ...) was drawn
        as a plain table or field list - what the hint table drew before was that form. The desk's own calendar and code
@@ -8012,7 +8015,7 @@ IMPORTANT:
         const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':String(v).slice(0,120); }));
         return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'var(--dv1, #38bdf8)', d:'table · '+body.length+' rows',
                  content:{ columns, rows:body, caption:title } }; }
-      case 'records': { const items=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',
+      case 'records': { const items=listOf(r0.data, ['items','results','records','rows','pages','sources','data']).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',
           domain:x.domain||(String(x.url||'').match(/^https?:\/\/([^/]+)/)||[])[1]||'', title:String(x.title||x.url||''), snippet:String(x.snippet||'').slice(0,1200),
           text:typeof x.text==='string'&&x.text.length>=200?x.text.slice(0,20000):undefined, when:x.when||undefined, score:typeof x.score==='number'?x.score:undefined }));
         if(!items.length) return null;
@@ -8027,7 +8030,7 @@ IMPORTANT:
       case 'image': { const d=r0.data||{}; const url=d.image_b64?('data:image/png;base64,'+d.image_b64):String(d.url||''); if(!url) return null;
         return { kind:'image', n:String(d.caption||title), k:'image', col:'var(--dv4, #e879f9)', d:'image', content:{ url, alt:String(d.caption||title), caption:String(d.caption||'') } }; }
       case 'kv': { const f=r0.data; if(!f||typeof f!=='object') return null; return { kind:'kv', n:title, k:'kv', col:'var(--dim2, #94a3b8)', d:'record · '+Object.keys(f).length+' fields', content:{ title, fields:f } }; }
-      case 'calendar': { const evs=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&x.start).map(x=>Object.assign({}, x, { title:String(x.title||'') })); if(!evs.length) return null;
+      case 'calendar': { const evs=listOf(r0.data, ['events','items','data']).filter(x=>x&&x.start).map(x=>Object.assign({}, x, { title:String(x.title||'') })); if(!evs.length) return null;
         return { kind:'calendar', n:'Calendar', k:'calendar', col:'var(--dv7, #9fe1e7)', d:'calendar · '+evs.length+' event'+(evs.length===1?'':'s'), key:'calendar:month',
                  content:{ title:title||'Calendar', month:_cvCalMonth(evs), selected:'', events:evs } }; }
       case 'composite': return pr.records.map(widget);
