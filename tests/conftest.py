@@ -13,6 +13,8 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_edge_guard_core",  # a page on another site could run any capability: no auth + CORS * (2026-10-17)
+    "test_edge_guard_asgi",  # the guard refuses before routing and closes foreign WebSockets (2026-10-17)
     "test_sandbox_idle_plan",  # sleep the container you judged, never an alias's target (2026-09-12)
     "test_operator_session_sweep",  # a cancelled run must not leak its browser context (2026-09-16)
     "test_gpu_residency",  # media models must not sit on the LLM's GPU while idle (2026-09-16)
