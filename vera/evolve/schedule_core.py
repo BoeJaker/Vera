@@ -84,9 +84,106 @@ CAP_ALLOW_PREFIXES = ("decide.", "obs.", "evolve.suite.", "chat.corpus.", "world
                       "perf.", "evolve.loop.record", "evolve.result.", "agents.work.",
                       # four-minds FM-7.9 (17 Oct 2026): the memory census - the frozen known-item set through
                       # memory.seek on four-minds nights; read-only on memory, a row in its own table
-                      "memory.perf.probe")
+                      "memory.perf.probe",
+                      # looplab-control A4 (17 Oct 2026): every test family can be scheduled - ML Workshop
+                      # training/eval and sweeps (never export or delete), memory retrieval evals, a dream
+                      # trigger's cycle (A5: the nightly QA suite), the student nightly pass, and the
+                      # allow-listed scripts (probes, TTS round-trip) through evolve.script.run
+                      "ml.train", "ml.sweep", "retrieval.eval", "retrieval.known_items.run",
+                      "dream.cycle.run", "evolve.script.run")
 
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+#: looplab-control A1 (17 Oct 2026): capabilities that start their work in the background and return at
+#: once. The scheduler recorded them as finished the moment they returned, freed the exclusive slot and let a
+#: census start beside work that was still running. Each says how to ask whether its job has ended:
+#:   status - the status capability; id_key - the start result's field that names the job (passed to the
+#:   status capability as id_arg); how - which reading of the status result applies (follow_state).
+FOLLOW = {
+    "evolve.suite.start": {"status": "evolve.suite.status", "id_key": "", "id_arg": "", "how": "running"},
+    "chat.corpus.run": {"status": "chat.corpus.last", "id_key": "", "id_arg": "", "how": "running"},
+    "dream.cycle.run": {"status": "dream.cycle.progress", "id_key": "", "id_arg": "", "how": "running"},
+    "bench.run.start": {"status": "bench.status", "id_key": "run_id", "id_arg": "run_id", "how": "rows"},
+    "bench.matrix.start": {"status": "bench.matrix.status", "id_key": "run_id", "id_arg": "run_id",
+                           "how": "state"},
+    "evolve.script.run": {"status": "evolve.script.status", "id_key": "job_id", "id_arg": "job_id",
+                          "how": "state"},
+}
+FOLLOW_POLL_S = 30
+_ENDED = ("done", "error", "failed", "cancelled", "canceled", "finished", "stopped", "exited")
+
+
+def follow_args(cap: str, res: Any) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """(status capability, its arguments) when `cap` started a background job that is still to finish,
+    else None (not a background starter, or it failed to start)."""
+    spec = FOLLOW.get((cap or "").strip())
+    if not spec or not isinstance(res, dict) or res.get("error") or res.get("ok") is False:
+        return None
+    args: Dict[str, Any] = {}
+    if spec["id_key"]:
+        jid = res.get(spec["id_key"])
+        if not jid:
+            return None
+        args[spec["id_arg"]] = jid
+    return spec["status"], args
+
+
+def follow_state(cap: str, st: Any) -> Tuple[bool, str, str]:
+    """(ended, result word, detail) from a status capability's answer. An unreadable status is NOT the
+    end: the follower keeps asking until STILL_RUNNING_HOURS."""
+    spec = FOLLOW.get((cap or "").strip()) or {}
+    if not isinstance(st, dict) or (st.get("error") and not st.get("state") and "running" not in st):
+        return False, "", ""            # unreadable (no state at all)
+    how = spec.get("how")
+    if how == "running":
+        if st.get("running"):
+            return False, "", ""
+        sst = st.get("status") if isinstance(st.get("status"), dict) else {}
+        summ = st.get("summary") or sst.get("avg_combined") or ""
+        if isinstance(summ, dict):
+            summ = " · ".join("%s %s" % (k, summ[k]) for k in list(summ)[:6])
+        return True, "done", str(summ)[:200]
+    row = st
+    if how == "rows":
+        rows = st.get("runs") or st.get("rows") or st.get("items") or []
+        row = rows[0] if rows and isinstance(rows[0], dict) else {}
+    state = str(row.get("state") or "").lower()
+    if state in _ENDED:
+        word = "error" if (state in ("error", "failed") or row.get("error")) else "done"
+        return True, word, str(row.get("error") or row.get("summary") or state)[:200]
+    return False, "", ""
+
+
+# ── A2: quiet hours ───────────────────────────────────────────────────────────
+#: NIGHT-BOOKINGS (owner, 17 Oct 2026): 04:00-05:00 is the background queue's quiet hour, every night.
+#: No schedule STARTS in a quiet window unless it says quiet_ok (what is already running carries on).
+DEFAULT_QUIET = [{"start": "04:00", "end": "05:00"}]
+
+
+def in_quiet(now: datetime, quiet: Optional[List[Dict[str, Any]]], tz_name: str = DEFAULT_TZ) -> str:
+    """The quiet window `now` falls in ("04:00-05:00"), or ""."""
+    tz = resolve_tz(tz_name or DEFAULT_TZ)
+    local = now.astimezone(tz)
+    for q in (quiet if quiet is not None else DEFAULT_QUIET) or []:
+        try:
+            a, b = parse_hhmm(q.get("start")), parse_hhmm(q.get("end"))
+        except Exception:
+            continue
+        t = local.time().replace(second=0, microsecond=0)
+        inside = (a <= t < b) if a < b else (t >= a or t < b)
+        if inside:
+            return "%s-%s" % (a.strftime("%H:%M"), b.strftime("%H:%M"))
+    return ""
+
+
+def window_end_stop(rec: Dict[str, Any], now: datetime) -> bool:
+    """A3: a NON-census run whose window has closed and whose schedule asked to stop it (at_window_end
+    drop or yield - a capability cannot be parked, so yield stops it too)."""
+    if rec.get("kind") == "census" or rec.get("once_at"):
+        return False
+    if rec.get("at_window_end", "finish") == "finish":
+        return False
+    return current_window(rec, now) is None
 
 
 # ── time helpers ─────────────────────────────────────────────────────────────
@@ -181,8 +278,9 @@ def normalize(rec: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[st
             raise ValueError("days must be weekday numbers 0 (Mon) .. 6 (Sun)")
         r["days"] = days
         start, end = parse_hhmm(r.get("start") or "05:00"), parse_hhmm(r.get("end") or "17:00")
-        if start >= end:
-            raise ValueError("the window must end after it starts (overnight windows are not supported)")
+        if start == end:
+            raise ValueError("the window must not start and end at the same time")
+        # A6 (17 Oct 2026): end before start = an overnight window, ending the next day (22:00-02:00)
         r["start"], r["end"] = start.strftime("%H:%M"), end.strftime("%H:%M")
     repeat = str(r.get("repeat") or ("continuous" if kind == "census" else "once_per_window"))
     if repeat not in REPEATS:
@@ -199,6 +297,7 @@ def normalize(rec: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[st
     r["exclusive"] = bool(r.get("exclusive", True))
     r["cooldown_minutes"] = max(0, int(r.get("cooldown_minutes") or 2))
     r["notes"] = str(r.get("notes") or "")
+    r["quiet_ok"] = bool(r.get("quiet_ok", False))           # A2: may start in a quiet hour
     # The board item this work is for: a board-kind schedule's own item, or any schedule linked to one (a census run
     # for an item that asked for one, a loop working an item's goal). The scheduler notes each start on the item.
     r["board_id"] = str(r.get("board_id") or (r["target"].get("id") if kind == "board" else "") or "").strip()
@@ -395,6 +494,8 @@ def window_on(rec: Dict[str, Any], day: date) -> Optional[Tuple[datetime, dateti
     tz = resolve_tz(rec.get("timezone") or DEFAULT_TZ)
     start = datetime.combine(day, parse_hhmm(rec.get("start") or "05:00"), tzinfo=tz)
     end = datetime.combine(day, parse_hhmm(rec.get("end") or "17:00"), tzinfo=tz)
+    if end <= start:                                   # A6: an overnight window ends the next day
+        end = datetime.combine(day + timedelta(days=1), parse_hhmm(rec.get("end") or "17:00"), tzinfo=tz)
     return start, end
 
 
@@ -403,9 +504,11 @@ def current_window(rec: Dict[str, Any], now: datetime) -> Optional[Tuple[datetim
     if rec.get("once_at"):
         return None
     tz = resolve_tz(rec.get("timezone") or DEFAULT_TZ)
-    w = window_on(rec, now.astimezone(tz).date())
-    if w and w[0] <= now < w[1]:
-        return w
+    today = now.astimezone(tz).date()
+    for d in (today, today - timedelta(days=1)):      # yesterday's overnight window may still be open
+        w = window_on(rec, d)
+        if w and w[0] <= now < w[1]:
+            return w
     return None
 
 
@@ -476,6 +579,12 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
                 every = timedelta(minutes=int(rec.get("every_minutes") or 60))
                 if last_started and now - last_started < every:
                     return False, "interval not elapsed"
+    # A2: nothing starts in the quiet hour (NIGHT-BOOKINGS) unless the schedule says quiet_ok.
+    if state.get("quiet") and not rec.get("quiet_ok"):
+        return False, "quiet hour %s (background queue)" % state["quiet"]
+    # A2: a declared activity (a probe, a manual benchmark) holds the box like a loop does.
+    if (kind == "census" or rec.get("exclusive", True)) and state.get("declared_busy"):
+        return False, "declared activity: %s" % state["declared_busy"]
     # Box gating. A census is one loop on prod's GPU; nothing else may run
     # beside it (HANDOVER §4.1-4.2), and a census needs the box to itself.
     if kind == "census":
@@ -503,6 +612,8 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
         return False, "census in flight"
     elif kind == "cap" and rec.get("exclusive", True) and int(state.get("loops_running") or 0) > 0:
         return False, "an agent loop is running"                      # RF-09: caps wait for loops
+    elif rec.get("exclusive", True) and int(state.get("exclusive_running") or 0) > 0:
+        return False, "another exclusive scheduled run is going"      # A3: one exclusive run at a time
     return True, "due"
 
 
@@ -539,6 +650,8 @@ def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[st
             continue
         out.append({"schedule_id": rec["id"], "kind": rec["kind"], "target": rec["target"],
                     "title": rec.get("title", ""), "reason": why})
+        if rec.get("kind") != "census" and rec.get("exclusive", True):
+            st["exclusive_running"] = int(st.get("exclusive_running") or 0) + 1   # A3: one per tick too
         if rec.get("kind") == "census":
             census_taken = True
             st["census_running"] = True     # exclusive kinds see the census we just planned

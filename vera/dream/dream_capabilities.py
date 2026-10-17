@@ -10429,6 +10429,16 @@ async def _trigger_due(trig: Dict[str, Any], idle_min: float) -> bool:
         return False
     if lifecycle["state"] != "active" or not trig.get("enabled"):
         return False
+    # looplab-control A5 (17 Oct 2026): a trigger a Loop Lab schedule runs (dream.cycle.run) is fired by
+    # the schedule, which can be seen, moved and paused - the dream scheduler stands down for it.
+    _cov = CAPABILITY_REGISTRY.get("evolve.schedule.covers")
+    if _cov and _cov.get("func"):
+        try:
+            if (await _cov["func"](name="dream.cycle.run",
+                                   match={"trigger_name": trig.get("name")})).get("covered"):
+                return False
+        except Exception:
+            pass
     if idle_min < float(trig.get("min_idle_minutes", 15)):
         return False
     from Vera.vera.execution.workflow_schedule import recurrence_due, within_schedule_window
