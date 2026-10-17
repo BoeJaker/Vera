@@ -184,3 +184,18 @@ def test_the_probe_stores_its_own_row_and_keeps_its_calls_out_of_live_rows(mod):
 def test_compare_needs_a_base(mod):
     out = asyncio.run(mod.M.cap_memory_perf_compare())
     assert out["ok"] is False and "base_sha" in out["error"]
+
+
+def test_compare_refuses_an_unknown_head(mod):
+    mod.monkeypatch.setattr(mod.M, "_provenance", lambda: {})
+    out = asyncio.run(mod.M.cap_memory_perf_compare(base_sha="abc"))
+    assert out["ok"] is False and "head_sha" in out["error"]
+
+
+def test_the_perf_caps_stay_on_the_host_and_the_probe_may_be_scheduled():
+    from vera.workers import worker_placement_core as WP
+    from vera.evolve import schedule_core as SC
+    for cap in ("memory.perf.probe", "memory.perf.versions", "memory.perf.compare", "memory.perf.log_now"):
+        assert cap in WP.HOST_BOUND_CAPS
+    assert not SC.cap_denied("memory.perf.probe")
+    assert SC.cap_denied("memory.perf.log_now")            # only the probe is a scheduled job

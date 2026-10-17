@@ -179,6 +179,17 @@ HOST_BOUND_CAPS.update({
     "memory.dual_write.rollback_rehearse": _MEMORY_REVISION_STATE,
 })
 
+#: The memory performance log (four-minds FM-7.9) reads this process's timing windows and git provenance: on a
+#: worker memory.perf.versions reported no running sha (17 Oct 2026), and compare's default head would have been "".
+_PERF_STATE = "reads the host process's timing windows and provenance"
+HOST_BOUND_CAPS.update({
+    "memory.perf.probe": _PERF_STATE,
+    "memory.perf.log_now": _PERF_STATE,
+    "memory.perf.versions": _PERF_STATE,
+    "memory.perf.compare": _PERF_STATE,
+    "memory.perf.rows": _PERF_STATE,
+})
+
 MUTATOR_SEGMENTS = frozenset({
     "set", "config", "configure", "enable", "disable", "reset", "reload",
     "register", "unregister", "save", "delete",

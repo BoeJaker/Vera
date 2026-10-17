@@ -81,7 +81,10 @@ CAP_DENY_PREFIXES = ("sys.", "background.", "evolve.bleeding_edge.", "evolve.sch
 #: when a new kind of scheduled job is wanted.
 CAP_ALLOW_PREFIXES = ("decide.", "obs.", "evolve.suite.", "chat.corpus.", "worldview.", "intel.", "bench.", "census.",
                       "nlp.", "info.seek", "memory.seek", "memory.map", "caps.shortlist.",
-                      "perf.", "evolve.loop.record", "evolve.result.", "agents.work.")
+                      "perf.", "evolve.loop.record", "evolve.result.", "agents.work.",
+                      # four-minds FM-7.9 (17 Oct 2026): the memory census - the frozen known-item set through
+                      # memory.seek on four-minds nights; read-only on memory, a row in its own table
+                      "memory.perf.probe")
 
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
