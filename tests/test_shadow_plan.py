@@ -32,7 +32,12 @@ def _reg(*entries):
 def test_the_registered_judges_give_the_old_list_exactly():
     from vera.minds import judge as J
     got = SP.plan(SP.judge_bindings(J._orch.CAPABILITY_REGISTRY), list(JC.QUESTIONS), MODELS, 40)
-    assert [(c, a, k) for c, _t, a, k in got] == _old_list(40)
+    old = _old_list(40)
+    assert [(c, a, k) for c, _t, a, k in got][:len(old)] == old
+    # the candidate matrix (17 Oct) adds the NLP-node judges after them, one job per model
+    assert [(c, a.get("family"), k) for c, _t, a, k in got][len(old):] == [
+        ("decide.shadow.nlp", "nli", "nlp-nli"), ("decide.shadow.nlp", "rerank", "nlp-rerank"),
+        ("decide.shadow.nlp", "zeroshot", "nlp-zeroshot")]
 
 
 def test_a_new_bound_student_is_judged_without_editing_the_job():

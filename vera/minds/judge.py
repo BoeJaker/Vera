@@ -35,6 +35,10 @@ try:                                     # pragma: no cover - import-shape only
 except Exception:                        # worktree / app-free import
     from vera.minds import shadow_plan_core as SP   # type: ignore
 try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import matrix_core as MX, applications_core as APPS
+except Exception:                        # worktree / app-free import
+    from vera.minds import matrix_core as MX, applications_core as APPS   # type: ignore
+try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import decide_dispatch as DD
 except Exception:                        # worktree / app-free import
     from vera.minds import decide_dispatch as DD   # type: ignore
@@ -146,11 +150,12 @@ async def cap_decide_shadow_score(question_id: str = "loop.step_verify", model: 
             """SELECT s.decision_id, s.state, l.row FROM decision_states s
                JOIN decision_ledger l ON l.decision_id = s.decision_id
                WHERE s.question_id = $1 AND COALESCE(l.mode, '') <> 'shadow'
-                 AND COALESCE(l.row->>'decider', 'llm') <> 'rule'
+                 AND ($5 OR COALESCE(l.row->>'decider', 'llm') <> 'rule')
                  AND s.ts >= NOW() - make_interval(hours => $2)
                  AND NOT EXISTS (SELECT 1 FROM decision_ledger x WHERE x.mode = 'shadow'
                                  AND x.row->'detail'->>'for' = s.decision_id AND x.row->>'implementation' = $3)
-               ORDER BY s.ts DESC LIMIT $4""", question_id, int(since_hours or 72), impl, limit)
+               ORDER BY s.ts DESC LIMIT $4""", question_id, int(since_hours or 72), impl, limit,
+            question_id not in JC.LOOP_QUESTIONS)
     try:
         from Vera.vera.minds import ledger_capabilities as L
     except Exception:                    # pragma: no cover
@@ -486,6 +491,174 @@ async def cap_decide_shadow_cards(question_id: str = "all", limit: int = 200, si
     return {"ok": True, "question_id": question_id, "scored": scored, "skipped": skipped}
 
 
+MATRIX_LAST_KEY = "vera:decide:matrix:last"        # LLM pair -> the night it was last queued
+_MATRIX_MODELS: Dict[str, Any] = {"at": 0.0, "models": []}
+
+
+async def matrix_models() -> List[str]:
+    """The LLM candidates: every completion model on the nodes up to MX.MAX_PARAMS_B (model.callable, read at most
+    every 6 h), plus VERA_DECIDE_SHADOW_MODEL; VERA_DECIDE_MATRIX_EXCLUDE drops names."""
+    if time.time() - _MATRIX_MODELS["at"] > 6 * 3600:
+        rows: List[Dict[str, Any]] = []
+        cap = CAPABILITY_REGISTRY.get("model.callable") if "CAPABILITY_REGISTRY" in globals() else None
+        cap = cap or _orch.CAPABILITY_REGISTRY.get("model.callable")
+        try:
+            if cap:
+                out = await (cap.get("raw") or cap.get("func"))(include_llms=True, measure=False)
+                rows = list((out or {}).get("models") or [])
+        except Exception as e:
+            log.debug("matrix models: %s", e)
+        ex = [x.strip() for x in str(os.environ.get("VERA_DECIDE_MATRIX_EXCLUDE") or "").split(",") if x.strip()]
+        found = MX.llm_candidates(rows, exclude=ex)
+        if found:
+            _MATRIX_MODELS.update(at=time.time(), models=found)
+    return list(dict.fromkeys(_models() + list(_MATRIX_MODELS["models"])))
+
+
+async def _rotate(r, jobs):
+    """Tonight's jobs: every non-LLM judge, and the LLM pairs the rotation picks (never-scored first)."""
+    llm = [j for j in jobs if "|" in j[3]]
+    rest = [j for j in jobs if "|" not in j[3]]
+    try:
+        raw = await r.hgetall(MATRIX_LAST_KEY) if r is not None else {}
+    except Exception:
+        raw = {}
+    last = {(k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+            for k, v in (raw or {}).items()}
+    budget = int(os.environ.get("VERA_DECIDE_MATRIX_LLM_JOBS", MX.LLM_JOBS_PER_NIGHT) or MX.LLM_JOBS_PER_NIGHT)
+    chosen = MX.rotate([j[3] for j in llm], last, budget)
+    keep = set(chosen)
+    return [j for j in llm if j[3] in keep] + rest, chosen
+
+
+_SERVES_NLP = [
+    _bind("decide", "nlp", io_in="state", io_out="label", tier=3, placement="nlp", questions=list(JC.CARDS),
+          selector={"family": fam}, model=model,
+          uses=uses, limits="labels whose cards do not separate them; questions without cards.")
+    for fam, model, uses in (
+        ("zeroshot", "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli",  # pragma: allowlist secret (a model id)
+         "Answer a stored decision by zero-shot classification of its text against the label cards (DeBERTa-base "
+         "MNLI on an NLP node) - no training, no LLM, a shadow judge in the candidate matrix."),
+        ("nli", "MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli",  # pragma: allowlist secret (a model id)
+         "Answer a stored decision by which label card its text entails most (DeBERTa-large NLI on an NLP node) - "
+         "no training, no LLM, a shadow judge in the candidate matrix."),
+        ("rerank", "Xenova/ms-marco-MiniLM-L-6-v2",
+         "Answer a stored decision by the cross-encoder's score of each label card against its text (ms-marco "
+         "MiniLM on an NLP node) - no training, no LLM, a shadow judge in the candidate matrix."))]
+NLP_IMPL = {"zeroshot": "zeroshot:deberta-base", "nli": "nli:deberta-large", "rerank": "rerank:msmarco-minilm"}
+
+
+async def _nlp_probs(family: str, text: str, cards: Dict[str, str]) -> Dict[str, float]:
+    """{label: probability} from one NLP-node model over the label cards."""
+    labels, descs = list(cards), [cards[k] for k in cards]
+    if family == "zeroshot":
+        out = await _raw("nlp.zeroshot", text=text, labels=descs, multi_label=False)
+        by = {x.get("label"): float(x.get("score") or 0) for x in out.get("labels") or []}
+        return {lab: by.get(d, 0.0) for lab, d in zip(labels, descs)}
+    if family == "nli":
+        out = await _raw("nlp.nli", pairs=[{"premise": text, "hypothesis": d} for d in descs])
+        res = out.get("results") or []
+        return {lab: float((res[i] or {}).get("entailment") or 0) for i, lab in enumerate(labels) if i < len(res)}
+    if family == "rerank":
+        out = await _raw("nlp.rerank", query=text, documents=descs)
+        by = {int(x.get("index")): float(x.get("score") or 0) for x in out.get("ranked") or []}
+        return MX.softmax({lab: by[i] for i, lab in enumerate(labels) if i in by})
+    return {}
+
+
+@capability(
+    "decide.shadow.nlp", serves=_SERVES_NLP, http_method="POST", http_path="/decide/shadow/nlp", http_tags=["minds"],
+    memory="off",
+    description="The NLP-node shadow judges of the candidate matrix (four-minds FM-2): each recent stored decision of "
+                "an application is answered by one NLP model against the application's label cards - family "
+                "zeroshot (DeBERTa-base MNLI), nli (DeBERTa-large, entailment per card) or rerank (ms-marco "
+                "cross-encoder, softmax over card scores) - and recorded as a shadow decision beside the live one. "
+                "No LLM. Inputs: family (zeroshot|nli|rerank), question_id (str='all'), limit (int=200), "
+                "since_hours (int=72). Output: {ok, family, questions|scored, skipped}.",
+)
+async def cap_decide_shadow_nlp(family: str = "zeroshot", question_id: str = "all", limit: int = 200,
+                                since_hours: int = 72, trace_id=None) -> Dict[str, Any]:
+    if family not in NLP_IMPL:
+        return {"ok": False, "error": f"family must be one of {sorted(NLP_IMPL)}"}
+    if question_id == "all":
+        return {"ok": True, "family": family,
+                "questions": {q: await cap_decide_shadow_nlp(family=family, question_id=q, limit=limit,
+                                                             since_hours=since_hours) for q in JC.CARDS}}
+    q = JC.QUESTIONS.get(question_id)
+    cards = JC.CARDS.get(question_id)
+    if not q or not cards:
+        return {"ok": False, "error": f"no cards for {question_id!r}"}
+    pool_db = getattr(_orch, "PG_POOL", None)
+    if pool_db is None:
+        return {"ok": False, "error": "postgres unavailable"}
+    impl = NLP_IMPL[family]
+    async with pool_db.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT s.decision_id, s.state, l.row FROM decision_states s
+               JOIN decision_ledger l ON l.decision_id = s.decision_id
+               WHERE s.question_id = $1 AND COALESCE(l.mode, '') <> 'shadow'
+                 AND s.ts >= NOW() - make_interval(hours => $2)
+                 AND NOT EXISTS (SELECT 1 FROM decision_ledger x WHERE x.mode = 'shadow'
+                                 AND x.row->'detail'->>'for' = s.decision_id AND x.row->>'implementation' = $3)
+               ORDER BY s.ts DESC LIMIT $4""", question_id, int(since_hours or 72), impl, max(1, min(400, int(limit or 200))))
+    try:
+        from Vera.vera.minds import ledger_capabilities as L
+    except Exception:                    # pragma: no cover
+        from vera.minds import ledger_capabilities as L  # type: ignore
+    scored = skipped = 0
+    for r in rows:
+        state = json.loads(r["state"]) if isinstance(r["state"], str) else (r["state"] or {})
+        live = json.loads(r["row"]) if isinstance(r["row"], str) else (r["row"] or {})
+        text = JC.user_message(question_id, state)
+        if not text:
+            skipped += 1
+            continue
+        t0 = time.monotonic()
+        try:
+            probs = await _nlp_probs(family, text[:2000], cards)
+        except Exception as e:
+            log.debug("nlp judge %s: %s", family, e)
+            probs = {}
+        answer, p = MX.vote(q, probs)
+        if not answer:
+            skipped += 1
+            continue
+        res = await L.append(JC.shadow_decision(live, answer, p, impl, mass=1.0,
+                                                ms=int((time.monotonic() - t0) * 1000)))
+        scored += 1 if res.get("ok") else 0
+    return {"ok": True, "family": family, "question_id": question_id, "scored": scored, "skipped": skipped}
+
+
+@capability(
+    "decide.matrix.report", http_method="GET", http_path="/decide/matrix/report", http_tags=["minds"],
+    contract=_MC.contract("decision.matrix.report", effects=["read"], idempotency="idempotent"),
+    memory="off", silent=True,
+    description="The candidate matrix (four-minds FM-2): for every application (each decision point with stored "
+                "inputs) every candidate that has scored it - each small LLM, kNN, cards, zero-shot, NLI, the "
+                "cross-encoder, trained heads - with n, agreement with the live decision, accuracy on outcomes and "
+                "latency, best first; the candidates not yet scored there; and the decision points that cannot be "
+                "tested yet, with why. Input: days (int=30). Output: {applications, pending, pairs_scored, "
+                "pairs_untested, candidates, rotation}.",
+)
+async def cap_decide_matrix_report(days: int = 30, trace_id=None) -> Dict[str, Any]:
+    shadow = await cap_decide_shadow_report(question_id="all", days=days)
+    models = await matrix_models()
+    cands = [_impl(m) for m in models] + [JC.KNN_IMPL, JC.CARD_IMPL] + list(NLP_IMPL.values())
+    out = MX.report(shadow, cands, APPS.PENDING)
+    r = getattr(_orch, "REDIS", None)
+    last = {}
+    try:
+        raw = await r.hgetall(MATRIX_LAST_KEY) if r is not None else {}
+        last = {(k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+                for k, v in (raw or {}).items()}
+    except Exception:
+        pass
+    return dict(out, candidates=cands,
+                rotation={"llm_pairs_total": len(models) * len(JC.QUESTIONS), "queued_ever": len(last),
+                          "budget_per_night": int(os.environ.get("VERA_DECIDE_MATRIX_LLM_JOBS", MX.LLM_JOBS_PER_NIGHT)
+                                                  or MX.LLM_JOBS_PER_NIGHT)})
+
+
 async def _night_job() -> None:
     """Queue tonight's scoring through the background queue (the background-inference rule), once a night.
 
@@ -508,7 +681,9 @@ async def _night_job() -> None:
         cap = int(os.environ.get("VERA_DECIDE_SHADOW_NIGHT_CAP", "40") or 40)
         # the judges from their model bindings (B3): the LLM judge per model and question, then the others by
         # tier - the kNN judge before the card judge, which reads the decision vectors kNN stores
-        jobs = SP.plan(SP.judge_bindings(_orch.CAPABILITY_REGISTRY), list(JC.QUESTIONS), _models(), cap)
+        # the candidate matrix: every callable small LLM (model.callable), every application, LLM pairs rotated
+        jobs = SP.plan(SP.judge_bindings(_orch.CAPABILITY_REGISTRY), list(JC.QUESTIONS), await matrix_models(), cap)
+        jobs, chosen = await _rotate(r, jobs)
         queued, failed = 0, []
         for name, title, args, key in jobs:
             jid = "shadow-" + night + "-" + "".join(c if c.isalnum() else "-" for c in key)[:60]
@@ -520,6 +695,8 @@ async def _night_job() -> None:
                 failed.append(f"{key}: {str(res.get('error') or res.get('reason') or res)[:80]}")
         if not failed:
             await r.set(KEY_NIGHT + night, "1", ex=86400)
+            if chosen:
+                await r.hset(MATRIX_LAST_KEY, mapping={k: night for k in chosen})
         log.info("shadow judge night %s: queued %d of %d%s", night, queued, len(jobs),
                  f"; failed {failed[:3]} (retrying next tick)" if failed else "")
     except Exception as e:
