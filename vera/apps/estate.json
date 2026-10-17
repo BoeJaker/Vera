@@ -149,9 +149,10 @@
           "columns": ["label", "max_c", "virt", "temps_from", "error"]
         }
       ],
-      "join": {
-        "nodes.docker_host_id": "containers.host_id"
-      }
+      "join": [
+        {"nodes.docker_host_id": "containers.host_id"},
+        {"nodes.ssh_host_id": "temps.host_id"}
+      ]
     },
     "read": [
       {
