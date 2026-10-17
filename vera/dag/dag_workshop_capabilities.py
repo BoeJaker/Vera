@@ -14887,7 +14887,10 @@ def _tool_shortlist_step(sid: str, step: Dict[str, Any], res: Dict[str, Any], or
             _tsm = importlib.import_module("vera.minds.tool_shortlist")
         used = sorted({h.get("tool") for h in (res.get("history") or [])
                        if isinstance(h, dict) and h.get("tool") and h.get("ok") is not False})
-        _tsm.on_step(sid, step.get("id"), str(step.get("title") or ""), used, origin=origin)
+        # FM-3.5: a call that failed is a negative label for the tool ranking
+        failed = sorted({h.get("tool") for h in (res.get("history") or [])
+                         if isinstance(h, dict) and h.get("tool") and h.get("ok") is False})
+        _tsm.on_step(sid, step.get("id"), str(step.get("title") or ""), used, origin=origin, failed=failed)
     except Exception as e:
         log.debug("tool shortlist step: %s", e)
 
