@@ -31,8 +31,10 @@ def test_the_nearest_card_wins_with_a_softmax_p():
 def test_the_judge_is_recorded_and_queued_nightly():
     src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
     assert '"decide.shadow.cards"' in src and "JC.shadow_decision(live, answer, p, JC.CARD_IMPL" in src
-    night = src[src.index("async def _night_job("):]
-    assert night.index('"decide.shadow.knn"') < night.index('"decide.shadow.cards"')
+    # B3: the night's jobs come from the bindings; the card judge still runs after kNN, whose vectors it reads
+    from vera.minds import judge as J, shadow_plan_core as SP
+    caps = [c for c, *_x in SP.plan(SP.judge_bindings(J._orch.CAPABILITY_REGISTRY), list(JC.QUESTIONS), ["m"], 1)]
+    assert caps.index("decide.shadow.knn") < caps.index("decide.shadow.cards")
     assert JC.CARD_IMPL == "card:minilm"
 
 
