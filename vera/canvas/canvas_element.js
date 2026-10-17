@@ -4082,7 +4082,23 @@
         el.addEventListener('click', (ev) => { const b = ev.target.closest('button'); if (!b) return; ev.stopPropagation();
           if (b.dataset.p === 'no') { (this._propNo = this._propNo || {})[sigP] = 1; el.remove(); return; }
           this._propUndo = { from: this.getAttribute('desk-arrange') || 'auto', to: p.mode, until: Date.now() + 8000 }; el.remove(); setMode(p.mode); }); }
-      st.appendChild(el);
+      st.appendChild(el); this._proposePlace(st);
+    }
+    /* THE PROPOSAL NEVER COVERS A CARD (owner 2026-10-17, WSU-91: "Keep your arrangement?" sat on the title of the card at the top):
+       it was fixed at the top middle of the desk. It goes to the first place along the top - from the middle outwards - that is
+       clear of every open card; none, the same along the bottom; none at all, the top middle as before. Placed again after every
+       pass (the cards move). */
+    _proposePlace(st) {
+      const el = st && st.querySelector(':scope > .desk-propose'); if (!el) return;
+      const W = st.clientWidth || 0, H = st.clientHeight || 0, w = el.offsetWidth || 220, h = el.offsetHeight || 26, G = 6;
+      const boxes = [...st.querySelectorAll(':scope > .it[data-key]')].filter((c) => c.offsetWidth && c.offsetHeight && !c.classList.contains('cmp-behind') && getComputedStyle(c).display !== 'none')
+        .map((c) => ({ l: c.offsetLeft - G, t: c.offsetTop - G, r: c.offsetLeft + c.offsetWidth + G, b: c.offsetTop + c.offsetHeight + G }));
+      const clear = (x, y) => x >= 4 && x + w <= W - 4 && !boxes.some((q) => x < q.r && q.l < x + w && y < q.b && q.t < y + h);
+      const xs = []; for (let d = 0; d <= W / 2; d += 16) { xs.push(Math.round(W / 2 - w / 2 - d)); if (d) xs.push(Math.round(W / 2 - w / 2 + d)); }
+      let at = null;
+      for (const y of [6, Math.max(6, H - h - 6)]) { const x = xs.find((x0) => clear(x0, y)); if (x != null) { at = [x, y]; break; } }
+      if (at) { el.style.left = at[0] + 'px'; el.style.top = at[1] + 'px'; el.style.transform = 'none'; el.classList.remove('covering'); }
+      else { el.style.left = ''; el.style.top = ''; el.style.transform = ''; el.classList.add('covering'); }
     }
     /* THE PERSON TOUCHES THE DESK (U4, see _placeDesk): from now on the cards stay where they are and only what is in the
        way moves, until the desk is dealt afresh. `base` is the desk as it was when this move or resize began. */
@@ -4994,7 +5010,7 @@
       (this._lanes || []).forEach((ln) => { const el = document.createElement('div'); el.className = 'desk-lane'; el.dataset.w = 'canvas.desk.lane';
         el.style.left = Math.round(ln.x) + 'px'; el.style.top = Math.round(ln.y) + 'px'; el.style.width = Math.round(ln.w) + 'px';
         el.innerHTML = '<b>' + esc(ln.label || '') + '</b>' + (ln.n != null ? '<i>' + ln.n + '</i>' : ''); st.appendChild(el); });
-      try { this._propose(st, mode, info, T, W); } catch (e) { /* a proposal is optional */ }
+      try { this._propose(st, mode, info, T, W); this._proposePlace(st); } catch (e) { /* a proposal is optional */ }
       try { this._liveLayout(); } catch (e) { /* the live layout readers are optional */ }
       // the cards slide to their places (.45s): the live layer follows once they have arrived
       clearTimeout(this._deskLiveT);
