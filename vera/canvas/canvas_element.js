@@ -2218,6 +2218,9 @@
   /* the records browser: a record already read is quieter; the keys' cursor is a bar at its edge */
   .vc-rbx-row.seen .vc-rbx-t,.vc-rbx-tbl tr.seen .vc-rbx-t{color:var(--dim2,#8a92a0);font-weight:400}
   .vc-rbx-row.cur,.vc-rbx-tbl tr.cur td:first-child{box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
+  /* the board of small items (LV-10): a frame the desk places as one block; its items sit in its cells */
+  :host([align="desk"]) .stage > .desk-board{position:absolute;border:1px solid color-mix(in srgb,var(--border,#2a2f37) 80%,transparent);border-radius:10px;background:color-mix(in srgb,var(--bg1,#15181d) 70%,transparent);pointer-events:none}
+  :host([align="desk"]) .stage > .desk-board > .bh{font-size:10.5px;letter-spacing:.02em;color:var(--dim2,#8a92a0);padding:4px 10px;height:22px;box-sizing:border-box}
   /* an app's bar: an action's form, its question, its answer */
   .vc-app-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:5px 7px;border-radius:7px;background:color-mix(in srgb,var(--acc,#5a9e8f) 9%,transparent);font-size:11px;flex:0 0 auto}
   .vc-app-bar.warn{background:color-mix(in srgb,var(--warn,#d6b25e) 14%,transparent)}.vc-app-bar.bad{background:color-mix(in srgb,var(--err,#e06c6c) 14%,transparent)}
@@ -4737,7 +4740,23 @@
         const bs = D.bestSlot ? D.bestSlot({ w, h, rel: relByKey[key] || [] }, slotted, R, desk, { strip: W < 760 ? 46 : 170 }) : null;
         if (!bs) return null; const p = [bs.x, bs.y]; p.size = { w: bs.w, h: bs.h }; slotted.push({ x: bs.x, y: bs.y, w: bs.w, h: bs.h, rel: relByKey[key] || [] }); return p; };
       const listOpen = ranked.slice(0, 9).some((x) => !outside.has(x.c.dataset.key || '') && this._aspectOf(x.c, x.c.dataset.key || '') === 'portrait');
-      const plan = ranked.map((x) => {
+      /* SMALL THINGS ON ONE PAGE (DESK-ARRANGEMENT 7, LV-10; owner 2026-10-17: "the much smaller items on the canvas should all composite onto a
+         single page like a composite widget - currently if there are lots of the smaller tables and status indicators, chip like the markets
+         portfolio or markets trader stuff on the canvas - currently they flicker about and dont layout well"): three or more small open items
+         (a tile's aspect, a short table, fields, a status) the arrangement places share ONE board - a framed card that the desk places as one
+         block, its items side by side in a grid of small cells inside it, always in the same order. An item the person places (carried out
+         of the board), locks, pills or windows is not on it. */
+      const smallOf = (c, key) => { const a = this._aspectOf(c, key); if (a === 'tile') return true; const cc = this._contentOf(key) || {}; const rec = cc.record && typeof cc.record === 'object' ? cc.record : cc;
+        const f = String(rec.form || cc.form || cc.widget || '').replace(/@iso$/, ''); if (/^(kv|status|numbers|pills|glance|counter|gauge|ring|level|hero|meter)$/.test(f)) return true;
+        const rows = Array.isArray(rec.data) ? rec.data.length : Array.isArray(cc.rows) ? cc.rows.length : null; const cols = Array.isArray(rec.data) && rec.data[0] && typeof rec.data[0] === 'object' ? Object.keys(rec.data[0]).length : Array.isArray(cc.columns) ? cc.columns.length : null;
+        return (f === 'table' || c.dataset.type === 'table') && rows != null && rows <= 6 && (cols == null || cols <= 4); };
+      const lk1 = this._lockGet(), pl1 = this._pillGet(), wk1 = this._winKeepGet();
+      const boardX = this.getAttribute('desk-board') === 'off' ? [] : ranked.filter((x) => { const k = x.c.dataset.key || ''; return k && !outside.has(k) && !lk1[k] && !pl1[k] && !wk1[k] && !userAt(k) && !(this._rz && this._rz.el === x.c) && !(this._expanded && this._expanded.key === k) && smallOf(x.c, k); });
+      const onBoard = new Set(boardX.length >= 3 ? boardX : []);
+      let boardEl = st.querySelector(':scope > .desk-board');
+      if (onBoard.size && !boardEl) { boardEl = document.createElement('div'); boardEl.className = 'desk-board'; boardEl.dataset.w = 'canvas.desk.board'; boardEl.innerHTML = '<div class="bh"></div>'; st.prepend(boardEl); }
+      if (!onBoard.size && boardEl) { boardEl.remove(); boardEl = null; }
+      const plan = ranked.filter((x) => !onBoard.has(x)).map((x) => {
         const c = x.c, key = c.dataset.key || String(x.i);
         /* the card under the hand's resize: its top-left where it was, its size the hand's; the others go round it */
         if (this._rz && this._rz.el === c) { const r = this._rz, rw = Math.min(W - 16, r.w), rh = Math.min(H - 8, r.h);
@@ -4820,6 +4839,11 @@
         if (hr) Object.assign(o, { x: hr.x, y: hr.y, w: hr.w, h: hr.h, bw: hr.bw || hr.w, bh: hr.bh || hr.h, held: true, keepSize: true, face0: hr.face });
         return o;
       });
+      if (onBoard.size) { const n = onBoard.size, CW = 280, CH = 172, G = 8, FW0 = (() => { const F = D.freeRegion ? D.freeRegion(R, desk, W < 760 ? 46 : 170) : { l: 8, r: W - 8 }; return Math.max(320, F.r - F.l - 16); })();
+        const cols = Math.max(1, Math.min(n, Math.floor((Math.min(FW0, 900) + G) / (CW + G)))), rows = Math.ceil(n / cols);
+        const bw = cols * CW + (cols - 1) * G + 2 * G, bh = rows * CH + (rows - 1) * G + 2 * G + 22;
+        const first = [...onBoard][0]; const p0 = pos[first.c.dataset.key || ''] || [W / 2, H / 2];
+        plan.push({ c: boardEl, id: '__board', so: { size: { w: bw, h: bh } }, x: p0[0], y: p0[1], w: Math.min(W - 16, bw), h: Math.min(H - 8, bh), face0: 'max', keepSize: true, board: true, cols, members: [...onBoard] }); }
       /* THE DESK AT REST IS PUT BACK, NOT PLACED AGAIN (owner 2026-10-17: "there is still some re-positioning of elements happening
          when no activity is happening"; "if you swap a tab on a composite desk item it changes the layout"; "the desk layout feels
          very unreliable"). Measured: the first pass under the hold moved 4 of 5 cards though nothing had changed (a map 560x380
@@ -4845,7 +4869,7 @@
         const clear = (x, y, w, h) => x - w / 2 >= 4 && x + w / 2 <= W - 4 && y - h / 2 >= 4 && y + h / 2 <= H - 4
           && !(R && R.r > R.l && x + w / 2 > R.l - g && x - w / 2 < R.r + g && y + h / 2 > R.t - g && y - h / 2 < R.b + g)
           && !rest.some((o) => x - w / 2 < o.x + o.w / 2 + g && o.x - o.w / 2 < x + w / 2 + g && y - h / 2 < o.y + o.h / 2 + g && o.y - o.h / 2 < y + h / 2 + g);
-        for (const k of ks) { const w = Math.round(v.w * k), h = Math.round(v.h * k); if (k < 1 && (w < 220 || h < 120)) break; let best = null;
+        for (const k of ks) { const w = Math.round(v.w * k), h = Math.round(v.h * k); if (k < 1 && (w < 160 || h < 100)) break; let best = null;
           for (let y = h / 2 + 4; y <= H - h / 2 - 4; y += 16) for (let x = w / 2 + 4; x <= W - w / 2 - 4; x += 16) { if (!clear(x, y, w, h)) continue;
             const d = Math.hypot(x - X, y - Y); if (!best || d < best.d) best = { x, y, w, h, d }; }
           if (best) return best; }
@@ -4873,7 +4897,7 @@
       const iconStrip = W < 760;
       const CHW = iconStrip ? 34 : 150, CHH = 34, SGAP = 6, perCol = Math.max(1, Math.floor((H - SGAP) / (CHH + SGAP)));
       /* the person's pill wins over a size they gave it (a resized card sent to the pills stayed open: own was never a pill) */
-      const pillish = (it) => { if (it.pilled && !it.isLock && !it.sizing) return true; if (it.fixed || it.sizing || it.own) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
+      const pillish = (it) => { if (it.board) return false; if (it.pilled && !it.isLock && !it.sizing) return true; if (it.fixed || it.sizing || it.own) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
         const f = D.sizeAt(R, it.x, it.y, it.so, desk).face; return f === 'chip' || f === 'icon'; };
       const pills = plan.filter(pillish);
       const cols = pills.length ? Math.min(Math.max(1, Math.floor((W * 0.45) / (CHW + SGAP))), Math.ceil(pills.length / perCol)) : 0;
@@ -5118,6 +5142,40 @@
           m.dataset.deskFace = s.face; m.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon'); m.classList.toggle('desk-icon', s.face === 'icon'); m.style.zIndex = c.style.zIndex;
           out.push({ key: m.dataset.key, x: left, y: top, w: w, h: h, face: s.face, behind: true }); });
       });
+      { const bi = plan.find((it) => it.board); const bo = bi && out.find((o) => o.key === '__board');
+        if (bi && bo && boardEl) { const G = 8, cols = bi.cols, CW = Math.floor((bo.w - 2 * G - (cols - 1) * G) / cols), rows = Math.ceil(bi.members.length / cols), CH = Math.floor((bo.h - 2 * G - 22 - (rows - 1) * G) / rows);
+          const zb = parseInt(boardEl.style.zIndex || '0', 10) || 0; boardEl.dataset.deskFace = 'board'; boardEl.classList.remove('desk-chip', 'desk-icon');
+          boardEl.querySelector('.bh').textContent = bi.members.length + ' small items';
+          bi.members.forEach((x, i) => { const m = x.c, col = i % cols, row = Math.floor(i / cols);
+            const l = bo.x + G + col * (CW + G), t = bo.y + 22 + G + row * (CH + G);
+            m.classList.remove('desk-chip', 'desk-icon', 'overfold', 'capped'); m.classList.add('on-board'); m.dataset.deskFace = 'card'; m.style.maxHeight = '';
+            m.style.left = l + 'px'; m.style.top = t + 'px'; m.style.setProperty('width', CW + 'px', 'important'); m.style.setProperty('height', CH + 'px', 'important'); m.style.setProperty('min-height', '0px', 'important');
+            m.style.zIndex = String(zb + 1); out.push({ key: m.dataset.key, x: l, y: t, w: CW, h: CH, face: 'card', board: true }); }); }
+        st.querySelectorAll(':scope > .it.on-board').forEach((m) => { if (!bi || !bi.members.some((x) => x.c === m)) m.classList.remove('on-board'); }); }
+      /* WHAT IS DRAWN NEVER OVERLAPS (owner 2026-10-17): the passes above work on the plan, and drawing it still fits each card (its content's
+         height, its least height, a pill's face) - two cards could end up over each other after the last check. The drawn rectangles are
+         checked: of two open cards that meet, the less firm moves to the nearest room at its drawn size (the board counts as one block). */
+      if (!replay) { const byK = new Map(plan.map((it) => [it.id, it])); const exK = this._expanded && this._expanded.key, act0 = this._actAt || {};
+        const firm = (o) => { const it = byK.get(o.key) || {}; return (o.key === '__board' || it.sizing || it.isLock || o.key === exK) ? 3 : (it.fixed || it.stay) ? 2 : it.own ? 1 : 0; };
+        const solid = () => out.filter((o) => !o.behind && !o.board && !o.win && !/^(chip|icon|layer-)/.test(o.face || '') && o.h > 40);
+        const meet = (a2, b2) => Math.max(0, Math.min(a2.x + a2.w, b2.x + b2.w) - Math.max(a2.x, b2.x)) * Math.max(0, Math.min(a2.y + a2.h, b2.y + b2.h) - Math.max(a2.y, b2.y));
+        for (let round = 0; round < 4; round++) { const S0 = solid(); let fixed = 0;
+          for (let i = 0; i < S0.length; i++) for (let j = i + 1; j < S0.length; j++) { const A = S0[i], B2 = S0[j]; if (meet(A, B2) < 400) continue;
+            const v0 = firm(A) !== firm(B2) ? (firm(A) < firm(B2) ? A : B2) : ((act0[A.key] || 0) <= (act0[B2.key] || 0) ? A : B2);
+            /* the less firm first; with no room for it, the other (if it may move); its size first, then smaller */
+            let v = null, best = null;
+            for (const c0 of [v0, v0 === A ? B2 : A]) { if (firm(c0) >= 3) continue;
+              const rest = out.filter((o) => o !== c0 && !o.behind && !o.board && !o.win && !/^layer-/.test(o.face || '')).map((o) => ({ x: o.x + o.w / 2, y: o.y + o.h / 2, w: o.w, h: o.h }));
+              best = roomFor({ x: c0.x + c0.w / 2, y: c0.y + c0.h / 2, w: c0.w, h: c0.h }, rest, [1, 0.85, 0.7, 0.55, 0.42]); if (best) { v = c0; break; } }
+            /* no room for either at all: the less firm goes to the pill strip (below the pills there) - never left on top of the other */
+            if (!best) { const pv = firm(v0) < 3 ? v0 : null; const pel = pv && [...st.querySelectorAll(':scope > .it[data-key]')].find((x) => x.dataset.key === pv.key); if (!pel) continue;
+              const z0 = this._stripZone || { l: W - 160, r: W }; const lowest = out.filter((o) => /^(chip|icon)$/.test(o.face || '') && o.x >= z0.l - 4).reduce((m, o) => Math.max(m, o.y + o.h), 0);
+              Object.assign(pv, { x: Math.round((z0.l + z0.r) / 2 - 75), y: lowest + 6, w: 150, h: 34, face: 'chip' });
+              pel.classList.add('desk-chip'); pel.dataset.deskFace = 'chip'; pel.style.left = pv.x + 'px'; pel.style.top = pv.y + 'px'; pel.style.setProperty('width', '150px', 'important'); pel.style.setProperty('height', '34px', 'important'); fixed++; continue; }
+            const el = [...st.querySelectorAll(':scope > .it[data-key]')].find((x) => x.dataset.key === v.key); if (!el) continue;
+            v.x = Math.round(best.x - best.w / 2); v.y = Math.round(best.y - best.h / 2); v.w = best.w; v.h = best.h;
+            el.style.left = v.x + 'px'; el.style.top = v.y + 'px'; el.style.setProperty('width', v.w + 'px', 'important'); el.style.setProperty('height', v.h + 'px', 'important'); fixed++; }
+          if (!fixed) break; } }
       /* the layered panels: the largest part of the desk the chat leaves free, under (behind) or over (front) the rest */
       const g = D.fullRegion(R, { W: W, H: H, m: 8, top: 4 });
       const behindNow = layered.some((c) => layOf(c) === 'behind');
