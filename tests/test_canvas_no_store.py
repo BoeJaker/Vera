@@ -5,6 +5,7 @@ stand-ins for what it calls."""
 import ast
 import asyncio
 import os
+from typing import Any, Dict, Optional
 
 import pytest
 
@@ -24,7 +25,7 @@ def _target_with(redis_up):
     async def _write(doc, op):
         writes.append((doc["id"], op))
         return 1
-    ns = {"Optional": object, "Dict": object, "Any": object, "_load": _load, "_write": _write, "now_iso": lambda: "t",
+    ns = {"Optional": Optional, "Dict": Dict, "Any": Any, "_load": _load, "_write": _write, "now_iso": lambda: "t",
           "_session_canvas_id": lambda s: ("cv_session_" + s) if s else "", "_redis": lambda: (object() if redis_up else None)}
     exec(compile(ast.Module(body=[node], type_ignores=[]), SRC_PATH, "exec"), ns)
     return ns["_target"], writes
