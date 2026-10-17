@@ -12322,6 +12322,9 @@ async def lifespan(app: FastAPI):
         # os.path.join(_here, "research_activity_capabilities.py"),
         os.path.join(_here, "web/web_capabilities.py"),
         os.path.join(_here, "web/web_api_capabilities.py"),
+        # Explicit opt-in portable route over the existing web capability
+        # boundaries. Loaded after web.* so registration never implies use.
+        os.path.join(_here, "discovery_capabilities.py"),
         os.path.join(_here, "telegram/telegram_capabilities.py"),
         os.path.join(_here, "dream/dream_capabilities.py"),
         # Idle-queue `cap` jobs: any capability as background work, dispatched
