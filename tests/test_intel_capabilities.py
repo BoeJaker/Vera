@@ -581,6 +581,34 @@ def test_night_schedule_is_an_exclusive_cap_entry_and_idempotent(tmp_path):
     assert calls[1]["id"] == "sched1" and calls[1]["days"] == [0, 2, 4] and calls[1]["enabled"] is False
 
 
+def test_topics_and_sweeps_touch_the_web_map(tmp_path):
+    # web-ingress WI-10: the intel topic is the canonical topic id; its sweep's signals become members
+    mod, orch = _load(tmp_path)
+    orch.CAPABILITY_REGISTRY["fabric.map.topic.touch"] = {"func": orch.CAPABILITY_REGISTRY["tg.notify"]["func"], "raw": None}
+    calls = []
+
+    async def touch(**kw):
+        calls.append(kw)
+        return {"topic_key": kw.get("topic_id"), "members_added": len(kw.get("urls") or [])}
+    orch.CAPABILITY_REGISTRY["fabric.map.topic.touch"] = {"func": touch, "raw": touch}
+
+    async def go():
+        r = await orch.CAPABILITY_REGISTRY["intel.topic.save"]["func"](name="AI property valuation", entities=["Acme"],
+                                                                       sites=["news.example"], queries=["acme pilot"])
+        await asyncio.sleep(0); await asyncio.sleep(0)
+        t = mod.store().get_topic(r["topic"]["id"])
+        await mod.sweep_topic(t)
+        await asyncio.sleep(0); await asyncio.sleep(0)
+        return t
+
+    t = _run(go())
+    assert calls and calls[0]["topic_id"] == t["id"] and calls[0]["source"] == "intel.topic.save"
+    assert calls[0]["seeds"] == ["news.example"] and "acme pilot" in calls[0]["queries"] and calls[0]["entities"] == ["Acme"]
+    sweep = [c for c in calls if c["source"] == "intel.sweep"]
+    assert sweep and sweep[0]["role"] == "source" and any(u.startswith("https://news.example/") for u in sweep[0]["urls"])
+    assert mod._touch_topic_map(t) is None or True                      # never raises without a running loop either
+
+
 def test_drop_folders(tmp_path):
     mod, orch = _load(tmp_path)
     r = _run(mod.run_drop_folders(None))
