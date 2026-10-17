@@ -66,6 +66,7 @@ LAYOUTS = {
     # goal constraints into done_when + the final gate (plan.goal_frame, B2, 11 Oct 2026)
     "G1": {"minds": {"plan.goal_frame": "on"}},
     "G2": {"info_first": True, "answer_check": True, "minds": {"plan.goal_frame": "on"}},
+    "W2": {"minds": {"plan.goal_frame": "writer"}},            # R-B2: constraints to the writer (four-minds)
     # NLI claim check (compute-roles P3, 11 Oct 2026): I2 + claim_nli shadow (recorded) / hint (to the checker)
     "N0": {"info_first": True, "answer_check": True, "claim_nli": "shadow"},
     "N1": {"info_first": True, "answer_check": True, "claim_nli": "hint"},
