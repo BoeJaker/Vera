@@ -219,6 +219,18 @@ class IntelStore:
                         "counts": d.get("counts", {}), "delivered": d.get("delivered", [])})
         return out
 
+    def count_reports(self) -> int:
+        with self._conn() as c:
+            return int(c.execute("SELECT COUNT(*) FROM reports").fetchone()[0])
+
+    def record_family_counts(self) -> Dict[str, int]:
+        """Exact content-free counts without materialising stored JSON records."""
+        tables = ("topics", "signals", "snapshots", "reports", "actions",
+                  "deliveries", "decisions", "outcomes", "kv")
+        with self._conn() as c:
+            return {table: int(c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                    for table in tables}
+
     def update_report(self, rid: str, **fields: Any) -> None:
         d = self.get_report(rid)
         if not d:
@@ -331,3 +343,26 @@ class IntelStore:
         with self._conn() as c:
             return [{"report_id": r[0], "channel": r[1], "ts": r[2], "ok": bool(r[3]), "detail": json.loads(r[4] or "{}")}
                     for r in c.execute(q, a).fetchall()]
+
+    def successful_delivery_channels(self, report_ids: Iterable[str]) -> Dict[str, List[str]]:
+        """Return bounded channel evidence for the selected reports only.
+
+        Grouping in SQLite avoids loading an unbounded delivery history merely
+        to learn whether Fabric or Memory ever accepted a report.
+        """
+        ids = sorted({str(item or "") for item in report_ids if str(item or "")})
+        out: Dict[str, set[str]] = {}
+        with self._conn() as c:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                if not chunk:
+                    continue
+                rows = c.execute(
+                    "SELECT report_id, channel FROM deliveries WHERE ok=1 "
+                    "AND channel IN ('fabric','memory') AND report_id IN (%s) "
+                    "GROUP BY report_id, channel" % ",".join("?" * len(chunk)),
+                    chunk,
+                ).fetchall()
+                for report_id, channel in rows:
+                    out.setdefault(str(report_id), set()).add(str(channel))
+        return {report_id: sorted(channels) for report_id, channels in out.items()}
