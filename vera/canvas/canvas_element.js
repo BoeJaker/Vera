@@ -121,6 +121,32 @@
         + Object.keys(d).map((k) => '<span><i>' + esc(k) + '</i>' + esc(appCell(d[k])) + '</span>').join('') + '</div></div>' : '';
     return { html: body + drawer, count: list.length === total ? total + ' rows' : list.length + ' of ' + total };
   }
+  /* A COMPOSITE APP'S PARTS (DA-07a, DESK-SPINE-DESIGN §6.1): one section per part named in view.parts (else one per read),
+     in the manifest's layout - dashboard (a grid), tabs (one part at a time), split (two side by side), stack (one under
+     another). A part draws as its read arrives: a skeleton while it reads, its error inside it only, else its answer
+     through the same reading as any result (resultView), the part's kind used when that reading has only the raw tree. */
+  const APP_LAYOUTS = ['dashboard', 'tabs', 'split', 'stack'];
+  function appPartsHtml(st, size, key, el) {
+    const vw = (st.manifest && st.manifest.view) || {}; const lay = APP_LAYOUTS.indexOf(vw.layout) >= 0 ? vw.layout : 'dashboard';
+    const spec = Array.isArray(vw.parts) && vw.parts.length ? vw.parts : st.parts.map((p) => ({ from: p.as }));
+    const parts = spec.map((s) => ({ s: s || {}, p: st.parts.find((x) => x.as === (s && s.from)) })).filter((x) => x.p);
+    const ui = st.ui || (st.ui = {}); const tab = lay === 'tabs' && parts.length ? (parts.some((x) => x.p.as === ui.tab) ? ui.tab : parts[0].p.as) : null;
+    const one = ({ s, p }) => {
+      const state = p.reading ? 'reading…' : p.error ? 'failed' : p.ms != null ? (p.ms < 1000 ? p.ms + ' ms' : (p.ms / 1000).toFixed(1) + ' s') : '';
+      let body;
+      if (p.error) body = '<div class="vc-res-err">' + esc(p.error) + '</div>';
+      else if (p.result === undefined) body = p.waiting ? '<span class="vc-dim">' + esc(p.waiting) + '</span>' : '<div class="vc-app-psk"><i></i><i></i><i></i></div>';
+      else {
+        let v = resultView({ cap: p.cap, args: p.args, result: p.result, ok: true }); const k = s.kind;
+        if ((!v || v.kind === 'json') && k && BLOCK[k] && k !== 'app' && p.result && typeof p.result === 'object') v = { kind: k, content: p.result };
+        try { const fn = v && BLOCK[v.kind]; body = fn ? fn(v.content || {}, lay === 'dashboard' ? 'm' : size, key + ':part:' + p.as, el) : '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
+        catch (e) { body = '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
+      }
+      return '<section class="vc-app-part' + (p.error ? ' bad' : '') + (p.reading ? ' reading' : '') + '" data-app-part="' + esc(p.as) + '"><header><b>' + esc(s.title || p.as) + '</b><span>' + esc(state) + '</span></header><div class="vc-app-pb">' + body + '</div></section>';
+    };
+    const strip = tab ? '<div class="vc-app-tabs" role="tablist">' + parts.map(({ s, p }) => '<button type="button" role="tab" class="hx' + (p.as === tab ? ' on' : '') + (p.error ? ' bad' : '') + '" data-app-tab="' + esc(p.as) + '" aria-selected="' + (p.as === tab) + '">' + esc(s.title || p.as) + (p.reading ? ' …' : '') + '</button>').join('') + '</div>' : '';
+    return strip + '<div class="vc-app-parts" data-layout="' + lay + '">' + (tab ? parts.filter((x) => x.p.as === tab) : parts).map(one).join('') + '</div>';
+  }
   /* a capability that only reads, by its name - what an app or a widget may call on its own (the chat's rule, _widgetReadable) */
   const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|sentiment\.map|news\.feed)$|^cal\.events\.list$)/.test(String(cap || ''));
   const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
@@ -1445,6 +1471,7 @@
           .concat(m && m.panel ? [{ act: 'appopen', label: 'Open the panel ↗', title: 'Open ' + m.panel + ' - the page this app comes from' }] : []) });
       if (!st || (st.result === undefined && !st.error)) return `<div class="vc-app vc-app-sk" data-app="${esc(id)}" data-w="canvas.app"><span class="vc-dim">${st && st.waiting ? esc(st.waiting) : 'opening ' + esc((m && m.title) || id) + '…'}</span><i></i><i></i><i></i></div>`;
       if (st.error) return `<div class="vc-app" data-app="${esc(id)}" data-w="canvas.app"><div class="vc-res-err">${esc(st.error)}</div></div>`;
+      if (st.parts) return `<div class="vc-app vc-app-comp" data-app="${esc(id)}" data-as="composite" data-w="canvas.app">${st.ui ? appBarHtml(st) : ''}${appPartsHtml(st, size, key, el)}</div>`;   /* DA-07a */
       /* THE APP MINIMUM (DA-05c, DESK-SPINE-DESIGN §4.3): an answer that is a list of records is drawn as a list the person
          works - filter (/), sort (a column's head), its views (table, cards, or the drawing its kind gives), a row opened in a
          drawer (Enter, Esc closes) with the app's detail app for it, Copy CSV in the head, ↑↓ through the rows */
@@ -2004,6 +2031,23 @@
   .vc-app-sk{display:flex;flex-direction:column;gap:7px;padding:10px 4px}
   .vc-app-sk > i{display:block;height:10px;border-radius:5px;background:color-mix(in srgb,var(--fg,#dce1e8) 7%,transparent)}
   .vc-app-sk > i:nth-child(3){width:80%}.vc-app-sk > i:nth-child(4){width:55%}
+  /* a composite app's parts (DA-07a) */
+  .vc-app-comp{display:flex;flex-direction:column;gap:6px;min-height:0}
+  .vc-app-parts{display:grid;gap:8px;min-height:0;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:start}
+  .vc-app-parts[data-layout="split"]{grid-template-columns:1fr 1fr}
+  .vc-app-parts[data-layout="stack"],.vc-app-parts[data-layout="tabs"]{grid-template-columns:1fr}
+  .vc-app-part{border:1px solid var(--line,#2a2f36);border-radius:8px;min-width:0;display:flex;flex-direction:column;overflow:hidden}
+  .vc-app-part > header{display:flex;align-items:baseline;gap:8px;padding:4px 8px;font-size:11px;border-bottom:1px solid var(--line,#2a2f36)}
+  .vc-app-part > header > span{margin-left:auto;color:var(--dim,#6b7480);font-variant-numeric:tabular-nums}
+  .vc-app-part.reading > header > span{color:var(--acc,#5a9e8f)}
+  .vc-app-part.bad{border-color:color-mix(in srgb,var(--err,#e06c75) 55%,transparent)}
+  .vc-app-pb{padding:6px 8px;min-width:0;overflow:auto;max-height:420px}
+  .vc-app-psk{display:flex;flex-direction:column;gap:7px;padding:4px 0}
+  .vc-app-psk > i{display:block;height:10px;border-radius:5px;background:color-mix(in srgb,var(--fg,#dce1e8) 7%,transparent)}
+  .vc-app-psk > i:nth-child(2){width:80%}.vc-app-psk > i:nth-child(3){width:55%}
+  .vc-app-tabs{display:flex;flex-wrap:wrap;gap:4px}
+  .vc-app-tabs .hx.bad{color:var(--err,#e06c75)}
+  @container (max-width: 520px){ .vc-app-parts[data-layout="split"]{grid-template-columns:1fr} }
   /* the body's own line (a terminal's host and shell, a cell's notebook, a diagram's size): quiet, beside the title */
   .it-hd > .it-sub{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px/1.2 var(--mono,ui-monospace,monospace);color:var(--dim,#6b7480)}
   .it-hd > .it-sub > .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:var(--dim,#6b7480)}
@@ -5259,6 +5303,7 @@
           if (t.closest('[data-app-yes]') && ui.confirm) { const a = acts.find((x) => x.id === ui.confirm.aid); if (a) this._appRun(key, a, ui.confirm.row, {}); return; }
           if (t.closest('[data-app-run]') && ui.form) { const a = acts.find((x) => x.id === ui.form.aid); const vals = {};
             box.querySelectorAll('[data-app-f]').forEach((x) => { vals[x.dataset.appF] = x.value; }); if (a) this._appRun(key, a, ui.form.row, vals); return; } }
+        if (st && st.parts && t.closest('[data-app-tab]')) { ev.stopPropagation(); (st.ui || (st.ui = {})).tab = t.closest('[data-app-tab]').dataset.appTab; return this._appDraw(key); }   /* a composite's tab (DA-07a) */
         if (!t.closest('.vc-app-rowsapp')) return; const a = this._appUi(t); if (!a) return;
         const th = t.closest('[data-app-sort]'), row = t.closest('[data-app-row]');
         if (th) { const k = th.dataset.appSort, so = a.ui.sort; a.ui.sort = !so || so[0] !== k ? [k, 'asc'] : so[1] === 'asc' ? [k, 'desc'] : null; }
@@ -5695,6 +5740,12 @@
         st.manifest = m; const rd = m.read || {};
         { const b = this._blockOf(key); if (b && b.content && !b.content.title && m.title) b.content.title = m.title; }   /* named by its manifest, not its id */ const a = c.args && typeof c.args === 'object' ? c.args : {}; const miss = [];
         const fill = (v) => typeof v === 'string' ? v.replace(/\{arg\.([\w.-]+)\}/g, (x, k) => { if (a[k] == null || a[k] === '') { miss.push(k); return ''; } return String(a[k]); }) : v;
+        if (Array.isArray(m.read)) {   /* a composite (DA-07a): its parts, each with its own read, side by side */
+          st.parts = m.read.filter((r) => r && r.cap).map((r) => { const args = {}; Object.keys(r.args || {}).forEach((k) => { args[k] = fill(r.args[k]); }); return { as: String(r.as || r.cap), cap: String(r.cap), args }; });
+          if (!st.parts.length) { st.error = 'the app ' + id + ' has no read'; return this._appDraw(key); }
+          if (miss.length) { st.waiting = m.title + ' needs ' + [...new Set(miss)].join(', '); return this._appDraw(key); }
+          const evs = m.read.map((r) => +((r && r.refresh) || {}).every_s).filter((n) => n > 0);
+          st.every = evs.length ? Math.max(10, Math.min(...evs)) : 0; return this._appRead(key); }
         st.cap = String(rd.cap || ''); st.args = {}; Object.keys(rd.args || {}).forEach((k) => { st.args[k] = fill(rd.args[k]); });
         if (!st.cap) { st.error = 'the app ' + id + ' has no read'; return this._appDraw(key); }
         if (miss.length) { st.waiting = m.title + ' needs ' + miss.join(', '); st.result = undefined; return this._appDraw(key); }
@@ -5703,7 +5754,21 @@
       }).catch((e) => { st.error = String((e && e.message) || e); this._appDraw(key); });
       this._appTick();
     }
+    /* a composite's read (DA-07a): every part at once, each drawn as it arrives; a part that only acts waits for Refresh */
+    async _appReadParts(key, forced) {
+      const st = this._apps && this._apps[key]; if (!st || !st.parts || st.reading) return;
+      st.parts.forEach((p) => { if (!forced && !readShaped(p.cap) && p.result === undefined && !p.error) p.waiting = p.cap + ' is not a read - press Refresh to run it'; });
+      const todo = st.parts.filter((p) => forced || readShaped(p.cap)); st.result = null; st.error = null; st.waiting = null;
+      if (!todo.length) { st.at = Date.now(); return this._appDraw(key); }
+      st.reading = true; const t0 = Date.now(); todo.forEach((p) => { p.reading = true; p.waiting = null; }); this._appDraw(key);
+      await Promise.all(todo.map(async (p) => { const p0 = Date.now();
+        try { const r = await this.callResult(p.cap, p.args || {}); if (r && r.ok === false && r.error) p.error = String(r.error); else { p.error = null; p.result = r; } }
+        catch (e) { p.error = String((e && e.message) || e); }
+        p.reading = false; p.at = Date.now(); p.ms = p.at - p0; this._appDraw(key); }));
+      st.reading = false; st.at = Date.now(); st.ms = st.at - t0; this._appDraw(key);
+    }
     async _appRead(key, forced) {
+      { const s0 = this._apps && this._apps[key]; if (s0 && s0.parts) return this._appReadParts(key, forced); }
       const st = this._apps && this._apps[key]; if (!st || !st.cap || st.reading) return;
       if (!forced && !readShaped(st.cap)) return;
       st.reading = true; this._appDraw(key); const t0 = Date.now();
