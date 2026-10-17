@@ -17,6 +17,8 @@ _CRITICAL_MODULES = {
     "test_edge_guard_asgi",  # the guard refuses before routing and closes foreign WebSockets (2026-10-17)
     "test_term_tickets",  # a terminal socket was a shell for anyone who knew the path (2026-10-17)
     "test_terminal_ws_tickets",  # the terminal routes refuse a foreign Origin and a missing ticket (2026-10-17)
+    "test_money_guard_core",  # a loop or widget could place a real broker order by name (2026-10-17)
+    "test_money_tag_dispatch",  # the dispatcher refuses money caps except from their own route (2026-10-17)
     "test_sandbox_idle_plan",  # sleep the container you judged, never an alias's target (2026-09-12)
     "test_operator_session_sweep",  # a cancelled run must not leak its browser context (2026-09-16)
     "test_gpu_residency",  # media models must not sit on the LLM's GPU while idle (2026-09-16)
