@@ -233,6 +233,8 @@ async def cap_memory_perf_compare(base_sha: str = "", head_sha: str = "", kind: 
     if not base_sha:
         return {"ok": False, "error": "base_sha is required (memory.perf.versions lists them)"}
     head_sha = head_sha or MP.version(_provenance())["sha_short"]
+    if not head_sha:            # an empty prefix would match every row and compare the base with everything
+        return {"ok": False, "error": "head_sha is required here: this process does not know its own sha"}
     base = await _fetch(kind, source, base_sha, base_digest, days, 5000)
     head = await _fetch(kind, source, head_sha, head_digest, days, 5000)
     if not base or not head:
