@@ -2048,6 +2048,9 @@
   .cmp-tabs{display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-front:not(.desk-chip) > .cmp-tabs{display:flex;gap:2px;flex:none;overflow-x:auto;scrollbar-width:none;padding:0 6px;margin:0 0 4px;border-bottom:1px solid var(--border,#2a2f37)}
   .cmp-tabs::-webkit-scrollbar{display:none}
+  .cmp-tab .cmp-out{margin-left:2px;padding:0 2px;border-radius:4px;opacity:0;color:var(--dim2,#8a92a0);transition:opacity .12s}
+  .cmp-tab:hover .cmp-out,.cmp-tab:focus-visible .cmp-out{opacity:.85}.cmp-tab .cmp-out:hover{opacity:1;color:var(--acc,#5a9e8f);background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .cmp-tab.tab-out{opacity:.45;cursor:grabbing}
   .cmp-tab{flex:none;max-width:220px;display:inline-flex;align-items:center;gap:6px;border:0;background:none;font:inherit;font-size:11.5px;color:var(--dim,#8b93a1);padding:5px 9px;border-bottom:2px solid transparent;margin-bottom:-1px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .cmp-tab:hover{color:var(--fg,#dce1e8)}
   .cmp-tab.on{color:var(--fg,#dce1e8);border-bottom-color:var(--acc,#5a9e8f)}
@@ -4384,7 +4387,7 @@
           const subs = new Set(g.map((c) => subjOf(titleOf(c))));
           const lab = (c) => { const t = titleOf(c); return subs.size === 1 && [...subs][0] ? prefOf(t) : t; };
           const tb = document.createElement('div'); tb.className = 'cmp-tabs'; tb.dataset.w = 'canvas.item.group';
-          tb.innerHTML = g.map((c) => `<button class="cmp-tab${c === front ? ' on' : ''}" data-act="cmptab" data-layer-key="${esc(c.dataset.key)}" title="${esc(titleOf(c))}"><i class="cmp-ty">${esc(String(c.dataset.type || '').slice(0, 2).toUpperCase())}</i>${esc(lab(c).slice(0, 42))}</button>`).join('');
+          tb.innerHTML = g.map((c) => `<button class="cmp-tab${c === front ? ' on' : ''}" data-act="cmptab" data-layer-key="${esc(c.dataset.key)}" title="${esc(titleOf(c))} - drag it out of the tabs to make it a card of its own"><i class="cmp-ty">${esc(String(c.dataset.type || '').slice(0, 2).toUpperCase())}</i>${esc(lab(c).slice(0, 42))}<span class="cmp-out" data-act="cmpsep" data-layer-key="${esc(c.dataset.key)}" title="Take it out: a card of its own">⤴</span></button>`).join('');
           const hd = front.querySelector(':scope > .it-hd'); if (hd) hd.after(tb); else front.prepend(tb);
         }
       });
@@ -5871,6 +5874,20 @@
            can move partially behind it"): it and its graph are on top, with their ground, until it is let go */
         if (this.deskAlign() && root.VeraDesk) { this._holdStart(it.dataset.key); this._rzPlacedAt = 0;
           it.style.zIndex = String(zOf('drag')); try { this._liveLayout(); } catch (e) { /* optional */ } } });
+      /* A TAB CARRIED OUT OF ITS CARD IS A CARD OF ITS OWN (DESK-ARRANGEMENT 7 principle 7, LV-6; owner 2026-10-17: "it should be easier to
+         split a part of a composite element out to its own element"): a tab pressed and carried more than 28 px off its strip is taken
+         out (its separate mark, as the menu's "take it out") and put where it is let go; a smaller move is still a click on the tab */
+      body.addEventListener('mousedown', (ev) => { const tab = ev.button === 0 && ev.target.closest && ev.target.closest('.cmp-tab[data-layer-key]'); if (!tab || ev.target.closest('.cmp-out') || !this.deskAlign()) return;
+        const strip = tab.parentElement; this._tabDrag = { key: tab.dataset.layerKey, tab, x0: ev.clientX, y0: ev.clientY, sr: strip ? strip.getBoundingClientRect() : null, out: false }; });
+      const tdoc = this.ownerDocument || document;   /* (the setup's own `doc` is declared further down) */
+      tdoc.addEventListener('mousemove', (ev) => { const d = this._tabDrag; if (!d) return;
+        const far = d.sr ? Math.max(d.sr.top - ev.clientY, ev.clientY - d.sr.bottom, d.sr.left - ev.clientX, ev.clientX - d.sr.right) : Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0);
+        if (!d.out && far > 28) { d.out = true; d.tab.classList.add('tab-out'); } });
+      tdoc.addEventListener('mouseup', (ev) => { const d = this._tabDrag; this._tabDrag = null; if (!d) return; d.tab.classList.remove('tab-out'); if (!d.out) return;
+        this._tabDragAt = Date.now(); const stg = this.shadowRoot.getElementById('stage'); this._sepSet(d.key, true);
+        if (stg) { const b = stg.getBoundingClientRect(), Z = stg.offsetWidth ? (b.width / stg.offsetWidth) || 1 : 1, W0 = stg.clientWidth || 1, H0 = stg.clientHeight || 1;
+          const x = (ev.clientX - b.left) / Z, y = (ev.clientY - b.top) / Z; if (x > 0 && y > 0 && x < W0 && y < H0) this._deskPosSet(d.key, { fx: +(x / W0).toFixed(4), fy: +(y / H0).toFixed(4) }); }
+        (this._actAt = this._actAt || {})[d.key] = Date.now(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); });
       /* MOVING A CARD ON THE DESK (owner-approved desk, 2026-10-06: "as you drag them in they become big enough to glance
          at"). Its header is the handle; past 4 px it follows the pointer, sized live by its distance from the chat and
          stacked on top; let go, it stays there (a share of the desk, per canvas). A double click on the header gives it
@@ -6746,6 +6763,7 @@
       if (act === 'pill' && this._wins && this._wins.has(key)) { this._winClose(key); return; }   /* WSU-55 */
       if (act === 'pill') { this._pillSet(key, true); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
+      if ((act === 'cmptab' || act === 'cmpsep') && this._tabDragAt && Date.now() - this._tabDragAt < 400) return;   /* the release of a tab carried out (LV-6) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
         if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
         else this._sepSet(key, act === 'cmpsep');
