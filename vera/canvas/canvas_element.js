@@ -7803,7 +7803,9 @@
       const redraw = () => { if (this._doc) this.render(this._doc); };
       st.body = st.body || {}; st.open = st.open || {};
       if (act === 'page') { st.page = arg === 'prev' ? Math.max(0, (st.page | 0) - 1) : arg === 'next' ? (st.page | 0) + 1 : (+arg || 0); return redraw(); }
-      if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
+      if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0;
+        if (act === 'view') viewSet(this, key, arg);   /* the card's own view buttons write it like the head's View menu (WSU-58 S1) */
+        return redraw(); }
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
       /* the names · sites menu: a filter in force is cleared by its button; otherwise the button opens or closes the menu */
       if (act === 'names') { if (st.ent || st.dom) { st.ent = ''; st.dom = ''; st.page = 0; } else st.namesOpen = !st.namesOpen; return redraw(); }
