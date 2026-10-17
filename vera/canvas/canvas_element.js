@@ -126,23 +126,57 @@
      another). A part draws as its read arrives: a skeleton while it reads, its error inside it only, else its answer
      through the same reading as any result (resultView), the part's kind used when that reading has only the raw tree. */
   const APP_LAYOUTS = ['dashboard', 'tabs', 'split', 'stack'];
+  /* THE JOIN (DA-07b, §6.1): view.join pairs a field of one part with a field of another - {"hosts.name": "containers.host"},
+     or a list of such objects / [a, b] pairs. A part named in a join draws its rows as rows you pick; a pick lights the rows
+     of every joined part whose field holds the same value (the others dim) and brings the first into view inside its part;
+     a joined part with no rows is outlined when its text names the value. The same row again, or Esc, lets go. */
+  function appJoins(view) {
+    const out = []; const side = (x) => { const s = String(x || ''); const i = s.indexOf('.'); return i > 0 && i < s.length - 1 ? { as: s.slice(0, i), f: s.slice(i + 1) } : null; };
+    const add = (a, b) => { const x = side(a), y = side(b); if (x && y && x.as !== y.as) out.push([x, y]); };
+    const j = view && view.join; const obj = (o) => Object.keys(o).forEach((k) => add(k, o[k]));
+    if (Array.isArray(j)) j.forEach((e) => { if (Array.isArray(e)) add(e[0], e[1]); else if (e && typeof e === 'object') obj(e); }); else if (j && typeof j === 'object') obj(j);
+    return out;
+  }
+  const appJv = (v) => String(v == null ? '' : v).trim().toLowerCase();
+  /* the words of an answer: its strings and numbers (not its keys), a few levels down, at most 20k characters */
+  function appLeaves(v, d) { d = d || 0; if (v == null || d > 4) return ''; if (typeof v !== 'object') return String(v);
+    const vs = Array.isArray(v) ? v.slice(0, 300) : Object.keys(v).slice(0, 60).map((k) => v[k]); let s = '';
+    for (const x of vs) { s += ' ' + appLeaves(x, d + 1); if (s.length > 20000) break; } return s; }
+  /* what a pick ({as, i, row}) lights in another part: the values its joined fields must hold */
+  function appJoinLights(joins, pick, as) {
+    const t = []; if (!pick || !pick.row || pick.as === as) return t;
+    joins.forEach((pr) => [[pr[0], pr[1]], [pr[1], pr[0]]].forEach(([a, b]) => { const v = appJv(pick.row[a.f]); if (a.as === pick.as && b.as === as && v) t.push({ f: b.f, v }); }));
+    return t;
+  }
+  function appPartRowsHtml(as, rows, pick, lights) {
+    const { cols } = appView(rows, {}); const shown = rows.slice(0, 200); const hit = (x) => lights.some((l) => appJv(x[l.f]) === l.v);
+    return '<table class="vc-table vc-app-t vc-app-jt" tabindex="0"><thead><tr>' + cols.map((k) => '<th>' + esc(k) + '</th>').join('') + '</tr></thead><tbody>'
+      + shown.map((x, i) => { const c = pick && pick.as === as && pick.i === i ? 'pk' : lights.length ? (hit(x) ? 'jn' : 'jd') : '';
+        return '<tr data-app-prow="' + i + '"' + (c ? ' class="' + c + '"' : '') + ' title="Pick: the joined parts show theirs">' + cols.map((k) => '<td>' + esc(appCell(x[k])) + '</td>').join('') + '</tr>'; }).join('')
+      + '</tbody></table>' + (rows.length > shown.length ? '<div class="vc-app-more">' + (rows.length - shown.length) + ' more</div>' : '');
+  }
   function appPartsHtml(st, size, key, el) {
     const vw = (st.manifest && st.manifest.view) || {}; const lay = APP_LAYOUTS.indexOf(vw.layout) >= 0 ? vw.layout : 'dashboard';
+    const joins = appJoins(vw); const pick = st.ui && st.ui.pick;
     const spec = Array.isArray(vw.parts) && vw.parts.length ? vw.parts : st.parts.map((p) => ({ from: p.as }));
     const parts = spec.map((s) => ({ s: s || {}, p: st.parts.find((x) => x.as === (s && s.from)) })).filter((x) => x.p);
     const ui = st.ui || (st.ui = {}); const tab = lay === 'tabs' && parts.length ? (parts.some((x) => x.p.as === ui.tab) ? ui.tab : parts[0].p.as) : null;
     const one = ({ s, p }) => {
       const state = p.reading ? 'reading…' : p.error ? 'failed' : p.ms != null ? (p.ms < 1000 ? p.ms + ' ms' : (p.ms / 1000).toFixed(1) + ' s') : '';
-      let body;
+      let body; const lights = appJoinLights(joins, pick, p.as); const joined = joins.some((pr) => pr[0].as === p.as || pr[1].as === p.as);
+      const jrows = joined && !p.error && p.result !== undefined ? appRows(p.result) : null; let focus = false;
       if (p.error) body = '<div class="vc-res-err">' + esc(p.error) + '</div>';
       else if (p.result === undefined) body = p.waiting ? '<span class="vc-dim">' + esc(p.waiting) + '</span>' : '<div class="vc-app-psk"><i></i><i></i><i></i></div>';
+      else if (jrows && jrows.length) { body = appPartRowsHtml(p.as, jrows, pick, lights); focus = lights.length > 0 && jrows.some((x) => lights.some((l) => appJv(x[l.f]) === l.v)); }   /* DA-07b */
       else {
         let v = resultView({ cap: p.cap, args: p.args, result: p.result, ok: true }); const k = s.kind;
         if ((!v || v.kind === 'json') && k && BLOCK[k] && k !== 'app' && p.result && typeof p.result === 'object') v = { kind: k, content: p.result };
         try { const fn = v && BLOCK[v.kind]; body = fn ? fn(v.content || {}, lay === 'dashboard' ? 'm' : size, key + ':part:' + p.as, el) : '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
         catch (e) { body = '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
+        if (lights.length) { const txt = appJv(appLeaves(p.result));   /* the answer's own words - a part may be drawn later by a live widget */
+          focus = lights.some((l) => l.v.length >= 2 && txt.indexOf(l.v) >= 0); }
       }
-      return '<section class="vc-app-part' + (p.error ? ' bad' : '') + (p.reading ? ' reading' : '') + '" data-app-part="' + esc(p.as) + '"><header><b>' + esc(s.title || p.as) + '</b><span>' + esc(state) + '</span></header><div class="vc-app-pb">' + body + '</div></section>';
+      return '<section class="vc-app-part' + (p.error ? ' bad' : '') + (p.reading ? ' reading' : '') + (focus ? ' jfocus' : '') + (pick && pick.as === p.as ? ' jsrc' : '') + '" data-app-part="' + esc(p.as) + '"><header><b>' + esc(s.title || p.as) + '</b><span>' + esc(state) + '</span></header><div class="vc-app-pb">' + body + '</div></section>';
     };
     const strip = tab ? '<div class="vc-app-tabs" role="tablist">' + parts.map(({ s, p }) => '<button type="button" role="tab" class="hx' + (p.as === tab ? ' on' : '') + (p.error ? ' bad' : '') + '" data-app-tab="' + esc(p.as) + '" aria-selected="' + (p.as === tab) + '">' + esc(s.title || p.as) + (p.reading ? ' …' : '') + '</button>').join('') + '</div>' : '';
     return strip + '<div class="vc-app-parts" data-layout="' + lay + '">' + (tab ? parts.filter((x) => x.p.as === tab) : parts).map(one).join('') + '</div>';
@@ -2139,6 +2173,15 @@
   .vc-app-tabs{display:flex;flex-wrap:wrap;gap:4px}
   .vc-app-tabs .hx.bad{color:var(--err,#e06c75)}
   @container (max-width: 520px){ .vc-app-parts[data-layout="split"]{grid-template-columns:1fr} }
+  /* the join (DA-07b): the row picked, the rows it lights, the rest dimmed; a part it focuses is outlined */
+  .vc-app-pb{position:relative}
+  .vc-app-jt{outline:none}
+  .vc-app-jt tbody tr{cursor:pointer}
+  .vc-app-jt tr.pk > td{background:color-mix(in srgb,var(--acc,#5a9e8f) 26%,transparent)}
+  .vc-app-jt tr.jn > td{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
+  .vc-app-jt tr.jd > td{opacity:.42}
+  .vc-app-part.jfocus{border-color:var(--acc,#5a9e8f);box-shadow:0 0 0 1px color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent)}
+  .vc-app-part.jsrc > header b{color:var(--acc,#5a9e8f)}
   /* the body's own line (a terminal's host and shell, a cell's notebook, a diagram's size): quiet, beside the title */
   .it-hd > .it-sub{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:10px/1.2 var(--mono,ui-monospace,monospace);color:var(--dim,#6b7480)}
   .it-hd > .it-sub > .dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:1px;background:var(--dim,#6b7480)}
@@ -5426,6 +5469,7 @@
           if (t.closest('[data-app-run]') && ui.form) { const a = acts.find((x) => x.id === ui.form.aid); const vals = {};
             box.querySelectorAll('[data-app-f]').forEach((x) => { vals[x.dataset.appF] = x.value; }); if (a) this._appRun(key, a, ui.form.row, vals); return; } }
         if (st && st.parts && t.closest('[data-app-tab]')) { ev.stopPropagation(); (st.ui || (st.ui = {})).tab = t.closest('[data-app-tab]').dataset.appTab; return this._appDraw(key); }   /* a composite's tab (DA-07a) */
+        if (st && st.parts && t.closest('[data-app-prow]')) { ev.stopPropagation(); return this._appPick(key, t.closest('[data-app-part]').dataset.appPart, +t.closest('[data-app-prow]').dataset.appProw); }   /* a pick (DA-07b) */
         if (!t.closest('.vc-app-rowsapp')) return; const a = this._appUi(t); if (!a) return;
         const th = t.closest('[data-app-sort]'), row = t.closest('[data-app-row]');
         if (th) { const k = th.dataset.appSort, so = a.ui.sort; a.ui.sort = !so || so[0] !== k ? [k, 'asc'] : so[1] === 'asc' ? [k, 'desc'] : null; }
@@ -5436,6 +5480,9 @@
         ev.stopPropagation(); this._appPaint(a.key); }, true);
       body.addEventListener('input', (ev) => { const t = ev.target; if (!t || !t.matches || !t.matches('[data-app-q]')) return; const a = this._appUi(t); if (!a) return;
         a.ui.q = t.value; a.ui.sel = null; a.ui.detail = null; this._appPaint(a.key); });
+      body.addEventListener('keydown', (ev) => { const t = ev.target; if (ev.key !== 'Escape' || !t || !t.closest || !t.closest('.vc-app-comp')) return;   /* Esc lets a pick go (DA-07b) */
+        const it = t.closest('.it[data-key]'); const st = it && this._apps && this._apps[it.dataset.key]; if (!st || !st.ui || !st.ui.pick) return;
+        ev.stopPropagation(); ev.preventDefault(); st.ui.pick = null; this._appDraw(it.dataset.key); });
       body.addEventListener('keydown', (ev) => { const t = ev.target; if (!t || !t.closest || !t.closest('.vc-app-rowsapp') || ev.ctrlKey || ev.metaKey || ev.altKey) return; const a = this._appUi(t); if (!a) return;
         const q = t.matches('[data-app-q]'); const box = t.closest('.vc-app-rowsapp');
         if (ev.key === '/' && !q) { ev.preventDefault(); const i = box.querySelector('[data-app-q]'); if (i) i.focus(); return; }
@@ -5920,6 +5967,14 @@
       }).catch((e) => { st.error = String((e && e.message) || e); this._appDraw(key); });
       this._appTick();
     }
+    /* a row picked in a composite's part (DA-07b): the same row again lets go; after the draw, each joined part brings its
+       first lit row into view - inside the part, never the desk */
+    _appPick(key, as, i) {
+      const st = this._apps && this._apps[key]; const p = st && st.parts && st.parts.find((x) => x.as === as); const rows = p && appRows(p.result); if (!rows || !rows[i]) return;
+      const ui = st.ui || (st.ui = {}); ui.pick = ui.pick && ui.pick.as === as && ui.pick.i === i ? null : { as, i, row: rows[i] }; this._appDraw(key);
+      setTimeout(() => { const it = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!it) return;
+        it.querySelectorAll('[data-app-part]').forEach((sec) => { const r = sec.querySelector('tr.jn'), pb = sec.querySelector('.vc-app-pb'); if (r && pb) pb.scrollTop = Math.max(0, r.offsetTop - pb.clientHeight / 3); }); }, 90);
+    }
     /* a composite's read (DA-07a): every part at once, each drawn as it arrives; a part that only acts waits for Refresh */
     async _appReadParts(key, forced) {
       const st = this._apps && this._apps[key]; if (!st || !st.parts || st.reading) return;
@@ -5928,7 +5983,9 @@
       if (!todo.length) { st.at = Date.now(); return this._appDraw(key); }
       st.reading = true; const t0 = Date.now(); todo.forEach((p) => { p.reading = true; p.waiting = null; }); this._appDraw(key);
       await Promise.all(todo.map(async (p) => { const p0 = Date.now();
-        try { const r = await this.callResult(p.cap, p.args || {}); if (r && r.ok === false && r.error) p.error = String(r.error); else { p.error = null; p.result = r; } }
+        try { const r = await this.callResult(p.cap, p.args || {}); if (r && r.ok === false && r.error) p.error = String(r.error); else { p.error = null; p.result = r;
+            const pk = st.ui && st.ui.pick; if (pk && pk.as === p.as) { const want = appRowKey(st, pk.row); const i = (appRows(r) || []).findIndex((x) => appRowKey(st, x) === want);   /* the pick follows its row (DA-07b) */
+              if (i < 0) st.ui.pick = null; else { pk.i = i; pk.row = appRows(r)[i]; } } } }
         catch (e) { p.error = String((e && e.message) || e); }
         p.reading = false; p.at = Date.now(); p.ms = p.at - p0; this._appDraw(key); }));
       st.reading = false; st.at = Date.now(); st.ms = st.at - t0; this._appDraw(key);

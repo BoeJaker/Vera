@@ -140,3 +140,18 @@ def test_a_composite_names_its_parts_and_lays_them_out():
     assert ("error", "view.parts.unknown") in got({"parts": [{"from": "news"}]})
     assert ("error", "view.parts.kind") in got({"parts": [{"from": "quote", "kind": "receipt"}]})
     assert ("warning", "view.layout.split") in got({"layout": "split"}, read=reads + [{"as": "news", "cap": "info.seek"}])
+
+
+def test_a_composite_joins_its_parts_by_field():
+    # DA-07b: view.join pairs "as.field" sides of two different reads
+    reads = [{"as": "hosts", "cap": "nodes.list"}, {"as": "containers", "cap": "docker.ps"}]
+    def got(join):
+        m = {"id": "estate.hostx", "panel": "estate", "title": "Host", "read": reads, "view": {"kind": "composite", "join": join}}
+        return {(p["level"], p["code"]) for p in A.check_manifest(m, "f.json")}
+    assert got({"hosts.name": "containers.host"}) == set()
+    assert got([{"hosts.name": "containers.host"}, ["hosts.ip", "containers.ip"]]) == set()
+    assert ("error", "view.join") in got("hosts.name")
+    assert ("error", "view.join") in got({"hosts": "containers.host"})
+    assert ("error", "view.join") in got([["hosts.name"]])
+    assert ("error", "view.join.same") in got({"hosts.name": "hosts.ip"})
+    assert ("error", "view.join.unknown") in got({"hosts.name": "logs.host"})

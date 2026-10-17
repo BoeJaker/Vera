@@ -139,6 +139,30 @@ def check_manifest(m: Any, file: str = "", caps: Optional[Iterable[str]] = None,
                     pk = part.get("kind") if _is_obj(part) else None
                     if pk is not None and (pk not in PRESENTATION_KINDS or pk in ("receipt", "job", "composite")):
                         _p(out, file, app, "error", "view.parts.kind", "view.parts[%d].kind %r is not a kind a part draws" % (i, pk))
+        # the join (DA-07b): pairs of "as.field", each side a different read - an object, or a list of objects / [a, b]
+        join = view.get("join")
+        if join is not None:
+            pairs = []
+            if _is_obj(join):
+                pairs = list(join.items())
+            elif isinstance(join, list):
+                for e in join:
+                    if _is_obj(e):
+                        pairs.extend(e.items())
+                    elif isinstance(e, list) and len(e) == 2:
+                        pairs.append((e[0], e[1]))
+                    else:
+                        pairs.append((None, None))
+            else:
+                _p(out, file, app, "error", "view.join", "view.join pairs fields: {\"a.field\": \"b.field\"} or a list of them")
+            for a, b in pairs:
+                sides = [s.split(".", 1) if isinstance(s, str) and "." in s.strip(".") else None for s in (a, b)]
+                if not all(sides) or not all(x[0] and x[1] for x in sides):
+                    _p(out, file, app, "error", "view.join", "a join side is \"as.field\" (got %r: %r)" % (a, b))
+                elif sides[0][0] == sides[1][0]:
+                    _p(out, file, app, "error", "view.join.same", "a join pairs two different parts (%r: %r)" % (a, b))
+                elif isinstance(read, list) and not {sides[0][0], sides[1][0]} <= seen_as:
+                    _p(out, file, app, "error", "view.join.unknown", "a join names a part no read is (%r: %r)" % (a, b))
         if view.get("layout") == "split" and isinstance(read, list) and len(parts if isinstance(parts, list) else read) != 2:
             _p(out, file, app, "warning", "view.layout.split", "a split shows two parts side by side")
     live = m.get("live")
