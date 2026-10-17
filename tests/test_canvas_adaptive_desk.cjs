@@ -29,7 +29,7 @@ test('panel obstacle delivery targets only live panel frames',
   src.includes("fr.contentWindow.postMessage({ type: 'vera:desk:obstacles'"));
 test('live overlays compensate for UI scale and clip to their owning card',
   src.includes('(B.width / body.offsetWidth)') && src.includes('el.style.clipPath') &&
-  src.includes("const z = card.style.zIndex || ''"));
+  src.includes("const z = m.z != null ? m.z : (card.style.zIndex || '');"));
 test('layer state is browser-local presentation state',
   src.includes("const LAYER_KEY = 'vera:canvas:layers'") &&
   src.includes('localStorage.setItem(LAYER_KEY') && src.includes('setLayer(key, mode)'));
