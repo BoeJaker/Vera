@@ -35,10 +35,16 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
+#: the NLP-node and embedding judges of the candidate matrix: fast enough to answer a live decision
+LIVE_FAST = ("card:minilm", "zeroshot:deberta-base", "nli:deberta-large", "rerank:msmarco-minilm")
+
+
 def runnable(impl: str, student_model: str, extra: Iterable[str] = ()) -> bool:
-    """Can the loop run this implementation live? kNN, the in-slot student LLM (no @node: the live student is
-    routed, not pinned to a CPU node), or a named extra (a bound trained student)."""
-    return impl == KNN or impl == f"llm:{student_model}" or impl in set(extra)
+    """Can the loop run this implementation live? kNN, the label cards and the NLP-node judges (milliseconds on a
+    node), the in-slot student LLM (no @node: the live student is routed, not pinned to a CPU node), a trained head
+    (onnx:<slug>), or a named extra - so any winner of the candidate matrix can be promoted."""
+    return (impl == KNN or impl in LIVE_FAST or impl == f"llm:{student_model}" or impl.startswith("onnx:")
+            or impl in set(extra))
 
 
 def candidate(impl: str, row: Mapping[str, Any], live_acc: float) -> Optional[Dict[str, Any]]:

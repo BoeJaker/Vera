@@ -32,6 +32,8 @@ MAX_PARAMS_B = 10.0
 MAX_F16_PARAMS_B = 3.0
 LLM_JOBS_PER_NIGHT = 48
 NLP_IMPLS = ("zeroshot:deberta-base", "nli:deberta-large", "rerank:msmarco-minilm")
+#: implementation id -> the NLP family that answers it (decide.shadow.nlp's `family`)
+NLP_FAMILY = {"zeroshot:deberta-base": "zeroshot", "nli:deberta-large": "nli", "rerank:msmarco-minilm": "rerank"}
 
 _P = re.compile(r"^\s*([\d.]+)\s*([KMB])", re.I)
 

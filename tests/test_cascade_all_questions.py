@@ -52,8 +52,10 @@ def test_the_plan_from_the_17_oct_report():
 
 def test_only_runnable_students_count_and_the_in_slot_llm_is_one():
     assert CC.runnable("knn:minilm", "qwen3:1.7b") and CC.runnable("llm:qwen3:1.7b", "qwen3:1.7b")
-    assert not CC.runnable("llm:qwen3:1.7b@cpu-247", "qwen3:1.7b") and not CC.runnable("card:minilm", "qwen3:1.7b")
-    assert CC.runnable("onnx:step_done", "qwen3:1.7b", extra=["onnx:step_done"])
+    assert not CC.runnable("llm:qwen3:1.7b@cpu-247", "qwen3:1.7b") and not CC.runnable("llm:qwen3:4b", "qwen3:1.7b")
+    # any matrix winner that answers in milliseconds is promotable (17 Oct): cards, the NLP-node judges, trained heads
+    for impl in ("card:minilm", "zeroshot:deberta-base", "nli:deberta-large", "rerank:msmarco-minilm", "onnx:step_done"):
+        assert CC.runnable(impl, "qwen3:1.7b")
 
 
 def test_every_question_has_a_switch_off_by_default():
@@ -93,3 +95,30 @@ def test_the_hook_passes_the_decisions_inputs_through():
     assert "prompt,\n                                inputs=inputs)" in src
     j = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
     assert "await r_.set(KNN_VERSION_KEY + question_id, version" in j and "async def knn_rows(" in j
+
+
+def test_any_matrix_winner_routes_to_its_family(monkeypatch):
+    plan = {"loop.tier": {"eligible": True, "impl": "zeroshot:deberta-base", "tau": 0.7},
+            "loop.intent": {"eligible": True, "impl": "card:minilm", "tau": 0.8},
+            "loop.step_done": {"eligible": True, "impl": "onnx:student-loop-step-done", "tau": 0.6},
+            "loop.prestep_needed": {"eligible": False, "impl": "nli:deberta-large"}}
+    monkeypatch.setattr(ST, "PLAN", {"plan": plan, "at": 1e18})
+    assert ST.impl_for("loop.tier") == "nlp:zeroshot" and ST.impl_for("loop.intent") == "card"
+    assert ST.impl_for("loop.step_done") == "onnx:student-loop-step-done"
+    assert ST.impl_for("loop.prestep_needed") == "nlp:nli" and ST.impl_for("loop.step_verify") == "llm"
+
+
+def test_a_zero_shot_winner_answers_live(monkeypatch):
+    import types
+    monkeypatch.setattr(ST, "PLAN", {"plan": {"loop.tier": {"eligible": True, "impl": "zeroshot:deberta-base",
+                                                            "tau": 0.7}}, "at": 1e18})
+
+    async def _nlp_probs(fam, text, cards):
+        assert fam == "zeroshot" and text.startswith("Goal: build me a site")
+        return {"single": 0.05, "simple": 0.8, "complex": 0.1, "strategic": 0.05}
+    monkeypatch.setitem(sys.modules, "judge", types.SimpleNamespace(_nlp_probs=_nlp_probs))
+    monkeypatch.setitem(sys.modules, "Vera.vera.capability_orchestration",
+                        types.SimpleNamespace(REDIS=None, CAPABILITY_REGISTRY={}))
+    out = asyncio.run(ST.ask("loop.tier", "sys", "prompt", inputs={"goal": "build me a site"}))
+    assert out["answer"] == "simple" and out["impl"] == "zeroshot:deberta-base" and out["p"] == 0.8
+    assert ST.decides("loop.tier", out)                                   # 0.8 >= the plan's 0.7
