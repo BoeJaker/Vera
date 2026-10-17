@@ -28,6 +28,12 @@ Interactive terminals  (WebSocket)
   /remote/ssh/term/ws/{host_id}                  — interactive shell on an SSH host / VM
   (Proxmox guest consoles keep using the existing /proxmox/console/ws proxy.)
 
+  A terminal socket opens only with a single-use ticket (``term_tickets``:
+  128 bits, 90 s, bound to the target) minted by ``conn.open``,
+  ``sandbox.session.terminal`` or ``remote.term.ticket``, and only from Vera's
+  own origin. ``<vera-terminal>`` asks for a fresh ticket on every connect.
+  Refusals close with 4403 (origin) or 4401 (ticket).
+
 Wire protocol (browser ⇄ Vera, shared by both terminal routes)
   • client → server : JSON text frames
         {"d": "<keystrokes>"}         write input
@@ -65,11 +71,17 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
+from Vera.vera import edge_guard as _edge_guard
+from Vera.vera import edge_guard_core as _egc
+from Vera.vera.remote import term_tickets as _tt
 
 log = logging.getLogger("vera.remote")
 
 _HERE = Path(__file__).parent
 KEY_CONNS = "vera:remote:connections"
+
+# Outstanding terminal tickets (in memory: Vera serves from one process).
+TICKETS = _tt.BOOK
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -350,6 +362,7 @@ async def cap_conn_open(
             return {"ok": False, "error": "container required"}
         from urllib.parse import quote
         ws = f"/remote/docker/term/ws/{quote(hid, safe='')}/{quote(c, safe='')}?shell={quote(shell)}"
+        ws = _tt.with_ticket(ws, TICKETS.mint("docker", hid, c))
         return {"ok": True, "kind": "docker", "protocol": "vera-term",
                 "ws_path": ws, "shell": shell, "container": c, "docker_host_id": hid}
 
@@ -359,6 +372,7 @@ async def cap_conn_open(
             return {"ok": False, "error": "ssh_host_id required (enroll the guest first)"}
         from urllib.parse import quote
         ws = f"/remote/ssh/term/ws/{quote(hid, safe='')}?shell={quote(shell)}"
+        ws = _tt.with_ticket(ws, TICKETS.mint("ssh", hid))
         return {"ok": True, "kind": "ssh", "protocol": "vera-term",
                 "ws_path": ws, "shell": shell, "ssh_host_id": hid}
 
@@ -374,6 +388,29 @@ async def cap_conn_open(
             vmid=int(vmid or rec.get("vmid", 0)), mode=mode)
 
     return {"ok": False, "error": f"cannot open kind={kind!r}"}
+
+
+@capability(
+    "remote.term.ticket",
+    http_method="POST", http_path="/remote/term/ticket", http_tags=["remote"],
+    memory="off",
+    description="Mint a single-use ticket (90 s) for a terminal WebSocket path and "
+                "return the path with it. <vera-terminal> calls this on every "
+                "connect, so a saved or reopened terminal path still works. Inputs: "
+                "ws_path (str!) - /remote/docker/term/ws/{host}/{container} or "
+                "/remote/ssh/term/ws/{host}, any query kept. Output: {ok, ws_path, "
+                "expires_in}.",
+)
+async def cap_term_ticket(ws_path: str = "", trace_id=None) -> Dict:
+    target = _tt.target_of_path(ws_path)
+    if target is None:
+        return {"ok": False, "error": "not a terminal socket path"}
+    kind, hid, container = target
+    ticket = TICKETS.mint(kind, hid, container)
+    await emit_event({"type": "remote.term.ticket", "kind": kind, "host_id": hid,
+                      "container": container})
+    return {"ok": True, "ws_path": _tt.with_ticket(ws_path, ticket),
+            "expires_in": int(TICKETS.ttl)}
 
 
 @capability(
@@ -431,6 +468,40 @@ def _sandbox_launch_ok(command: str) -> Tuple[bool, str]:
         return ex._sandbox_check(command)
     except Exception:
         return True, ""
+
+
+def _term_gate(ws: WebSocket, kind: str, host_id: str, container: str = "") -> Tuple[int, str]:
+    """(0, "") when this terminal socket may open, else (close code, reason).
+
+    Checked on every terminal whatever the edge guard's mode: a browser socket
+    must come from Vera's own origin (4403), and every socket must spend a
+    ticket minted for this target (4401)."""
+    headers = {k.lower(): v for k, v in ws.headers.items()}
+    g = _edge_guard.current()
+    peer = ws.client.host if ws.client else ""
+    v = _egc.decide(kind="websocket", method="GET", path=ws.url.path, headers=headers,
+                    allowed_hosts=g.allowed_hosts if g else (),
+                    allowed_origins=g.allowed_origins if g else (),
+                    trusted_proxy=bool(g and peer in g.trusted_proxies),
+                    default_port=g.listen_port if g else None, check_host=False)
+    if not v.allow:
+        return 4403, v.reason
+    ok, why = TICKETS.consume(ws.query_params.get("ticket", ""), kind, host_id, container)
+    if not ok:
+        return 4401, why
+    return 0, ""
+
+
+async def _refuse_term(ws: WebSocket, kind: str, host_id: str, code: int, why: str) -> None:
+    await emit_event({"type": "remote.term.refused", "kind": kind, "host_id": host_id,
+                      "code": code, "reason": why})
+    msg = ("open the terminal from Vera" if code == 4403
+           else "this terminal link has no valid ticket; reopen it from Vera")
+    try:
+        await ws.send_bytes(f"\r\n[vera] {msg} ({why})\r\n".encode())
+    except Exception:
+        pass
+    await ws.close(code=code)
 
 
 async def _ws_input_loop(ws: WebSocket, write_bytes, resize) -> None:
@@ -558,6 +629,10 @@ async def _read_http_headers(reader: asyncio.StreamReader) -> bytes:
 @APP.websocket("/remote/docker/term/ws/{host_id}/{container}")
 async def remote_docker_term_ws(ws: WebSocket, host_id: str, container: str):
     await ws.accept()
+    code, why = _term_gate(ws, "docker", host_id, container)
+    if code:
+        await _refuse_term(ws, "docker", host_id, code, why)
+        return
     shell = ws.query_params.get("shell", "sh") or "sh"
     cols = int(ws.query_params.get("cols", "80") or 80)
     rows = int(ws.query_params.get("rows", "24") or 24)
@@ -809,6 +884,10 @@ async def _ssh_pty_bridge(ws: WebSocket, *, ssh_host_id: str, command: str = "",
 @APP.websocket("/remote/ssh/term/ws/{host_id}")
 async def remote_ssh_term_ws(ws: WebSocket, host_id: str):
     await ws.accept()
+    code, why = _term_gate(ws, "ssh", host_id)
+    if code:
+        await _refuse_term(ws, "ssh", host_id, code, why)
+        return
     shell = ws.query_params.get("shell", "") or ""   # blank = login shell
     cols = int(ws.query_params.get("cols", "80") or 80)
     rows = int(ws.query_params.get("rows", "24") or 24)
