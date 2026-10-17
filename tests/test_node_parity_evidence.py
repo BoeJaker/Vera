@@ -255,3 +255,30 @@ def test_a_reviewed_list_scopes_the_drops_too():
     # a namespace scopes both sides; a reviewed list naming a cap to drop drops it
     assert fc.plan_vet(v, current={"b.room", "a.gone"}, namespace="a")["drop"] == ["a.gone"]
     assert fc.plan_vet(v, current={"b.room"}, only=["b.room"])["drop"] == ["b.room"]
+
+
+
+def test_decrypting_a_secret_keeps_a_cap_on_the_host(tmp_path):
+    """2026-10-17: ha.summary, n8n.* and proxmox.status passed every rule but
+    unseal their tokens through platform_access / vsecrets (the in-process
+    platforms copy, the host's master key)."""
+    v = tmp_path / "vera"
+    v.mkdir()
+    (v / "capability_orchestration.py").write_text(
+        "CAPABILITY_REGISTRY = {}\n\ndef capability(name):\n    def d(f):\n        return f\n    return d\n")
+    (v / "svc.py").write_text(
+        "import Vera.vera.capability_orchestration as _orch\n"
+        "from Vera.vera.capability_orchestration import capability\n\n"
+        "def _pa():\n    import platform_access\n    return platform_access\n\n"
+        "async def _load_config():\n"
+        "    return {'token': await _pa().open_any(_orch.CAPABILITY_REGISTRY, 'ref')}\n\n"
+        "@capability('demo.summary')\nasync def summary():\n    return await _load_config()\n\n"
+        "@capability('demo.cluster')\nasync def cluster():\n"
+        "    from vsecrets import open_secret\n    return open_secret('x')\n\n"
+        "@capability('demo.list')\nasync def listing():\n    return await _orch.REDIS.hgetall('k')\n\n"
+        "@capability('demo.reopen')\nasync def reopen():\n    return reopen_any('x')\n")
+    rows = audit.audit(str(tmp_path))
+    assert "opens_secret" in rows["demo.summary"]["markers"], "followed into the helper"
+    assert "opens_secret" in rows["demo.cluster"]["markers"]
+    assert "opens_secret" not in rows["demo.list"]["markers"]
+    assert "opens_secret" not in rows["demo.reopen"]["markers"], "whole names only"
