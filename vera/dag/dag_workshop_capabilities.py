@@ -14426,6 +14426,40 @@ except Exception:                                     # pragma: no cover
     from vera.dag import goal_constraints_core as _goal_cons_core
 
 
+# plan.goal_frame=writer (R-B2): the goal's constraints ride on every authoring call's task in this run; set by the
+# loop once it has them, read where the executor invokes a tool. A context var, so child tasks of the run see it
+# and other runs never do.
+import contextvars as _cv_gw
+_GOAL_WRITER_CONS: "_cv_gw.ContextVar[Optional[List[Dict[str, Any]]]]" = _cv_gw.ContextVar(
+    "vera_goal_writer_cons", default=None)
+
+
+def _goal_frame_mode() -> str:
+    """Switch plan.goal_frame: off (default) | on (done_when + gate) | writer (R-B2: constraints to the writer)."""
+    try:
+        return str(_minds_core.mode_of("plan.goal_frame") or "off") if _minds_core is not None else "off"
+    except Exception:
+        return "off"
+
+
+def _writer_constraints_apply(tool: str, args: Any) -> Any:
+    """In writer mode, an authoring call (code.author / prose.author ...) gets the goal's constraints appended to
+    its `task`. Any other call, or a task that is not a string, is returned untouched."""
+    try:
+        cons = _GOAL_WRITER_CONS.get()
+        if not cons or tool not in _V5_AUTHORING_CAPS or not isinstance(args, dict):
+            return args
+        task = args.get("task")
+        if not isinstance(task, str) or not task.strip():
+            return args
+        blk = _goal_cons_core.writer_block(cons)
+        if not blk or blk in task:
+            return args
+        return dict(args, task=task.rstrip() + "\n\n" + blk)
+    except Exception:
+        return args
+
+
 def _goal_frame_on() -> bool:
     """Switch plan.goal_frame (four-minds FM-1.3 / compute-roles B2), off by default."""
     try:
@@ -17077,6 +17111,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             elif _h_url_cached and "_url_cache_value" in _h_url_cached:
                 invoke = {"ok": True, "result": _h_url_cached["_url_cache_value"]}
             else:
+                h_args = _writer_constraints_apply(hop_tool, h_args)   # plan.goal_frame=writer (R-B2)
                 _hstream = _v5_make_tool_stream_cb(stream_id, step_id, cur, hop_tool, sid)
                 try:
                     invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "",
@@ -18983,6 +19018,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         elif _url_cached and "_url_cache_value" in _url_cached:
             invoke = {"ok": True, "result": _url_cached["_url_cache_value"]}
         else:
+            args = _writer_constraints_apply(tool, args)   # plan.goal_frame=writer (R-B2)
             _tstream = _v5_make_tool_stream_cb(stream_id, step_id, cur_cycle, tool, sid)
             try:
                 invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "",
@@ -25943,12 +25979,19 @@ async def cap_dag_agent_loop_v6(
     # Goal constraints (plan.goal_frame, B2): dates, versions and numeric limits from the goal
     # text become done_when items and the final gate's must-cover list (goal_constraints_core).
     _goal_cons: List[Dict[str, Any]] = []
-    if _goal_frame_on():
-        _goal_cons = _goal_cons_core.extract(goal)
-        if _goal_cons:
+    _goal_writer_cons: List[Dict[str, Any]] = []          # writer mode (R-B2): to the authoring calls only
+    _gf_mode = _goal_frame_mode()
+    if _gf_mode in ("on", "writer"):
+        _found = _goal_cons_core.extract(goal)
+        if _found and _gf_mode == "on":
+            _goal_cons = _found
             done_when = (done_when + "\n" if done_when else "") + _goal_cons_core.block(_goal_cons)
+        elif _found:
+            _goal_writer_cons = _found
+            _GOAL_WRITER_CONS.set(_goal_writer_cons)
+        if _found:
             await emit_event({"type": "agent_loop_v6.goal_constraints", "session_id": sid,
-                              "stream_id": stream_id, "constraints": _goal_cons})
+                              "stream_id": stream_id, "constraints": _found, "mode": _gf_mode})
     steps = plan.get("steps") or []
     if not steps:
         # Every planning stage failed (structured plan, minimal-schema retry,
@@ -27122,13 +27165,15 @@ async def cap_dag_agent_loop_v6(
     # Before .done, so the trace digest and the Loop Lab record include it.
     await _v6_entity_coverage(_goal_ents_task, deliverable or final, sid=sid,
                               stream_id=stream_id)
-    if _goal_cons:                                       # plan.goal_frame: what the answer met
+    if _goal_cons or _goal_writer_cons:                  # plan.goal_frame: what the answer met (a shadow signal)
         try:
             await emit_event({"type": "agent_loop_v6.goal_constraint_coverage", "session_id": sid,
-                              "stream_id": stream_id,
-                              **_goal_cons_core.coverage(_goal_cons, deliverable or final)})
+                              "stream_id": stream_id, "mode": _gf_mode,
+                              **_goal_cons_core.coverage(_goal_cons or _goal_writer_cons, deliverable or final)})
         except Exception:
             pass
+        if _goal_writer_cons:
+            _GOAL_WRITER_CONS.set(None)
     _zs_rec = await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
                                        stream_id=stream_id)
     if _dl is not None and _zs_rec:

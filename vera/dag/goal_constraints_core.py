@@ -78,3 +78,13 @@ def coverage(cons: List[Dict[str, Any]], text: str) -> Dict[str, Any]:
         (covered if ok else missing).append(c.get("text"))
     n = len(covered) + len(missing)
     return {"covered": covered, "missing": missing, "ratio": round(len(covered) / n, 3) if n else None}
+
+
+def writer_block(cons: List[Dict[str, Any]]) -> str:
+    """The constraints as instructions for the WRITER (plan.goal_frame=writer, compute-roles R-B2, 16 Oct 2026):
+    appended to an authoring call's task, never to done_when or the gate - measured 12 Oct, constraints in
+    done_when + the must-cover list sent the loop into self-verification and a research loop that never converged."""
+    if not cons:
+        return ""
+    return ("HARD CONSTRAINTS FROM THE GOAL - honour each one in what you write:\n"
+            + "\n".join("- " + str(c.get("text") or "") for c in cons))
