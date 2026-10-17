@@ -7605,24 +7605,39 @@ IMPORTANT:
     if(!SID||!_cvEnrichOn()||!tid||!m) return;
     let g=_cvRuns[tid];
     if(!g){ if(g===null) return; const mid=_cvActMid(el); if(!mid) return;
-      g=_cvRuns[tid]={ cap:String(cap), args:Object.assign({}, args||{}), t0:Date.now(), run:{ state:'running', started:Date.now() } };
+      g=_cvRuns[tid]={ tid, cap:String(cap), args:Object.assign({}, args||{}), t0:Date.now(), run:{ state:'running', started:Date.now() } };
       g.L=_cvLive({ key:'run:'+tid, kind:'result', size:'m', mid, from:'run', content:()=>_cvRunItem(g) });
       try{ el.__cvRunKey=g.L.key; }catch(_){} _cvActDrop(act); _cvLiveSave(g.L, false); }
-    if(g.done) return;
+    if(g.done&&!g.pending) return;
     ['stage','done','total','found','text'].forEach((k)=>{ if(m[k]!=null&&m[k]!=='') g.run[k]=m[k]; });
+    /* a job the call started (DA-04c (c) - a model pull): its steps go on after the call's answer, until a final stage */
+    if(g.pending){ clearTimeout(g.idle); g.idle=setTimeout(()=>_cvRunFinish(g, false, 'no news from it for 30 minutes'), 30*60*1000);
+      if(_CV_RUN_FINAL.test(String(m.stage||''))){ const keep={}; Object.keys(m).forEach((k)=>{ if(!/^(type|event|trace_id|ts|cap)$/.test(k)) keep[k]=m[k]; });
+        return _cvRunFinish(g, String(m.stage)==='done', m.result!=null?m.result:Object.assign({}, g.receipt&&typeof g.receipt==='object'?g.receipt:{}, keep)); } }
     _cvLiveShow(g.L); _cvLiveSoon(g.L, 2500);
+  }
+  const _CV_RUN_FINAL=/^(done|error|failed|cancelled|canceled)$/;
+  /* an answer that only says a job has started (its id; the work goes on): the run item waits for the job's last step */
+  function _cvRunIsJob(c){ return !!(c&&typeof c==='object'&&!Array.isArray(c)&&(c.pull_id||c.job_id||c.job)); }
+  function _cvRunFinish(g, ok, content){
+    if(!g||(g.done&&!g.pending)) return true; clearTimeout(g.idle); g.pending=false;
+    g.done=true; g.ok=ok; g.ms=Date.now()-g.t0; g.run.state=ok?'done':'error';
+    if(ok) g.result=content; else g.error=String((content&&typeof content==='object'&&(content.error||content.detail||content.text))||content||'the capability failed').slice(0,400);
+    _cvLiveSave(g.L, true); if(g.onEnd){ try{ g.onEnd(); }catch(_){} } setTimeout(()=>{ delete _cvRuns[g.tid]; }, 3000); return true;
   }
   function _cvRunItem(g){
     const c={ cap:g.cap, args:g.args, run:Object.assign({}, g.run) };
-    if(!g.done) c.running=true; else { c.running=false; c.ok=g.ok; c.ms=g.ms; if(g.ok) c.result=g.result; else c.error=g.error; }   /* said, not left out: a live draw merges over the stored item */
+    if(!g.done||g.pending) c.running=true; else { c.running=false; c.ok=g.ok; c.ms=g.ms; if(g.ok) c.result=g.result; else c.error=g.error; }   /* said, not left out: a live draw merges over the stored item */
     return c;
   }
-  /* the call ended: its answer into its run item (true), or false when it never reported a step */
-  function _cvRunEndCall(tid, ok, content){
+  /* the call ended: its answer into its run item (true); 'pending' when the answer is a job receipt and the job's steps
+     go on (the item waits for its last step - onEnd lets the caller stop listening then); false when it reported no step */
+  function _cvRunEndCall(tid, ok, content, onEnd){
     const g=_cvRuns[tid]; if(!g){ _cvRuns[tid]=null; setTimeout(()=>{ delete _cvRuns[tid]; }, 3000); return false; }   /* a step trailing the answer makes no item */
-    g.done=true; g.ok=ok; g.ms=Date.now()-g.t0; g.run.state=ok?'done':'error';
-    if(ok) g.result=content; else g.error=String((content&&typeof content==='object'&&(content.error||content.detail))||content||'the capability failed').slice(0,400);
-    _cvLiveSave(g.L, true); setTimeout(()=>{ delete _cvRuns[tid]; }, 3000); return true;
+    g.tid=tid;
+    if(ok&&_cvRunIsJob(content)&&!_CV_RUN_FINAL.test(String(g.run.stage||''))){ g.pending=true; g.done=true; g.receipt=content; g.onEnd=onEnd;
+      clearTimeout(g.idle); g.idle=setTimeout(()=>_cvRunFinish(g, false, 'no news from it for 30 minutes'), 30*60*1000); return 'pending'; }
+    return _cvRunFinish(g, ok, content);
   }
   function _cvEnrichToggle(btn){ const on=!_cvEnrichOn(); try{ localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} _cvEnrichPaint(btn); }
   function _cvEnrichPaint(btn){ const b=btn||document.getElementById('cvEnrichBtn'); if(!b) return; const on=_cvEnrichOn(); b.classList.toggle('on',on); b.style.opacity=on?'':'.55'; b.setAttribute('aria-pressed',on?'true':'false'); }
@@ -11605,11 +11620,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       httpStatus=r.status;
       res=await r.json();
     }catch(e){res=null;}
+    let _runEnd=false;
     try{ const c=res&&res.type==='tool_result'?res.content:null; const bad=!res||res.type!=='tool_result'||(c&&typeof c==='object'&&(c.ok===false||(c.error!=null&&c.error!==''&&c.error!==false)));
-      if(!_look) _cvRunEndCall(_tid, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer');   /* a run item gets its answer (DA-04c) */
+      /* a run item gets its answer (DA-04c); a job it started keeps it - and this trace's listener - until its last step */
+      if(!_look){ const sub=_lookSub; _runEnd=_cvRunEndCall(_tid, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer', ()=>{ try{ if(sub) sub.close(); }catch(_){} }); }
       _cvActEnd(_act, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer');
       _cvLookEnd(_look, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer', coercedArgs); }catch(_){}
-    if(_lookSub) setTimeout(()=>{ try{ _lookSub.close(); }catch(_){} }, 1500);   // a stage may trail the answer
+    if(_lookSub&&_runEnd!=='pending') setTimeout(()=>{ try{ _lookSub.close(); }catch(_){} }, 1500);   // a stage may trail the answer
 
     // Build a persistent cap header showing what was run (never vanishes)
     const argsSummary=Object.entries(coercedArgs).filter(([k])=>k!=='trace_id').map(([k,v])=>`${k}=${JSON.stringify(v).slice(0,20)}`).slice(0,3).join(' ');

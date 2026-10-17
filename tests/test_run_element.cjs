@@ -59,7 +59,24 @@ const A = ctx.api; const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // wiring and the shared core
   t('every other call listens on its trace for .step events', H.includes("else if(window.VeraLive&&_cvActOn(capName)){ try{ _lookSub=VeraLive.subscribe({ trace:[_tid] }, (m)=>{ const t=String(m.event||m.type||''); if(/\\.step$/.test(t)) _cvRunStep(el, capName, coercedArgs, _tid, _act, m); }); await VeraLive.ready(400);"));
-  t('its answer goes to its run item', H.includes("if(!_look) _cvRunEndCall(_tid, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer');"));
+  t('its answer goes to its run item; a job keeps its listener till its last step', H.includes("if(!_look){ const sub=_lookSub; _runEnd=_cvRunEndCall(_tid, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer', ()=>{ try{ if(sub) sub.close(); }catch(_){} }); }") && H.includes("if(_lookSub&&_runEnd!=='pending') setTimeout("));
+
+  // a job the call started (a model pull): the receipt keeps the item running; its steps go on; the last step ends it
+  { let closed = 0; const el = {};
+    A._cvRunStep(el, 'catalog.pull.start', { model: 'qwen3:1.7b' }, 'tj', null, { stage: 'queued', text: 'qwen3:1.7b' }); await wait(10);
+    const r = A._cvRunEndCall('tj', true, { ok: true, pull_id: 'p1', pull: { state: 'queued' } }, () => { closed++; }); await wait(10);
+    const upJ = () => calls.filter((c) => c[1].key === 'run:tj' && /canvas\.(add|update)/.test(c[0])).pop();
+    t('a job receipt: the item waits (pending), still running, listener kept', r === 'pending' && closed === 0 && !calls.some((c) => c[0] === 'canvas.update' && c[1].key === 'run:tj'));
+    A._cvRunStep(el, 'catalog.pull.start', {}, 'tj', null, { stage: 'downloading', done: 400, total: 1000, text: 'qwen3:1.7b · 12 MB/s' });
+    t('...its steps go on after the answer', live.filter((x) => x[0] === 'run:tj').pop()[1].run.done === 400 && live.filter((x) => x[0] === 'run:tj').pop()[1].running === true);
+    A._cvRunStep(el, 'catalog.pull.start', {}, 'tj', null, { type: 'catalog.pull.start.step', trace_id: 'tj', stage: 'done', done: 1000, total: 1000, model: 'qwen3:1.7b', total_bytes: 1000 }); await wait(20);
+    const fin = upJ();
+    t('...its last step ends it: the answer in the item, the listener let go', !!fin && fin[1].content.ok === true && fin[1].content.running === false && fin[1].content.result.model === 'qwen3:1.7b' && fin[1].content.result.pull_id === 'p1' && !('trace_id' in fin[1].content.result) && closed === 1); }
+  { const el = {}; A._cvRunStep(el, 'catalog.pull.start', {}, 'tk', null, { stage: 'queued' }); A._cvRunEndCall('tk', true, { pull_id: 'p2' }); await wait(5);
+    A._cvRunStep(el, 'catalog.pull.start', {}, 'tk', null, { stage: 'error', text: 'node unreachable' }); await wait(20);
+    const f = calls.filter((c) => c[1].key === 'run:tk' && c[0] === 'canvas.update').pop();
+    t('...a job that fails ends with its error', !!f && f[1].content.ok === false && /node unreachable/.test(f[1].content.error)); }
+  t('...and one that goes quiet ends after 30 minutes', H.includes("g.idle=setTimeout(()=>_cvRunFinish(g, false, 'no news from it for 30 minutes'), 30*60*1000)"));
   t('the harvest skips a call with a run item', H.includes("if(el.__cvRunKey) return;"));
   t('the lookup is on the core', H.includes("const L=h.L||(h.L=_cvLive({ key:h.key, kind:'records', size:'l', mid:h.mid, from:'lookup', content:()=>h.final||_cvLookContent(h) }));"));
   t('the research run is on the core', H.includes("r.L=_cvLive({ key:r.key, kind:'research', size:'l', mid, content:(keep)=>_cvRunContent(jobId, r, keep), onAdded:"));
