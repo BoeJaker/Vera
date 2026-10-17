@@ -309,6 +309,10 @@
    "values": "hosts"
   }
  },
+ "ollama.instances": {
+  "form": "table",
+  "kind": "table"
+ },
  "ollama.request_log": {
   "form": "log",
   "kind": "log",

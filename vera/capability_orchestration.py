@@ -10452,15 +10452,31 @@ async def topology_snapshot(trace_id=None) -> Dict:
 
 @capability("ollama.instances", memory="off", silent=True,
             http_method="GET", http_path="/ollama/instances", http_tags=["ollama"],
-            description="Live status of all Ollama cluster nodes.")
+            contract={"presentation": {"kind": "table", "form": "table"}},
+            description="Live status of all Ollama cluster nodes. Output: {instance_id: {url,status,models,in_use,latency_ms,has_gpu,num_thread,...}} - num_thread is what a request to the node carries (0 = none: a GPU node).")
 async def cap_ollama_instances(trace_id=None):
+    # The one registration of ollama.instances (D11 a): capabilities.py's copy,
+    # which added num_thread and the /ollama/cluster mount, is folded in here.
+    def _nt(i):
+        return _node_threads_core.threads_for(
+            has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
+            default=_CPU_NODE_THREADS)
     return {iid:{"url":i["url"],"label":i["label"],"has_gpu":i["has_gpu"],
                  "enabled":i.get("enabled", True),
                  "status":i["status"],"latency_ms":i["latency_ms"],"models":i["models"],
                  "in_use":i["in_use"],"errors":i["errors"],"last_check":i["last_check"],
+                 "num_thread":_nt(i),
                  "num_ctx":i.get("num_ctx", 4096),
+                 # a node switched to vLLM: served by that server (status is its)
                  "backend":i.get("backend", "ollama"),"served_by":i.get("served_by", "")}
             for iid,i in OLLAMA_INSTANCES.items()}
+
+
+async def _ollama_cluster_get_alias():
+    """GET /ollama/cluster - the path capabilities.py's (removed) copy of
+    ollama.instances was mounted at; the dream panel and the docs still use it.
+    Registered on APP right after APP is created (APP does not exist yet here)."""
+    return await cap_ollama_instances()
 
 @capability("ollama.add_instance", memory="off",
             http_method="POST", http_path="/ollama/instances/add", http_tags=["ollama"],
@@ -12823,6 +12839,9 @@ def _mount_all_http_routes(app: FastAPI):
 
 APP = FastAPI(title="Vera Orchestrator", version="3.0", lifespan=lifespan)
 APP.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# ollama.instances is mounted at /ollama/instances; /ollama/cluster answers the same (see the cap)
+APP.add_api_route("/ollama/cluster", _ollama_cluster_get_alias, methods=["GET"],
+                  tags=["ollama"], include_in_schema=False)
 
 @APP.get("/ui/elements/research_card.js", include_in_schema=False)
 async def _serve_research_card_js():
