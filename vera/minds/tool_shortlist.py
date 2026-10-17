@@ -379,6 +379,87 @@ async def run_replay(night: str = "") -> Dict[str, Any]:
     return snap
 
 
+# ── FM-3.3 'on' (owner, 17 Oct): the chat agent reaches every SAFE capability through a shortlist ───────────────────
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import chat_caps_core as _CC
+except Exception:                        # worktree / app-free import
+    from vera.minds import chat_caps_core as _CC   # type: ignore
+_SAFE: Dict[str, Any] = {"at": 0.0, "cat": {}}
+SAFE_TTL_S = 600
+CHAT_RERANK_POOL = 40
+CHAT_RERANK_TIMEOUT_S = 0.6
+
+
+def safe_catalogue() -> Dict[str, Dict[str, Any]]:
+    """The safe capabilities (chat_caps_core.safe), rebuilt every 10 min."""
+    if not _SAFE["cat"] or time.time() - _SAFE["at"] > SAFE_TTL_S:
+        _SAFE.update(cat=_CC.catalogue(dict(CAPABILITY_REGISTRY)), at=time.time())
+    return _SAFE["cat"]
+
+
+async def _chat_mode(minds: Optional[Dict[str, Any]] = None) -> str:
+    try:
+        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        if eff:
+            return str((((await eff(minds=minds or None)) or {}).get("modes") or {}).get("tools.shortlist.chat")
+                       or "legacy")
+    except Exception as e:
+        log.debug("chat shortlist mode: %s", e)
+    return "legacy"
+
+
+@capability(
+    "caps.chat_shortlist", http_method="POST", http_path="/caps/chat_shortlist", http_tags=["minds", "caps"],
+    contract=_MC.contract("tool.shortlist.chat", effects=["read", "model"], idempotency="idempotent"),
+    memory="off", silent=True,
+    description="The capabilities a chat agent should be offered for a message, from every SAFE capability (four-minds "
+                "FM-3.3; switch tools.shortlist.chat=on): what similar past steps used and the keyword scorer over the "
+                "safe catalogue, fused, the head reordered by the cross-encoder when it answers within 0.6 s. Safe = "
+                "exposed, read / network / model effects with no approval (or a lookup-like name when none are "
+                "declared), never shells, secrets, deploys or system controls. Inputs: text (str!), k (int=24, max "
+                "40), force (bool - answer whatever the switch says, for a check). Output: {mode, tools: [{name, "
+                "score, by}], safe_total, reranked, ms}.",
+)
+async def cap_caps_chat_shortlist(text: str = "", k: int = 24, force: bool = False, minds: Optional[Dict[str, Any]] = None,
+                                  trace_id=None) -> Dict[str, Any]:
+    t0 = time.monotonic()
+    mode = await _chat_mode(minds)
+    if mode != "on" and not force:
+        return {"mode": mode, "tools": []}
+    q = str(text or "").strip()
+    if not q:
+        return {"mode": mode, "tools": [], "error": "text is required"}
+    k = max(1, min(40, int(k or 24)))
+    cat = safe_catalogue()
+    lists: Dict[str, List[str]] = {}
+    try:
+        knn = await cap_caps_shortlist(text=q, k=30)
+        lists["past_steps"] = [t["name"] for t in knn.get("tools") or []]
+    except Exception as e:
+        log.debug("chat shortlist knn: %s", e)
+    lists["keywords"] = await asyncio.to_thread(TC.lexical_ranking, q, cat, 60)
+    fused = _CC.fuse(lists, cat, max(k, CHAT_RERANK_POOL))
+    reranked = False
+    rr = (CAPABILITY_REGISTRY.get("nlp.rerank") or {}).get("func")
+    if rr and len(fused) > 1:
+        names = [f["name"] for f in fused]
+        try:
+            res = await asyncio.wait_for(rr(query=q[:500], documents=[_CC.card(n, cat[n]) for n in names]),
+                                         CHAT_RERANK_TIMEOUT_S)
+            order = [names[int(x["index"])] for x in (res or {}).get("ranked") or []
+                     if 0 <= int(x.get("index", -1)) < len(names)]
+            if order:
+                pos = {n: i for i, n in enumerate(order)}
+                fused.sort(key=lambda f: pos.get(f["name"], len(order)))
+                for f in fused:
+                    f["by"] += "+rerank"
+                reranked = True
+        except Exception as e:
+            log.debug("chat shortlist rerank: %s", e)
+    return {"mode": mode, "tools": fused[:k], "safe_total": len(cat), "reranked": reranked,
+            "ms": int((time.monotonic() - t0) * 1000)}
+
+
 try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import chat_tools_core as _CT
 except Exception:                        # worktree / app-free import

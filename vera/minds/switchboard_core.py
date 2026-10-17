@@ -147,11 +147,13 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "message, started when the turn arrives and never awaited before the model - a 'sense / frame' phase records "
        "its domain and when it landed, so the turn record shows how often it is ready before the first token. "
        "'off' (default) = no frame; 'on' = framed. Exit: TTFT p95 unchanged (it waits for nothing)."),
-    _f("tools.shortlist.chat", ("legacy", "shadow"), "chat", "FM-3.3",
-       "Which tools a chat turn is offered. 'legacy' (default) = the page's own word scoring only; 'shadow' = also "
-       "caps.shortlist on the user's words, started with the turn and never awaited, recorded after the reply beside "
-       "the page's list and what the reply used (caps.shortlist.chat_report: recall@16/24/28). 'on' (the server's "
-       "list offered to the model) comes after the shadow shows a gain and needs the page to take it."),
+    _f("tools.shortlist.chat", ("legacy", "shadow", "on"), "chat", "FM-3.3",
+       "Which tools a chat turn is offered. 'legacy' (default) = the page's own word scoring of the agent's own list "
+       "only; 'shadow' = also caps.shortlist on the user's words, started with the turn and never awaited, recorded "
+       "after the reply beside the page's list and what the reply used (caps.shortlist.chat_report: recall@16/24/28); "
+       "'on' (owner, 17 Oct) = the page asks caps.chat_shortlist before the turn and offers the model the most fitting "
+       "SAFE capabilities from the whole catalogue (read / network / model effects, no approval; never shells, "
+       "secrets, deploys or system controls) beside the agent's own list - recorded the same way."),
     _f("memory.text_index", ("like", "fts"), "memory", "FM-7.1",
        "memory.seek's keyword leg. 'like' (default) = text ILIKE per word over fabric_records (a sequential scan that "
        "keeps the first rows matching any word, p95 2.2 s on prod 11 Oct); 'fts' = a GIN full-text index "
