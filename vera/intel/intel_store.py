@@ -223,6 +223,14 @@ class IntelStore:
         with self._conn() as c:
             return int(c.execute("SELECT COUNT(*) FROM reports").fetchone()[0])
 
+    def record_family_counts(self) -> Dict[str, int]:
+        """Exact content-free counts without materialising stored JSON records."""
+        tables = ("topics", "signals", "snapshots", "reports", "actions",
+                  "deliveries", "decisions", "outcomes", "kv")
+        with self._conn() as c:
+            return {table: int(c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+                    for table in tables}
+
     def update_report(self, rid: str, **fields: Any) -> None:
         d = self.get_report(rid)
         if not d:

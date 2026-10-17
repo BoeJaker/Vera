@@ -3020,24 +3020,25 @@ async def cap_records(limit: int = 200, trace_id=None):
         "fabric_delivery_successes_sampled": len(fabric_delivered),
         "memory": {
             "delivery_successes_sampled": len(memory_delivered),
-            "projection_receipts": 0,
+            "projection_identity_available": False,
             "status": "delivery_evidence_only" if memory_delivered else "no_successful_delivery_in_window",
             "reason": "native_delivery_log_retains_no_projection_identity",
         },
     })
 
     families = intel_records.family_contracts()
-    native_samples = {
-        "topics": len(st.topics()),
-        "snapshots": len(st.snapshots(limit=limit)),
-        "decisions_outcomes": len(st.decisions(limit=limit)),
-        "actions_deliveries": len(st.actions(limit=limit)) + len(st.deliveries(limit=limit)),
-        "configuration": 1 if st.get_kv("config") is not None else 0,
+    counts = st.record_family_counts()
+    native_counts = {
+        "topics": counts["topics"],
+        "signals": counts["signals"],
+        "snapshots": counts["snapshots"],
+        "reports": counts["reports"],
+        "decisions_outcomes": counts["decisions"] + counts["outcomes"],
+        "actions_deliveries": counts["actions"] + counts["deliveries"],
+        "configuration": counts["kv"],
     }
     for family in families:
-        family["native_sampled"] = (len(signals) if family["id"] == "signals"
-                                     else len(reports) if family["id"] == "reports"
-                                     else native_samples.get(family["id"], 0))
+        family["native_count"] = native_counts.get(family["id"], 0)
     return intel_records.result_envelope(
         families=families,
         reconciliation={"signals": signal_recon, "reports": report_recon},

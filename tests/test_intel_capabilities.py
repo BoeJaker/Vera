@@ -363,13 +363,16 @@ def test_record_reconciliation_matches_only_real_fabric_and_delivery_evidence(tm
     assert reports["fabric_delivery_successes_sampled"] == 1
     assert reports["memory"] == {
         "delivery_successes_sampled": 1,
-        "projection_receipts": 0,
+        "projection_identity_available": False,
         "status": "delivery_evidence_only",
         "reason": "native_delivery_log_retains_no_projection_identity",
     }
     families = {row["id"]: row for row in result["families"]}
     assert families["reports"]["portable_record"]["status"] == "not_revision_backed"
     assert families["decisions_outcomes"]["shared_contract"] == "four_minds.decision_outcome"
+    assert families["signals"]["native_count"] == 2
+    assert families["reports"]["native_count"] == 2
+    assert families["actions_deliveries"]["native_count"] == 122
 
 
 def test_record_reconciliation_reports_fabric_failure_without_fabricating_missing_rows(tmp_path):
