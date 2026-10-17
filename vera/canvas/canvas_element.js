@@ -4037,8 +4037,9 @@
         const kind = this._kindOf(c, key); let ksz = null;
         if (!user && !msz && kind) { const FR = D.freeRegion ? D.freeRegion(R, desk, W < 760 ? 46 : 170) : { l: 8, r: W - 8 }; const FW = Math.max(240, FR.r - FR.l - 16);
           if (kind === 'chart') ksz = { w: Math.max(Math.min(FW, 480), FW - (listOpen ? 470 : 0)), h: Math.round(Math.max(340, Math.min(600, H * 0.5))) };
-          else if (kind === 'table') { const tb = c.querySelector('.it-bd table'); const tw = tb ? tb.scrollWidth : 0, th = tb ? tb.scrollHeight : 0;
-            ksz = tw ? { w: Math.round(Math.max(300, Math.min(FW, tw + 28))), h: Math.round(Math.max(160, Math.min(H * 0.7, th + 64))) } : { w: Math.round(Math.min(FW, 560)), h: Math.round(Math.min(H * 0.55, 380)) }; }
+          /* a table by its columns and rows (it stretches to its card, so its own width says nothing): about 120 px a column, 26 a row */
+          else if (kind === 'table') { const tb = c.querySelector('.it-bd table'); const nc = tb && tb.rows[0] ? tb.rows[0].cells.length : 0, nr = tb ? tb.rows.length : 0;
+            ksz = nc ? { w: Math.round(Math.max(300, Math.min(FW, nc * 120 + 40))), h: Math.round(Math.max(160, Math.min(H * 0.7, nr * 26 + 70))) } : { w: Math.round(Math.min(FW, 560)), h: Math.round(Math.min(H * 0.55, 380)) }; }
           else if (kind === 'list') ksz = { w: Math.round(Math.max(380, Math.min(520, FW * 0.32))), h: Math.round(Math.max(380, Math.min(H - 16, H * 0.75))) }; }
         const so = { size: user || msz || ksz, pinned: (!!user && c.classList.contains('pinned')) || (!user && !!msz), icon: p[2] === 'icon' };
         const po = D.pushOut(R, p[0], p[1], (xx, yy) => D.sizeAt(R, xx, yy, so, desk), desk);
@@ -4060,7 +4061,7 @@
         const nwm = user || kind === 'chart' || kind === 'table' ? null : (this._natW || {})[key]; const nw = kind === 'chart' || kind === 'table' ? null : nwm ? Math.min(nw0 || Infinity, nwm) : (user ? null : nw0);
         /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
         const mh = (this._minH || {})[key];
-        const o = { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || undefined, minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
+        const o = { c, id: key, so, x: po.x, y: po.y, w: Math.min(W - 16, po.size.w, nw || Infinity), h: Math.max(Math.min(H - 8, mh || 0), Math.min(H - 8, po.size.h, nat || Infinity)), face0: po.size.face, maxH: nat || undefined, maxW: nw || (kind === 'table' && ksz ? ksz.w : undefined),   /* a table no wider than its columns need, whatever the fill */ minH: mh || undefined, stay: !!userAt(key), own: !!user /* a size the person gave: kept while it moves, never grown (WSU-74) */ };
         /* held (U4): a card the arrangement placed starts where it is now, at the size it has; one the person put somewhere
            (userAt) has its own place already */
         /* a card shorter than its mode's cell (fitted to what it holds) keeps the cell's top - no gap above it */
