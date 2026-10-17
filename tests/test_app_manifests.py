@@ -123,3 +123,20 @@ def test_an_action_says_what_it_does_and_how_a_removal_is_put_back():
     assert ("error", "action.effect") in issues(dict(base, effect="explode"))
     assert ("error", "action.undo_args") in issues(dict(base, undo="a.b.add", undo_args="k"))
     assert ("warning", "action.undo_args.orphan") in issues(dict(base, undo_args={"k": "v"}))
+
+
+def test_a_composite_names_its_parts_and_lays_them_out():
+    # DA-07a: read is a list of {as, cap}; view.layout one the window draws; each part names a read
+    reads = [{"as": "quote", "cap": "markets.quote"}, {"as": "chart", "cap": "markets.chart"}]
+    def got(view, read=reads):
+        m = {"id": "markets.symbolx", "panel": "markets", "title": "Symbol", "read": read, "view": dict({"kind": "composite"}, **view)}
+        return {(p["level"], p["code"]) for p in A.check_manifest(m, "f.json")}
+    assert got({"layout": "dashboard", "parts": [{"from": "quote", "kind": "metric", "title": "Price"}, {"from": "chart", "kind": "series"}]}) == set()
+    assert got({}) == set()   # layout and parts are optional: a dashboard of every read
+    assert ("error", "view.composite.read") in got({}, read={"cap": "markets.quote"})
+    assert ("error", "view.layout") in got({"layout": "grid"})
+    assert ("error", "view.parts") in got({"parts": "quote"})
+    assert ("error", "view.parts.from") in got({"parts": [{"kind": "metric"}]})
+    assert ("error", "view.parts.unknown") in got({"parts": [{"from": "news"}]})
+    assert ("error", "view.parts.kind") in got({"parts": [{"from": "quote", "kind": "receipt"}]})
+    assert ("warning", "view.layout.split") in got({"layout": "split"}, read=reads + [{"as": "news", "cap": "info.seek"}])

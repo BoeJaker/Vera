@@ -27,6 +27,7 @@ WHERE = ("header", "row", "menu")
 PATCH = ("row", "replace", "append")
 EFFECTS = ("remove", "create", "update")   # what an action does to its rows (DA-08a)
 SIZES = ("s", "m", "l", "xl")
+LAYOUTS = ("dashboard", "tabs", "split", "stack")   # how a composite's parts are laid out (DA-07a)
 SETTING_TYPES = ("multi", "select", "toggle", "number", "text")
 TEMPLATE = re.compile(r"\{([a-zA-Z_][\w.]*)\}")
 
@@ -118,6 +119,28 @@ def check_manifest(m: Any, file: str = "", caps: Optional[Iterable[str]] = None,
                 _p(out, file, app, "error", "read.refresh", "%s.refresh.every_s is a positive number of seconds" % where)
             elif every < 5:
                 _p(out, file, app, "warning", "read.refresh.fast", "%s refreshes every %ss - at least 5 s" % (where, every))
+    # a composite (DA-07a): its reads are a list, its layout one the window draws, each part names one of the reads
+    if kind == "composite":
+        if read is not None and not isinstance(read, list):
+            _p(out, file, app, "error", "view.composite.read", "a composite view reads a list of parts (read: [{as, cap, args}])")
+        if view.get("layout") is not None and view["layout"] not in LAYOUTS:
+            _p(out, file, app, "error", "view.layout", "view.layout is one of %s" % (LAYOUTS,))
+        parts = view.get("parts")
+        if parts is not None:
+            if not isinstance(parts, list):
+                _p(out, file, app, "error", "view.parts", "view.parts is a list of {from, kind?, title?}")
+            else:
+                for i, part in enumerate(parts):
+                    frm = part.get("from") if _is_obj(part) else None
+                    if not isinstance(frm, str) or not frm:
+                        _p(out, file, app, "error", "view.parts.from", "view.parts[%d].from names a read (its `as`)" % i)
+                    elif isinstance(read, list) and frm not in seen_as:
+                        _p(out, file, app, "error", "view.parts.unknown", "view.parts[%d].from %r is no read's `as`" % (i, frm))
+                    pk = part.get("kind") if _is_obj(part) else None
+                    if pk is not None and (pk not in PRESENTATION_KINDS or pk in ("receipt", "job", "composite")):
+                        _p(out, file, app, "error", "view.parts.kind", "view.parts[%d].kind %r is not a kind a part draws" % (i, pk))
+        if view.get("layout") == "split" and isinstance(read, list) and len(parts if isinstance(parts, list) else read) != 2:
+            _p(out, file, app, "warning", "view.layout.split", "a split shows two parts side by side")
     live = m.get("live")
     if live is not None:
         if not _is_obj(live) or not isinstance(live.get("event"), str) or not live.get("event"):
