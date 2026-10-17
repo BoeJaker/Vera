@@ -49,6 +49,11 @@ MARKERS = {
     # the host's home directory (~/.something config): a node has its own,
     # without the host's file in it (2026-10-09: exec.sandbox.get)
     "home_fs": re.compile(r"expanduser\(|Path\.home\(\)"),
+    # decrypts a stored secret: platform_access resolves references through
+    # the platforms module's in-process copy, and vsecrets.open_secret needs
+    # the host's master key - a node has neither (2026-10-17 batch 6: ha /
+    # n8n / proxmox caps cleared by every other rule)
+    "opens_secret": re.compile(r"\b(?:open_any(?:_sync)?|open_value(?:_sync)?|open_secret|target_fields|secret_value)\("),
 }
 
 
