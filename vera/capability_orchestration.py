@@ -12524,6 +12524,7 @@ async def lifespan(app: FastAPI):
         # canvas/, widgets/, web/, fabric/, markets/ and dag/ (caps.search), which it
         # calls through the registry.
         os.path.join(_here, "canvas/enrich_capabilities.py"),
+        os.path.join(_here, "canvas/engagement.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any
