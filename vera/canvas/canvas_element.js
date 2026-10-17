@@ -6263,8 +6263,11 @@
       if (eff === 'create') ui.before = new Set((st.rows || []).map((x) => appRowKey(st, x)));
       if (eff === 'remove' && rk) (ui.gone || (ui.gone = {}))[rk] = true;
       ui.undo = null; st.acting = true; ui.form = null; ui.confirm = null; ui.msg = { ok: true, text: a.label + '…' }; this._appDraw(key);
-      let res = null; try { res = await this.callResult(a.cap, appActArgs(a, row, appArgs, vals)); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
-      st.acting = false; ui.msg = { ok: !(res && (res.ok === false || res.error)), text: appActText(a, res) };
+      /* a long action says how it goes in the bar - its latest step (DA-04c (e)) */
+      const tr = await this._traceSteps((m) => { if (!st.acting) return; const s = [m.stage, m.total ? (m.done || 0) + ' of ' + m.total : '', m.found != null ? m.found + ' found' : ''].filter(Boolean).join(' · ');
+        ui.msg = { ok: true, text: a.label + '… ' + s }; this._appDraw(key); });
+      let res = null; try { res = await this.callResult(a.cap, appActArgs(a, row, appArgs, vals), { trace: tr.tid }); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      tr.close(); st.acting = false; ui.msg = { ok: !(res && (res.ok === false || res.error)), text: appActText(a, res) };
       if (!ui.msg.ok) { if (rk && ui.gone) delete ui.gone[rk]; ui.before = null; return this._appDraw(key); }
       if (res && res.changed && typeof res.changed === 'object' && row) { Object.assign(row, res.changed); (ui.hl || (ui.hl = {}))[rk] = Date.now(); }
       if (eff === 'remove' && row && a.undo) ui.undo = { a, row: Object.assign({}, row), until: Date.now() + 10000 };
@@ -6806,7 +6809,11 @@
          again; its width and height stay (kept in the entry, so a reload keeps them too) */
       if (act === 'desk-auto') { const u = this._deskPosGet()[key]; this._deskPosSet(key, u && u.w > 0 && u.h > 0 ? { w: u.w, h: u.h, face: u.face, free: true } : null); this._holdEnd(); return this._placeNow(); }
       if (act === 'layer-behind' || act === 'layer-front') return this.setLayer(key, this._layer[key] === act.slice(6) ? '' : act.slice(6));
-      if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
+      if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026';
+        /* its steps on this item while it runs, as a chat call's run item (DA-04c (e)); the answer replaces them */
+        const run = { state: 'running', started: Date.now() };
+        return this._traceSteps((m) => { ['stage', 'done', 'total', 'found', 'text'].forEach((k) => { if (m[k] != null && m[k] !== '') run[k] = m[k]; }); this.liveUpdate(key, { running: true, run: Object.assign({}, run) }); })
+          .then((tr) => this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }, { trace: tr.tid }).finally(() => { tr.close(); if (run.stage) { this.liveUpdate(key, { running: false }); this.liveDone(key); } })); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
       // these are the shelves those items went to, so they carry their own act rather than sharing one.
       if (act === 'hid' || act === 'parkpop' || act === 'rmvpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
@@ -7346,9 +7353,17 @@
       });
     }
     /* the bridge, asked for its answer (panel.query · panel.dispatch · ui.panels.open): the same /mcp/call, the reply back */
-    async callResult(name, args) {
+    /* A DESK CALL'S STEPS (DA-04c (e)): a call made from the desk carries a trace of its own; the `<cap>.step` events on it
+       (the page's live channel, VeraLive) go to onStep. close() lets go a moment after the answer (a step may trail it). */
+    async _traceSteps(onStep) {
+      const tid = 't-desk-' + Date.now().toString(36) + '-' + (this._tn = (this._tn || 0) + 1); let sub = null; const L = root.VeraLive;
+      try { if (L && typeof L.subscribe === 'function') { sub = L.subscribe({ trace: [tid] }, (m) => { const t = String((m && (m.event || m.type)) || ''); if (/\.step$/.test(t)) { try { onStep(m); } catch (e) { /* a step it cannot show */ } } });
+        if (typeof L.ready === 'function') await L.ready(400); } } catch (e) { sub = null; }
+      return { tid, close: () => { if (sub) setTimeout(() => { try { sub.close(); } catch (e) { /* gone */ } }, 1500); } };
+    }
+    async callResult(name, args, opts) {
       const base = (window._veraBase || '').replace(/\/$/, '');
-      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) }); const j = await r.json(); return unwrap(j); }
+      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name, arguments: args || {} }, opts && opts.trace ? { trace_id: opts.trace } : {})) }); const j = await r.json(); return unwrap(j); }
       catch (e) { return { ok: false, error: String(e && e.message || e) }; }
     }
     /* the bridge asked from an item: the readout on the item, the reply to the host */
@@ -8049,11 +8064,11 @@
     _switch(id) { id = String(id || ''); if (!id) return; this._open = new Set(); this._px = {}; this._pw = {}; this._editKey = null; this.setAttribute('canvas-id', id); this._railMark(); try { this.dispatchEvent(new CustomEvent('vera:canvas:switch', { bubbles: true, detail: { id } })); } catch (e) {} }
     /* Every per-item action is the capability the chat and the model use — one implementation — through the
        same /mcp/call the chat uses; the element only asks for a repaint afterwards. */
-    async call(name, args) {
+    async call(name, args, opts) {
       const base = (window._veraBase || '').replace(/\/$/, '');
       try {
         await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, arguments: Object.assign({ id: this.canvasId }, args || {}) }) });
+          body: JSON.stringify(Object.assign({ name, arguments: Object.assign({ id: this.canvasId }, args || {}) }, opts && opts.trace ? { trace_id: opts.trace } : {})) });
       } catch (e) { /* the poll shows whatever state the backend has */ }
       this._rev = null;
       this.refresh();
