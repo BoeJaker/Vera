@@ -33,6 +33,8 @@ import sys
 import time
 import uuid
 from datetime import datetime, timezone
+from datetime import timedelta as _timedelta
+import os
 from pathlib import Path as _Path
 from typing import Dict, List, Optional
 
@@ -53,6 +55,8 @@ try:
     HAS_CCXT = True
 except Exception:                              # pragma: no cover
     HAS_CCXT = False
+
+from Vera.vera.markets import broker_guard_core as _bg
 
 try:
     from Vera.vera.security import secrets as vsecrets
@@ -488,6 +492,14 @@ def _new_job(ex_id: str, symbol: str, timeframes: List[str], full: bool) -> dict
 # ─────────────────────────────────────────────────────────────────────────────
 # Broker (real exchange) accounts — keys sealed at rest, read-only by default
 # ─────────────────────────────────────────────────────────────────────────────
+# Columns added for the real-money guard (broker_guard_core): arming, expiry,
+# limits. Added in place so existing rows keep their keys; a row from before
+# arming has no trade_until and therefore counts as not armed.
+_BROKER_GUARD_COLUMNS = (("trade_until", "TEXT"), ("arm_hash", "TEXT"), ("arm_expires", "TEXT"),
+                         ("max_order_amount", "REAL"), ("max_order_notional", "REAL"),
+                         ("max_daily_notional", "REAL"), ("symbols", "TEXT"))
+
+
 def _ensure_broker_table_sync():
     conn = _sqlite_conn()
     try:
@@ -496,7 +508,89 @@ def _ensure_broker_table_sync():
             "id TEXT PRIMARY KEY, exchange TEXT, label TEXT, "
             "k_key TEXT, k_secret TEXT, k_password TEXT, "
             "can_trade INTEGER DEFAULT 0, created_at TEXT)")
+        have = {r[1] for r in conn.execute("PRAGMA table_info(mkt_broker)").fetchall()}
+        for col, typ in _BROKER_GUARD_COLUMNS:
+            if col not in have:
+                conn.execute(f"ALTER TABLE mkt_broker ADD COLUMN {col} {typ}")
+        # Every real order attempt, keyed by its idempotency id.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mkt_broker_orders ("
+            "client_order_id TEXT PRIMARY KEY, account_id TEXT, day TEXT, symbol TEXT, "
+            "side TEXT, type TEXT, amount REAL, price REAL, notional REAL, status TEXT, "
+            "broker_order_id TEXT, error TEXT, result TEXT, created_at TEXT, updated_at TEXT)")
+        conn.execute("CREATE INDEX IF NOT EXISTS mkt_broker_orders_day "
+                     "ON mkt_broker_orders(account_id, day)")
         conn.commit()
+    finally:
+        conn.close()
+
+
+def _broker_update_sync(bid: str, fields: dict):
+    _ensure_broker_table_sync()
+    allowed = {"can_trade", "trade_until", "arm_hash", "arm_expires", "max_order_amount",
+               "max_order_notional", "max_daily_notional", "symbols"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    conn = _sqlite_conn()
+    try:
+        conn.execute("UPDATE mkt_broker SET " + ", ".join(f"{k}=?" for k in sets) + " WHERE id=?",
+                     (*sets.values(), bid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _order_get_sync(coid: str):
+    _ensure_broker_table_sync()
+    conn = _sqlite_conn()
+    try:
+        r = conn.execute("SELECT * FROM mkt_broker_orders WHERE client_order_id=?", (coid,)).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+
+def _order_put_sync(rec: dict):
+    """Insert a new attempt (status 'submitting'); False when the id already exists."""
+    _ensure_broker_table_sync()
+    conn = _sqlite_conn()
+    try:
+        cur = conn.execute(
+            "INSERT OR IGNORE INTO mkt_broker_orders (client_order_id, account_id, day, symbol, side, "
+            "type, amount, price, notional, status, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (rec["client_order_id"], rec["account_id"], rec["day"], rec["symbol"], rec["side"],
+             rec["type"], rec["amount"], rec.get("price"), rec.get("notional"), "submitting",
+             rec["created_at"], rec["created_at"]))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
+def _order_finish_sync(coid: str, status: str, broker_order_id: str = "", error: str = "",
+                       result: Optional[dict] = None):
+    conn = _sqlite_conn()
+    try:
+        conn.execute("UPDATE mkt_broker_orders SET status=?, broker_order_id=?, error=?, result=?, "
+                     "updated_at=? WHERE client_order_id=?",
+                     (status, broker_order_id, error[:500], json.dumps(result or {})[:4000],
+                      datetime.now(timezone.utc).isoformat(), coid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _day_notional_sync(bid: str, day: str) -> float:
+    """Notional of today's orders that went out or may have (failed ones excluded)."""
+    _ensure_broker_table_sync()
+    conn = _sqlite_conn()
+    try:
+        r = conn.execute("SELECT COALESCE(SUM(notional),0) FROM mkt_broker_orders "
+                         "WHERE account_id=? AND day=? AND status IN ('submitting','placed','unknown')",
+                         (bid, day)).fetchone()
+        return float(r[0] or 0)
     finally:
         conn.close()
 
@@ -540,17 +634,6 @@ def _broker_del_sync(bid: str):
     conn = _sqlite_conn()
     try:
         conn.execute("DELETE FROM mkt_broker WHERE id=?", (bid,))
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def _broker_set_trade_sync(bid: str, can: bool):
-    _ensure_broker_table_sync()
-    conn = _sqlite_conn()
-    try:
-        conn.execute("UPDATE mkt_broker SET can_trade=? WHERE id=?",
-                     (1 if can else 0, bid))
         conn.commit()
     finally:
         conn.close()
@@ -652,6 +735,20 @@ def _prov_positions(row: dict):
     return out, {"free": float(acct.get("cash") or 0), "total": float(acct.get("equity") or 0)}
 
 
+def _prov_quote(row: dict, symbol: str) -> Optional[float]:
+    """A live last price for a market order's notional check, or None when the
+    provider has no cheap quote (the guard then refuses a capped market order)."""
+    kind, _ = _prov_info(row["exchange"])
+    if kind != "ccxt":
+        return None
+    try:
+        t = _broker_exchange(row).fetch_ticker(symbol) or {}
+        p = t.get("last") or t.get("close") or t.get("ask")
+        return float(p) if p else None
+    except Exception:
+        return None
+
+
 def _prov_order(row: dict, symbol: str, side: str, otype: str, amount: float, price: float):
     kind, base = _prov_info(row["exchange"])
     if kind == "ccxt":
@@ -751,13 +848,24 @@ if _CAP_AVAILABLE:
         "markets.broker.list", http_method="GET", http_path="/markets/broker/list",
         http_tags=["markets"], memory="off", silent=True,
         description="List linked broker accounts (keys never returned). "
-                    "Output: {accounts:[{id,exchange,label,can_trade,created_at}]}.",
+                    "can_trade is true only while trading is armed and unexpired. "
+                    "Output: {accounts:[{id,exchange,label,can_trade,trade_until,limits,created_at}]}.",
     )
     async def cap_broker_list(trace_id=None) -> dict:
         rows = await asyncio.get_running_loop().run_in_executor(None, _broker_rows_sync)
-        return {"accounts": [{"id": r["id"], "exchange": r["exchange"],
-                              "label": r["label"], "can_trade": bool(r["can_trade"]),
-                              "created_at": r["created_at"]} for r in rows]}
+        now = datetime.now(timezone.utc)
+        out = []
+        for r in rows:
+            lim = _bg.Limits.from_row(r)
+            active = bool(r.get("can_trade")) and _bg.trading_active(r.get("trade_until"), now)
+            out.append({"id": r["id"], "exchange": r["exchange"], "label": r["label"],
+                        "can_trade": active, "trade_until": r.get("trade_until") if active else None,
+                        "limits": {"max_order_amount": lim.max_order_amount,
+                                   "max_order_notional": lim.max_order_notional,
+                                   "max_daily_notional": lim.max_daily_notional,
+                                   "symbols": list(lim.symbols)},
+                        "created_at": r["created_at"]})
+        return {"accounts": out}
 
     @capability(
         "markets.broker.unlink", http_method="POST", http_path="/markets/broker/unlink",
@@ -793,35 +901,141 @@ if _CAP_AVAILABLE:
         return {"ok": True, "exchange": row["exchange"], "label": row["label"],
                 "balances": balances, "cash": cash}
 
+    async def _deliver_arm_code(row: dict, code: str) -> list:
+        """Send the code where a remote caller cannot read it: Telegram, and a 0600
+        file on the host. Returns the channels that took it."""
+        sent = []
+        tg = sys.modules.get("telegram_capabilities")
+        if tg and hasattr(tg, "tg_notify"):
+            try:
+                await tg.tg_notify(text=(f"Arm code for REAL trading on {row['exchange']} "
+                                         f"[{row['label']}]: {code} (valid 10 min, single use)"))
+                sent.append("telegram")
+            except Exception:
+                pass
+        try:
+            from Vera.vera import state_paths as _sp
+            p = _sp.state_dir("markets") / f"broker-arm-{row['id']}.txt"
+            fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(f"{code}\n")
+            sent.append(f"file:{p}")
+        except Exception as e:
+            log.warning("broker arm code file write failed: %s", e)
+        return sent
+
+    @capability(
+        "markets.broker.arm", http_method="POST", http_path="/markets/broker/arm",
+        http_tags=["markets"], memory="off",
+        description="Start enabling REAL trading on a linked account: sends a 6-digit arm code "
+                    "out of band (Telegram, and a 0600 file on the Vera host). The code is never "
+                    "returned here. Pass it to markets.broker.set_trading or markets.broker.limits.set "
+                    "within 10 minutes. Input: id (str!). Output: {ok, sent_to, expires_at}.",
+    )
+    async def cap_broker_arm(id: str = "", trace_id=None) -> dict:
+        if not id:
+            return {"error": "id required"}
+        loop = asyncio.get_running_loop()
+        row = await loop.run_in_executor(None, _broker_get_sync, id)
+        if not row:
+            return {"error": "no such account"}
+        code = _bg.new_arm_code()
+        expires = (datetime.now(timezone.utc) + _timedelta(seconds=_bg.ARM_TTL_S)).isoformat()
+        await loop.run_in_executor(None, _broker_update_sync, id,
+                                   {"arm_hash": _bg.hash_code(code, id), "arm_expires": expires})
+        sent = await _deliver_arm_code(row, code)
+        if not sent:
+            await loop.run_in_executor(None, _broker_update_sync, id, {"arm_hash": None, "arm_expires": None})
+            return {"error": "no out-of-band channel took the arm code (Telegram and the host file both failed)"}
+        await emit_event({"type": "markets.broker", "stage": "arm", "exchange": row["exchange"],
+                          "account": id, "sent_to": [s.split(":", 1)[0] for s in sent]})
+        return {"ok": True, "id": id, "sent_to": [s.split(":", 1)[0] for s in sent], "expires_at": expires}
+
+    async def _consume_arm(row: dict, code: str) -> Optional[str]:
+        """None when the code is right and unexpired (and it is then spent); else the error."""
+        loop = asyncio.get_running_loop()
+        now = datetime.now(timezone.utc)
+        if not _bg.trading_active(row.get("arm_expires"), now):
+            return "no arm code pending or it expired: call markets.broker.arm first"
+        if not _bg.verify_code(row.get("arm_hash"), code, row["id"]):
+            return "wrong arm code"
+        await loop.run_in_executor(None, _broker_update_sync, row["id"], {"arm_hash": None, "arm_expires": None})
+        return None
+
     @capability(
         "markets.broker.set_trading", http_method="POST",
         http_path="/markets/broker/set_trading", http_tags=["markets"], memory="on",
-        description="Enable or disable REAL order placement on a linked account "
-                    "(off by default). Input: id (str!), enabled (bool). "
-                    "Output: {ok, can_trade}.",
+        redact_args=["arm_code"],
+        description="Enable or disable REAL order placement on a linked account (off by default). "
+                    "Enabling needs the arm code from markets.broker.arm and lasts `hours` "
+                    "(default 8, max 24), then expires. Disabling needs no code. Input: id (str!), "
+                    "enabled (bool), arm_code (str, required to enable), hours (float). "
+                    "Output: {ok, can_trade, trade_until}.",
     )
-    async def cap_broker_set_trading(id: str = "", enabled: bool = False,
-                                     trace_id=None) -> dict:
+    async def cap_broker_set_trading(id: str = "", enabled: bool = False, arm_code: str = "",
+                                     hours: float = _bg.DEFAULT_TRADE_HOURS, trace_id=None) -> dict:
         if not id:
             return {"error": "id required"}
-        await asyncio.get_running_loop().run_in_executor(
-            None, _broker_set_trade_sync, id, bool(enabled))
-        return {"ok": True, "id": id, "can_trade": bool(enabled)}
+        loop = asyncio.get_running_loop()
+        row = await loop.run_in_executor(None, _broker_get_sync, id)
+        if not row:
+            return {"error": "no such account"}
+        if not enabled:
+            await loop.run_in_executor(None, _broker_update_sync, id, {"can_trade": 0, "trade_until": None})
+            return {"ok": True, "id": id, "can_trade": False, "trade_until": None}
+        err = await _consume_arm(row, arm_code)
+        if err:
+            return {"error": err}
+        until = _bg.trade_until(datetime.now(timezone.utc), hours)
+        await loop.run_in_executor(None, _broker_update_sync, id, {"can_trade": 1, "trade_until": until})
+        await emit_event({"type": "markets.broker", "stage": "trading_enabled",
+                          "exchange": row["exchange"], "account": id, "until": until})
+        return {"ok": True, "id": id, "can_trade": True, "trade_until": until}
+
+    @capability(
+        "markets.broker.limits.set", http_method="POST",
+        http_path="/markets/broker/limits/set", http_tags=["markets"], memory="on",
+        redact_args=["arm_code"],
+        description="Set an account's REAL-order limits; needs the arm code from markets.broker.arm. "
+                    "0 means no cap. Inputs: id (str!), arm_code (str!), max_order_amount (float, base "
+                    "units), max_order_notional (float), max_daily_notional (float), symbols (list - "
+                    "allow-list; empty = any). Output: {ok, limits}.",
+    )
+    async def cap_broker_limits_set(id: str = "", arm_code: str = "", max_order_amount: float = 0.0,
+                                    max_order_notional: float = 0.0, max_daily_notional: float = 0.0,
+                                    symbols: Optional[List[str]] = None, trace_id=None) -> dict:
+        if not id:
+            return {"error": "id required"}
+        loop = asyncio.get_running_loop()
+        row = await loop.run_in_executor(None, _broker_get_sync, id)
+        if not row:
+            return {"error": "no such account"}
+        err = await _consume_arm(row, arm_code)
+        if err:
+            return {"error": err}
+        syms = [str(s).strip().upper() for s in (symbols or []) if str(s).strip()]
+        fields = {"max_order_amount": max(float(max_order_amount or 0), 0.0),
+                  "max_order_notional": max(float(max_order_notional or 0), 0.0),
+                  "max_daily_notional": max(float(max_daily_notional or 0), 0.0),
+                  "symbols": json.dumps(syms)}
+        await loop.run_in_executor(None, _broker_update_sync, id, fields)
+        return {"ok": True, "id": id, "limits": {**fields, "symbols": syms}}
 
     @capability(
         "markets.broker.order", http_method="POST", http_path="/markets/broker/order",
         http_tags=["markets"], memory="on",
-        description="Place a REAL order on a linked exchange. GUARDED: the account "
-                    "must have trading enabled AND confirm must be true. Input: id "
-                    "(str!), symbol (str! e.g. 'BTC/USDT'), side (buy|sell), type "
-                    "(market|limit=market), amount (float! — base units), price "
-                    "(float — required for limit), confirm (bool! must be true). "
-                    "Output: {ok, order} or {error}.",
+        description="Place a REAL order on a linked exchange. GUARDED: trading must be armed and "
+                    "unexpired (markets.broker.arm + set_trading), the order must pass the account's "
+                    "limits, and confirm must be true. client_order_id makes it idempotent: the same "
+                    "id never places a second order. Every attempt is recorded. Input: id (str!), "
+                    "symbol (str! e.g. 'BTC/USDT'), side (buy|sell), type (market|limit=market), "
+                    "amount (float! - base units), price (float - required for limit), confirm "
+                    "(bool! must be true), client_order_id (str). Output: {ok, order} or {error}.",
     )
     async def cap_broker_order(id: str = "", symbol: str = "", side: str = "buy",
                                type: str = "market", amount: float = 0.0,
                                price: float = 0.0, confirm: bool = False,
-                               trace_id=None) -> dict:
+                               client_order_id: str = "", trace_id=None) -> dict:
         if not (id and symbol and amount):
             return {"error": "id, symbol and amount required"}
         if not confirm:
@@ -834,13 +1048,39 @@ if _CAP_AVAILABLE:
         row = await loop.run_in_executor(None, _broker_get_sync, id)
         if not row:
             return {"error": "no such account"}
-        if not row.get("can_trade"):
-            return {"error": "trading is disabled for this account — enable it first"}
+        now = datetime.now(timezone.utc)
+        if not (row.get("can_trade") and _bg.trading_active(row.get("trade_until"), now)):
+            return {"error": "trading is not armed for this account (or it expired): "
+                             "markets.broker.arm, then set_trading with the code"}
+        coid = _bg.clean_client_order_id(client_order_id) or uuid.uuid4().hex
+        prior = await loop.run_in_executor(None, _order_get_sync, coid)
+        if prior:
+            return {"ok": prior.get("status") == "placed", "duplicate": True,
+                    "order": {"client_order_id": coid, "status": prior.get("status"),
+                              "id": prior.get("broker_order_id"), "error": prior.get("error") or None}}
+        quote = float(price) if otype == "limit" else await loop.run_in_executor(None, _prov_quote, row, symbol)
+        day = _bg.utc_day(now)
+        so_far = await loop.run_in_executor(None, _day_notional_sync, id, day)
+        refuse = _bg.check_order(_bg.Limits.from_row(row), symbol=symbol, amount=float(amount),
+                                 price=quote, day_notional_so_far=so_far)
+        if refuse:
+            return {"error": refuse}
+        rec = {"client_order_id": coid, "account_id": id, "day": day, "symbol": symbol, "side": side,
+               "type": otype, "amount": float(amount), "price": quote,
+               "notional": float(amount) * float(quote or 0), "created_at": now.isoformat()}
+        if not await loop.run_in_executor(None, _order_put_sync, rec):
+            return {"error": "an order with this client_order_id is already in flight", "duplicate": True}
         try:
             order = await loop.run_in_executor(
                 None, _prov_order, row, symbol, side, otype, float(amount), float(price or 0))
         except Exception as e:
-            return {"error": f"order failed: {str(e)[:200]}"}
+            # A timeout may still have placed it: 'unknown' counts toward the daily cap
+            # and the same client_order_id is never retried into a second order.
+            await loop.run_in_executor(None, _order_finish_sync, coid, "unknown", "", str(e)[:200])
+            return {"error": f"order failed or its outcome is unknown: {str(e)[:200]}",
+                    "client_order_id": coid}
+        await loop.run_in_executor(None, _order_finish_sync, coid, "placed",
+                                   str(order.get("id") or ""), "", order)
         await emit_event({"type": "markets.broker", "stage": "order",
                           "exchange": row["exchange"], "symbol": symbol,
                           "side": side, "amount": float(amount)})
@@ -852,7 +1092,7 @@ if _CAP_AVAILABLE:
                     f"[{otype}] · [real: {row['label']}]"))
             except Exception:
                 pass
-        return {"ok": True, "order": {"id": order.get("id"), "symbol": symbol,
+        return {"ok": True, "order": {"id": order.get("id"), "client_order_id": coid, "symbol": symbol,
                                       "side": side, "type": otype,
                                       "amount": float(amount),
                                       "price": order.get("price") or (price or None),
