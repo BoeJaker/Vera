@@ -6473,7 +6473,7 @@
        only when that layer was next laid out. A press raises the card (_focusSet) - its body then lay over its own chart and
        took every later click. Every z change now carries to the card's live elements (and its fused panes'). */
     _liveZ(cards) {
-      const L = this._live || {}; (cards || []).forEach((c) => { if (!c) return; const z = c.style.zIndex || '';
+      const L = this._live || {}; (cards || []).forEach((c) => { if (!c) return; const zc = getComputedStyle(c).zIndex; const z = zc && zc !== 'auto' ? zc : (c.style.zIndex || '');
         [c.dataset.key].concat([...c.querySelectorAll('.fu-p[data-key]')].map((f) => f.dataset.key)).forEach((k) => { const el = L[k]; if (el && el.style.zIndex !== z) el.style.zIndex = z; }); });
     }
     /* WHAT A CARD IS, FOR ITS SIZE (owner 2026-10-16: "complex charts (like ohlcv) should try to be a larger element - they could
@@ -7393,7 +7393,7 @@
       Object.keys(L).forEach((k) => { const h = body.querySelector('#items .vc-live[data-key="' + k.replace(/"/g, '\\"') + '"]'); const m = M[k] = { h };
         if (!h) return; m.vis = h.getClientRects().length; if (!m.vis) return; m.r = h.getBoundingClientRect(); const card = h.closest('.it'); if (!card) return;
         m.c = card.getBoundingClientRect(); const stg = card.parentElement; if (stg) { m.S = stg.getBoundingClientRect(); m.cl = stg.clientLeft; m.ct = stg.clientTop; }
-        if (L[k]._at) m.cs = getComputedStyle(card); const grip = card.querySelector(':scope > .rz'); m.grip = !!(grip && grip.getClientRects().length); });
+        m.cs = getComputedStyle(card); m.z = m.cs.zIndex === 'auto' ? '' : m.cs.zIndex; const grip = card.querySelector(':scope > .rz'); m.grip = !!(grip && grip.getClientRects().length); });
       Object.keys(L).forEach((k) => {
         const el = L[k]; const m = M[k] || {}; const h = m.h;
         /* a maximised item covers the column - but what is drawn INSIDE it stays: a code item's exploded diagram is a pane of
@@ -7410,7 +7410,7 @@
           const S = m.S || { left: B.left, top: B.top }; const c0 = m.c;
           lx = Math.round((S.left - B.left) / Z + SL + (m.cl || 0) + parseFloat(card.style.left) + (r.left - c0.left) / Z);
           ly = Math.round((S.top - B.top) / Z + ST + (m.ct || 0) + (parseFloat(card.style.top) || 0) + (r.top - c0.top) / Z);
-          if (el._at && m.cs) { const cs = m.cs; const sp = (s) => String(s || '').split(/,(?![^(]*\))/).map((x) => x.trim());
+          if (el._at && m.cs && L[k]._at) { const cs = m.cs; const sp = (s) => String(s || '').split(/,(?![^(]*\))/).map((x) => x.trim());
             const P = sp(cs.transitionProperty), Du = sp(cs.transitionDuration), Tf = sp(cs.transitionTimingFunction), De = sp(cs.transitionDelay);
             const of = (p) => { let i = P.indexOf(p); if (i < 0) i = P.indexOf('all'); if (i < 0) return ''; const d = Du[i % Du.length]; return parseFloat(d) > 0 ? p + ' ' + d + ' ' + Tf[i % Tf.length] + ' ' + De[i % De.length] : ''; };
             tr = [of('left'), of('top')].filter(Boolean).join(', ') || 'none'; }
@@ -7442,7 +7442,10 @@
               clip = 'polygon(' + [[L0, T0], [R0, T0], [R0, y1], [x1, y1], [x1, B0], [L0, B0]].map((p) => p[0] + 'px ' + p[1] + 'px').join(',') + ')';
           }
           if (el.style.clipPath !== clip) el.style.clipPath = clip;
-          const z = card.style.zIndex || '';
+          /* the card's stacking as it IS (computed): a rule can lift it past its own style - a card filling the desk is z 150 by its
+             .maxed rule while its style said 120, so its opaque ground covered its own chart or graph (owner 2026-10-17: "Elements
+             going dark when they fill the desk ... if i press the expand button ... until then the element is blank") */
+          const z = m.z != null ? m.z : (card.style.zIndex || '');
           if (el.style.zIndex !== z) el.style.zIndex = z;
         }
         if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} }
