@@ -5455,7 +5455,7 @@ Formats:
   [[cap:cap.name {"param":value}]]              — run immediately
   [[suggest:cap cap.name {"param":value}]]       — user confirms before run
   [[suggest:dag {"dag":[["cap","key"]],"initial_state":{"key":"val"}}]]  — multi-step plan
-  [[panel:panel-id]]                             — open a UI panel (only when the user wants to SEE it; not needed to run caps)
+  [[panel:panel-id]]                             — open a UI panel (only when the user wants to SEE it; not needed to run caps)${_cvAppsPromptLine()}
 
 IMPORTANT:
 - Conversational / simple questions → plain text. Do not invoke caps.
@@ -8793,6 +8793,30 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   let _CV_APPS=null, _cvAppsQ='';
   function _cvAppsLoad(){ if(_CV_APPS) return; _CV_APPS=[]; Promise.resolve().then(()=>_capCall('ui.apps.list',{})).then(r=>{ const c=r&&r.type==='tool_result'?r.content:r;
       _CV_APPS=(c&&Array.isArray(c.apps))?c.apps:[]; _cvMenuRender(true); }).catch(()=>{ _CV_APPS=[]; }); }
+  /* AN APP OPENED FROM THE CHAT (DA-06c): [[app:...]] in a reply, /app, or a panel inside this page asking - the canvas
+     opened first if it is closed, then the same act as the menu's (here, or over cvact from the menu page) */
+  async function _cvOpenApp(id, args){
+    id=String(id||'').trim(); if(!id) return false;
+    if(!_cvLocal()&&_EMBED.only!=='menu'&&typeof togglePage==='function'&&!(_pages&&_pages.has&&_pages.has('canvas'))) togglePage('canvas');
+    for(let i=0;i<40&&!_cvLocal()&&_EMBED.only!=='menu';i++) await new Promise(r=>setTimeout(r,150));
+    await _cvMenuAct({ a:'app', app:id, args:args||{} }); try{ _cvPublish(); }catch(_){} return true; }
+  /* "symbol=BTC-USD days=30" or {"symbol":"BTC-USD"} */
+  function _cvAppArgsOf(s){ s=String(s||'').trim(); if(!s) return {}; if(s[0]==='{'){ try{ const o=JSON.parse(s); return o&&typeof o==='object'?o:{}; }catch(_){ return {}; } }
+    const o={}; (s.match(/([A-Za-z_][\w.-]*)=("[^"]*"|'[^']*'|\S+)/g)||[]).forEach(kv=>{ const i=kv.indexOf('='); o[kv.slice(0,i)]=kv.slice(i+1).replace(/^["']|["']$/g,''); }); return o; }
+  function _cvAppsPromptLine(){ _cvAppsLoad(); const l=Array.isArray(_CV_APPS)?_CV_APPS:[]; if(!l.length) return '';
+    return '\n  [[app:app.id key=value]]                       — open an APP on the desk: a live window of a panel feature that reads and acts; apps: '
+      +l.map(a=>a.id+(Array.isArray(a.needs_args)&&a.needs_args.length?' ('+a.needs_args.join(', ')+')':'')).join(', '); }
+  async function _slashApp(arg){ const s=String(arg||'').trim();
+    if(!s){ try{ VeraLHM.pick('canvas'); }catch(_){} try{ _cvMenuRender(); }catch(_){} appendSys('The apps are in the Canvas menu - or <code>/app &lt;id&gt; key=value</code>'); return; }
+    const id=s.split(/\s+/)[0], args=_cvAppArgsOf(s.slice(id.length)); _cvAppsLoad();
+    const ap=(Array.isArray(_CV_APPS)?_CV_APPS:[]).find(x=>x.id===id); const miss=ap&&Array.isArray(ap.needs_args)?ap.needs_args.filter(n=>args[n]==null||args[n]===''):[];
+    if(miss.length){ appendSys('<code>'+esc(id)+'</code> needs '+miss.map(n=>'<code>'+esc(n)+'=…</code>').join(' ')); return; }
+    await _cvOpenApp(id, args); }
+  /* a panel inside this page asks for one of its apps on the desk: postMessage({type:'vera:app:open', app, args}) */
+  window.addEventListener('message', ev=>{ const d=ev.data; if(!d||ev.origin&&ev.origin!==location.origin) return;
+    if(d.type==='vera:app:hello'&&ev.source){ try{ ev.source.postMessage({ type:'vera:app:ready' }, location.origin); }catch(_){} return; }   /* a panel asks: this page opens apps */
+    if(d.type!=='vera:app:open'||!d.app) return;
+    _cvOpenApp(String(d.app), d.args&&typeof d.args==='object'?d.args:{}).catch(()=>{}); });
   function _cvAppRecent(id){ try{ const k='vera:canvas:apps:recent'; const l=JSON.parse(localStorage.getItem(k)||'[]').filter(x=>x!==id); l.unshift(id); localStorage.setItem(k, JSON.stringify(l.slice(0,5))); }catch(_){} }
   function _cvAppRecents(){ try{ return JSON.parse(localStorage.getItem('vera:canvas:apps:recent')||'[]'); }catch(_){ return []; } }
   function _cvAppRow(ap){ const need=Array.isArray(ap.needs_args)?ap.needs_args:[];
@@ -10039,6 +10063,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const stash=html=>{ const i=badges.length; badges.push(html); return ''+i+''; };
     let t=text;
     t=t.replace(new RegExp(PANEL_PLACEHOLDER_RE.source,'gi'),(_,n)=>stash(_streamBadge('panel','panel: '+n)));
+    t=t.replace(new RegExp(APP_PLACEHOLDER_RE.source,'gi'),(_,n)=>stash(_streamBadge('panel','app: '+n)));   /* DA-06c */
     t=t.replace(new RegExp(CAP_PLACEHOLDER_RE.source,'gi'),(_,n)=>stash(_streamBadge('cap',n)));
     t=t.replace(new RegExp(DIRECTIVE_INLINE_RE.source,'g'),(_,n)=>stash(_streamBadge('cap','ui.directive '+n)));
     t=t.replace(new RegExp(CAP_PAREN_RE.source,'gi'),(_,n)=>stash(_streamBadge('cap',n)));
@@ -10927,6 +10952,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // free-text args (key="value" pairs) are captured but currently unused;
   // we accept them so the schema is forward-compatible.
   const PANEL_PLACEHOLDER_RE=/\[\[panel:([a-z0-9_-]+)(?:\s+([^\]]*?))?\s*\]\]/gi;
+  // [[app:app.id key=value ...]] or [[app:app.id {"k":"v"}]] - an app from the catalogue opened on the desk (DA-06c)
+  const APP_PLACEHOLDER_RE=/\[\[app:([a-z0-9_.-]+)(?:\s+([^\]]*?))?\s*\]\]/gi;
   // [[cap:capname(...)]] — paren form. The LLM emits this constantly even
   // though we never document it. It's mostly: [[cap:name({"k":"v"})]] but
   // sometimes [[cap:name(k=v,k2=v2)]]. We accept either; the JSON shape
@@ -10994,6 +11021,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     while((m=rePnl.exec(text))!==null){
       if(matches.find(x=>x.idx===m.index)) continue;
       matches.push({idx:m.index,end:m.index+m[0].length,type:'panel',groups:[m[1],m[2]||'']});
+    }
+    // [[app:id ...]] - an app on the desk (DA-06c)
+    const reApp=new RegExp(APP_PLACEHOLDER_RE.source,'gi');
+    while((m=reApp.exec(text))!==null){
+      if(matches.find(x=>x.idx===m.index)) continue;
+      matches.push({idx:m.index,end:m.index+m[0].length,type:'app',groups:[m[1],m[2]||'']});
     }
     // the vocabulary spoken as a bare capability ([[canvas.add {…}]], [[cap:panel.open {…}]]) is the same directive: lifted
     // into ui.directive so it meets the same policy, log and undo (the Control board: one vocabulary, one dispatcher)
@@ -11173,7 +11206,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   function hasCapPlaceholders(text){
     const t=_stripMdLinksFromCap(text);
     // …or the control plane's inline shorthand ⟦name {args}⟧ (a reply of directives alone must run, not read as prose)
-    return /\[\[(?:cap:|dag:|panel:|loop\b|suggest:(?:cap\s+|[a-z][a-z0-9_]*\.[a-z0-9_.]+|dag\s+)|[a-z][a-z0-9_]*\.[a-z0-9_.]+\(|[a-z][a-z0-9_]*\.[a-z0-9_.]+\s+\{)/.test(t) || /\u27e6\s*[a-z][a-z0-9_.]+/.test(t);
+    return /\[\[(?:cap:|dag:|panel:|app:|loop\b|suggest:(?:cap\s+|[a-z][a-z0-9_]*\.[a-z0-9_.]+|dag\s+)|[a-z][a-z0-9_]*\.[a-z0-9_.]+\(|[a-z][a-z0-9_]*\.[a-z0-9_.]+\s+\{)/.test(t) || /\u27e6\s*[a-z][a-z0-9_.]+/.test(t);
   }
 
   // Remove [[panel:...]] placeholders from text destined for the model's
@@ -11245,6 +11278,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         }
         const nSteps=(dagSpec.dag||[]).length;
         renderSuggestion(placeholder,dagSpec.name||`DAG workflow`,dagSpec,()=>executeSuggestedDag(placeholder,dagSpec));
+
+      }else if(match.type==='app'){
+        // [[app:id args]] - the app opens on the desk; the reply keeps a line saying so (DA-06c)
+        const appId=match.groups[0], appArgs=_cvAppArgsOf(match.groups[1]);
+        placeholder.className='cap-inline';
+        placeholder.innerHTML=`<div class="cap-inline-header"><span style="color:var(--acc)">&#9636; opening app</span> <code style="color:var(--acc2);font-family:var(--mono)">${esc(appId)}</code>${Object.keys(appArgs).length?' <span style="color:var(--dim)">'+esc(Object.keys(appArgs).map(k=>k+'='+appArgs[k]).join(' '))+'</span>':''}</div>`;
+        _cvOpenApp(appId, appArgs).catch(()=>{});
 
       }else if(match.type==='panel'){
         // LLM emitted [[panel:name]] — open the panel inline. Render an
@@ -20969,6 +21009,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     {name:'toggle', alias:['set'], arg:'toggle', desc:'Flip a setting on/off', run:_slashToggle},
     {name:'cap', alias:['run','exec'], arg:'cap', desc:'Execute a capability directly', run:_slashRunCap},
     {name:'vera', alias:['director'], arg:'message', desc:'Talk to Vera\'s director (conversational; can orchestrate dreams, loops, projects)', run:_slashVera},
+    {name:'app', alias:['apps'], arg:'app', desc:'Open an app on the desk: /app markets.symbol symbol=BTC-USD (blank: the list)', run:_slashApp},
     {name:'canvas', alias:['board','whiteboard'], arg:'title|id|list', desc:'Embed a LIVE canvas in the conversation (blank arg = most recent, a title creates one)', run:_slashCanvas},
     {name:'help', desc:'List slash commands', run:_slashHelp},
   ];
@@ -21811,6 +21852,8 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
   let _slashCur=[], _slashSel=0, _slashVisible=false;
   function _slashArgOptions(type,q){
     q=(q||'').toLowerCase();
+    if(type==='app'){ _cvAppsLoad(); return (Array.isArray(_CV_APPS)?_CV_APPS:[]).filter(ap=>!q||[ap.id,ap.title,ap.panel].some(x=>String(x||'').toLowerCase().includes(q))).slice(0,30)
+      .map(ap=>({label:ap.title||ap.id, hint:ap.id+(Array.isArray(ap.needs_args)&&ap.needs_args.length?' '+ap.needs_args.map(n=>n+'=…').join(' '):''), value:ap.id})); }   /* DA-06c */
     if(type==='panel'){
       // List ALL registered panels (the menu scrolls). The previous slice(0,8)
       // silently hid every panel past the eighth in registry order.
@@ -22413,7 +22456,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     cmdOpen,cmdClose,
     toggleViewMode,setViewMode,
     setDensity,toggleBlocks,
-    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,executeCapInline,
+    _uiAskAnswer,_uiAskPick,_uiDirectiveApply,_cvLandReply,_studioHint,_cvDirectiveShape,_chromeFold,executeCapInline,processCapPlaceholders,_runSlash,_cvOpenApp,
     _cmpChip,_cmpSync,_paOpen,_paCopy,
     _wRead,_wXl,_wForm,_wPin,_wAct,_widgetFormByShape,_widgetRecord,renderMd,_paintStream,_mkMsg,_paFromMarkdown,_paRenderAttachments,_micUi,explode,explodeMode,_xplScene,_xplRefresh,_loopCanvasEv,_ctxColLoopEv,_ctxColShowRun,_ctxColRuns,_ctxColEstate,_cvRelevance,_xplRels,_xplPlaceOpen,_xplPlaceClose,_xplPlacePick,_toolsSheet,_appearanceSheet,_chromeMount,_ctxGrow,_cvLandReply,_cvHarvest,_cmOpen,_cmClose,_crunOpen,_cmTarget,_cvLandCell,_cvItemAct,_settingsPage,_spShow,_spFilter,_runsToggle,_drvUndoRow,_cvDrvRibbon,_cvDrvUndo,_ctxRemoteSet,_ctxRemoteInfo,_xplToggle,_xplClose,_ctxShares,_ctxMeterSegs,_quickTick,_cvStageSync,_cvRunsDraw,_cvColumns,_cvEnrichToggle,_cvTellToggle,_cvCheck:()=>_cvLastCheck,_paPickFiles,_paFilesChosen,_paGuard,_docEditorLang,_docEditorSend,_attUpload,_paIngestText,_buildDocsPrefix,_paHtmlToMd,
     _drvRibbon,_drvUndo,_drvLog,_findAllPlaceholders,_renderStreamingMarkdown,

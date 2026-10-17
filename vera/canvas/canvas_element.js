@@ -594,6 +594,43 @@
     PANEL_SRC[id] = src; return src;
   }
 
+  /* THE TIMELINE'S BRUSH AND SCRUBBER (DU-E-timeline). A position on the axis is the timeline's own number for a date
+     (year + (month-1)/12 + (day-1)/366); the brush is two of them, the scrubber one. Per item, on the element, never
+     written to the canvas: looking along a timeline is not an edit. */
+  const tlUi = (el, key) => { if (!el || !key) return { b0: null, b1: null, s: null }; const m = el._tlUi || (el._tlUi = {}); return m[key] || (m[key] = { b0: null, b1: null, s: null }); };
+  const TL_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /* a position back to words: the month (and the day, on a short span) it falls in */
+  function tlDate(x, fine) {
+    const y = Math.floor(x); const f = Math.max(0, x - y); const m = Math.min(11, Math.floor(f * 12 + 1e-9));
+    const d = Math.min(31, Math.max(1, Math.round((f - m / 12) * 366) + 1));
+    return (fine ? d + ' ' : '') + TL_MON[m] + ' ' + y;
+  }
+  /* the event nearest a position (the first of a tie) */
+  function tlNear(xs, x) { let b = -1, bd = Infinity; xs.forEach((v, i) => { const d = Math.abs(v - x); if (d < bd - 1e-12) { bd = d; b = i; } }); return b; }
+  /* where on an axis a pointer is, as a position (clamped to the axis's ends) */
+  function tlAt(ax, clientX) {
+    const r = ax.getBoundingClientRect(); const lo = +ax.dataset.tlLo || 0, sp = +ax.dataset.tlSpan || 1e-6;
+    const f = (((clientX - r.left) / (r.width || 1)) * 100 - 4) / 92; return lo + Math.min(1, Math.max(0, f)) * sp;
+  }
+  const tlPct = (ax, x) => 4 + 92 * (x - (+ax.dataset.tlLo || 0)) / (+ax.dataset.tlSpan || 1e-6);
+  /* while dragging, the drawing is changed in place (drawn again only on release): the range's band, the dots and rows
+     outside it dimmed */
+  function tlLiveBrush(ax, a, b) {
+    const lo = Math.min(a, b), hi = Math.max(a, b); let br = ax.querySelector('.vc-tl-br');
+    if (!br) { br = (ax.ownerDocument || document).createElement('div'); br.className = 'vc-tl-br'; ax.insertBefore(br, ax.children[1] || null); }
+    br.style.left = tlPct(ax, lo).toFixed(2) + '%'; br.style.width = (tlPct(ax, hi) - tlPct(ax, lo)).toFixed(2) + '%';
+    const box = ax.closest('.vc-tl');
+    ax.querySelectorAll('.vc-tl-dot[data-x]').forEach((d) => { const x = +d.dataset.x; const out = x < lo - 1e-9 || x > hi + 1e-9; d.classList.toggle('out', out);
+      const row = box && box.querySelector('.vc-tl-e[data-i="' + d.dataset.tlGo + '"]'); if (row) row.classList.toggle('out', out); });
+  }
+  /* the scrubber moved in place: the handle, and the nearest event lit on the axis and in the list */
+  function tlLiveScrub(ax, x) {
+    const h = ax.querySelector('.vc-tl-sc'); if (h) { h.style.left = tlPct(ax, x).toFixed(2) + '%'; h.classList.add('on'); }
+    const dots = [...ax.querySelectorAll('.vc-tl-dot[data-x]')]; const i = tlNear(dots.map((d) => +d.dataset.x), x); const box = ax.closest('.vc-tl');
+    dots.forEach((d, k) => d.classList.toggle('cur', k === i));
+    if (box) box.querySelectorAll('.vc-tl-e').forEach((r) => r.classList.toggle('cur', dots[i] && r.dataset.i === dots[i].dataset.tlGo));
+  }
+
   const BLOCK = {
     /* a document item draws with the reader's renderer (mdx): a research report's tables, numbered lists, quotes and
        figures were pipes and bare lines under the note subset */
@@ -691,7 +728,7 @@
        same year is grouped under it, because a timeline of forty rows each labelled with the same four digits
        is a list wearing an axis. Each event keeps the page it came from, so the timeline is a way back into the
        sources rather than a summary that has left them behind. */
-    timeline: (c) => {
+    timeline: (c, size, key, el) => {
       const ev = (Array.isArray(c.events) ? c.events : []).filter((e) => e && e.when);
       if (!ev.length) return `<div class="vc-tl-empty">No dated events were found.</div>`;
       const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -707,8 +744,19 @@
       const pct = (x) => (4 + 92 * (x - lo) / span).toFixed(2);
       const y0 = Math.floor(lo), y1 = Math.floor(hi);
       const ticks = [y0]; if (y1 - y0 >= 4) { const step = (y1 - y0) / 4; for (let k = 1; k < 4; k++) ticks.push(Math.round(y0 + step * k)); } if (y1 !== y0) ticks.push(y1);
-      const axis = `<div class="vc-tl-ax"><div class="vc-tl-ln"></div>`
-        + ev.map((e, i) => `<button class="vc-tl-dot" style="left:${pct(xs[i])}%" data-tl-go="${i}" title="${esc(e.when + ' \u2014 ' + labelOf(e).slice(0, 90))}"></button>`).join('')
+      /* the brush (a range dragged across the axis) and the scrubber (a handle dragged, or stepped by the arrow keys, to a
+         date) - DU-E-timeline. Their state is the element's, per item key; a timeline drawn with no key has neither. */
+      const live = !!key && ev.length > 1; const ui = live ? tlUi(el, key) : { b0: null, b1: null, s: null };
+      const brushed = live && ui.b0 != null && ui.b1 != null; const ba = brushed ? Math.min(ui.b0, ui.b1) : 0, bb = brushed ? Math.max(ui.b0, ui.b1) : 0;
+      const inB = (i) => !brushed || (xs[i] >= ba - 1e-9 && xs[i] <= bb + 1e-9);
+      const nIn = brushed ? xs.filter((_, i) => inB(i)).length : ev.length;
+      const sc = live && ui.s != null ? Math.min(hi, Math.max(lo, ui.s)) : null; const cur = sc == null ? -1 : tlNear(xs, sc);
+      const fine = span < 3; const kq = esc(key || '');
+      const axis = `<div class="vc-tl-ax"${live ? ` data-tl-key="${kq}" data-tl-lo="${lo}" data-tl-span="${span}" title="Drag across the axis to pick a range; double-click to clear it"` : ''}><div class="vc-tl-ln"></div>`
+        + (brushed ? `<div class="vc-tl-br" style="left:${pct(ba)}%;width:${(+pct(bb) - +pct(ba)).toFixed(2)}%"></div>` : '')
+        + ev.map((e, i) => `<button class="vc-tl-dot${inB(i) ? '' : ' out'}${i === cur ? ' cur' : ''}" style="left:${pct(xs[i])}%" data-tl-go="${i}" data-x="${xs[i]}" title="${esc(e.when + ' \u2014 ' + labelOf(e).slice(0, 90))}"></button>`).join('')
+        + (live ? `<button class="vc-tl-sc${sc == null ? '' : ' on'}" data-tl-scrub="${kq}" style="left:${pct(sc == null ? lo : sc)}%" role="slider" aria-label="Scrub to a date"`
+          + ` aria-valuetext="${esc(sc == null ? 'not set' : tlDate(sc, fine))}" title="${esc(sc == null ? 'Drag to a date, or focus and use the arrow keys' : tlDate(sc, fine) + ' \u2014 nearest: ' + ev[cur].when)}"></button>` : '')
         /* a year starts before its first event: its tick is kept on the axis, not drawn off its left end ("324" for 2024) */
         + [...new Set(ticks)].map((y, i, a) => `<span class="vc-tl-tick${i === a.length - 1 && a.length > 1 ? ' end' : ''}" style="left:${Math.min(100, Math.max(0, +pct(y)))}%">${y}</span>`).join('')
         + `</div>`;
@@ -719,7 +767,7 @@
           if (year && +y - +year > 1) out += `<div class="vc-tl-gap">\u2026 ${+y - +year} years</div>`;
           year = y; out += `<div class="vc-tl-y">${esc(y)}</div>`;
         }
-        out += `<div class="vc-tl-e" data-i="${i}">`
+        out += `<div class="vc-tl-e${inB(i) ? '' : ' out'}${i === cur ? ' cur' : ''}" data-i="${i}">`
           + `<span class="vc-tl-w">${esc(pretty(e.when))}</span>`
           + `<span class="vc-tl-t">${esc(labelOf(e))}`
           + (e.url ? `<a class="vc-tl-a" href="${esc(e.url)}" target="_blank" rel="noopener">source \u2197</a>` : '')
@@ -728,7 +776,10 @@
       const years = y1 > y0 ? y0 + '\u2013' + y1 : String(y0);
       // the card's own header carries the title; the body says how much and over what span
       return `<div class="vc-tl"><div class="vc-tl-h"><small>${ev.length} event${ev.length === 1 ? '' : 's'} \u00b7 ${esc(years)}</small></div>`
-        + (ev.length > 1 ? axis : '') + `<div class="vc-tl-list">${out}</div></div>`;
+        + (ev.length > 1 ? axis : '')
+        + (brushed ? `<div class="vc-tl-bn"><span>${nIn} of ${ev.length} in ${esc(tlDate(ba, fine) + ' – ' + tlDate(bb, fine))}</span>`
+          + `<button class="ib" data-act="tlclear" data-tl-key="${kq}" title="Clear the range (or double-click the axis)">clear</button></div>` : '')
+        + `<div class="vc-tl-list">${out}</div></div>`;
     },
     /* A PAGE THE RESEARCH READ. The run already knows every page it fetched - the research card has listed them
        beside the report all along - but the canvas only ever got the finished prose, so the thing you could not
@@ -2529,6 +2580,19 @@
   .vc-dged-bar .vc-dged-save{border-color:var(--acc,#5a9e8f);color:var(--acc,#5a9e8f)}.vc-dged-bar button:disabled{opacity:.45;cursor:default}
   .vc-dged-r{min-width:0;min-height:0}.vc-dged .vc-live{min-height:160px}
   @container dged (max-width: 440px) { .vc-dged{grid-template-columns:minmax(0,1fr)} }
+  /* the timeline's brush and scrubber (DU-E-timeline) */
+  .vc-tl-ax[data-tl-key]{cursor:crosshair;user-select:none}
+  .vc-tl-br{position:absolute;top:2px;height:19px;border:1px solid var(--acc,#5a9e8f);border-radius:3px;background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);pointer-events:none;box-sizing:border-box}
+  .vc-tl-dot.out{opacity:.2}
+  .vc-tl-dot.cur{background:var(--acc,#5a9e8f);opacity:1;transform:scale(1.45)}
+  .vc-tl-sc{position:absolute;top:-5px;width:10px;height:8px;margin-left:-5px;padding:0;border:0;border-radius:2px 2px 5px 5px;background:var(--dim,#6b7480);cursor:ew-resize;z-index:1}
+  .vc-tl-sc::after{content:"";position:absolute;left:4px;top:8px;width:2px;height:15px;background:inherit;opacity:.6;pointer-events:none}
+  .vc-tl-sc.on{background:var(--acc,#5a9e8f)}
+  .vc-tl-sc:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:2px}
+  .vc-tl-bn{display:flex;align-items:center;gap:8px;margin:-4px 8px 4px;font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim,#6b7480)}
+  .vc-tl-bn span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vc-tl-e.out{opacity:.35}
+  .vc-tl-e.cur{background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
   /* a command that ran (DU-E-session) */
   .vc-rc{font:10px system-ui,sans-serif;padding:0 6px;border-radius:9px;border:1px solid currentColor;white-space:nowrap}.vc-rc.ok{color:var(--ok,#8fb87a)}.vc-rc.bad{color:var(--err,#e06c75)}
   .vc-ran-ask{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;margin:4px 0;border:1px solid var(--warn,#e5c07b);border-radius:6px;font:11px system-ui,sans-serif}.vc-ran-when{font-size:10px;margin:2px 0}
@@ -5483,6 +5547,38 @@
           if (err) return; ui.good = ui.draft.trim(); if (inner) this._mermaidInto(inner, key); }, 300); });
       body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null || ev.key !== 'Escape') return;
         ev.preventDefault(); ev.stopPropagation(); const box = q.closest('.vc-dged'); const b = box && box.querySelector('[data-act="dgcancel"]'); if (b) this._act(b, ev); });
+      /* THE TIMELINE'S BRUSH AND SCRUBBER (DU-E-timeline). A press on the axis that moves past 3 px is a brush: the band
+         follows the pointer and the events outside it dim, in place; on release the range is kept (el._tlUi) and the item
+         drawn again. A press that does not move is a click (a dot still goes to its event). The handle is dragged the same
+         way, or stepped from event to event by the arrow keys (Home / End: the ends); the nearest event is lit and brought
+         into view inside the card. A double-click on the axis clears the range. */
+      const tlSel = (k) => (window.CSS && CSS.escape ? CSS.escape(k) : k);
+      const tlAgain = (k, focus) => { if (this._doc) this.render(this._doc);
+        const show = () => { const ax = body.querySelector('.vc-tl-ax[data-tl-key="' + tlSel(k) + '"]'); if (!ax) return; const box = ax.closest('.vc-tl'); const row = box && box.querySelector('.vc-tl-e.cur');
+          if (row) mdShow(row); if (focus) { const h = ax.querySelector('.vc-tl-sc'); if (h && this.shadowRoot.activeElement !== h) h.focus({ preventScroll: true }); } };
+        show(); if (focus) requestAnimationFrame(show); };
+      body.addEventListener('mousedown', (ev) => { const t = ev.target; if (ev.button !== 0 || !t || !t.closest) return; const ax = t.closest('.vc-tl-ax[data-tl-key]'); if (!ax || !body.contains(ax)) return;
+        const k = ax.dataset.tlKey, ui = tlUi(this, k), doc = this.ownerDocument || document; const scrub = !!t.closest('.vc-tl-sc');
+        const x0 = ev.clientX; let moved = false, a = tlAt(ax, x0), b = a;
+        ev.preventDefault(); if (scrub) ev.stopPropagation();   /* no text selected along the way; a dot's click still lands */
+        const mv = (e) => { if (!moved && Math.abs(e.clientX - x0) < 3) return; moved = true; e.preventDefault(); b = tlAt(ax, e.clientX);
+          if (scrub) tlLiveScrub(ax, b); else tlLiveBrush(ax, a, b); };
+        const up = (e) => { doc.removeEventListener('mousemove', mv, true); doc.removeEventListener('mouseup', up, true);
+          if (scrub) { if (moved) b = tlAt(ax, e.clientX); ui.s = b; tlAgain(k, true); return; }
+          if (!moved) return; b = tlAt(ax, e.clientX); ui.b0 = Math.min(a, b); ui.b1 = Math.max(a, b); tlAgain(k, false); };
+        doc.addEventListener('mousemove', mv, true); doc.addEventListener('mouseup', up, true); });
+      body.addEventListener('dblclick', (ev) => { const t = ev.target; const ax = t && t.closest ? t.closest('.vc-tl-ax[data-tl-key]') : null; if (!ax || !body.contains(ax)) return;
+        ev.stopPropagation(); const ui = tlUi(this, ax.dataset.tlKey); if (ui.b0 == null) return; ui.b0 = ui.b1 = null; tlAgain(ax.dataset.tlKey, false); });
+      body.addEventListener('keydown', (ev) => { const h = ev.target; if (!h || !h.dataset || h.dataset.tlScrub == null || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        if (!/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End)$/.test(ev.key)) return; const ax = h.closest('.vc-tl-ax'); if (!ax) return;
+        ev.preventDefault(); ev.stopPropagation(); const k = h.dataset.tlScrub, ui = tlUi(this, k);
+        const xs = [...ax.querySelectorAll('.vc-tl-dot[data-x]')].map((d) => +d.dataset.x).sort((p, q) => p - q); if (!xs.length) return;
+        const s = ui.s == null ? null : ui.s; const fwd = ev.key === 'ArrowRight' || ev.key === 'ArrowDown';
+        if (ev.key === 'Home') ui.s = xs[0]; else if (ev.key === 'End') ui.s = xs[xs.length - 1];
+        else if (s == null) ui.s = fwd ? xs[0] : xs[xs.length - 1];
+        else if (fwd) { const n = xs.find((x) => x > s + 1e-9); ui.s = n != null ? n : xs[xs.length - 1]; }
+        else { const p = xs.filter((x) => x < s - 1e-9).pop(); ui.s = p != null ? p : xs[0]; }
+        tlAgain(k, true); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.tblQ == null) return;   /* the table bar's filter (DU-E-table) */
         const key = q.dataset.tblQ; tblUi(this, key).q = String(q.value || ''); clearTimeout(this._tblQT);
         this._tblQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
@@ -6007,6 +6103,8 @@
           if (need > H * 0.7) { if (this._max !== key) { this._toggleMax(key); E[key] = 'max'; } return; }
           if (need > it2.offsetHeight + 4) { (this._minH || (this._minH = {}))[key] = need; E[key] = E[key] || 'grow'; this._placeNow(); } }, 60);
         return; }
+      /* the timeline's brush (DU-E-timeline): clear the range */
+      if (act === 'tlclear') { const u = tlUi(this, btn.dataset.tlKey || key); u.b0 = u.b1 = null; if (this._doc) this.render(this._doc); return; }
       if (act === 'tagain' || act === 'tagainno') { (this._ranAsk = this._ranAsk || {})[key] = act === 'tagain'; if (this._doc) this.render(this._doc); return; }
       if (act === 'tagainok') { const c = this._contentOf(key) || {}; (this._ranAsk = this._ranAsk || {})[key] = false; if (!c.cap) return;
         (this._ranBusy = this._ranBusy || {})[key] = true; if (this._doc) this.render(this._doc);
