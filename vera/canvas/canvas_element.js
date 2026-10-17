@@ -3864,6 +3864,11 @@
     attributeChangedCallback(name) {
       if (name === 'canvas-id' && this.shadowRoot.childElementCount) {
         this._rev = null;
+        /* ANOTHER CANVAS IS ANOTHER DESK (owner 2026-10-17: "the layout flickers about a bit as stuff loads"): the last desk's places, its
+           hold, its topics' layouts and what was settling belong to the canvas left - an item of the same key here (the enrichments every
+           session has) was taken as already placed and slid across from where it sat on the other desk. Here every card is new: unseen
+           until it is still. */
+        this._placed = null; this._lastPlan = null; this._hold = null; this._topicMem = null; this._topicMemK = null; this._newSeen = null; this._expanded = null; this._hist = null; this._slotWant = null;
         this.refresh();
       }
       if (name === 'columns' && this._doc) this.render(this._doc);
@@ -4459,7 +4464,7 @@
        spare is given that height (never under 96 px) and does not grow past it; one whose content outgrows it is let go
        again. A change re-places the desk, at most four times in a row. */
     _deskFit() {
-      const sr = this.shadowRoot; if (!sr || this.getAttribute('desk-fit') === 'off') return;
+      const sr = this.shadowRoot; this._fitRanAt = Date.now(); if (!sr || this.getAttribute('desk-fit') === 'off') return;
       /* a diagram is measured too: its drawing has its own shape, and its slot is as tall as the drawing (_diagramGrew) */
       /* a notebook cell is measured too: its source and its output were each stretched to half a tall card (2026-10-11) */
       const FILLS = new Set(['records', 'research', 'widget', 'explode', 'panel', 'html', 'image']);   /* a live shell is skipped by its .vc-live */
@@ -5216,9 +5221,21 @@
         st.appendChild(pill);
       });
       st.style.height = H + 'px';
-      /* a new card is in its place now: it fades in there (it was unseen, not sliding in from a default spot) */
-      const news = [...st.querySelectorAll('.it.desk-new')];
-      if (news.length) requestAnimationFrame(() => requestAnimationFrame(() => news.forEach((c) => c.classList.remove('desk-new'))));
+      /* A NEW CARD IS SHOWN ONCE IT IS STILL (owner 2026-10-17: "the layout flickers about a bit as stuff loads and should not"; measured on
+         the design mirror: all of a load's motion in its first 2 s - cards gliding about while the items, their sizes and the topic arrive -
+         then none). A card that is new stays unseen until its place has not changed for 350 ms (at most 1.6 s after it came), then fades in
+         there - the desk is seen once it has settled, not while it does. */
+      { const nowT = Date.now(), NS = this._newSeen = this._newSeen || {};
+        st.querySelectorAll('.it.desk-new[data-key]').forEach((c) => { const k = c.dataset.key; if (!NS[k]) NS[k] = { first: nowT, at: nowT, r: '' }; });
+        out.forEach((o) => { const e = NS[o.key]; if (!e) return; const rr = [o.x, o.y, o.w, o.h, o.face].join(','); if (e.r !== rr) { e.r = rr; e.at = nowT; } });
+        const reveal = () => { const t = Date.now(); let left = 0;
+          st.querySelectorAll('.it.desk-new[data-key]').forEach((c) => { const e = NS[c.dataset.key];
+            /* still for 340 ms AND measured: the content fit has run since it came (it re-placed the desk a second later); at most 2 s */
+            const fitDone = this.getAttribute('desk-fit') === 'off' || (this._fitRanAt || 0) > (e ? e.first : 0);
+            if (!e || (t - e.at >= 340 && fitDone) || t - e.first >= 2000) { c.classList.remove('desk-new'); delete NS[c.dataset.key]; } else left++; });
+          Object.keys(NS).forEach((k) => { if (t - NS[k].first > 4000) delete NS[k]; });
+          if (left) this._revealT = setTimeout(reveal, 120); };
+        clearTimeout(this._revealT); this._revealT = setTimeout(reveal, 120); }
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
       /* what this pass laid out, for the hold (U4): centre and size of each card it placed */
       { const rects = {}; out.forEach((o) => { if (!o.behind && !/^layer-/.test(o.face || '')) rects[o.key] = { x: o.x + o.w / 2, y: o.y + o.h / 2, w: o.w, h: o.h, bw: o.bw || o.w, bh: o.bh || o.h, face: o.face, nd: o.nd, win: !!o.win }; });
@@ -5513,8 +5530,18 @@
       this._topicAt = Date.now();   /* a combined card's tab picked after this wins over the topic's choice (WSU-71) */
       /* only the cards that joined or left the topic move: those leave the hold (a card that left goes to the border, one that
          joined to the best free room beside what it relates to); every other card keeps its place and its size */
-      if (this._hold && this._hold.rects) { const now = new Set(ks || []), was = this._topicWas || now;
+      /* A TOPIC COMES BACK AS IT WAS (owner 2026-10-17: "as the user scrolls through the chat the animation and loading of the desk items changing
+         needs to be better and smoother"): each topic's desk is kept when the topic moves on; scrolling back to it puts the desk back exactly
+         as it was then (held at those rectangles), not placed again - only a topic not seen before is placed. The last 24 topics. */
+      const memK = (ks || []).slice().sort().join('|'), lpT = this._lastPlan;
+      const cpy = (m) => { const o = {}; Object.keys(m || {}).forEach((k) => { o[k] = Object.assign({}, m[k]); }); return o; };
+      if (lpT && this._topicMemK != null) { const TM = this._topicMem = this._topicMem || {}; TM[this._topicMemK] = { rects: cpy((this._hold && this._hold.rects) || lpT.rects), sb: lpT.sb, at: Date.now() };
+        const ks2 = Object.keys(TM); if (ks2.length > 24) ks2.sort((a, b) => TM[a].at - TM[b].at).slice(0, ks2.length - 24).forEach((k) => delete TM[k]); }
+      const back = this._topicMem && this._topicMem[memK];
+      if (back && lpT && back.sb === lpT.sb) { this._hold = { sig: lpT.sig, sb: lpT.sb, keys: Object.keys(back.rects), rects: cpy(back.rects), base: cpy(back.rects) }; }
+      else if (this._hold && this._hold.rects) { const now = new Set(ks || []), was = this._topicWas || now;
         Object.keys(this._hold.rects).forEach((k) => { if (was.has(k) !== now.has(k)) delete this._hold.rects[k]; }); }
+      this._topicMemK = memK;
       this._topicWas = new Set(ks || []);
       if (this.deskAlign()) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
       try { this.dispatchEvent(new CustomEvent('vera:canvas:topic', { bubbles: true, detail: { mid: mid || '', keys: ks || [] } })); } catch (e) { /* no listener */ }
@@ -5838,11 +5865,16 @@
            spot and slid back - the flicker when an item joined. Each card that was on the desk takes its last place and
            size at once (no animation), so only a card the desk really moves animates, from where it was; a card that is
            new starts unseen and fades in where the desk puts it. */
+        /* A DESK NOT PLACED YET (its first load, another canvas): every card starts unseen and is shown once it is still - it was drawn at
+           the stage's corner and flew to its place a second later (measured: the load's motion all fell between the first draw and the first
+           placing pass) */
+        if (stage && this.deskAlign() && !(this._placed && this._placed.mode === 'desk')) layers.items.querySelectorAll('.it[data-key]').forEach((it) => it.classList.add('desk-new'));
         if (stage && this.deskAlign() && this._placed && this._placed.mode === 'desk') {
           const prev = {}; (this._placed.placements || []).forEach((p) => { prev[p.key] = p; });
           const fresh = [...layers.items.querySelectorAll('.it[data-key]')];
           fresh.forEach((it) => { const p = prev[it.dataset.key];
             if (!p) { it.classList.add('desk-new'); return; }
+            if (this._newSeen && this._newSeen[it.dataset.key]) it.classList.add('desk-new');   /* still settling: unseen until it is still */
             it.classList.add('desk-hold');
             it.style.left = p.x + 'px'; it.style.top = p.y + 'px';
             it.style.setProperty('width', p.w + 'px', 'important'); it.style.setProperty('height', p.h + 'px', 'important'); it.style.setProperty('min-height', '0px', 'important');
