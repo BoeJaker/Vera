@@ -8011,8 +8011,12 @@ IMPORTANT:
     { const P=W.presentationOf(cap)||{}; if((pr.element==='table'||pr.element==='kv')&&P.form&&P.form!=='table'&&P.form!=='kv') return widget(Object.assign({}, r0, { form:String(P.form) })); }
     switch(pr.element){
       case 'table': { const rows=rowsOf(drawn(r0)).filter(x=>x&&typeof x==='object'); if(!rows.length) return null;
-        const columns=Object.keys(rows[0]).filter(k=>rows[0][k]==null||typeof rows[0][k]!=='object').slice(0,8);   /* as _cvCapTable */
-        const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':String(v).slice(0,120); }));
+        /* a list of plain values (a host's open ports) is a column too, shown joined; the declaration's draw.columns choose and
+           order them (DA-04c (d) - a scan's hosts) */
+        const flat=(v)=>v==null||typeof v!=='object'||(Array.isArray(v)&&v.every(s=>s==null||typeof s!=='object'));
+        const want=((W.presentationOf(cap)||{}).draw||{}).columns;
+        const columns=(Array.isArray(want)&&want.length?want.map(String).filter(k=>rows.some(x=>x[k]!=null)):Object.keys(rows[0]).filter(k=>flat(rows[0][k]))).slice(0,8);   /* as _cvCapTable */
+        const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':Array.isArray(v)?v.join(', ').slice(0,120):typeof v==='object'?JSON.stringify(v).slice(0,120):String(v).slice(0,120); }));
         return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'var(--dv1, #38bdf8)', d:'table · '+body.length+' rows',
                  content:{ columns, rows:body, caption:title } }; }
       case 'records': { const items=listOf(r0.data, ['items','results','records','rows','pages','sources','data']).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',

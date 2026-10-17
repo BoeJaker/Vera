@@ -187,7 +187,8 @@
       else {
         let v = resultView({ cap: p.cap, args: p.args, result: p.result, ok: true }); const k = s.kind;
         if ((!v || v.kind === 'json') && k && BLOCK[k] && k !== 'app' && p.result && typeof p.result === 'object') v = { kind: k, content: p.result };
-        try { const fn = v && BLOCK[v.kind]; body = fn ? fn(v.content || {}, lay === 'dashboard' ? 'm' : size, key + ':part:' + p.as, el) : '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
+        try { const fn = v && BLOCK[v.kind]; if (el && v) (el._nested || (el._nested = {}))[key + ':part:' + p.as] = v.content || {};   /* what a live widget in it is fed */
+          body = fn ? fn(v.content || {}, lay === 'dashboard' ? 'm' : size, key + ':part:' + p.as, el) : '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
         catch (e) { body = '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
         if (lights.length) { const txt = appJv(appLeaves(p.result));   /* the answer's own words - a part may be drawn later by a live widget */
           focus = lights.some((l) => l.v.length >= 2 && txt.indexOf(l.v) >= 0); }
@@ -198,7 +199,7 @@
     return strip + '<div class="vc-app-parts" data-layout="' + lay + '">' + (tab ? parts.filter((x) => x.p.as === tab) : parts).map(one).join('') + '</div>';
   }
   /* a capability that only reads, by its name - what an app or a widget may call on its own (the chat's rule, _widgetReadable) */
-  const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|quotes|sentiment\.map|news\.feed)$|^cal\.events\.list$|^ollama\.instances$|^syslog\.errors$|^evolve\.sandbox\.(logs|diff)$)/.test(String(cap || ''));   /* the last four: the reads of the first composites (DA-07c), by name */
+  const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|quotes|sentiment\.map|news\.feed)$|^cal\.events\.list$|^ollama\.instances$|^syslog\.errors$|^evolve\.sandbox\.(logs|diff)$|^netscan\.graph$)/.test(String(cap || ''));   /* the last five: the reads of the first composites (DA-07c) and the network map (DA-04c (d)), by name */
   const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
   if (root.__veraCanvasElement) return;
   root.__veraCanvasElement = true;
@@ -1651,7 +1652,8 @@
       /* the manifest's own view when the generic mapping has nothing better than the raw tree (a calendar's events) */
       let v = resultView(rc); const mk = m && m.view && m.view.kind; if ((!v || v.kind === 'json') && mk && BLOCK[mk] && mk !== 'app' && st.result && typeof st.result === 'object') v = { kind: mk, content: st.result };
       let inner = '';
-      try { const fn = v && BLOCK[v.kind]; inner = fn ? fn(v.content || {}, size, key + ':app', el) : '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; } catch (e) { inner = '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; }
+      try { const fn = v && BLOCK[v.kind]; if (el && v) (el._nested || (el._nested = {}))[key + ':app'] = v.content || {};   /* what a live widget in it is fed */
+        inner = fn ? fn(v.content || {}, size, key + ':app', el) : '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; } catch (e) { inner = '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; }
       return `<div class="vc-app" data-app="${esc(id)}" data-as="${esc(v ? v.kind : 'json')}" data-w="canvas.app">${st.ui ? appBarHtml(st) : ''}${inner}</div>`;
     },
 
@@ -6847,6 +6849,8 @@
           // `bare`: the widget draws its figure and nothing else. Its own frame inside a canvas item was a box in a
           // box — and it lives in a second shadow root, so no rule of ours could reach it (owner, 2026-09-24).
           else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); inner.setAttribute('item-drawer', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = '';
+            /* the estate graph in a widget (vgraph) styles itself in the page's head; here it is in this shadow tree */
+            if (rc && /vgraph/.test(String((rc.record || rc).form || ''))) this._adoptGraphCss();
             // a chip-faced widget is as wide as its face: the card takes that width and the rest of the row is free
             inner.addEventListener('widget:rendered', () => this._widgetFit(key, inner)); }
           else if (kind === 'mchart') { inner = document.createElement('vera-mkt-chart'); h.textContent = '';   /* the Markets chart (WSU-75) */
@@ -7598,7 +7602,9 @@
       return this.call('canvas.update', { key, content: next });
     }
     _sid() { return String((this._doc && this._doc.session) || this.getAttribute('session-id') || ''); }
-    _contentOf(key) { const b = this._blockOf(key); if (!b) return null; if (b.type === 'result') { const v = resultView(b.content || {}); return Object.assign({}, (v && v.content) || {}); } return Object.assign({}, b.content || {}); }   // a result's live slot is the element it is drawn as
+    /* a body drawn inside another item (an app's answer, a composite's part) has no item of its own: its content is the one
+       the app drew under that sub-key - so a live widget there is fed the answer, not its sample face (DA-04c (d)) */
+    _contentOf(key) { const b = this._blockOf(key); if (!b) { const n = this._nested && this._nested[key]; return n ? Object.assign({}, n) : null; } if (b.type === 'result') { const v = resultView(b.content || {}); return Object.assign({}, (v && v.content) || {}); } return Object.assign({}, b.content || {}); }   // a result's live slot is the element it is drawn as
     _readout(key, obj) { this._pq = this._pq || {}; let text = ''; try { text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 1); } catch (e) { text = String(obj); } this._pq[key] = { text: String(text).slice(0, 4000) }; if (this._doc) this.render(this._doc); }
     /* the add bar's seed: the kind's own content as an item, yours, beside the turn in view */
     _addSeed(k) {
