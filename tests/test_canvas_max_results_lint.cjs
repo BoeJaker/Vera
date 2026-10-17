@@ -71,7 +71,8 @@ t('and a swap is at most every half second', /Math\.max\(0, 500 - \(Date\.now\(\
   /* its line is declared for the item's head (DEEP-29 11A.4: a body draws no head) */
   const rd = (er._decl || {})['result:docker.hosts:x'] || {};
   t('with the cap, its arguments and how long it took', /docker\.hosts/.test(rd.sub || '') && /all=true/.test(rd.sub || '') && /1\.2 s/.test(rd.sub || '') && !/vc-res-h/.test(r));
-  t('and a way to run it again - a head button of the item', SRC.includes("if (b.type === 'result' && c.cap) hx('data-act=\"rerun\"', 'Run again',"));
+  /* WSU-58 S3: the head's generic Refresh, for any item with a source - a result's is its call */
+  t('and a way to run it again - a head button of the item', SRC.includes("const src = sourceOf(b); if (src.cap) hx('data-act=\"rerun\"', 'Refresh', 'Run ' + src.cap + ' again with the same arguments');"));
   const bad = V.BLOCK.result({ cap: 'x.y', ok: false, error: 'boom' }, 'm', 'result:x', null);
   t('a failed run says so', /vc-res-err/.test(bad) && /boom/.test(bad));
   g.VeraCanvasAdapt = was;

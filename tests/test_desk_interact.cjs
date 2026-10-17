@@ -45,7 +45,7 @@ t('what the person decides is in the replay key (places, locks, pills, windows, 
   && C.includes('this._hold.want = wantSig;') && C.includes('rects: base, base, want: lp.want }') && C.includes('face: o.face, nd: o.nd, win: !!o.win };'));/* owner 2026-10-17: "like the ui panels on the desk id like to be able to send full screen to the front and back" */
 t('any item fills the desk in front or behind (its menu; its head while it fills the desk); a maximised one sent behind stops being maximised',
   C.includes("if (desk && !inHead('[data-act=\"layer-behind\"]')) h += '<hr>' + row('layer-behind', 'Full size, behind',")
-  && C.includes("if (b.type !== 'panel' && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];")
+  && C.includes("if (!dLay && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];")   /* WSU-58 S3: unless it declared its own (a panel) */
   && C.includes("if (this._max === key) { this._max = ''; try { localStorage.removeItem('vera:canvas:max:' + this.canvasId); }")
   && C.includes("const bk = this._blockOf(key); if (bk && bk.type !== 'panel' && this._doc) { this._html = null; this.render(this._doc); return; }"));/* owner 2026-10-17: "after re-sizing an element the other elements jump around to different positions allot" */
 t('under the hold each card goes back to where it was whenever that is clear; one pressed only by the card under the hand is trimmed on that side, not moved',

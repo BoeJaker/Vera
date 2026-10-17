@@ -45,8 +45,9 @@ t('the run command is the notebook page\'s own: a python heredoc, node, ruby, el
 let asked = ''; const pn0 = B.panel({ panel: 'workers', title: 'Workers' }, 'l', 'panel:workers', { _pq: {}, _pdOpen: {}, _panelResolve: (id) => { asked = id; } });
 t('a panel item without its page says it is opening and asks for it (never the dead /ui/panels/<id> frame)', /opening Workers…/.test(pn0) && asked === 'workers' && !/data-src="\/ui\/panels\/workers"/.test(pn0));
 const ep = E({ _pq: {}, _pdOpen: {} }); const pn = B.panel({ panel: 'workers', title: 'Workers', src: '/ui/panels/file/worker_panel.html' }, 'l', 'panel:workers', ep);
-t('a panel item frames the panel page; the bridge actions are its menu\'s panel section', /data-live="frame"/.test(pn) && /data-src="\/ui\/panels\/file\/worker_panel\.html"/.test(pn) && /over the bridge/.test(decl(ep, 'panel:workers').sub)
-  && ['pquery', 'pdispatch', 'prefresh', 'pstand'].every(a => SRC.includes("row('" + a + "'")) && !/vc-th/.test(pn));
+/* WSU-58 S3: the bridge actions are declared like every kind's - the head draws them, the menu lists what does not fit */
+t('a panel item frames the panel page; the bridge actions are declared for its head', /data-live="frame"/.test(pn) && /data-src="\/ui\/panels\/file\/worker_panel\.html"/.test(pn) && /over the bridge/.test(decl(ep, 'panel:workers').sub)
+  && acts(ep, 'panel:workers').join() === 'prefresh,pquery,pdispatch,pstand' && !/vc-th/.test(pn));
 t('the dispatch row is hidden until asked; the readout hidden until there is one', /vc-bridge" hidden/.test(pn) && /vc-pq" hidden/.test(pn));
 const pn2 = B.panel({ panel: 'dag', src: '/ui/panels/dag-workshop' }, 'l', 'panel:dag', { _pq: { 'panel:dag': { text: '{"ok":true}' } }, _pdOpen: { 'panel:dag': true } });
 t('a resolved page wins over the route; an answered query shows; the dispatch row opens', /data-src="\/ui\/panels\/dag-workshop"/.test(pn2) && /vc-pq"><code>\{&quot;ok&quot;:true\}/.test(pn2) && /vc-bridge" data-w/.test(pn2));
