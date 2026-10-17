@@ -501,6 +501,9 @@ CORS answers only this machine's own origins (any port) and
   switch the guard off.
 - **Behind a reverse proxy**, list the proxy's address in `VERA_TRUSTED_PROXIES`, so
   its `X-Forwarded-Host` counts as the request's host.
+- **Terminal sockets** have a second layer that the break-glass does not lift:
+  each needs a single-use ticket from a capability call and Vera's own Origin
+  ([12](./12-execution.md), "Interactive terminals").
 
 What the framework does provide:
 

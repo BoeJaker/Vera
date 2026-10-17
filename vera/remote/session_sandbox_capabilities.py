@@ -1898,6 +1898,8 @@ async def cap_sbx_terminal(session_id: str = "", shell: str = "bash",
     sh = (shell or "bash").strip() or "bash"
     ws_path = (f"/remote/docker/term/ws/{quote(hid, safe='')}/"
                f"{quote(cont, safe='')}?shell={quote(sh)}")
+    from Vera.vera.remote import term_tickets as _tt
+    ws_path = _tt.with_ticket(ws_path, _tt.BOOK.mint("docker", hid, cont))
     page_url = (f"/remote/sandbox/terminal?session_id={quote(session_id, safe='')}"
                 f"&shell={quote(sh)}")
     return {"ok": True, "ws_path": ws_path, "page_url": page_url,
