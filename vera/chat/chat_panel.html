@@ -7919,6 +7919,23 @@ IMPORTANT:
     const ns=n.split('.')[0]+'.*';
     return CV_CAP_KIND[ns];
   }
+  /* A CHAT-RUN ACTION LEAVES NOTHING BEHIND (DA-08b, DESK-SPINE §7): a capability that DOES something - its name ends in
+     a verb that changes a thing (watchlist.add, cal.event.upsert, sys.dev.restart, memory.feedback) - and answers with a
+     receipt is no item. The turn's activity line says it ran and how, and leaves with the turn's other calls (a failure
+     stays there); what it acted on shows the change itself. Not receipts: command output (a terminal), a list of two or
+     more things, a long text - those are something to look at. Only the reply's harvest asks this: a call made from the
+     desk updates its own element (DA-08a). */
+  const _CV_ACT_VERB=/^(add|append|remove|delete|del|drop|set|unset|put|update|upsert|patch|create|new|save|write|rename|move|toggle|enable|disable|start|stop|restart|pause|resume|cancel|kill|send|post|publish|notify|ack|acknowledge|approve|reject|assign|unassign|tag|untag|pin|unpin|archive|unarchive|restore|mark|clear|reset|apply|install|uninstall|mount|unmount|trigger|schedule|unschedule|watch|unwatch|subscribe|unsubscribe|follow|unfollow|rate|feedback|dismiss|snooze|forget|purge|prune|register|unregister|grant|revoke|lock|unlock|invite|link|unlink)$/i;
+  function _cvActionReceipt(capName, result){
+    const segs=String(capName||'').split('.'); if(segs.length<2) return false;
+    if(!_CV_ACT_VERB.test(String(segs[segs.length-1]||'').split('_')[0])) return false;
+    if(result==null) return true;
+    if(typeof result==='string') return result.length<=600;
+    if(typeof result!=='object'||Array.isArray(result)) return false;
+    if(result.command!=null&&(result.stdout!=null||result.stderr!=null)) return false;   // its output is a terminal
+    const rows=_cvRowsOf(result); if(Array.isArray(rows)&&rows.length>1) return false;
+    return !Object.values(result).some(v=>typeof v==='string'&&v.length>600);
+  }
   /* A DECLARED ANSWER IS READ AS DECLARED (DA-02c, DESK-SPINE rule 2): a capability whose Contract v2 says how its answer
      is drawn (presentation, carried by /mcp/tools - VeraWidget.presentations is fed from ALL_CAPS) goes through
      VeraWidget.present, the one reading the canvas and the server share, and becomes the item its element names. A
@@ -8271,6 +8288,7 @@ IMPORTANT:
       if(el.__cvLookKey) return;
       // an event written is not an item in itself - it is a reason to show the month it landed in
       try{ if(/^cal\.(event|todo)\.upsert$/.test(cname)&&cres&&cres.event) _cvLandCalendar(cres.event, _cvRelMid||''); }catch(_){}
+      if(cap&&!cap.err&&_cvActionReceipt(cname, cres)) return;   // an action's receipt is its activity line, not an item (DA-08b)
       try{ made = _cvAdapt(cname, cres, cap && cap.args); }catch(_){ made = null; }
       // a search answers with PAGES - several items, not one - so a recogniser may hand back a list
       if(Array.isArray(made)){ made.forEach(x=>out.push(x)); return; }
