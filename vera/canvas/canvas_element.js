@@ -3705,6 +3705,9 @@
     unlock: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 4.8-.9"/>',
     explode: '<circle cx="4" cy="4" r="1.6"/><circle cx="12" cy="5" r="1.6"/><circle cx="7" cy="12" r="1.6"/><path d="M5.5 4.2l5 .6M4.6 5.5l1.8 5M11 6.4l-3.1 4.4"/>',
     source: '<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',
+    code: '<path d="M6 4L2.5 8 6 12M10 4l3.5 4L10 12"/>',   /* a code item's views (WSU-58 S4): the code alone · the structure alone · both */
+    structure: '<circle cx="4" cy="4" r="1.6"/><circle cx="12" cy="5" r="1.6"/><circle cx="7" cy="12" r="1.6"/><path d="M5.5 4.2l5 .6M4.6 5.5l1.8 5M11 6.4l-3.1 4.4"/>',
+    both: '<rect x="2.5" y="3" width="11" height="10" rx="1"/><path d="M6.5 3v10"/>',
     edit: '<path d="M3 13l.8-3.2L10.4 3.2l2.4 2.4-6.6 6.6z"/>',
     ctx: '<circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.6" fill="currentColor"/>',
     max: '<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/>',
@@ -3725,7 +3728,7 @@
      A kind that can be seen more than one way says how: records (graph · list · cards · table), a table (table · cards ·
      list · chart when a column is numbers), the names a reply mentions (chips · list). The choice is the reader's, per
      item, kept in this browser; a records item's lives with its other browsing state. */
-  const VIEW_LABEL = { drawn: 'Its own view', list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips', fields: 'Fields', tree: 'Tree', flat: 'Flat (path, type, value)', validate: 'Validate' };
+  const VIEW_LABEL = { drawn: 'Its own view', list: 'List', cards: 'Cards', table: 'Table', graph: 'Graph', chart: 'Chart', chips: 'Chips', fields: 'Fields', tree: 'Tree', flat: 'Flat (path, type, value)', validate: 'Validate', code: 'The code alone', structure: 'The structure alone', both: 'The code and its structure' };
   const viewStore = (el) => { if (el._views) return el._views; try { el._views = JSON.parse(localStorage.getItem('vera:canvas:views:' + el.canvasId) || '{}') || {}; } catch (e) { el._views = {}; } return el._views; };
   const viewOf = (el, key, dflt) => (el && key && viewStore(el)[key]) || dflt;
   const viewSet = (el, key, v) => { const m = viewStore(el); m[key] = v; try { localStorage.setItem('vera:canvas:views:' + el.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } if (el._itemSet) el._itemSet(key, { view: v }); };
@@ -3744,7 +3747,17 @@
     if (b.type === 'entities' && Array.isArray(c.groups) && c.groups.length) return { views: ['chips', 'list', 'graph'], cur: viewOf(el, key, 'chips') };
     if (b.type === 'json') return { views: ['tree', 'flat', 'validate'], cur: viewOf(el, key, 'tree') };   /* the JSON lens (DU-E-json) */
     if (b.type === 'kv') { const f = c.fields || c.data || {}; const n = Array.isArray(f) ? f.length : Object.keys(f).length; if (n >= 3) return { views: ['fields', 'graph'], cur: viewOf(el, key, 'fields') }; }
+    /* THE CODE EXPLODE'S VIEWS ARE ORDINARY VIEWS (WSU-54; WSU-58 S4): a code item with its structure open is seen as the
+       code, the structure, or both side by side (the structure the larger) - picked through the same view control as every
+       other kind, kept as the item's view (viewSet → _itemSet) and so back after a reload. Prose explodes and the chat's
+       Explode scene are other things and are not touched. */
+    if (b.type === 'code' && el && key && codeXploded(el, key) && canExplode(b, el.explodeOffer ? el.explodeOffer() : 'both') === 'code') {
+      const v = ['code', 'structure', 'both'], cur = viewOf(el, key, 'both'); return { views: v, cur: v.includes(cur) ? cur : 'both' }; }
     return { views: [], cur: '' }; };
+  /* whether a code item has its structure (its bound explode item) open: the set the last render worked out, else the document */
+  const codeXploded = (el, key) => { const s = el._xploded instanceof Set ? el._xploded
+      : new Set(((el._doc && el._doc.blocks) || []).filter((x) => x && x.type === 'explode' && x.content && x.content.binds).map((x) => String(x.content.binds)));
+    return s.has(String(key)); };
   /* DEEP DIVES AS WIDGETS (WSU-42 / DA-09; owner: "deep dives ... shown through widgets"; the spine: "no stats in front -
      counts, facets behind menus"). What an item can be looked into, worked out from what it already holds - nothing is
      fetched, no model runs: each dive is a widget record (form + data) that opens as an item of its own beside its source,
@@ -4340,12 +4353,9 @@
       const had = st.querySelector(':scope > .hd-pop'); if (had) { had.remove(); if (had.dataset.key === key && had.dataset.kind === 'view') return; }
       const b = this._blockOf(key); if (!b) return; const vw = viewsOf(b, this);
       const c = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
-      const xv = c && (/(?:^|\s)xv-(code|both|structure)(?:\s|$)/.exec(c.className) || [])[1];
-      if (!xv && vw.views.length < 2) return;
+      if (vw.views.length < 2) return;
       const pop = document.createElement('div'); pop.className = 'hd-pop'; pop.dataset.key = key; pop.dataset.kind = 'view'; pop.dataset.w = 'canvas.item.views';
-      pop.innerHTML = xv ? [['code', 'The code alone'], ['both', 'The code and its structure'], ['structure', 'The structure alone']]
-          .map(([v, l]) => `<button class="ib vrow${v === xv ? ' on' : ''}" data-act="xview" data-view="${v}" data-layer-key="${esc(key)}" aria-pressed="${v === xv}">${l}</button>`).join('')
-        : vw.views.map((v) => `<button class="ib vrow${v === vw.cur ? ' on' : ''}" data-act="setview" data-view="${v}" data-layer-key="${esc(key)}"><span class="vic">${HDI[v] || ''}</span>${esc(VIEW_LABEL[v] || v)}</button>`).join('');
+      pop.innerHTML = vw.views.map((v) => `<button class="ib vrow${v === vw.cur ? ' on' : ''}" data-act="setview" data-view="${v}" data-layer-key="${esc(key)}"><span class="vic">${HDI[v] || ''}</span>${esc(VIEW_LABEL[v] || v)}</button>`).join('');
       this._popPlace(pop, btn, c || st);
       const doc = this.ownerDocument || document;
       const off = (ev) => { const p = ev.composedPath ? ev.composedPath() : []; if (p.includes(pop) || (btn && p.includes(btn))) return; pop.remove(); doc.removeEventListener('mousedown', off, true); };
@@ -5589,6 +5599,7 @@
       if (this.dataset.tier !== tier) this.dataset.tier = tier;
       // which items already have their diagram open, so each can draw its switch the right way round
       const xplodedKeys = new Set(((doc && doc.blocks) || []).filter((x) => x && x.type === 'explode' && x.content && x.content.binds).map((x) => String(x.content.binds)));
+      this._xploded = xplodedKeys;   /* viewsOf reads it: a code item with its structure open offers code · structure · both */
       const focusMid = this.dataset.focusMid || ''; this._focusMid = focusMid;
       const order = turnOrder(this._turns || {});
       const stage = this.hasAttribute('stage');
@@ -5703,10 +5714,10 @@
         const xploded = xplodable && xplodedKeys.has(String(b.key));
         /* THE CODE EXPLODE'S VIEWS (WSU-54, owner 2026-10-11: "explode opens full room, like reader mode; two views ... side by
            side in the full view; the structure area larger"): a code item with its structure open shows the code, the
-           structure, or both side by side (the structure the larger) - the reader's pick per item. Prose explodes and the
-           chat's Explode scene are other things and are not touched. */
-        const xcode = xploded && canExplode(b, this.explodeOffer()) === 'code';
-        const xv = xcode ? ((this._xpView && this._xpView[String(b.key)]) || 'both') : '';
+           structure, or both side by side (the structure the larger). Since WSU-58 S4 they are the item's ordinary views
+           (viewsOf): the pick is its view, drawn here as the xv-<view> class the panes answer to. */
+        const vw = viewsOf(b, this);
+        const xv = b.type === 'code' && vw.views[0] === 'code' ? vw.cur : '';
         // what is fused INTO this one: drawn as panes of its body, so the two read as one thing
         const g = groupOf(b);
         const panes = g ? g.members.map((k) => byKey[k]).filter(Boolean) : [];
@@ -5723,10 +5734,8 @@
             const ctxOn = inF && (F || b.state === 'pinned');
             (this._cardActs || (this._cardActs = {}))[key] = { explode: xplodable ? { on: xploded } : null, edit: editable ? { on: editing } : null, ctx: bid ? null : { on: ctxOn } };
             const hb = (act, ic, ttl, on) => `<span class="hb${on ? ' on' : ''}" data-act="${act}" role="button" tabindex="0" title="${esc(ttl)}">${HDI[ic]}</span>`;
-            const vw = viewsOf(b, this); const XV = { code: 'the code alone', both: 'the code and its structure side by side', structure: 'the structure alone' };
             const ctl = [];
-            if (xcode) ctl.push(hb('hdview', 'source', 'View: ' + XV[xv] + ' - choose another'));
-            else if (vw.views.length > 1) ctl.push(hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')));
+            if (vw.views.length > 1) ctl.push(hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')));
             if (desk && this._winKeepGet()[key]) ctl.push(hb('dock', 'restore', 'Back to the desk: no longer a window - it is placed with the others again (Esc)', true));
             if (desk) ctl.push(hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked));
             if (!maxed && !bid) ctl.push(desk ? hb('pill', 'pill', 'Minimise it to a pill on the border - a click on the pill opens it again')
@@ -5734,7 +5743,7 @@
             ctl.push(hb('max', maxed ? 'restore' : 'max', maxed ? 'Restore it' : desk ? 'Fill the free desk with it' : 'Maximise it in the canvas - it stays there until you restore it', maxed));
             ctl.push(hb('hdmore', 'more', 'More: park, pin, size, the arrangement, in context, deep dives - and what does not fit in the head'));
             ctl.push(hb('remove', 'drop', desk ? 'Take it off the desk' : 'Take it off the canvas'));
-            const nn = ctl.length - (xcode || vw.views.length > 1 ? 1 : 0) - 1;   /* below 320 px the row keeps lock, pill, more, drop */
+            const nn = ctl.length - (vw.views.length > 1 ? 1 : 0) - 1;   /* below 320 px the row keeps lock, pill, more, drop */
             /* THE CONTROLS OF WHAT IS IN IT, IN ITS HEAD (owner, 2026-10-16: "the unified header should have controls relevant to
                whatever is in it not the same controls for everything - i dont want everything to be chucked into the ⋯ menu"):
                after the title, the item's own actions as buttons - a code card's Copy, Run, Edit, Preview; a terminal's Attach
@@ -5759,8 +5768,7 @@
               hx('data-act="prefresh"', 'Refresh', 'Reload the panel'); hx('data-act="pquery"', 'Query', 'panel.query - what the panel holds'); hx('data-act="pdispatch"', 'Dispatch', 'panel.dispatch - drive it'); hx('data-act="pstand"', 'Standalone ↗', 'Open it in a tab of its own'); }
             if (b.type === 'result' && c.cap) hx('data-act="rerun"', 'Run again', 'Run ' + c.cap + ' again with the same arguments');
             if (editable && !kit) hx('data-act="edit"', editing ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', editing);
-            if (xplodable && !xcode) hx('data-act="explode"', xploded ? 'Source' : 'Explode', xploded ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', xploded);
-            else if (xcode) hx('data-act="explode"', 'Source', 'Back to the source alone - the diagram goes', true);
+            if (xplodable) hx('data-act="explode"', xploded ? 'Source' : 'Explode', xploded ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', xploded);
             const acts = ax.length ? '<span class="it-acts" data-w="canvas.item.actions">' + ax.map((x, i) => x.replace(/^<(button|a) /, '<$1 data-pri="' + i + '" ')).join('') + '</span>' : '';
             return `<div class="it-hd" style="--hda-n:${ctl.length};--hda-nn:${nn}"><span class="ic vc-badge" data-kind="${esc(b.type)}" title="${esc(b.type)}">${esc(glyphOf(b.type))}</span><span class="t" title="${esc(title)}">${esc(title)}</span>`
               + (d.sub ? `<span class="it-sub">${d.sub}</span>` : '')
@@ -7065,7 +7073,6 @@
         if (act === 'jcopy') { const p = ui.sel || ''; try { navigator.clipboard.writeText(p); } catch (e) { /* no clipboard */ } btn.textContent = 'copied'; setTimeout(() => { btn.textContent = 'copy path'; }, 1200); return; }
         const jp = btn.dataset.jp || ''; if (act === 'jsel') ui.sel = ui.sel === jp ? '' : jp; else ui.tab[jp] = !ui.tab[jp];
         if (this._doc) this.render(this._doc); return; }
-      if (act === 'xview') { (this._xpView = this._xpView || {})[key] = btn.dataset.view || 'both'; if (this._doc) this.render(this._doc); return; }   /* WSU-54 */
       if (act === 'hdview') return this._viewMenu(key, btn);
       /* a body drawn by the shared kit (code, a diagram, a file): its own action, run by the kit on its card (VeraOut.actOn) */
       if (act === 'vo') { const fu = it && [...it.querySelectorAll('.fu-p[data-key]')].find((f) => f.dataset.key === key);
@@ -8412,7 +8419,7 @@
     }
   }
 
-  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, version: 6 };
+  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
