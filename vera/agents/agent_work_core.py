@@ -21,6 +21,7 @@ must not hold back a census). Pure: dicts in, validated dicts / views out.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -89,6 +90,7 @@ def normalize(item: Dict[str, Any], *, now: Optional[float] = None, prev: Option
         "session_id": str(item.get("session_id") or out.get("session_id") or "")[:80],
         "when": when, "window_end": str(item.get("window_end") or out.get("window_end") or "")[:40],
         "repeat": str(item.get("repeat") or out.get("repeat") or "")[:80],
+        "tz": str(item.get("tz") or out.get("tz") or DEFAULT_TZ)[:40],
         "what": str(item.get("what") or out.get("what") or "")[:MAX_TEXT],
         "board_items": _strs(item.get("board_items") if "board_items" in item else out.get("board_items")),
         "branch": str(item.get("branch") or out.get("branch") or "")[:120],
@@ -99,6 +101,7 @@ def normalize(item: Dict[str, Any], *, now: Optional[float] = None, prev: Option
         "updated_at": _iso(now),
     })
     out.setdefault("created_at", _iso(now))
+    out["repeat_ok"] = bool(out["repeat"]) and repeat_rule(out["repeat"]) is not None
     out["id"] = str(item.get("id") or out.get("id") or make_id(kind, session, title, when))
     return out
 
@@ -147,3 +150,131 @@ def pending_for(entries: Iterable[Dict[str, Any]], session: str, now: Optional[f
         if due is None or due <= now:
             out.append(e)
     return sorted(out, key=lambda e: _epoch(e.get("when")) or 0)
+
+
+# ── repeat rules (looplab-control B2, 17 Oct 2026) ──────────────────────────
+# A trigger's `repeat` was free text nothing read. Two forms are now understood, so a repeating trigger
+# rolls its `when` forward each time it fires and the central view knows its next fire:
+#   every N (s|m|h|d), hourly, daily        - an interval from the last fire
+#   cron: M H DOM MON DOW  (or the bare 5 fields) - standard cron in the entry's tz (default Europe/London)
+DEFAULT_TZ = "Europe/London"
+_EVERY = re.compile(r"^every\s+(\d+)\s*(s|sec|secs|seconds?|m|min|mins|minutes?|h|hr|hrs|hours?|d|days?)$", re.I)
+_UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_CRON_RANGES = ((0, 59), (0, 23), (1, 31), (1, 12), (0, 7))
+
+
+def _cron_field(text: str, lo: int, hi: int) -> Optional[set]:
+    out = set()
+    for part in text.split(","):
+        step = 1
+        if "/" in part:
+            part, s = part.split("/", 1)
+            if not s.isdigit() or int(s) < 1:
+                return None
+            step = int(s)
+        if part == "*":
+            a, b = lo, hi
+        elif "-" in part:
+            x, y = part.split("-", 1)
+            if not (x.isdigit() and y.isdigit()):
+                return None
+            a, b = int(x), int(y)
+        elif part.isdigit():
+            a = b = int(part)
+            if step > 1:
+                b = hi
+        else:
+            return None
+        if a < lo or b > hi or a > b:
+            return None
+        out.update(range(a, b + 1, step))
+    return out
+
+
+def parse_cron(expr: str) -> Optional[tuple]:
+    f = expr.split()
+    if len(f) != 5:
+        return None
+    sets = [_cron_field(t, lo, hi) for t, (lo, hi) in zip(f, _CRON_RANGES)]
+    if any(s is None for s in sets):
+        return None
+    dow = {0 if d == 7 else d for d in sets[4]}
+    # cron's rule: when both day fields are restricted, a day matches EITHER
+    dom_any, dow_any = f[2] == "*", f[4] == "*"
+    return sets[0], sets[1], sets[2], sets[3], dow, dom_any, dow_any
+
+
+def repeat_rule(text: str) -> Optional[tuple]:
+    """('every', seconds) | ('cron', parsed) | None for text this does not understand."""
+    t = str(text or "").strip()
+    low = t.lower()
+    if low == "hourly":
+        return ("every", 3600)
+    if low == "daily":
+        return ("every", 86400)
+    m = _EVERY.match(t)
+    if m:
+        n = int(m.group(1)) * _UNIT[m.group(2)[0].lower()]
+        return ("every", n) if n >= 60 else None
+    expr = t[5:].strip() if low.startswith("cron:") else t
+    c = parse_cron(expr)
+    return ("cron", c) if c else None
+
+
+def _tz(name: str):
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name or DEFAULT_TZ)
+    except Exception:
+        return timezone.utc
+
+
+def next_fire(text: str, after: float, tz_name: str = DEFAULT_TZ) -> Optional[float]:
+    """The first fire strictly after `after` (epoch seconds), or None."""
+    rule = repeat_rule(text)
+    if rule is None:
+        return None
+    if rule[0] == "every":
+        return after + rule[1]
+    mins, hours, doms, mons, dows, dom_any, dow_any = rule[1]
+    from datetime import timedelta
+    tz = _tz(tz_name)
+    start = datetime.fromtimestamp(after, tz).replace(second=0, microsecond=0) + timedelta(minutes=1)
+    day = start.replace(hour=0, minute=0)
+    for i in range(400):
+        d = day + timedelta(days=i)
+        if d.month not in mons:
+            continue
+        cron_dow = (d.weekday() + 1) % 7                  # cron: 0 = Sunday
+        dom_ok, dow_ok = d.day in doms, cron_dow in dows
+        if not (dom_ok and dow_ok if (dom_any or dow_any) else dom_ok or dow_ok):
+            continue
+        for h in sorted(hours):
+            for mi in sorted(mins):
+                cand = d.replace(hour=h, minute=mi)
+                if cand >= start:
+                    return cand.timestamp()
+    return None
+
+
+def roll(entry: Dict[str, Any], now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """A repeating trigger that fired (or a repeating request that was done): the same entry, armed /
+    pending again at its next fire. None when it does not repeat (it stays done)."""
+    now = time.time() if now is None else now
+    text = entry.get("repeat") or ""
+    rule = repeat_rule(text)
+    if rule is None:
+        return None
+    # an interval counts from the planned fire when that is later than now (done early), else from now
+    base = max(now, _epoch(entry.get("when")) or now) if rule[0] == "every" else now
+    nxt = next_fire(text, base, entry.get("tz") or DEFAULT_TZ)
+    if nxt is None:
+        return None
+    out = dict(entry)
+    out["when"] = _iso(nxt)
+    out["window_end"] = ""
+    out["status"] = "pending" if entry.get("kind") == "request" else "armed"
+    out["fired"] = int(entry.get("fired") or 0) + 1
+    out["last_fired_at"] = _iso(now)
+    out["updated_at"] = _iso(now)
+    return out

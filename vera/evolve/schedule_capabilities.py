@@ -544,6 +544,9 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                                           repo=t.get("repo", "")),
                        exclusive=bool(rec.get("exclusive", True)))           # A3
         return {"ok": True, "state": f"tests running on {t.get('branch', '')}", "background": True}
+    if kind == "claude_session":
+        return _bg(run_id, rec, _session_request(rec, t), "request for %s" % t.get("session", ""),
+                   follow_cap="agents.work.request")
     if kind == "cap":
         if core.cap_denied(t.get("name", "")):
             return {"error": f"{t.get('name')} may not run from a schedule"}
@@ -553,6 +556,29 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                        exclusive=bool(rec.get("exclusive", True)), follow_cap=t.get("name", ""))
         return {"ok": True, "state": f"cap {t.get('name', '')} running", "background": True}
     return {"error": f"unknown kind {kind!r}"}
+
+
+#: B5: a session with this many unanswered requests gets no more from a schedule until it catches up
+MAX_UNANSWERED = 3
+
+
+async def _session_request(rec: Dict[str, Any], t: Dict[str, Any]) -> Dict[str, Any]:
+    """B3: write the request a claude_session schedule is for. The session picks it up at its own check
+    (agents.work.pending) - Vera never starts or resumes a Claude process (owner D2, 17 Oct 2026)."""
+    lst = await _call("agents.work.list", session=t.get("session", ""), kind="request")
+    waiting = [e for e in ((lst or {}).get("entries") or [])
+               if e.get("view_status") == "pending" and e.get("session") == t.get("session")]
+    if len(waiting) >= MAX_UNANSWERED:
+        return {"ok": True, "skipped": True,
+                "why": "%s has %d unanswered requests - not adding another" % (t.get("session"), len(waiting))}
+    w = core.current_window(rec, _now())
+    res = await _call("agents.work.request", session=t.get("session", ""),
+                      title=t.get("title") or rec.get("title") or "scheduled work",
+                      what=t.get("what", ""), board_items=t.get("board_items") or [],
+                      window_end=core.iso(w[1]) if w else "", owner="loop-lab-schedule:%s" % rec.get("id"))
+    if not (res or {}).get("ok"):
+        return {"error": (res or {}).get("error") or "agents.work.request failed"}
+    return {"ok": True, "id": res["entry"]["id"], "state": "requested"}
 
 
 def _result_word(res: Any) -> str:
@@ -884,12 +910,13 @@ async def cap_schedule_tick(trace_id=None) -> Dict[str, Any]:
                         "run and suite as a span coloured by its pass rate (source results; "
                         "granularity=runs|goals); mode=both. Input: start, end (ISO; default this "
                         "week ± 3 days), mode, granularity, include_calendar (bool - Vera's own "
-                        "calendar events beside them, source local/ics/caldav/google). Every event carries "
+                        "calendar events beside them, source local/ics/caldav/google), include_agents (bool, "
+                        "default true - Claude sessions' triggers and requests, layer agents). Every event carries "
                         "`layer` (windows|runs|results|board|calendar) so a viewer can switch each on and off. "
                         "Output: {events[], count, layers{layer: n}}.")
 async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windows",
                               granularity: str = "runs", include_calendar: bool = False,
-                              trace_id=None) -> Dict[str, Any]:
+                              include_agents: bool = True, trace_id=None) -> Dict[str, Any]:
     now = _now()
     s = core.parse_iso(start) or (now - __import__("datetime").timedelta(days=3))
     e = core.parse_iso(end) or (now + __import__("datetime").timedelta(days=10))
@@ -902,6 +929,8 @@ async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windo
         res = await _call("evolve.suites", limit=400)
         suites = (res.get("suites") if isinstance(res, dict) else None) or []
         ev += core.results_events(suites, s, e, granularity=(granularity or "runs").strip().lower())
+    if include_agents in (True, 1, "1", "true", "yes"):
+        ev += await _agent_events(s, e)                    # B1: the agents layer
     if include_calendar in (True, 1, "1", "true", "yes"):
         # Vera's calendar (the one the Comms panel shows), without its own Loop Lab overlay - that is this list
         cal = await _call("cal.events.list", start=core.iso(s), end=core.iso(e))
@@ -1085,3 +1114,93 @@ async def cap_script_status(job_id: str = "", trace_id=None):
     if rec.get("state") != "running" and r is not None:
         await r.hset(KEY_SCRIPT_JOBS, job_id, json.dumps(rec))
     return rec
+
+
+
+# ── B1: the central cron view (looplab-control, owner 17 Oct 2026) ──────────
+async def _host_rows() -> List[Dict[str, Any]]:
+    """The host's own timers: the prod user's crontab and systemd timers (read-only)."""
+    def _read():
+        out = []
+        try:
+            p = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=10)
+            if p.returncode == 0:
+                out += core.parse_crontab(p.stdout)
+        except Exception:
+            pass
+        try:
+            p = subprocess.run(["systemctl", "list-timers", "--all", "--no-legend", "--no-pager"],
+                               capture_output=True, text=True, timeout=10)
+            if p.returncode == 0:
+                out += core.parse_systemd_timers(p.stdout)
+        except Exception:
+            pass
+        return out
+    return await asyncio.to_thread(_read)
+
+
+def _in_process_rows() -> List[Dict[str, Any]]:
+    """Vera's own periodic jobs (schedule()): name and interval, read-only."""
+    rows = []
+    for t in list(getattr(_orch, "SCHEDULED_TASKS", []) or []):
+        try:
+            rows.append(core.central_row("in-process", "interval", str(t.get("name")),
+                                         repeat="every %ds" % int(t.get("int") or 0), status="armed",
+                                         owner="vera", last=str(t.get("last") or "")))
+        except Exception:
+            continue
+    return rows
+
+
+@capability("evolve.schedule.all", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/schedule/all", http_tags=["evolve", "schedule"],
+            description="The central cron view (looplab-control B1): EVERYTHING scheduled on the box in one shape - "
+                        "Loop Lab schedules (next window), Claude sessions' registered triggers and the owner's "
+                        "requests for them (agents.work), Vera's in-process periodic jobs, and the host crontab and "
+                        "systemd timers. Input: sources (comma list: loop-lab,agents-work,in-process,host; default "
+                        "all), session (filter agents-work by session). Output: {rows[{source, kind, title, owner, "
+                        "next_fire, repeat, status, last, target, ref}], counts}.")
+async def cap_schedule_all(sources: str = "", session: str = "", trace_id=None) -> Dict[str, Any]:
+    want = {s.strip() for s in (sources or "loop-lab,agents-work,in-process,host").split(",") if s.strip()}
+    rows: List[Dict[str, Any]] = []
+    now = _now()
+    if "loop-lab" in want:
+        for s in await _load_all():
+            nw = core.next_window(s, now) if s.get("enabled", True) else None
+            rows.append(core.central_row(
+                "loop-lab", s.get("kind", ""), s.get("title", ""), owner="loop-lab",
+                next_fire=core.iso(nw[0]) if nw else (s.get("once_at") or ""),
+                repeat=s.get("repeat", "") + (" every %dm" % s.get("every_minutes") if s.get("repeat") == "every" else ""),
+                status="enabled" if s.get("enabled", True) else "disabled", last=s.get("last_result", ""),
+                target=s.get("target"), ref=s.get("id", "")))
+    if "agents-work" in want:
+        lst = await _call("agents.work.list", session=session or "", include_done=False)
+        for e in (lst or {}).get("entries") or []:
+            rows.append(core.central_row(
+                "agents-work", e.get("kind", ""), e.get("title", ""), owner=e.get("session", ""),
+                next_fire=e.get("when", ""), repeat=e.get("repeat", ""), status=e.get("view_status", ""),
+                last=e.get("last_fired_at", ""), target={"what": (e.get("what") or "")[:200]}, ref=e.get("id", "")))
+    if "in-process" in want:
+        rows += _in_process_rows()
+    if "host" in want:
+        rows += await _host_rows()
+    counts: Dict[str, int] = {}
+    for r in rows:
+        counts[r["source"]] = counts.get(r["source"], 0) + 1
+    rows.sort(key=lambda r: (r.get("next_fire") or "9999", r["source"], r["title"]))
+    return {"rows": rows, "counts": counts, "count": len(rows)}
+
+
+async def _agent_events(s: datetime, e: datetime) -> List[Dict[str, Any]]:
+    """B1: Claude sessions' triggers and requests as calendar events (layer agents)."""
+    lst = await _call("agents.work.list", include_done=True)
+    out = []
+    for x in (lst or {}).get("entries") or []:
+        st = core.parse_iso(x.get("when") or "")
+        if st is None or not (s <= st <= e):
+            continue
+        en = core.parse_iso(x.get("window_end") or "") or (st + __import__("datetime").timedelta(minutes=30))
+        out.append({"id": "agents:%s" % x.get("id"), "title": "%s · %s" % (x.get("session") or "?", x.get("title")),
+                    "start": core.iso(st), "end": core.iso(en), "source": "agents-work", "read_only": True,
+                    "kind": x.get("kind"), "status": x.get("view_status"), "color": "#e0a458"})
+    return out

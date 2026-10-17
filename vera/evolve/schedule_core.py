@@ -26,14 +26,17 @@ import uuid
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-KINDS = ("census", "suite", "task", "pipeline", "board", "loop", "tests", "cap")
+KINDS = ("census", "suite", "task", "pipeline", "board", "loop", "tests", "cap",
+         # looplab-control B3 (17 Oct 2026): work the owner schedules FOR a Claude session - written as an
+         # agents.work request when due; the session picks it up at its own check (live sessions only, D2)
+         "claude_session")
 # Kinds whose work outlives the tick that started it: run in the background, the run record closed when it ends,
 # and the next start held while one is still going.
 BACKGROUND_KINDS = ("loop", "tests")
 #: Every kind but census now starts in the background (DEEP-21 D21-1): a run still going holds the
 #: schedule's next start back, whatever the kind. BACKGROUND_KINDS keeps its narrower meaning for the
 #: `continuous` repeat rule (cooldown vs interval) so existing schedules keep their cadence.
-RUN_TRACKED_KINDS = ("suite", "task", "pipeline", "board", "loop", "tests", "cap")
+RUN_TRACKED_KINDS = ("suite", "task", "pipeline", "board", "loop", "tests", "cap", "claude_session")
 STILL_RUNNING_HOURS = 6                 # a background run older than this no longer holds the next one back
 REPEATS = ("continuous", "once_per_window", "every")
 WINDOW_END = ("finish", "yield", "drop")
@@ -44,17 +47,21 @@ MAX_PROJECTED_EVENTS = 600
 
 COLORS = {"census": "#c9a35a", "suite": "#6db87a", "task": "#8fb87a",
           "pipeline": "#7aa2f7", "board": "#a78bfa", "loop": "#f472b6", "tests": "#38bdf8",
-          "cap": "#9aa0a6"}
+          "cap": "#9aa0a6", "claude_session": "#e0a458"}
 
 # The calendar's layers: what an event is, so a viewer can switch each on and off. A board item's schedule is its own
 # layer - the work a board item asked for, whatever kind it is.
-LAYERS = ("windows", "runs", "results", "board", "calendar")
+LAYERS = ("windows", "runs", "results", "board", "calendar", "agents", "host")
 
 
 def layer_of(ev: Dict[str, Any]) -> str:
     src = ev.get("source") or ""
     if src == "results":
         return "results"
+    if src == "agents-work":
+        return "agents"                       # B1: Claude sessions' triggers and requests
+    if src in ("host-cron", "host-timer", "in-process"):
+        return "host"
     if src in ("loop-lab", "loop-lab-run"):
         if ev.get("board_id") or ev.get("kind") == "board":
             return "board"
@@ -108,9 +115,12 @@ FOLLOW = {
                            "how": "state"},
     "evolve.script.run": {"status": "evolve.script.status", "id_key": "job_id", "id_arg": "job_id",
                           "how": "state"},
+    # B3: a claude_session run lasts until the session settles the request it wrote
+    "agents.work.request": {"status": "agents.work.get", "id_key": "id", "id_arg": "id", "how": "state"},
 }
 FOLLOW_POLL_S = 30
-_ENDED = ("done", "error", "failed", "cancelled", "canceled", "finished", "stopped", "exited")
+_ENDED = ("done", "error", "failed", "cancelled", "canceled", "finished", "stopped", "exited",
+          "declined", "expired")
 
 
 def follow_args(cap: str, res: Any) -> Optional[Tuple[str, Dict[str, Any]]]:
@@ -149,7 +159,8 @@ def follow_state(cap: str, st: Any) -> Tuple[bool, str, str]:
         row = rows[0] if rows and isinstance(rows[0], dict) else {}
     state = str(row.get("state") or "").lower()
     if state in _ENDED:
-        word = "error" if (state in ("error", "failed") or row.get("error")) else "done"
+        word = ("error" if (state in ("error", "failed") or row.get("error"))
+                else state if state in ("declined", "expired", "cancelled") else "done")
         return True, word, str(row.get("error") or row.get("summary") or state)[:200]
     return False, "", ""
 
@@ -294,7 +305,8 @@ def normalize(rec: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[st
     if awe not in WINDOW_END:
         raise ValueError(f"at_window_end must be one of {', '.join(WINDOW_END)}")
     r["at_window_end"] = awe
-    r["exclusive"] = bool(r.get("exclusive", True))
+    # a claude_session request does not hold the box (the session's own work declares itself)
+    r["exclusive"] = bool(r.get("exclusive", kind != "claude_session"))
     r["cooldown_minutes"] = max(0, int(r.get("cooldown_minutes") or 2))
     r["notes"] = str(r.get("notes") or "")
     r["quiet_ok"] = bool(r.get("quiet_ok", False))           # A2: may start in a quiet hour
@@ -375,6 +387,17 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
         t["paths"] = str(t.get("paths") or "tests").strip()
         t["markers"] = str(t.get("markers") or "").strip()
         t["repo"] = str(t.get("repo") or "").strip()
+    elif kind == "claude_session":
+        sess = str(t.get("session") or "").strip()
+        if not sess:
+            raise ValueError("a claude_session schedule needs target.session (a session name, or 'any')")
+        if not str(t.get("what") or "").strip():
+            raise ValueError("a claude_session schedule needs target.what (the brief)")
+        t["session"] = sess[:80]
+        t["what"] = str(t["what"]).strip()[:2000]
+        t["title"] = str(t.get("title") or "").strip()[:160]
+        items = t.get("board_items") or []
+        t["board_items"] = [str(x).strip() for x in (items if isinstance(items, list) else [items]) if str(x).strip()][:20]
     elif kind == "cap":
         name = str(t.get("name") or "").strip()
         if not name:
@@ -472,7 +495,8 @@ def _default_title(kind: str, t: Dict[str, Any]) -> str:
             "board": f"Board · {t.get('id', '')}",
             "loop": f"Loop · {str(t.get('goal', ''))[:48]}",
             "tests": f"Tests · {t.get('branch', '')}" + (f" · {t['markers']}" if t.get("markers") else ""),
-            "cap": f"Cap · {t.get('name', '')}"}[kind]
+            "cap": f"Cap · {t.get('name', '')}",
+            "claude_session": f"Session · {t.get('session', '')} · {t.get('title') or str(t.get('what', ''))[:40]}"}[kind]
 
 
 # ── windows ──────────────────────────────────────────────────────────────────
@@ -824,4 +848,44 @@ def results_events(suites: Iterable[Dict[str, Any]], start: datetime, end: datet
         if len(out) >= limit:
             break
     out.sort(key=lambda e: e["start"])
+    return out
+
+
+# ── B1: the central view - every scheduled thing in one shape ───────────────
+def central_row(source: str, kind: str, title: str, *, owner: str = "", next_fire: str = "", repeat: str = "",
+                status: str = "", last: str = "", target: Any = None, ref: str = "") -> Dict[str, Any]:
+    return {"source": source, "kind": kind, "title": title, "owner": owner, "next_fire": next_fire,
+            "repeat": repeat, "status": status, "last": last, "target": target or {}, "ref": ref}
+
+
+def parse_crontab(text: str) -> List[Dict[str, Any]]:
+    """Host crontab lines -> rows (schedule + command). Comments, blanks and VAR= lines are skipped."""
+    out = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", s):
+            continue
+        if s.startswith("@"):
+            spec, _, cmd = s.partition(" ")
+        else:
+            parts = s.split(None, 5)
+            if len(parts) < 6:
+                continue
+            spec, cmd = " ".join(parts[:5]), parts[5]
+        out.append(central_row("host-cron", "cron", cmd.strip()[:160], repeat=spec, status="armed",
+                               owner="crontab"))
+    return out
+
+
+def parse_systemd_timers(text: str) -> List[Dict[str, Any]]:
+    """`systemctl list-timers --all --no-legend --no-pager` -> rows (next fire text + unit)."""
+    out = []
+    for line in (text or "").splitlines():
+        cols = line.split()
+        units = [c for c in cols if c.endswith(".timer")]
+        if not units:
+            continue
+        unit = units[0]
+        nxt = " ".join(cols[:4]) if cols and cols[0] not in ("-", "n/a") else ""
+        out.append(central_row("host-timer", "systemd", unit, next_fire=nxt, status="armed", owner="systemd"))
     return out

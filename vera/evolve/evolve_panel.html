@@ -723,13 +723,14 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="sch-layers" id="sch-layers"></div>
     <div class="sch-body">
       <div class="sch-main">
-        <vera-calendar id="sch-cal" fill src="/evolve/schedule/events?mode=both&amp;granularity=runs" view="week" hour-start="4" hour-end="23" poll="60000"></vera-calendar>
+        <vera-calendar id="sch-cal" fill src="/evolve/schedule/events?mode=both&amp;granularity=runs" view="week" hour-start="0" hour-end="24" poll="60000"></vera-calendar>
       </div>
       <aside class="sch-side">
-        <div class="sch-tabs"><button data-t="list" class="on" onclick="schTab('list')">Schedules</button><button data-t="board" onclick="schTab('board')" title="Board items - schedule work for one, see what is scheduled for each">Board</button><button data-t="runs" onclick="schTab('runs')">Runs</button></div>
+        <div class="sch-tabs"><button data-t="list" class="on" onclick="schTab('list')">Schedules</button><button data-t="board" onclick="schTab('board')" title="Board items - schedule work for one, see what is scheduled for each">Board</button><button data-t="runs" onclick="schTab('runs')">Runs</button><button data-t="all" onclick="schTab('all')" title="Everything scheduled on the box: Loop Lab schedules, Claude sessions' timers and the work scheduled for them, Vera's own periodic jobs, the host crontab and systemd timers">All</button></div>
         <div class="sch-pane" data-p="list"><div id="sch-list" class="hint">loading…</div></div>
-        <div class="sch-pane" data-p="board" hidden><input id="sch-bq" placeholder="filter board items…" oninput="schBoard()" style="width:100%;margin-bottom:6px"><div id="sch-board" class="hint">—</div></div>
+        <div class="sch-pane" data-p="board" hidden><input id="sch-bq" placeholder="filter board items…" oninput="schBoard()" style="width:100%;margin-bottom:6px"><div id="sch-bpane" class="hint">—</div></div>
         <div class="sch-pane" data-p="runs" hidden><div id="sch-runs" class="hint">—</div></div>
+        <div class="sch-pane" data-p="all" hidden><select id="sch-all-src" onchange="schAll()" style="width:100%;margin-bottom:6px"><option value="">every source</option><option value="loop-lab">Loop Lab schedules</option><option value="agents-work">Claude sessions (agents.work)</option><option value="in-process">Vera's periodic jobs</option><option value="host">host crontab + systemd timers</option></select><div id="sch-all" class="hint">—</div></div>
       </aside>
     </div>
   </div>
@@ -1065,15 +1066,16 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
 // the page; what it shows is a set of LAYERS the viewer switches: the windows (faint bands - when work MAY run), the
 // runs the scheduler started, the results of every census run and suite (solid, by pass rate), the board items' work,
 // and Vera's own calendar (the Comms panel's).
-const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',loop:'Agent loop',tests:'Unit tests',cap:'Capability'};
-const SCH_KIND_COL={census:'#c9a35a',suite:'#6db87a',task:'#8fb87a',pipeline:'#7aa2f7',board:'#a78bfa',loop:'#f472b6',tests:'#38bdf8',cap:'#9aa0a6'};
+const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',loop:'Agent loop',tests:'Unit tests',cap:'Capability',claude_session:'Claude session'};
+const SCH_KIND_COL={census:'#c9a35a',suite:'#6db87a',task:'#8fb87a',pipeline:'#7aa2f7',board:'#a78bfa',loop:'#f472b6',tests:'#38bdf8',cap:'#9aa0a6',claude_session:'#e0a458'};
 const SCH_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const SCH_LAYERS=[
   {k:'windows',label:'Windows',col:'#c9a35a',tip:'when each schedule may run - faint bands behind the rest'},
   {k:'runs',label:'Runs',col:'#7aa2f7',tip:'what the scheduler started, and how each ended'},
   {k:'results',label:'Results',col:'#4ade80',tip:'every census run and suite over time, coloured by its pass rate'},
   {k:'board',label:'Board items',col:'#a78bfa',tip:'work scheduled for board items - its windows and runs'},
-  {k:'calendar',label:'Calendar',col:'#4a9eff',tip:'Vera\u2019s own calendar - the Comms panel\u2019s: local, ics, CalDAV, Google'}];
+  {k:'calendar',label:'Calendar',col:'#4a9eff',tip:'Vera\u2019s own calendar - the Comms panel\u2019s: local, ics, CalDAV, Google'},
+  {k:'agents',label:'Agents',col:'#e0a458',tip:'Claude sessions - their registered timers and the work scheduled for them (agents.work)'}];
 let _schOn=new Set(SCH_LAYERS.map(L=>L.k)), _schCounts={}, _schBoardItems=[], _schProfiles=[];
 try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
 let _schCache={schedules:[],next:{},state:{},config:{}};
@@ -1083,8 +1085,9 @@ async function loadSchedule(){
   $('sch-enabled').checked=!!(d.config||{}).enabled;
   const st=d.state||{};
   $('sch-state').textContent=(st.census_running?'census in flight ('+(st.template||'')+' '+(st.census_run||'')+')':'box free')
-    +(st.loops_running?' · '+st.loops_running+' loop(s)':'')+(st.harness_blocked?' · '+st.harness_blocked:'')+' · tz '+((d.config||{}).timezone||'');
-  schList(); schRuns(); schBoard(); schMode();
+    +(st.loops_running?' · '+st.loops_running+' loop(s)':'')+(st.harness_blocked?' · '+st.harness_blocked:'')+(st.declared_busy?' · declared: '+st.declared_busy:'')+' · tz '+((d.config||{}).timezone||'')
+    +(((d.config||{}).quiet_windows||[]).length?' · quiet '+(d.config.quiet_windows||[]).map(q=>q.start+'–'+q.end).join(', '):'');
+  schList(); schRuns(); schBoard(); schMode(); schAll();
   const cal=$('sch-cal'); if(cal&&typeof cal.refresh==='function')cal.refresh();
 }
 function schWhen(s){
@@ -1120,9 +1123,28 @@ async function schRuns(){
     +'<div class="m">'+esc(String(r.started_at).replace('T',' ').slice(5,16))+(r.finished_at?' → '+esc(String(r.finished_at).replace('T',' ').slice(11,16)):' · running')+(r.detail?' · '+esc(String(r.detail).slice(0,90)):'')+'</div>'
     +(r.board_id?'<div class="m">'+schBoardTag(r.board_id)+'</div>':'')+'</div></div>').join(''):'nothing yet';
 }
+// The central cron view (looplab-control B1): every scheduled thing on the box, by source. A Claude session's
+// trigger or a request for one can be cancelled here; the rest are read-only (edit them where they live).
+const SCH_SRC_LABEL={'loop-lab':'Loop Lab','agents-work':'Claude session','in-process':'Vera job','host-cron':'crontab','host-timer':'systemd'};
+async function schAll(){
+  const box=$('sch-all'); if(!box)return;
+  const src=(($('sch-all-src')||{}).value||'');
+  const d=await api('/evolve/schedule/all'+(src?'?sources='+encodeURIComponent(src):''));
+  const R=(d&&d.rows)||[];
+  if(!R.length){box.innerHTML='<span class="hint">nothing scheduled'+(src?' from this source':'')+'</span>';return}
+  box.innerHTML='<div class="hint" style="margin-bottom:4px">'+Object.entries((d&&d.counts)||{}).map(([k,n])=>esc(SCH_SRC_LABEL[k]||k)+' '+n).join(' · ')+'</div>'
+    +R.slice(0,400).map(r=>'<div class="sch-row"><span class="sch-dot" style="background:'+(r.source==='agents-work'?'#e0a458':r.source==='loop-lab'?(SCH_KIND_COL[r.kind]||'#999'):'#666')+'"></span><div style="flex:1;min-width:0">'
+      +'<div class="t"'+(r.source==='loop-lab'&&r.ref?' style="cursor:pointer" onclick="schOpen(\''+esc(r.ref)+'\')"':'')+'>'+esc(r.title||'?')+'</div>'
+      +'<div class="m">'+esc(SCH_SRC_LABEL[r.source]||r.source)+(r.owner?' · '+esc(r.owner):'')+' · '+esc(r.kind||'')
+      +(r.next_fire?' · next '+esc(String(r.next_fire).replace('T',' ').slice(0,16)):'')+(r.repeat?' · '+esc(r.repeat):'')
+      +(r.status?' · '+esc(r.status):'')+(r.last?' · last '+esc(String(r.last).slice(0,24)):'')+'</div></div>'
+      +(r.source==='agents-work'&&/armed|pending|running|claimed/.test(r.status||'')?'<button class="btn sm" onclick="schWorkCancel(\''+esc(r.ref)+'\')" title="cancel it (it stops repeating)">✕</button>':'')
+      +'</div>').join('');
+}
+async function schWorkCancel(id){const d=await api('/agents/work/cancel',{method:'POST',body:JSON.stringify({id,note:'cancelled from the Loop Lab schedule'})});toast(d&&d.ok?'cancelled':'not cancelled: '+((d&&d.error)||'?'));schAll();const cal=$('sch-cal');if(cal&&typeof cal.refresh==='function')cal.refresh()}
 // Board items beside the calendar: what is scheduled for each, and ⏰ to schedule work for one.
 function schBoard(){
-  const box=$('sch-board'); if(!box)return;
+  const box=$('sch-bpane'); if(!box)return;
   const q=(($('sch-bq')||{}).value||'').toLowerCase();
   const by={}; (_schCache.schedules||[]).forEach(s=>{if(s.board_id)(by[s.board_id]=by[s.board_id]||[]).push(s)});
   const items=_schBoardItems.filter(it=>!/^(done|dropped)$/.test(it.lane||'')&&(!q||(String(it.title||'')+' '+it.id+' '+(it.labels||[]).join(' ')).toLowerCase().includes(q)))
@@ -1157,7 +1179,9 @@ const SCH_PRESETS=[
   ['Suite',{kind:'suite',target:{tag:'nightly'},days:[5],start:'06:00',end:'12:00',repeat:'once_per_window'}],
   ['Gate a pipeline',{kind:'pipeline',target:{action:'test'},days:[0,1,2,3,4],start:'07:00',end:'08:00',repeat:'once_per_window'}],
   ['Dispatch a board item',{kind:'board',target:{executor:'deterministic',agent:'orchestrator'},days:[0,1,2,3,4],start:'09:00',end:'17:00',repeat:'once_per_window'}],
-  ['Sync errors',{kind:'cap',target:{name:'evolve.errors.sync',arguments:{}},days:[0,1,2,3,4,5,6],start:'06:00',end:'07:00',repeat:'once_per_window'}]];
+  ['Sync errors',{kind:'cap',target:{name:'evolve.errors.sync',arguments:{}},days:[0,1,2,3,4,5,6],start:'06:00',end:'07:00',repeat:'once_per_window'}],
+  ['Work for a Claude session',{kind:'claude_session',target:{session:'any',title:'',what:''},days:[1,3,5],start:'01:00',end:'03:30',repeat:'once_per_window',exclusive:false}],
+  ['Student training (nightly)',{kind:'cap',target:{name:'decide.student.nightly',arguments:{}},days:[0,1,2,3,4,5,6],start:'01:00',end:'03:30',repeat:'every',every_minutes:10}]];
 function schPreset(i){const p=JSON.parse(JSON.stringify(SCH_PRESETS[i][1]));const bid=(($('sch-board')||{}).value||'').trim();if(bid){p.board_id=bid;if(p.kind==='board')p.target.id=bid}schOpen(null,p)}
 function schKindFields(kind,t){
   t=t||{};
@@ -1169,7 +1193,11 @@ function schKindFields(kind,t){
     +[['','each goal’s own (auto) — the baseline series'],['auto','auto'],['flat','flat'],['stepwise','stepwise'],['detailed','detailed'],['broad','broad'],['broad-stepwise','broad-stepwise'],['stepwise-reviewed','stepwise-reviewed']]
       .map(([v,l])=>'<option value="'+v+'"'+((t.plan_style||'')===v?' selected':'')+'>'+l+'</option>').join('')
     +'</select></div>'
-    +'<div><label class="fld">At window end</label><select id="sch-t-awe" style="width:100%"><option value="finish">let the census in flight finish</option><option value="yield">yield (park after the goal in flight)</option><option value="drop">drop the set</option></select></div>';
+    ;
+  if(kind==='claude_session')return f('sch-t-session','Session (its name, or any)',t.session||'any','vera-fb, vera-62, any')+f('sch-t-wtitle','Title',t.title,'what to call this request')
+    +'<div style="grid-column:1/-1"><label class="fld">Brief (what the session should do)</label><textarea id="sch-t-what" rows="3" style="width:100%">'+esc(t.what||'')+'</textarea></div>'
+    +f('sch-t-items','Board items (comma separated, optional)',(t.board_items||[]).join(', '),'')
+    +'<div class="hint" style="grid-column:1/-1">The session picks this up at its own check (agents.work.pending) - Vera never starts or resumes a Claude process. A session with 3 unanswered requests gets no more until it catches up.</div>';
   if(kind==='suite')return f('sch-t-tag','Suite tag',t.tag,'e.g. nightly or census-default')+f('sch-t-profile','Profile (optional)',t.profile,'')
     +'<div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="sch-t-assess" style="width:auto" '+(t.assess?'checked':'')+'> assess</label></div>';
   if(kind==='task')return f('sch-t-id','Task id',t.id,'evolve task id')
@@ -1211,13 +1239,15 @@ function schOpen(id,prefill){
     +'<div><label class="fld">Repeat inside the window</label><select id="sch-repeat" style="width:100%"><option value="continuous">back to back (start the next when the last finished)</option><option value="once_per_window">once, when the window opens</option><option value="every">every N minutes</option></select></div>'
     +'<div><label class="fld">Every (minutes)</label><input id="sch-every" type="number" min="1" value="'+esc(r.every_minutes||60)+'" style="width:100%"></div>'
     +'<div><label class="fld">Or once at (ISO, leave blank for weekly)</label><input id="sch-once" value="'+esc(r.once_at||'')+'" placeholder="2026-09-22T09:00" style="width:100%"></div>'
+    +'<div><label class="fld">At window end</label><select id="sch-t-awe" style="width:100%" title="a census can be parked (yield); any other run is stopped by yield or drop"><option value="finish">let what is running finish</option><option value="yield">yield (census: park after the goal in flight; others: stop)</option><option value="drop">drop / stop it</option></select></div>'
     +'</div><div class="row" style="margin-top:8px;gap:14px">'
-    +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-excl" style="width:auto" '+(r.exclusive!==false?'checked':'')+'> never beside a census</label>'
+    +'<label class="row" style="gap:5px" title="one exclusive run at a time, never beside a census or a declared probe"><input type="checkbox" id="sch-excl" style="width:auto" '+(r.exclusive!==false?'checked':'')+'> exclusive (never beside a census)</label>'
+    +'<label class="row" style="gap:5px" title="may start inside a quiet window (the background queue’s hour, 04:00-05:00)"><input type="checkbox" id="sch-quiet" style="width:auto" '+(r.quiet_ok?'checked':'')+'> may start in the quiet hour</label>'
     +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-on" style="width:auto" '+(r.enabled!==false?'checked':'')+'> enabled</label>'
     +'<span style="flex:1"></span><button class="btn primary" onclick="schSave(\''+(s?s.id:'')+'\')">Save</button></div>'
     +'<div class="hint" style="margin-top:6px">A census needs the box to itself: it starts only when no census and no agent loop is running. An agent loop or a test run goes on in the background; the next one waits until it has ended. Pipelines may reach bleeding-edge, never main.</div>');
   $('sch-repeat').value=r.repeat||'continuous';
-  if(r.kind==='census'&&$('sch-t-awe'))$('sch-t-awe').value=r.at_window_end||'finish';
+  if($('sch-t-awe'))$('sch-t-awe').value=r.at_window_end||'finish';
   if(r.kind==='pipeline'&&$('sch-t-action'))$('sch-t-action').value=(r.target||{}).action||'test';
 }
 function schBoardHint(){const v=(($('sch-board')||{}).value||'').trim();const h=$('sch-board-hint');if(h)h.textContent=v?schBoardTitle(v):'';if($('sch-kind').value==='board'&&$('sch-t-id')&&!$('sch-t-id').value)$('sch-t-id').value=v}
@@ -1231,6 +1261,7 @@ function schReadTarget(kind){
   if(kind==='board')return {id:v('sch-t-id'),executor:v('sch-t-executor')||'deterministic',agent:v('sch-t-agent')||'orchestrator'};
   if(kind==='loop')return {goal:v('sch-t-goal'),profile:v('sch-t-profile')||'coding',model:v('sch-t-model')};
   if(kind==='tests')return {branch:v('sch-t-branch')||'bleeding-edge',paths:v('sch-t-paths')||'tests',markers:v('sch-t-markers'),repo:v('sch-t-repo')};
+  if(kind==='claude_session')return {session:v('sch-t-session')||'any',title:v('sch-t-wtitle'),what:v('sch-t-what'),board_items:v('sch-t-items').split(',').map(x=>x.trim()).filter(Boolean)};
   let args={};try{args=JSON.parse(v('sch-t-args')||'{}')}catch(_){toast('arguments must be JSON');throw new Error('bad json')}
   return {name:v('sch-t-name'),arguments:args};
 }
@@ -1240,8 +1271,8 @@ async function schSave(id){
     days:[...document.querySelectorAll('.sch-day:checked')].map(e=>+e.value),
     start:$('sch-start').value.trim(),end:$('sch-end').value.trim(),timezone:$('sch-tz').value.trim(),
     repeat:$('sch-repeat').value,every_minutes:+$('sch-every').value||60,once_at:$('sch-once').value.trim(),
-    exclusive:$('sch-excl').checked,enabled:$('sch-on').checked};
-  if(kind==='census'&&$('sch-t-awe'))rec.at_window_end=$('sch-t-awe').value;
+    exclusive:$('sch-excl').checked,enabled:$('sch-on').checked,quiet_ok:!!($('sch-quiet')||{}).checked};
+  if($('sch-t-awe'))rec.at_window_end=$('sch-t-awe').value;
   const d=await api('/evolve/schedule/upsert',{method:'POST',body:JSON.stringify({schedule:rec})});
   if(!d||!d.ok){toast('not saved: '+((d&&d.error)||'?'));return}
   closeModal();toast('saved · next '+(d.next?String(d.next.start).replace('T',' ').slice(0,16):'—'));loadSchedule();
@@ -1257,7 +1288,7 @@ async function schCfgSave(){const d=await api('/evolve/schedule/config/set',{met
 // The layers. What the server is asked for follows them (results only while that layer is on - it reads every suite;
 // Vera's calendar only while that one is); what is drawn is the calendar's filter over the answer, so switching a
 // layer the answer already holds redraws at once. Per goal places each goal of a census run by its elapsed time.
-function schLayerOf(ev){return ev.layer||(ev.source==='results'?'results':ev.source==='loop-lab-run'?(ev.board_id||ev.kind==='board'?'board':'runs'):ev.source==='loop-lab'?(ev.board_id||ev.kind==='board'?'board':'windows'):'calendar')}
+function schLayerOf(ev){return ev.layer||(ev.source==='agents-work'?'agents':ev.source==='results'?'results':ev.source==='loop-lab-run'?(ev.board_id||ev.kind==='board'?'board':'runs'):ev.source==='loop-lab'?(ev.board_id||ev.kind==='board'?'board':'windows'):'calendar')}
 function schGran(){try{return localStorage.getItem('loop-lab.sch.gran')==='goals'?'goals':'runs'}catch(_){return 'runs'}}
 function schLayersBar(){
   const b=$('sch-layers'); if(!b)return;
