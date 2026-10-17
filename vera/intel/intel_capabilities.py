@@ -3699,9 +3699,15 @@ async def _tick() -> None:
         st.set_kv("brief_day", today)
         pend = st.get_kv("pending_brief") or {}
         rid = pend.get("id")
-        if not rid:              # the night did not finish: brief what is in, and say so
+        if not rid:              # the night did not finish: brief what is in, and say so (and why)
+            blocker = ""
+            try:
+                if _has("background.status"):
+                    blocker = str((await _call("background.status")).get("busy_reason") or "")
+            except Exception as ex:  # noqa: BLE001 - the reason is a courtesy, never a reason not to brief
+                log.debug("intel: background reason: %s", ex)
             doc = await build_report([], period_hours=int(c.get("report_period_hours", 24)),
-                                     note=ops.night_note(st.get_kv("night", {}) or {}))
+                                     note=ops.night_note(st.get_kv("night", {}) or {}, blocker))
             rid = doc["id"] if _has_content(doc) else ""
         if rid:
             await deliver_report(rid, list(c.get("brief_channels") or ["html"]))
