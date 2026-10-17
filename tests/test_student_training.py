@@ -233,3 +233,46 @@ def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch, signal
     calls.clear()
     skip = asyncio.run(st_mod.train_student("loop.step_done", dry_run=False))
     assert skip.get("skipped") and not any(c[0] == "train" for c in calls)
+
+
+def test_the_nightly_tick_retries_an_error_but_not_forever(monkeypatch):
+    """17 Oct: a Redis drop restarted the node workers, the run found no node
+    and failed, and the night was over. Errors now retry on later ticks, up to
+    core.ATTEMPTS; a finished run or a not-trainable answer ends the night."""
+    orch = types.ModuleType("Vera.vera.capability_orchestration")
+
+    class R:
+        def __init__(self): self.kv = {}
+        async def get(self, k): return self.kv.get(k)
+        async def set(self, k, v, ex=None): self.kv[k] = v
+        async def incr(self, k):
+            self.kv[k] = int(self.kv.get(k) or 0) + 1
+            return self.kv[k]
+        async def expire(self, k, s): pass
+
+    orch.CAPABILITY_REGISTRY, orch.REDIS, orch.PG_POOL, orch.OLLAMA_INSTANCES = {}, R(), None, {}
+    orch.capability = lambda *a, **k: (lambda f: f)
+    orch.schedule = lambda *a, **k: None
+    orch.emit_event = lambda e: asyncio.sleep(0)
+    monkeypatch.setitem(sys.modules, "Vera.vera.capability_orchestration", orch)
+    st = _load("student_training")
+    monkeypatch.setattr(st, "_orch", orch)
+    monkeypatch.setattr(st.core, "in_window", lambda h, w=None: True)
+    results = [{"ok": False, "error": "no node had room"}] * 5
+    seen = []
+
+    async def train(question_id, dry_run):
+        seen.append(question_id)
+        return results[len(seen) - 1]
+    monkeypatch.setattr(st, "cap_decide_student_train", train)
+    for _ in range(5):
+        asyncio.run(st._nightly())
+    assert len(seen) == core.ATTEMPTS, "three errors, then the night is over"
+    done = [k for k in orch.REDIS.kv if k.startswith("vera:students:done:")]
+    assert len(done) == 1 and "error" in orch.REDIS.kv[done[0]]
+
+    orch.REDIS.kv.clear(); seen.clear()
+    results[:] = [{"ok": False, "error": "lost"}, {"ok": True, "state": "trained_not_bound"}, {"ok": True}]
+    for _ in range(3):
+        asyncio.run(st._nightly())
+    assert len(seen) == 2, "an error, then a finished run ends the night"
