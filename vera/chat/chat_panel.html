@@ -9325,13 +9325,29 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   const _LOOP_RUNS={}, _loopCanvasT={}; let _loopCanvasMid='';
   function _loopCanvasEv(ev){
     if(!ev||typeof ev!=='object'||!SID) return;
-    const t=String(ev.type||''); const rid=String(ev.run_id||ev.stream_id||ev.session_id||'run').slice(0,80);
+    const t=String(ev.type||''); /* one run, one item: its events name it by the loop's session (every event) before its stream (only some) - by stream first, one run became two items */ const rid=String(ev.run_id||ev.session_id||ev.stream_id||'run').slice(0,80);
     let R=_LOOP_RUNS[rid];
     if(!R||t==='start'||/\.triage_start$/.test(t)){ if(R&&R.added&&(t==='start'||/\.triage_start$/.test(t))) { R.evs=[]; R.status='running'; } else R=_LOOP_RUNS[rid]={rid, key:'loop:'+rid, goal:'agentic loop', status:'running', evs:[], mid:_loopCanvasMid||'', added:false}; }
     R.evs.push(ev); if(R.evs.length>3000) R.evs=R.evs.slice(-2000);
     if(ev.goal&&!R.goalSet){ R.goal=String(ev.goal).slice(0,120); R.goalSet=true; }
     if(t==='done'||/\.done$/.test(t)||t==='run_done'||/\.(error|failed|cancelled)$/.test(t)) R.status=(ev.ok===false||/error|failed|cancelled/.test(t))?'fail':'ok';
     clearTimeout(_loopCanvasT[rid]); _loopCanvasT[rid]=setTimeout(()=>_loopCanvasFlush(rid), R.added?1500:50);
+    if(/\.tool_done$/.test(t)&&ev.ok!==false&&ev.tool){ try{ _loopStepLand(R, ev); }catch(_){} }
+  }
+  /* A LOOP DRIVES THE DESK AS A TURN DOES (DESK-ARRANGEMENT 8.4, LV-12; owner 2026-10-17: "you need to add integrating the agentic loop into the
+     desk/canvas ... its a key part of the chat ui and needs to be able to drive it just the same"). A turn lands each tool's answer as an item
+     (the adapters, _cvAdapt) and the desk's topic follows the turn; a loop only kept its one run item. Now each step's answer (a tool_done's
+     preview, when it is the whole answer) is read by the same adapters and lands as its own item beside the run, and the desk's topic follows
+     the step - the run and what its last steps made - as it follows a turn (when the desk follows the conversation at all). */
+  async function _loopStepLand(R, ev){
+    let res=null; try{ res=JSON.parse(String(ev.preview||'')); }catch(_){ res=null; }
+    if(!res||typeof res!=='object') return;
+    let made=null; try{ made=_cvAdapt(String(ev.tool), res, null); }catch(_){ made=null; } if(Array.isArray(made)) made=made[0]; if(!made||!made.kind) return;
+    const key=R.key+':s'+String(ev.step_id||0)+':'+(R.stepN=(R.stepN||0)+1);
+    R.stepKeys=(R.stepKeys||[]).concat([key]).slice(-12);
+    try{ const r=await _capCall('canvas.add',{session_id:SID, kind:made.kind, key, content:made.content, at:'now', size:'m', anchor:{mid:R.mid, turn:R.mid, beside:R.key}}); if(r&&r.ok===false) return; }catch(_){ return; }
+    try{ if(typeof _cvTopicOn==='function'&&!_cvTopicOn()) return; const cv=document.querySelector('#canvasColumnBody vera-canvas');
+      if(cv&&typeof cv.setTopic==='function') cv.setTopic([R.key].concat(R.stepKeys.slice(-4)), {}, 'loop:'+R.rid+':'+String(ev.step_id||0)); }catch(_){}
   }
   function _loopRunContent(R){
     let steps=[];
