@@ -139,6 +139,9 @@ def test_a_composite_names_its_parts_and_lays_them_out():
     assert ("error", "view.parts.from") in got({"parts": [{"kind": "metric"}]})
     assert ("error", "view.parts.unknown") in got({"parts": [{"from": "news"}]})
     assert ("error", "view.parts.kind") in got({"parts": [{"from": "quote", "kind": "receipt"}]})
+    assert got({"parts": [{"from": "quote", "kind": "table", "columns": ["symbol", "last"]}]}) == set()   # DA-07c
+    assert ("error", "view.parts.columns") in got({"parts": [{"from": "quote", "columns": "symbol"}]})
+    assert ("error", "view.parts.columns") in got({"parts": [{"from": "quote", "columns": []}]})
     assert ("warning", "view.layout.split") in got({"layout": "split"}, read=reads + [{"as": "news", "cap": "info.seek"}])
 
 

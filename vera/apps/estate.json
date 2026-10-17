@@ -40,5 +40,84 @@
       "default": "m",
       "min": "s"
     }
+  },
+  {
+    "id": "estate.glance",
+    "panel": "estate",
+    "title": "Estate at a glance",
+    "icon": "server",
+    "summary": "Every machine, how hot it runs, the model servers and the latest errors - side by side",
+    "view": {
+      "kind": "composite",
+      "layout": "dashboard",
+      "parts": [
+        {
+          "from": "nodes",
+          "kind": "table",
+          "title": "Machines",
+          "columns": ["label", "addr", "docker_kind", "user"]
+        },
+        {
+          "from": "temps",
+          "kind": "status",
+          "title": "Temperatures"
+        },
+        {
+          "from": "models",
+          "kind": "status",
+          "title": "Model servers"
+        },
+        {
+          "from": "errors",
+          "kind": "log",
+          "title": "Latest errors"
+        }
+      ]
+    },
+    "read": [
+      {
+        "as": "nodes",
+        "cap": "nodes.list",
+        "args": {},
+        "refresh": {
+          "every_s": 120
+        }
+      },
+      {
+        "as": "temps",
+        "cap": "obs.node_temps",
+        "args": {},
+        "refresh": {
+          "every_s": 60
+        }
+      },
+      {
+        "as": "models",
+        "cap": "ollama.instances",
+        "args": {},
+        "refresh": {
+          "every_s": 60
+        }
+      },
+      {
+        "as": "errors",
+        "cap": "syslog.errors",
+        "args": {
+          "limit": 20,
+          "include_code": false
+        },
+        "refresh": {
+          "every_s": 60
+        }
+      }
+    ],
+    "related": [
+      "estate.nodes",
+      "system-monitor.now"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
   }
 ]

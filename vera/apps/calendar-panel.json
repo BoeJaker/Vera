@@ -66,5 +66,57 @@
         }
       }
     ]
+  },
+  {
+    "id": "calendar.briefing",
+    "panel": "calendar-panel",
+    "title": "Briefing",
+    "icon": "calendar",
+    "summary": "Today's diary and the inbox in one window",
+    "view": {
+      "kind": "composite",
+      "layout": "split",
+      "parts": [
+        {
+          "from": "today",
+          "kind": "calendar",
+          "title": "Today"
+        },
+        {
+          "from": "inbox",
+          "kind": "table",
+          "title": "Inbox"
+        }
+      ]
+    },
+    "read": [
+      {
+        "as": "today",
+        "cap": "cal.events.list",
+        "args": {
+          "start": "today"
+        },
+        "refresh": {
+          "every_s": 300
+        }
+      },
+      {
+        "as": "inbox",
+        "cap": "mail.inbox.list",
+        "args": {
+          "limit": 15
+        },
+        "refresh": {
+          "every_s": 300
+        }
+      }
+    ],
+    "related": [
+      "calendar.agenda"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
   }
 ]

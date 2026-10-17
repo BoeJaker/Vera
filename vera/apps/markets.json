@@ -134,5 +134,69 @@
       "default": "m",
       "min": "s"
     }
+  },
+  {
+    "id": "markets.ticker",
+    "panel": "markets",
+    "title": "Ticker",
+    "icon": "chart",
+    "summary": "One symbol in one place - its candles, its news and how the news has read over time",
+    "view": {
+      "kind": "composite",
+      "layout": "dashboard",
+      "parts": [
+        {
+          "from": "chart",
+          "kind": "series",
+          "title": "Candles"
+        },
+        {
+          "from": "news",
+          "kind": "records",
+          "title": "News"
+        },
+        {
+          "from": "mood",
+          "kind": "series",
+          "title": "Sentiment"
+        }
+      ]
+    },
+    "read": [
+      {
+        "as": "chart",
+        "cap": "markets.chart",
+        "args": {
+          "symbol": "{arg.symbol}"
+        },
+        "refresh": {
+          "every_s": 60
+        }
+      },
+      {
+        "as": "news",
+        "cap": "markets.news.feed",
+        "args": {
+          "symbol_key": "{arg.exchange}:{arg.symbol}",
+          "limit": 8
+        }
+      },
+      {
+        "as": "mood",
+        "cap": "markets.sentiment.history",
+        "args": {
+          "symbol_key": "{arg.exchange}:{arg.symbol}",
+          "limit": 60
+        }
+      }
+    ],
+    "related": [
+      "markets.symbol",
+      "markets.watchlist"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
   }
 ]

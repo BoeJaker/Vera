@@ -148,10 +148,12 @@
     joins.forEach((pr) => [[pr[0], pr[1]], [pr[1], pr[0]]].forEach(([a, b]) => { const v = appJv(pick.row[a.f]); if (a.as === pick.as && b.as === as && v) t.push({ f: b.f, v }); }));
     return t;
   }
-  function appPartRowsHtml(as, rows, pick, lights) {
-    const { cols } = appView(rows, {}); const shown = rows.slice(0, 200); const hit = (x) => lights.some((l) => appJv(x[l.f]) === l.v);
+  function appPartRowsHtml(as, rows, pick, lights, want, still) {   /* still: a table only, nothing to pick (no join) */
+    let { cols } = appView(rows, {}); if (Array.isArray(want) && want.length) cols = want.map(String).slice(0, 8);   /* the part's own columns (DA-07c) */
+    const shown = rows.slice(0, 200); const hit = (x) => lights.some((l) => appJv(x[l.f]) === l.v);
     return '<table class="vc-table vc-app-t vc-app-jt" tabindex="0"><thead><tr>' + cols.map((k) => '<th>' + esc(k) + '</th>').join('') + '</tr></thead><tbody>'
       + shown.map((x, i) => { const c = pick && pick.as === as && pick.i === i ? 'pk' : lights.length ? (hit(x) ? 'jn' : 'jd') : '';
+        if (still) return '<tr>' + cols.map((k) => '<td>' + esc(appCell(x[k])) + '</td>').join('') + '</tr>';
         return '<tr data-app-prow="' + i + '"' + (c ? ' class="' + c + '"' : '') + ' title="Pick: the joined parts show theirs">' + cols.map((k) => '<td>' + esc(appCell(x[k])) + '</td>').join('') + '</tr>'; }).join('')
       + '</tbody></table>' + (rows.length > shown.length ? '<div class="vc-app-more">' + (rows.length - shown.length) + ' more</div>' : '');
   }
@@ -164,10 +166,10 @@
     const one = ({ s, p }) => {
       const state = p.reading ? 'reading…' : p.error ? 'failed' : p.ms != null ? (p.ms < 1000 ? p.ms + ' ms' : (p.ms / 1000).toFixed(1) + ' s') : '';
       let body; const lights = appJoinLights(joins, pick, p.as); const joined = joins.some((pr) => pr[0].as === p.as || pr[1].as === p.as);
-      const jrows = joined && !p.error && p.result !== undefined ? appRows(p.result) : null; let focus = false;
+      const jrows = (joined || s.kind === 'table') && !p.error && p.result !== undefined ? appRows(p.result) : null; let focus = false;   /* joined, or a part that asks for a table (DA-07c) */
       if (p.error) body = '<div class="vc-res-err">' + esc(p.error) + '</div>';
       else if (p.result === undefined) body = p.waiting ? '<span class="vc-dim">' + esc(p.waiting) + '</span>' : '<div class="vc-app-psk"><i></i><i></i><i></i></div>';
-      else if (jrows && jrows.length) { body = appPartRowsHtml(p.as, jrows, pick, lights); focus = lights.length > 0 && jrows.some((x) => lights.some((l) => appJv(x[l.f]) === l.v)); }   /* DA-07b */
+      else if (jrows && jrows.length) { body = appPartRowsHtml(p.as, jrows, pick, lights, s.columns, !joined); focus = lights.length > 0 && jrows.some((x) => lights.some((l) => appJv(x[l.f]) === l.v)); }   /* DA-07b */
       else {
         let v = resultView({ cap: p.cap, args: p.args, result: p.result, ok: true }); const k = s.kind;
         if ((!v || v.kind === 'json') && k && BLOCK[k] && k !== 'app' && p.result && typeof p.result === 'object') v = { kind: k, content: p.result };
@@ -182,7 +184,7 @@
     return strip + '<div class="vc-app-parts" data-layout="' + lay + '">' + (tab ? parts.filter((x) => x.p.as === tab) : parts).map(one).join('') + '</div>';
   }
   /* a capability that only reads, by its name - what an app or a widget may call on its own (the chat's rule, _widgetReadable) */
-  const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|sentiment\.map|news\.feed)$|^cal\.events\.list$)/.test(String(cap || ''));
+  const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|quotes|sentiment\.map|news\.feed)$|^cal\.events\.list$|^ollama\.instances$|^syslog\.errors$|^evolve\.sandbox\.(logs|diff)$)/.test(String(cap || ''));   /* the last four: the reads of the first composites (DA-07c), by name */
   const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
   if (root.__veraCanvasElement) return;
   root.__veraCanvasElement = true;
@@ -2157,8 +2159,11 @@
   .vc-app-sk > i{display:block;height:10px;border-radius:5px;background:color-mix(in srgb,var(--fg,#dce1e8) 7%,transparent)}
   .vc-app-sk > i:nth-child(3){width:80%}.vc-app-sk > i:nth-child(4){width:55%}
   /* a composite app's parts (DA-07a) */
-  .vc-app-comp{display:flex;flex-direction:column;gap:6px;min-height:0}
-  .vc-app-parts{display:grid;gap:8px;min-height:0;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:start}
+  /* the composite scrolls inside its card; its parts keep their own heights (a part clips, so a grid squeezed to the card
+     would shrink its rows under them and the parts would overlap) */
+  .vc-app-comp{display:flex;flex-direction:column;gap:6px;min-height:0;height:100%;overflow:auto}
+  .vc-app-parts{display:grid;gap:8px;flex:0 0 auto;grid-auto-rows:max-content;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));align-items:start}
+  .vc-app-tabs{flex:0 0 auto}
   .vc-app-parts[data-layout="split"]{grid-template-columns:1fr 1fr}
   .vc-app-parts[data-layout="stack"],.vc-app-parts[data-layout="tabs"]{grid-template-columns:1fr}
   .vc-app-part{border:1px solid var(--line,#2a2f36);border-radius:8px;min-width:0;display:flex;flex-direction:column;overflow:hidden}
