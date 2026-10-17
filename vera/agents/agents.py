@@ -1783,6 +1783,10 @@ async def agent_chat_stream_endpoint(request: Request):
     session_id = body.get("session_id", "") or str(uuid.uuid4())
     try:    history = json.loads(body.get("history", "[]"))
     except: history = []
+    # four-minds FM-0.3: the exact request body, kept only when chat.replay_capture is on (background, never waits)
+    _replay = sys.modules.get("chat_replay") or sys.modules.get("Vera.vera.minds.chat_replay")
+    if _replay is not None:
+        _replay.capture(body, session_id)
 
     # ── Set session_id into syslog context var so all downstream caps
     # (ide.fs.write, research.*, etc.) can read it from get_trigger_chain().

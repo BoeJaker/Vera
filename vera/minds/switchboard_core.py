@@ -69,6 +69,12 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "and then search memory deeply before the model answers - every session and agent, the vector leg when it "
        "answers in time - announced in the throbber, waited on at most 1.5 s. 'off' (default) = the agent's own "
        "memory only; 'rules' = the rules decide (turn_needs_core).", owner="context-and-ui"),
+    _f("chat.replay_capture", ("off", "on"), "chat", "FM-0.3",
+       "Keep the exact request body of each chat turn (message, history, the browser-built system prefix and cap "
+       "hint) in a private Postgres store (chat_replay, credentials redacted, 30 days), so real turns can be replayed "
+       "faithfully. A case goes into the chat corpus only after it is approved one by one (chat.replay.approve). "
+       "'off' (default) = nothing kept; 'on' = every chat turn kept (corpus-run sessions excepted). Owner: yes, "
+       "17 Oct (§13 Q3).", census=False),
     _f("decide.student.step_verify", ("off", "shadow", "first", "first_met", "first_not_met"), "loop", "FM-2.5",
        "A pre-trained student (VERA_DECIDE_STUDENT_MODEL, default qwen3:1.7b in a second warm slot on gpu-250; one "
        "token over the live verifier's own evidence and rules) on every step "
