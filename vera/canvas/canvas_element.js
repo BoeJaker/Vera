@@ -37,7 +37,8 @@
   const zOf = (band, n) => { const b = ZB[band]; if (b === undefined) return ZB.tile[0];
     return Array.isArray(b) ? Math.min(b[1], b[0] + Math.max(0, Math.round(n || 0))) : b; };
   /* A BODY DRAWS NO HEAD (DEEP-29 11A.4 Decision 4). It declares, as it is drawn, what its head used to hold - a line about
-     it (sub, html) and its actions ({act, label, title, on} run through the item's one dispatcher, {href, download} a link)
+     it (sub, html) and its actions ({act, label, title, on} run through the item's one dispatcher, {href, download} a link;
+     lead: true puts one first in the head, ahead of the kit's, so a narrow card still shows it)
      and any dropdowns of its own (menus, html) - and the item's container draws them: the line beside the title, the rest
      in the item's menu. A body drawn by the shared kit (code, a diagram, a file) is asked for its actions instead
      (VeraOut.barActions). Returns '' so a renderer can declare in an expression. */
@@ -606,6 +607,18 @@
   /* A DIAGRAM'S SOURCE, EDITED BESIDE ITS DRAWING (DU-E-diagram): per item - open, the draft, the last source that drew,
      the error. Nothing here is written to the item; only Save writes (canvas.update). */
   const dgUi = (el, key) => { const m = el._dgUi || (el._dgUi = {}); return m[key] || (m[key] = { open: false, draft: '', good: '', err: '' }); };
+  /* the source box keeps its focus and caret: a redraw replaces it, so the new one is focused - now, on the next frame and
+     once more (the desk's own pass can draw the card again) - with the caret where it was (ui.ss / ui.se). Only while it
+     had the focus (ui.had): a redraw drops the focus to nothing; anything that HAS it keeps it, unless force (just opened) */
+  const dgFocus = (el, key, force) => {
+    const go = () => { const ui = (el._dgUi || {})[key]; if (!ui || !ui.open || !el.shadowRoot || (!force && !ui.had)) return;
+      const ta = [...el.shadowRoot.querySelectorAll('[data-dg-src]')].find((x) => x.dataset.dgSrc === key); if (!ta) return;
+      const a = el.shadowRoot.activeElement; if (a === ta) return;
+      const doc = el.ownerDocument || document, da = doc.activeElement;
+      if (!force && (a || (da && da !== el && da !== doc.body))) return;
+      const n = ta.value.length, s = ui.ss == null ? n : Math.min(ui.ss, n), e = ui.se == null ? s : Math.min(Math.max(ui.se, s), n);
+      ta.focus({ preventScroll: true }); ui.had = true; try { ta.setSelectionRange(s, e); } catch (_) { /* optional */ } };
+    go(); requestAnimationFrame(go); setTimeout(go, 120); };
   /* does a draft parse? '' when it does. Each line's brackets and quotes first (the drawing element's parser is lenient and
      reads past an unclosed one), then the estate element's own parser (vera-mermaid's _build) - no second renderer. */
   const dgCheck = (inner, code) => {
@@ -1250,7 +1263,8 @@
       /* EDIT SOURCE (DU-E-diagram): the source in a box on the left, the drawing on the right (stacked on a narrow card); it
          redraws as it is typed, a source that does not parse says so under the box and the last good drawing stays */
       const ui = key && el && el._dgUi && el._dgUi[key] && el._dgUi[key].open ? el._dgUi[key] : null;
-      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui };
+      /* lead: first in the head, ahead of the kit's actions - a narrow card (under 640 px keeps four) still shows it */
+      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui, lead: true };
       const ACTS = [{ act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }];
       if (ui) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · editing', acts: [EDA].concat(ACTS) })
         + `<div class="vc-dgedw" data-w="canvas.diagram.edit"><div class="vc-dged" data-dged="${esc(key)}"><div class="vc-dged-l">`
@@ -5442,9 +5456,12 @@
             if (typeof document !== 'undefined' && document.createElement && VO && typeof VO.barActions === 'function' && /class="code-card/.test(inner)) {
               try { const tp = document.createElement('template'); tp.innerHTML = inner; const kc = tp.content.querySelector('.code-card[data-cb]'); if (kc) kit = VO.barActions(kc); } catch (e) { kit = null; } }
             const RANK = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'];
+            /* a declared action marked lead goes first, ahead of the kit's: it is the one a narrow card keeps (data-pri) */
+            const dact = (a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"` + (a.aid ? ` data-app-action="${esc(a.aid)}"` : ''), a.label, a.title, a.on); };
+            (d.acts || []).filter((a) => a.lead).forEach(dact);
             if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane').sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
               .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
-            (d.acts || []).forEach((a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"` + (a.aid ? ` data-app-action="${esc(a.aid)}"` : ''), a.label, a.title, a.on); });
+            (d.acts || []).filter((a) => !a.lead).forEach(dact);
             if (b.type !== 'panel' && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];
               hx('data-act="layer-behind"', 'Behind', 'Behind the other items, still filling the free desk - again to put it back among them', L1 === 'behind'); hx('data-act="layer-front"', 'Front', 'Over the other items, filling the free desk - again to put it back among them', L1 === 'front'); }
             if (b.type === 'panel') { if (desk) { const L0 = (this._layer || {})[key] || ''; hx('data-act="layer-behind"', 'Behind', 'Fill the free desk, under the other items', L0 === 'behind'); hx('data-act="layer-front"', 'Front', 'Fill the free desk, over the other items', L0 === 'front'); }
@@ -5975,6 +5992,15 @@
           const eb = box && box.querySelector('.vc-dged-err'); if (eb) { eb.textContent = err; eb.hidden = !err; }
           const sv = box && box.querySelector('[data-act="dgsave"]'); if (sv) sv.disabled = !!err;
           if (err) return; ui.good = ui.draft.trim(); if (inner) this._mermaidInto(inner, key); }, 300); });
+      /* where its caret is and whether it holds the focus, for dgFocus after a redraw: a box that is gone (redrawn) did not
+         give the focus away; one still there that lost it did (another field, a button, the chat) */
+      const dgCaret = (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null) return; const ui = dgUi(this, q.dataset.dgSrc);
+        try { ui.ss = q.selectionStart; ui.se = q.selectionEnd; } catch (_) { /* optional */ } };
+      ['input', 'keyup', 'pointerup', 'select'].forEach((t) => body.addEventListener(t, dgCaret));
+      body.addEventListener('focusin', (ev) => { const q = ev.target; if (q && q.dataset && q.dataset.dgSrc != null) dgUi(this, q.dataset.dgSrc).had = true; });
+      body.addEventListener('focusout', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null) return; const key = q.dataset.dgSrc; dgCaret(ev);
+        setTimeout(() => { if (q.isConnected && this.shadowRoot.activeElement !== q) dgUi(this, key).had = false; }, 0); });
+      this.addEventListener('vera:canvas:placed', () => { const m = this._dgUi || {}; Object.keys(m).forEach((k) => { if (m[k] && m[k].open && m[k].had) dgFocus(this, k, false); }); });
       body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null || ev.key !== 'Escape') return;
         ev.preventDefault(); ev.stopPropagation(); const box = q.closest('.vc-dged'); const b = box && box.querySelector('[data-act="dgcancel"]'); if (b) this._act(b, ev); });
       /* THE TIMELINE'S BRUSH AND SCRUBBER (DU-E-timeline). A press on the axis that moves past 3 px is a brush: the band
@@ -6620,12 +6646,14 @@
             this.call('canvas.update', Object.assign(this._ref(key), { content: nc })); }
           ui.open = false; }
         else ui.open = false;
-        if (!ui.open) Object.assign(ui, { draft: '', good: '', err: '' });
+        if (!ui.open) Object.assign(ui, { draft: '', good: '', err: '', had: false, ss: null, se: null });
+        else if (act === 'dgedit') Object.assign(ui, { had: true, ss: null, se: null });   /* just opened: the caret at the end */
         clearTimeout((this._dgT || {})[key]); this._html = null; if (this._doc) this.render(this._doc);
+        if (ui.open) dgFocus(this, key, act === 'dgedit');
         /* the card grows for the editor on the desk (as a code card's edit does) and lets the height go when it ends */
         setTimeout(() => { const it2 = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!it2) return;
           if (!ui.open) { try { this._editFit(it2, true); } catch (e) { /* optional */ } return; }
-          const ta = it2.querySelector('[data-dg-src]'); if (ta) { ta.focus(); try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) { /* optional */ } }
+          dgFocus(this, key, false);
           if (!this.deskAlign()) return; const bd = it2.querySelector(':scope > .it-bd'); if (!bd) return;
           const E = this._editGrow || (this._editGrow = {}); const H = (this._deskGeo && this._deskGeo.H) || 800;
           const need = Math.round(it2.offsetHeight - bd.clientHeight + Math.max(bd.scrollHeight, 300) + 8);
