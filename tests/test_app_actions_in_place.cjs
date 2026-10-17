@@ -27,7 +27,7 @@ t('remove: marked going before the call; put back when it fails', S.includes("if
 t('an answer that says what changed patches the row and lights it', S.includes("if (res && res.changed && typeof res.changed === 'object' && row) { Object.assign(row, res.changed); (ui.hl || (ui.hl = {}))[rk] = Date.now(); }"));
 t('create: the rows before are kept, so the new one is lit when the read brings it', S.includes("if (eff === 'create') ui.before = new Set((st.rows || []).map((x) => appRowKey(st, x)));") && S.includes("if (ui.before) { keys.forEach((k) => { if (!ui.before.has(k)) (ui.hl || (ui.hl = {}))[k] = Date.now(); }); ui.before = null; }"));
 t('undo: the manifest\'s inverse with the gone row\'s values, then read again', S.includes("res = await this.callResult(u.a.undo, appActArgs({ args: u.a.undo_args || u.a.args || {} }, u.row, appArgs, {}));") && S.includes("if (t.closest('[data-app-undo]')) return this._appUndo(key);"));
-t('the Undo button reaches its handler (the bar's click guard lets it through)', S.includes("t.closest('[data-app-cancel],[data-app-run],[data-app-yes],[data-app-rowact],[data-app-undo]')"));
+t('the Undo button reaches its handler (the click guard of the bar lets it through)', S.includes("t.closest('[data-app-cancel],[data-app-run],[data-app-yes],[data-app-rowact],[data-app-undo]')"));
 t('a confirm asks for 4 s', S.includes("st.confirmT = setTimeout(() => { if (ui.confirm && ui.confirm.aid === aid) { ui.confirm = null; this._appDraw(key); } }, 4000);"));
 t('a row is known by live.key, else id / symbol (+ exchange) / name / key / title', S.includes("const f = lk && x[lk] != null ? lk : ['id', 'symbol', 'name', 'key', 'title'].find((n) => x[n] != null && x[n] !== '');"));
 // the manifests that can put a removal back
