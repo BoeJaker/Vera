@@ -12951,7 +12951,8 @@ APP.add_middleware(CORSMiddleware,
 
 # Edge guard: refuses cross-site requests and WebSocket handshakes (rules in
 # vera/edge_guard_core.py). Added after CORS, so it is the outermost middleware
-# and runs before CORS and routing. Default mode is observe (VERA_EDGE_GUARD).
+# and runs before CORS and routing. Default mode is enforce (VERA_EDGE_GUARD;
+# break-glass: SET vera:auth:mode observe EX 3600 on the host's Redis).
 APP.add_middleware(_edge_guard.EdgeGuard,
                    backend_host=cfg.BACKEND_HOST,
                    listen_port=cfg.ORCHESTRATOR_PORT,

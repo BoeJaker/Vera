@@ -13,13 +13,14 @@ The rules are in ``edge_guard_core`` (pure, unit-tested). This module adds:
 - rate-limited evidence events;
 - in-memory counters for ``auth.edge.status``.
 
-Mode, from ``VERA_EDGE_GUARD`` (default ``observe``):
+Mode, from ``VERA_EDGE_GUARD`` (default ``enforce`` since 2026-10-17, after an
+observe phase that saw no legitimate request refused):
   observe   evaluate every request and record what WOULD be refused; refuse nothing
   enforce   refuse (HTTP 403, or 421 for a foreign Host; WebSocket close 1008)
   off       do nothing
-A temporary override can be set out of band with the Redis key
-``vera:auth:mode`` (it must carry a TTL; it is read through a 5 s cache). No
-capability can switch the guard off.
+Break-glass: a temporary override can be set out of band on the host's Redis,
+``SET vera:auth:mode observe EX 3600`` (always with a TTL; read through a 5 s
+cache). No capability can switch the guard off.
 
 The Host rule has its own switch, ``VERA_EDGE_GUARD_HOST`` (default
 ``observe``). A host name the owner uses but this module does not know would
@@ -107,7 +108,7 @@ class EdgeGuard:
         self.allowed_hosts = set(allowed_hosts) if allowed_hosts is not None else local_hosts(backend_host)
         self.allowed_origins = list(allowed_origins) if allowed_origins is not None else _env_list("VERA_ALLOWED_ORIGINS")
         self.trusted_proxies = set(trusted_proxies) if trusted_proxies is not None else set(_env_list("VERA_TRUSTED_PROXIES"))
-        self._mode = mode or _env_mode("VERA_EDGE_GUARD", "observe")
+        self._mode = mode or _env_mode("VERA_EDGE_GUARD", "enforce")
         self._host_mode = host_mode or _env_mode("VERA_EDGE_GUARD_HOST", "observe")
         self._override: Optional[str] = None
         self._override_at = 0.0
