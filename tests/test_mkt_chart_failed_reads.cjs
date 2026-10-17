@@ -10,4 +10,5 @@ t('a bars answer with no count and no error is failed too (a stored dataset with
 t('a failed read keeps the drawing and retries with backoff (2, 4, 8 ... at most 60 s)', S.includes("'read failed - retrying'") && S.includes('1000 * Math.min(60, 2 ** this._retryN)') && S.includes("if (!this._B) this._msg('Reading '"));
 t('the retry stops when the chart leaves the page', S.includes('disconnectedCallback() { clearTimeout(this._liveT); clearTimeout(this._retryT);'));
 t('a failed watchlist or timeframe probe leaves the timeframes unknown (asked again), never "every timeframe"', S.includes('const wFailed = !w || !!w.failed || !Array.isArray(w.watchlist);') && S.includes('if (got.some((g) => g === undefined)) { this._tfsOf = undefined; }') && S.includes('this._tfsOf === undefined ? [...new Set([this._goodTf || this._tf, this._tf])]'));
+t('an empty answer is read again (15, 30, 60 s) before No stored bars is believed', S.includes("const again = !(r && r.error) && (this._emptyN || 0) < 3;") && S.includes('15000 * 2 ** (this._emptyN - 1)') && S.includes("' - checking again'"));
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);

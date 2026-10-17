@@ -221,7 +221,13 @@
       /* a timeframe with no bars never leaves the chart empty: it stays on the last that drew, and says so */
       if (!B && this._B && this._goodTf && this._goodTf !== this._tf) { const tf = this._tf; this.setAttribute('tf', this._goodTf); const n = sr.querySelector('.note'); if (n) n.textContent = 'no ' + tf + ' bars stored'; return; }
       this._B = B;
-      if (!this._B) { this._teardown(); this._msg(r && r.error ? 'Error: ' + r.error : 'No stored bars for ' + this._sym + ' · ' + this._tf); return; }
+      /* NO BARS IS CHECKED AGAIN (17 Oct, the design mirror just after a restart: BTC-USD 1d answered count 0, then 2000 a minute later -
+         the chart said `No stored bars` for good): an empty answer is read again after 15, 30 and 60 s before it is believed */
+      if (!this._B) { this._teardown(); const again = !(r && r.error) && (this._emptyN || 0) < 3;
+        this._msg(r && r.error ? 'Error: ' + r.error : 'No stored bars for ' + this._sym + ' · ' + this._tf + (again ? ' - checking again' : ''));
+        if (again) { this._emptyN = (this._emptyN || 0) + 1; this._tfsOf = this._tfsOf || undefined; clearTimeout(this._retryT); this._retryT = setTimeout(() => { if (this.isConnected) this._load(fit); }, 15000 * 2 ** (this._emptyN - 1)); }
+        return; }
+      this._emptyN = 0;
       this._goodTf = this._tf; this._draw(fit);
     }
     _msg(t) { const st = this.shadowRoot.querySelector('.stack'); st.innerHTML = `<div class="msg">${esc(t)}</div>`; }

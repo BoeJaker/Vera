@@ -6913,6 +6913,11 @@
             /* calm: settled before it is shown and still after, a resize only re-frames it (the desk's graphs flickered
                while nobody touched them: each one re-ran its layout for 20 s after every load and every resize) */
             inner.setAttribute('calm', ''); inner.setAttribute('min-h', '60');
+            /* A NODE CLICKED SHOWS ITS DETAILS (owner 2026-10-17, WSU-88: "i need to be able to click nodes to see details etc -
+               vera graph js already has all of this its just not usable from the desk"): vera_graph's own detail drawer opens
+               on a click; a double click is the card's action (a record opened in the list, a name filtering it) - that was
+               the click, and it took the graph away */
+            inner.setAttribute('details', '');
             ensureLib('/ui/vera-graph-embed.js', 'vera-graph-embed');
             this._rgFeed(inner, key);
             inner.addEventListener('vera-graph-node', (ev) => this._rgNode(key, (ev.detail || {}).node)); }
