@@ -1243,5 +1243,7 @@ async def cap_apps_get(id: str, trace_id=None):
         if isinstance(m, dict) and m.get("id") == id:
             app = {k: v for k, v in m.items() if k != "_file"}
             app["needs_args"] = core.needs_args(app)
+            # an action that asks with its capability's own inputs (form: "schema", no fields written)
+            app = core.with_schema_forms(app, lambda cap: (CAPABILITY_REGISTRY.get(cap) or {}).get("schema"))
             return {"ok": True, "app": app}
     return {"ok": False, "error": "no app %r" % id}

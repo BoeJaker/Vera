@@ -53,6 +53,63 @@ def needs_args(m: dict) -> list:
     return out
 
 
+_SKIP_ARGS = {"trace_id", "session_id", "id"}   # carried by the call, never asked of the person ("id" comes from the row)
+
+
+def schema_fields(schema: Any, args: Optional[dict] = None, limit: int = 8) -> list:
+    """the form an action asks with when its manifest says form: "schema" and lists no fields: one field per input of
+    its capability (Contract v2 schemas.input / the registry's schema), leaving out what the action already fills (its
+    args - row and app templates included) and what the call carries. Required first, then in the schema's order."""
+    if not _is_obj(schema):
+        return []
+    props = schema.get("properties") if _is_obj(schema.get("properties")) else {}
+    req = set(schema.get("required") or []) if isinstance(schema.get("required"), list) else set()
+    taken = set((args or {}).keys()) | _SKIP_ARGS
+    out = []
+    for key, p in props.items():
+        if key in taken or not isinstance(key, str):
+            continue
+        p = p if _is_obj(p) else {}
+        t = p.get("type")
+        f = {"key": key, "label": str(p.get("title") or key.replace("_", " ").capitalize())[:40]}
+        if isinstance(p.get("enum"), list) and p["enum"]:
+            f["type"] = "select"
+            f["options"] = [str(x) for x in p["enum"]][:40]
+        elif t in ("integer", "number"):
+            f["type"] = "number"
+        elif t == "boolean":
+            f["type"] = "checkbox"
+        if key in req:
+            f["required"] = True
+        if p.get("default") is not None and not isinstance(p.get("default"), (dict, list)):
+            f["default"] = p["default"]
+        if isinstance(p.get("description"), str) and p["description"]:
+            f["title"] = p["description"][:160]
+        if t in ("object", "array") and "enum" not in p:
+            continue   # a structured input is not a form field
+        out.append(f)
+    out.sort(key=lambda f: 0 if f.get("required") else 1)
+    return out[:limit]
+
+
+def with_schema_forms(app: dict, schema_of) -> dict:
+    """the app as served: each action with form "schema" and no fields of its own gets its fields from its capability's
+    input schema (schema_of(cap) -> schema or None). Fields written in the manifest win."""
+    acts = app.get("actions")
+    if not isinstance(acts, list):
+        return app
+    out = []
+    for a in acts:
+        if _is_obj(a) and a.get("form") == "schema" and not a.get("fields"):
+            try:
+                sch = schema_of(a.get("cap"))
+            except Exception:
+                sch = None
+            a = dict(a, fields=schema_fields(sch, a.get("args")))
+        out.append(a)
+    return dict(app, actions=out)
+
+
 def check_manifest(m: Any, file: str = "", caps: Optional[Iterable[str]] = None, panels: Optional[Iterable[str]] = None) -> list:
     """the problems of one manifest; caps / panels, when given, are the names that exist"""
     caps = set(caps) if caps is not None else None
