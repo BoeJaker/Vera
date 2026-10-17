@@ -243,7 +243,7 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
                  "intel.action.run", "intel.brief", "intel.ingest_dream", "intel.import.n8n", "intel.n8n.retire",
                  "intel.panel.html", "intel.summary", "intel.entities.get", "intel.asof.get", "intel.command",
                  "intel.save", "intel.files.run", "intel.advise", "intel.session.status", "intel.notes.list",
-                 "intel.models", "intel.effects", "intel.records"):
+                 "intel.models", "intel.effects", "intel.records", "intel.replay.evaluate"):
         assert name in orch.CAPABILITY_REGISTRY, name
     assert orch.UI and orch.UI[0][0][0] == "intel" and "<iframe" in orch.UI[0][1]["html"]
     fn, interval, kw = orch.SCHEDULED[0]
@@ -251,6 +251,19 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
     roles = orch.PROFILES["intel"]["roles"]
     assert roles["assess"]["model"] == "qwen3.6:35b-a3b" and roles["assess"]["pin"] == "cpu-247" and roles["assess"]["deny_gpu"]
     assert roles["enrich"]["deny_gpu"] and roles["enrich"]["model"] == "qwen3.6:35b-a3b" and roles["notes"]["pin"] == "cpu-247"
+
+
+def test_replay_evaluation_is_offline_aggregate_only(tmp_path):
+    _mod, orch = _load(tmp_path)
+    before = list(orch.CALLS)
+    result = _R(orch, "intel.replay.evaluate")
+    assert result["ok"] is True
+    assert result["accuracy"] == 1.0
+    assert result["coverage"] == 1.0
+    assert result["deterministic"] is True
+    assert result["failed_case_ids"] == []
+    assert "actual" not in result and "expected" not in result
+    assert orch.CALLS == before
 
 
 def test_model_inventory_joins_intel_consumers_without_executing_models(tmp_path):

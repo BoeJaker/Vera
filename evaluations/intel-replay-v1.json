@@ -1,0 +1,31 @@
+{
+  "schema": "vera.intel-replay-corpus/v1",
+  "revision": 1,
+  "policy": {"synthetic_only": true, "network_calls": false, "model_calls": false, "capability_execution": false, "writes": false},
+  "cases": [
+    {
+      "id": "intel.signal-quality-and-report",
+      "now": "2026-10-17T09:00:00Z",
+      "topic": {"id": "portable-models", "name": "Portable models", "brief": "ONNX model packages and edge inference", "why": "portable deployment", "entities": ["ONNX"], "minimum_score": 4.0},
+      "recent_titles": ["Unrelated archived announcement"],
+      "candidates": [
+        {"fixture_id": "strong", "url": "https://example.invalid/onnx-edge", "title": "ONNX edge runtime improves portable inference", "snippet": "A new ONNX model package improves edge inference.", "published": "2026-10-16T08:00:00Z", "model": {"relevance": 0.94, "genre": {"labels": [{"label": "an academic research paper or technical documentation", "score": 0.91}]}, "ner": {"entities": [{"word": "ONNX", "score": 0.99, "label": "ORG"}]}, "qa": {"answer": "portable edge inference", "score": 0.88}, "question": "What changed?", "stance": {"top": "positive"}, "enrichment": {"summary": "The runtime packages an ONNX model for edge inference.", "so_what": "Deployment becomes portable.", "tags": ["onnx", "edge"]}}},
+        {"fixture_id": "marketing", "url": "https://example.invalid/report", "title": "AI market size forecast 2035", "snippet": "Request a free sample market report.", "model": {"relevance": 0.70, "genre": {"labels": [{"label": "a page selling a product, service or paid market research report", "score": 0.96}]}}},
+        {"fixture_id": "duplicate", "url": "https://example.invalid/onnx-edge", "title": "ONNX edge runtime improves portable inference", "snippet": "duplicate"}
+      ],
+      "snapshot_output": {"headline": "Portable inference improved", "state": "A packaged runtime is available.", "changed": ["Runtime added"], "confidence": "high", "watch": ["ONNX"]},
+      "expected": {"retained": ["strong"], "dropped": ["duplicate", "marketing"], "scores": {"strong": 8.6}, "snapshot": {"changed": ["Runtime added"], "confidence": "high", "signal_count": 1}, "report": {"topics": 1, "signals": 1, "section_kinds": ["headline", "topic"]}, "delivery_plan": {"channel": "email", "planned": true, "has_target": true, "executed": false}}
+    },
+    {
+      "id": "intel.first-snapshot-safety",
+      "now": "2026-10-17T10:00:00Z",
+      "topic": {"id": "nlp-routing", "name": "NLP routing", "brief": "distributed named entity routing", "why": "fast local context", "minimum_score": 3.0},
+      "candidates": [
+        {"fixture_id": "ner", "title": "Distributed NLP routing adds named entity workers", "snippet": "NER requests route across CPU workers.", "published": "2026-10-17", "model": {"relevance": 0.9, "ner": {"entities": [{"word": "NER", "score": 0.97}]}, "enrichment": {"summary": "NER is distributed across workers.", "so_what": "Context extraction can scale."}}}
+      ],
+      "first_snapshot": true,
+      "snapshot_output": {"headline": "NER routing is distributed", "state": "CPU workers share NER load.", "changed": ["must be removed for first snapshot"], "confidence": "medium"},
+      "expected": {"retained": ["ner"], "dropped": [], "scores": {"ner": 9.4}, "snapshot": {"changed": [], "confidence": "medium", "signal_count": 1}, "report": {"topics": 1, "signals": 1, "section_kinds": ["headline", "topic"]}, "delivery_plan": {"channel": "email", "planned": true, "has_target": true, "executed": false}}
+    }
+  ]
+}
