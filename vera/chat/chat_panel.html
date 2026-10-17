@@ -8267,7 +8267,8 @@ IMPORTANT:
     (c,ctx)=>{ const pr=_cvFallbackOf(ctx.cap, c, ctx.args); if(!pr) return false; const f=String(pr.records[0].form||'');
       /* what the two claimed: a table of two or more columns (one column is a list), or a widget form; a reading as a
          document, a note, records, kv or json is left to the rules below */
-      if(pr.element==='table'){ const rows=_cvRowsOf(c); const r0=Array.isArray(rows)&&rows[0]; return !!(r0&&typeof r0==='object'&&Object.keys(r0).filter(k=>r0[k]==null||typeof r0[k]!=='object'||Array.isArray(r0[k])).length>=2); }
+      /* the rows: the answer's own list, or the ones present() read out of it (an object keyed by id, ollama.instances) */
+      if(pr.element==='table'){ const pd=pr.records[0].data; const rows=_cvRowsOf(c)||(Array.isArray(pd)?pd:null); const r0=Array.isArray(rows)&&rows[0]; return !!(r0&&typeof r0==='object'&&Object.keys(r0).filter(k=>r0[k]==null||typeof r0[k]!=='object'||Array.isArray(r0[k])).length>=2); }
       if(pr.element==='code'&&pr.kind==='diff') return true;   /* a diff / patch (the diff adapter's, D10 step 2c) */
       return pr.element==='widget'&&!!f&&!/^(json|text|table|record|kv)$/.test(f); },
     (c,ctx)=>{ const it=_cvPresented(ctx.cap, c, ctx.args, { fallback:true }); return Array.isArray(it)?(it[0]||null):(it||null); });

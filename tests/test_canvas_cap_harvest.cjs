@@ -262,6 +262,9 @@ const TBL = (c, cap) => { const m = AD(cap, c, {}); return m && !Array.isArray(m
     const sb = AD('evolve.sandbox.diff', { ok: true, branch: 'feat/x', files: [{ path: 'a.py', status: 'M', adds: 3, dels: 1 }, { path: 'b.py', status: 'A', adds: 9, dels: 0 }], diff: '--- a/a.py\n+++ b/a.py\n+x' }, {}) || {};
     t('a diff with its file list is still the diff, not a table of files', sb.kind === 'code' && sb.content.lang === 'diff', JSON.stringify(sb.kind));
     t('an empty diff is no diff item', (AD('x.diff', { diff: '   ' }, {}) || {}).kind !== 'code'); }
+  /* an object keyed by id (ollama.instances): present() reads it as rows, and the chat takes that table (keyed-rows) */
+  { const k = AD('ollama.instances', { 'gpu-250': { url: 'http://a:11434', status: 'online', has_gpu: true }, 'cpu-246': { url: 'http://b:11434', status: 'online', has_gpu: false }, 'cpu-247': { url: 'http://c:11434', status: 'down', has_gpu: false } }, {}) || {};
+    t('an object keyed by id is a table, its key the first column', k.kind === 'table' && k.content.columns[0] === 'id' && k.content.rows.length === 3 && k.content.rows[0][0] === 'gpu-250', JSON.stringify(k.content && k.content.columns)); }
   t('an answer to a question is an exchange', kind('agent.consult', { question: 'why?', answer: 'because' }) === 'chat');
   t('a failure is said once, as a failure', kind('x.y', { ok: false, error: 'no route to host' }) === 'note');
   t('a failing COMMAND is still a terminal with its stderr', kind('exec.bash.run', { ok: false, command: 'ls /x', stderr: 'nope', rc: 2 }) === 'session');
