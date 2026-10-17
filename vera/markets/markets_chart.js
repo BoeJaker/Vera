@@ -129,7 +129,8 @@
      parse - one pixel painted with it says what it is */
   const plainColor = (css, fallback) => { try { const cv = document.createElement('canvas'); cv.width = cv.height = 1; const x = cv.getContext('2d'); x.fillStyle = fallback; x.fillStyle = css; x.fillRect(0, 0, 1, 1);
       const p = x.getImageData(0, 0, 1, 1).data; return 'rgba(' + p[0] + ',' + p[1] + ',' + p[2] + ',' + (p[3] / 255).toFixed(2) + ')'; } catch (e) { return fallback; } };
-  const api = async (path, body) => { try { const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}); return await r.json(); } catch (e) { return { error: String(e) }; } };
+  /* a read that did not reach the server (or the server failing: 5xx) is `failed` - tried again; an answer that says why is not */
+  const api = async (path, body) => { try { const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}); if (r.status >= 500) return { error: 'HTTP ' + r.status, failed: true }; return await r.json(); } catch (e) { return { error: String(e), failed: true }; } };
 
   class VeraMktChart extends HTMLElement {
     static get observedAttributes() { return ['symbol', 'provider', 'tf']; }
@@ -167,7 +168,7 @@
       document.addEventListener('visibilitychange', this._vis = () => this._livePlan());
       this._load(true);
     }
-    disconnectedCallback() { clearTimeout(this._liveT); try { this._io.disconnect(); this._ro.disconnect(); } catch (e) { /* gone */ } document.removeEventListener('visibilitychange', this._vis); this._teardown(); this._built = false; }
+    disconnectedCallback() { clearTimeout(this._liveT); clearTimeout(this._retryT); try { this._io.disconnect(); this._ro.disconnect(); } catch (e) { /* gone */ } document.removeEventListener('visibilitychange', this._vis); this._teardown(); this._built = false; }
     attributeChangedCallback(name) { if (name !== 'tf') this._tfsOf = null; if (this._built) this._load(true); }
     get _sym() { return this.getAttribute('symbol') || ''; } get _prov() { return this.getAttribute('provider') || 'yahoo'; }
     get _tf() { return this.getAttribute('tf') || '1d'; }
@@ -185,18 +186,37 @@
       /* the timeframes the asset has stored (its watchlist row); every one its provider offers when that is not known */
       if (!this._tfsOf) { const w = await api('/markets/watchlist'); const row = ((w && w.watchlist) || []).find((x) => x && (x.id === this._prov + ':' + this._sym || (x.symbol === this._sym && x.exchange === this._prov)));
         this._tfsOf = row && Array.isArray(row.timeframes) && row.timeframes.length ? row.timeframes : null; if (seq !== this._seq) return;
+        /* the watchlist not read (the server away): not known yet - asked again on the next load, never taken as "not listed" */
+        const wFailed = !w || !!w.failed || !Array.isArray(w.watchlist);
         /* NOT ON THE WATCHLIST: only the timeframes that have bars (owner 2026-10-16: "the controls in the revised ohlcv element dont
            work" - a symbol the watchlist does not hold offered every timeframe its provider has; most had no bars, and one pressed
            tore the chart down, so the indicators, Vol and Fit had nothing to draw on). One bar read for each, once. */
-        if (!this._tfsOf) { const cands = this._prov === 'yahoo' ? M.YAHOO_TFS : (this._prov === 'custom' ? ['1d'] : M.TFS);
-          const got = await Promise.all(cands.map((tf) => api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(this._prov, this._sym, tf)) + '&limit=1').then((x) => (x && !x.error && x.count ? tf : null))));
-          if (seq !== this._seq) return; const have = got.filter(Boolean); this._tfsOf = have.length ? have : null; } }
-      const tfs = this._tfsOf || (this._prov === 'yahoo' ? M.YAHOO_TFS : (this._prov === 'custom' ? ['1d'] : M.TFS));
+        if (!this._tfsOf && !wFailed) { const cands = this._prov === 'yahoo' ? M.YAHOO_TFS : (this._prov === 'custom' ? ['1d'] : M.TFS);
+          const got = await Promise.all(cands.map((tf) => api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(this._prov, this._sym, tf)) + '&limit=1').then((x) => (x && !x.error && x.count ? tf : (!x || x.failed || typeof x.count !== 'number' ? undefined : null)))));
+          /* a timeframe whose probe failed is not known to be empty: none settled until every probe answered */
+          if (got.some((g) => g === undefined)) { this._tfsOf = undefined; } else
+          { if (seq !== this._seq) return; const have = got.filter(Boolean); this._tfsOf = have.length ? have : null; } }
+        if (wFailed) this._tfsOf = undefined; }
+      /* not known yet (a read failed): only the timeframe on show - offering every one the provider has led to presses with nothing behind them */
+      const tfs = this._tfsOf || (this._tfsOf === undefined ? [...new Set([this._goodTf || this._tf, this._tf])] : (this._prov === 'yahoo' ? M.YAHOO_TFS : (this._prov === 'custom' ? ['1d'] : M.TFS)));
       sr.querySelector('.sym').textContent = this._sym; sr.querySelector('.tfs').innerHTML = tfs.map((tf) => `<button data-a="tf" data-v="${tf}" class="${tf === this._tf ? 'on' : ''}">${tf}</button>`).join('');
       sr.querySelector('.inds').innerHTML = IND.map((d) => `<button data-a="ind" data-v="${d.id}" class="${this._on.has(d.id) ? 'on' : ''}" title="${esc(d.kind)} ${esc(M.paramStr(d.params))}">${esc(d.label)}</button>`).join('');
       const ok = await M.ensureLw(); if (seq !== this._seq) return;
       if (!ok) { this._msg('The chart library did not load (offline?)'); return; }
       const r = await api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(this._prov, this._sym, this._tf)) + '&limit=2000'); if (seq !== this._seq) return;
+      /* A READ THAT FAILED IS NOT "NO BARS" (owner 2026-10-17, WSU-86 / WSU-92: the desk chart "cant zoom, pan, use the buttons";
+         measured: the server restarting under a press of 1h - the read failed, the chart fell back to 1d, that read failed too
+         and the drawing was torn down to "Error: TypeError: Failed to fetch", with nothing left to zoom, pan or press). The
+         drawing stays as it is, the note says the read failed, and it is read again after 2, 4, 8 ... s (at most 60). */
+      /* ...and an answer that is not a bars answer (no count, no error saying why - what a server starting up answers) is failed too:
+         a stored dataset with no bars says count 0 */
+      if (!r || r.failed || (typeof r.count !== 'number' && !r.error)) { const n = sr.querySelector('.note'); if (n) n.textContent = 'read failed - retrying';
+        this._retryN = Math.min(5, (this._retryN || 0) + 1); clearTimeout(this._retryT);
+        this._retryT = setTimeout(() => { if (this.isConnected) this._load(fit); }, 1000 * Math.min(60, 2 ** this._retryN));
+        if (!this._B) this._msg('Reading ' + this._sym + ' · ' + this._tf + ' failed - trying again');
+        else sr.querySelectorAll('.tfs button').forEach((b) => b.classList.toggle('on', b.dataset.v === (this._goodTf || this._tf)));
+        return; }
+      this._retryN = 0; clearTimeout(this._retryT);
       const B = this._bars(r);
       /* a timeframe with no bars never leaves the chart empty: it stays on the last that drew, and says so */
       if (!B && this._B && this._goodTf && this._goodTf !== this._tf) { const tf = this._tf; this.setAttribute('tf', this._goodTf); const n = sr.querySelector('.note'); if (n) n.textContent = 'no ' + tf + ' bars stored'; return; }
