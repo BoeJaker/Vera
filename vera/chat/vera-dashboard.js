@@ -118,7 +118,7 @@
   function _dragGuardOn(cursor) {
     if (_dragGuardEl) return;
     _dragGuardEl = document.createElement('div');
-    _dragGuardEl.style.cssText = 'position:fixed;inset:0;z-index:2147483647;' +
+    _dragGuardEl.style.cssText = 'position:fixed;inset:0;z-index:2147483647;' +   // z-local: the drag's pointer guard, over everything for the drag only
       'cursor:' + (cursor || 'move') + ';background:transparent';
     document.body.appendChild(_dragGuardEl);
   }
@@ -172,9 +172,11 @@
      its menus, drawers and sheets - in the item z band 130-149, the last one pressed on top. One stack per page, shared by
      every grid and by the harness's floating solo views (window.VeraWindows). */
   var WSTACK = [];
+  var ZW = (window.VeraItem && window.VeraItem.Z && window.VeraItem.Z.window) || [130, 149];   // the table's window band (VeraItem.Z.window)
   function winRaise(el) {
     if (!el) return; WSTACK = WSTACK.filter(function (x) { return x !== el && x.isConnected; }); WSTACK.push(el);
-    var n = WSTACK.length; WSTACK.forEach(function (x, i) { x.style.zIndex = String(130 + Math.max(0, Math.min(19, 19 - (n - 1 - i)))); });
+    var n = WSTACK.length, span = ZW[1] - ZW[0];
+    WSTACK.forEach(function (x, i) { x.style.zIndex = String(ZW[0] + Math.max(0, Math.min(span, span - (n - 1 - i)))); });
   }
   function winDrop(el) { WSTACK = WSTACK.filter(function (x) { return x !== el; }); if (el) el.style.zIndex = ''; }
   window.VeraWindows = window.VeraWindows || { raise: winRaise, drop: winDrop };
@@ -197,7 +199,7 @@
       '.widget.floating .w-actions{opacity:1}',
       '.w-iconbtn.vd-pop.on{color:var(--acc)}',
       '.vd-wl-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;',
-      'align-items:center;justify-content:center;z-index:9500;backdrop-filter:blur(2px)}',
+      'align-items:center;justify-content:center;z-index:9500;backdrop-filter:blur(2px)}',   // z-local: over the host pages' own chrome (900-9000); --z-sheet (300) would put it under it
       '.vd-wl-box{background:var(--bg1);border:1px solid var(--border2);',
       'border-radius:var(--radius-lg,8px);width:520px;max-width:96%;max-height:80%;',
       'display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)}',
@@ -280,8 +282,8 @@
       '.dash-grid.editing > .widget > .w-resize::before{border-right-color:var(--acc,#5a9e8f);border-bottom-color:var(--acc,#5a9e8f);width:10px;height:10px}',
       '.dash-grid.editing > .widget:hover > .w-resize{opacity:1}',
       '.dash-grid.editing > .widget.dragging{opacity:.94;transform:rotate(-1deg) scale(1.02);',
-      'box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 24px 50px -16px #000;z-index:6;cursor:grabbing}',
-      '.dash-grid.editing > .widget.dragging::before{content:"moving · drop on the grid";position:absolute;left:8px;bottom:6px;z-index:2;',
+      'box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 24px 50px -16px #000;z-index:6;cursor:grabbing}',   // z-local: over its grid neighbours only - --z-drag would lift it over the host page's bars
+      '.dash-grid.editing > .widget.dragging::before{content:"moving · drop on the grid";position:absolute;left:8px;bottom:6px;z-index:2;',   // z-local: inside the tile
       'font-family:var(--mono);font-size:8px;color:var(--acc,#5a9e8f);pointer-events:none}',
       '.dash-grid.editing.vd-drop-here{outline:2px dashed var(--acc,#5a9e8f);outline-offset:6px}',
       // the moving tile follows the pointer on its transform: the host page's transform transition would trail it
@@ -289,7 +291,7 @@
       // the dashed slot the lifted tile will take (the board's ghost: "drop here · 4 × 2") — fixed on the body, as the resize
       // ghost is: a box inside the grid would dirty the grid's layout on every move and the auto-scroll would pay for it
       '.vd-ghost{position:fixed;box-sizing:border-box;border-radius:var(--radius-lg,8px);border:1.5px dashed var(--acc,#5a9e8f);',
-      'background:color-mix(in srgb,var(--acc,#5a9e8f) 8%,transparent);pointer-events:none;z-index:9600}',
+      'background:color-mix(in srgb,var(--acc,#5a9e8f) 8%,transparent);pointer-events:none;z-index:9600}',   // z-local: the drop ghost over the host pages' own chrome (900-9500); --z-drag (200) would put it under it
       '.vd-ghost span{position:absolute;left:8px;top:6px;font-family:var(--mono);font-size:8.5px;color:var(--acc,#5a9e8f);white-space:nowrap}',
       // the tile that was just placed shows where it landed
       '@keyframes vdLanded{0%{box-shadow:0 0 0 2px var(--acc,#5a9e8f),0 0 24px color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent)}100%{box-shadow:none}}',
@@ -333,7 +335,7 @@
       // .widget rules under a section id.
       'html.vd-solo-mode body>*:not(.vd-solo){display:none!important}',
       'html.vd-solo-mode body>.widget.vd-solo{display:flex!important;position:fixed;inset:0;',
-      'width:auto!important;height:auto!important;flex-direction:column;z-index:9999;',
+      'width:auto!important;height:auto!important;flex-direction:column;z-index:var(--z-full,150);',   // solo: every other body child is hidden, so the band is enough
       'margin:0;border:none;border-radius:0;background:var(--bg1,#16181d)}',
       'html.vd-solo-mode .widget.vd-solo .w-head{display:flex;align-items:center;gap:6px;',
       'padding:7px 10px 6px;border-bottom:1px solid var(--border);flex-shrink:0}',
@@ -342,7 +344,7 @@
       'html.vd-solo-mode .widget.vd-solo .w-resize{display:none}',
       // Loading overlay for widget iframes while they boot (self-contained so it
       // works even on pages that don't include vera-panel.css).
-      '.vera-loading{position:absolute;inset:0;z-index:40;display:flex;align-items:center;',
+      '.vera-loading{position:absolute;inset:0;z-index:40;display:flex;align-items:center;',   // z-local: inside the tile
       'justify-content:center;gap:10px;background:color-mix(in srgb,var(--bg1,#16181d) 60%,transparent);',
       'backdrop-filter:blur(1px)}',
       '.vera-spinner{width:22px;height:22px;border-radius:50%;flex-shrink:0;',
@@ -352,7 +354,7 @@
       // Resize ghost — see onResizeDown(). A plain fixed-position preview box
       // that tracks the mouse directly; the real widget/grid are untouched
       // until mouseup, so nothing reflows (and therefore nothing jumps) mid-drag.
-      '.vd-rghost{position:fixed;z-index:9600;pointer-events:none;box-sizing:border-box;',
+      '.vd-rghost{position:fixed;z-index:9600;pointer-events:none;box-sizing:border-box;',   // z-local: as the drop ghost
       'border:2px dashed var(--acc,#5a9e8f);border-radius:var(--radius-lg,8px);',
       'background:color-mix(in srgb, var(--acc,#5a9e8f) 10%, transparent)}',
       '.vd-rghost-label{position:absolute;right:6px;bottom:5px;font-family:var(--mono);',

@@ -594,7 +594,7 @@ html[data-blocks="off"] .wblk{background:transparent}
 .art-pop .art-body{display:flex;flex-direction:column}
 
 /* Floating artifact pop-out — draggable window over the whole UI. */
-.art-pop{position:fixed;z-index:9600;min-width:320px;min-height:200px;width:min(760px,86vw);height:min(560px,78vh);
+.art-pop{position:fixed;z-index:9600;/* z-local: a window over the shell's own sheets (settings 5200, modals 8888/9500); --z-window would put it under them */min-width:320px;min-height:200px;width:min(760px,86vw);height:min(560px,78vh);
   background:var(--bg1);border:1px solid var(--border2);border-radius:10px;display:flex;flex-direction:column;
   box-shadow:0 12px 48px rgba(0,0,0,.55);resize:both;overflow:hidden}
 .art-pop .art-hd{display:flex;align-items:center;gap:6px;padding:6px 10px;border-bottom:1px solid var(--border);
@@ -1985,9 +1985,9 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph vera-loo
 #rightRail.lhm-host .lhm-quick .wc-v .bar i{display:block;height:100%;background:var(--ac,var(--acc,#5a9e8f))}
 #rightRail.lhm-host .lhm-quick .sp{flex:1}
 /* ── ONE context menu (the Canvas board's .cmenu) and the staged capability runner (.crun) ── */
-.cmw{position:fixed;inset:0;z-index:9999;pointer-events:none}
+.cmw{position:fixed;inset:0;z-index:9999;pointer-events:none}   /* z-local: the one context menu, over the shell's own sheets (5200-9600); --z-menu would put it under them */
 .cmw .cmbg{position:fixed;inset:0;pointer-events:auto}
-.cmenu{position:fixed;z-index:9999;min-width:216px;max-width:320px;padding:5px;pointer-events:auto;background:var(--surf,var(--bg1,#151719));border-radius:var(--ui-radius,10px);box-shadow:var(--elev,0 8px 24px rgba(0,0,0,.28)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column}
+.cmenu{position:fixed;z-index:9999;/* z-local: as .cmw */min-width:216px;max-width:320px;padding:5px;pointer-events:auto;background:var(--surf,var(--bg1,#151719));border-radius:var(--ui-radius,10px);box-shadow:var(--elev,0 8px 24px rgba(0,0,0,.28)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column}
 .cmenu .cm-h{display:flex;align-items:center;gap:7px;padding:5px 9px 7px;font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:600;white-space:nowrap;overflow:hidden}
 .cmenu .cm-h i{width:7px;height:7px;border-radius:2px;flex-shrink:0;display:inline-block}
 .cmenu .cm-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:9px;color:var(--t3,var(--dim,#6b7280));font-weight:400;padding-left:10px}
@@ -1999,7 +1999,7 @@ html[data-blocks="off"] #rightRail.lhm-host .lhm-quick .lhm-dk.dk-graph vera-loo
 .cmenu .cm-i.on{color:var(--ac,var(--acc,#5a9e8f))}
 .cmenu .cm-i.cap{font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:10px}.cmenu .cm-i.cap::before{content:'▷';font-size:8px;color:var(--ac,var(--acc,#5a9e8f))}
 .cmenu .cm-sep{height:1px;background:var(--bd,var(--border,rgba(255,255,255,.09)));margin:4px 6px}
-.crun{position:fixed;z-index:9998;width:330px;padding:10px 12px;border-radius:var(--ui-radius,10px);background:var(--surf,var(--bg1,#151719));box-shadow:var(--elev,0 8px 24px rgba(0,0,0,.28)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column;gap:7px}
+.crun{position:fixed;z-index:9998;/* z-local: under the context menu, over the shell's own sheets */width:330px;padding:10px 12px;border-radius:var(--ui-radius,10px);background:var(--surf,var(--bg1,#151719));box-shadow:var(--elev,0 8px 24px rgba(0,0,0,.28)),0 0 0 1px var(--bd,var(--border,rgba(255,255,255,.09)));display:flex;flex-direction:column;gap:7px}
 .crun .crun-h{display:flex;align-items:center;gap:7px;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--ac,var(--acc,#5a9e8f))}
 .crun .crun-h i{width:7px;height:7px;border-radius:50%;background:var(--ac,var(--acc,#5a9e8f));display:inline-block}
 .crun .crun-h b{margin-left:auto;font-weight:400;font-size:9px;color:var(--t3,var(--dim,#6b7280));overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}

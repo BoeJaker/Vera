@@ -31,9 +31,11 @@
 (function () {
   const root = typeof window !== 'undefined' ? window : globalThis;
   /* the item z bands (DEEP-29 11A.4 Decision 6): the same table as VeraItem.Z (/ui/vera-item.js) and vera-item.css, held to
-     it by tests/test_canvas_z_bands.cjs. A desk item's z-index is only ever one of these. */
+     it by tests/test_canvas_z_bands.cjs. A desk item's z-index is only ever one of these. The stylesheet below writes
+     var(--z-<band>,<n>) for an item-level z; a small literal (0-8) is the held column's own chrome or a card's insides,
+     under every band, and carries a "z-local" comment on its line (the test fails on any other raw number). */
   const ZB = { back: 1, layerBehind: 2, tile: [10, 110], pill: 115, tileFocus: 120, window: [130, 149], full: 150,
-               layerFront: 155, flash: 180, drag: 200, pop: 230, menu: 240, chat: 250, sheet: 300 };
+               layerFront: 155, flash: 180, drag: 200, pop: 230, menu: 240, chat: 250, sheet: 300, toast: 400 };
   const zOf = (band, n) => { const b = ZB[band]; if (b === undefined) return ZB.tile[0];
     return Array.isArray(b) ? Math.min(b[1], b[0] + Math.max(0, Math.round(n || 0))) : b; };
   /* A BODY DRAWS NO HEAD (DEEP-29 11A.4 Decision 4). It declares, as it is drawn, what its head used to hold - a line about
@@ -1887,7 +1889,7 @@
   .err{color:var(--err,#f7768e);padding:10px}
   /* ── the SESSION projection (the Canvas board's column): the add bar at the top, pinned above, the NOW band,
         the items level with their turns, parked as a chip line at the bottom ── */
-  .addbar{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:5px;flex-wrap:wrap;
+  .addbar{position:sticky;top:0;z-index:6;/* z-local: the held column's sticky bar, under every item band; the desk raises it to --z-menu */display:flex;align-items:center;gap:5px;flex-wrap:wrap;
     padding:6px 0 6px;margin-bottom:2px;background:var(--bg1,#15181d);border-bottom:1px solid var(--border,#2a2f37)}
   /* THE ADD BAR'S MENUS OVER THE DESK (owner, 2026-10-10: "the canvas panel menu appears behind the desk elements and the
      note and terminal menus are see through"): a desk card stacks at 10-200 and the graph drawn over it with it, and the
@@ -1954,7 +1956,7 @@
      oscillation at every item edge. Now each is an overlay - the header over the top, the rail over the foot - that fades
      in when you are on the item; an item's height never changes because you pointed at it. */
   /* (an item is already position:relative - absolute on the stage - so the overlays anchor to it either way) */
-  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;/* z-local: a card's own head */opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
   :host([data-tier="hover"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > .it-hd{opacity:1;pointer-events:auto}
   /* ...in bands of their own (owner, 2026-10-04: "the top and bottom bar appear over the top of the element instead of
      above and below - sometimes it can block entire parts of the elements"): an overlay at the item's edge covered its
@@ -2010,7 +2012,7 @@
   .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-fview > .vo-deck{flex:1 1 auto}   /* block: its centred 16:9 stage keeps its width */
   .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-stage{max-height:none}   /* a slide keeps 16:9 - it grows with the width */
   .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-grid-w{flex:1 1 auto;max-height:none}
-  .it.hovopen{z-index:5;box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
+  .it.hovopen{z-index:var(--z-pop,230);box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   /* the preview of a folded item: over the column, its own scroll past a screenful, no slide (it does not move) */
   .stage .it.peek{z-index:var(--z-pop,230);max-height:min(70vh,640px);overflow:auto;transition:none;background:var(--bg1,#16181d);scrollbar-width:thin}
   .stage .it.peek .it-bd{max-height:none}
@@ -2025,7 +2027,7 @@
   .it.sized .rz{opacity:.45}
   .it.resizing{transition:none!important;user-select:none}
   /* the resize handle — a corner grip that shows on hover; a drop saves the item's size */
-  .rz{position:absolute;right:3px;bottom:3px;width:14px;height:14px;z-index:5;cursor:nwse-resize;opacity:0;
+  .rz{position:absolute;right:3px;bottom:3px;width:14px;height:14px;z-index:5;/* z-local: a card's own grip - a band would lift it over the held column's sticky bars */cursor:nwse-resize;opacity:0;
     border-radius:0 0 5px 0;transition:opacity .18s;
     background:linear-gradient(135deg,transparent 52%,var(--dim,#6b7480) 52%,var(--dim,#6b7480) 60%,transparent 60%,
       transparent 74%,var(--dim,#6b7480) 74%,var(--dim,#6b7480) 82%,transparent 82%)}
@@ -2201,7 +2203,7 @@
   /* the keyboard's focus ring: on the item, and on a control of its row */
   .it:focus{outline:none}
   .it:focus-visible,.hda > .hb:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:1px}
-  .it:not(.desk-chip):not(.ghost) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
+  .it:not(.desk-chip):not(.ghost) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;/* z-local: a card's own head row - a band would lift it over the held column's sticky bars */gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
   /* the item's own actions in its head (owner 2026-10-16): small labelled buttons after the title; a narrow card keeps the
      most used (data-pri), the rest are in its more menu */
   .it-hd > .it-acts{display:inline-flex;flex:0 1 auto;min-width:0;gap:2px;align-items:center;margin-left:6px;overflow:hidden}
@@ -2358,7 +2360,7 @@
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .back:hover{opacity:.9}
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .head,
-  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body{position:relative;z-index:1}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body{position:relative;z-index:1}   /* z-local: the body over its own back plane (0) */
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body,
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .stage,
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .band{background:transparent;pointer-events:none}
@@ -2376,17 +2378,17 @@
   :host([stage]) .body{position:relative;padding-top:0}
   :host([stage]) .band.pinned{padding-top:6px}
   /* the NOW bar stays in view under the add bar while the stage scrolls with the transcript */
-  :host([stage]) .band.now>.band-h{position:sticky;top:34px;z-index:5;background:var(--bg1,#15181d);margin:0;padding:3px 0}
-  :host([stage]) .band.parked{position:sticky;bottom:0;z-index:5;background:var(--bg1,#15181d)}
+  :host([stage]) .band.now>.band-h{position:sticky;top:34px;z-index:5;/* z-local: held column chrome */background:var(--bg1,#15181d);margin:0;padding:3px 0}
+  :host([stage]) .band.parked{position:sticky;bottom:0;z-index:5;/* z-local: held column chrome */background:var(--bg1,#15181d)}
   .band.hid{padding:4px 0;position:relative}
   .hidbtn{font:inherit;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);background:none;border:1px solid var(--border,#2a2f37);border-radius:9px;padding:1px 8px;cursor:pointer}
   .hidbtn:hover{color:var(--fg,#dce1e8)}
   .hidpop[hidden]{display:none}
   :host([chrome="none"]) .addbar{display:none!important}   /* the host draws these controls elsewhere (WSU-72) */
   .hidpop .chip.rmv{cursor:pointer;border:0;font:inherit}
-  .vc-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:400;display:flex;gap:12px;align-items:center;padding:8px 10px 8px 14px;border-radius:10px;background:var(--bg2,#1c2026);border:1px solid var(--border2,rgba(255,255,255,.14));color:var(--text,#d8dce4);font:12.5px var(--ui,system-ui,sans-serif);box-shadow:0 6px 22px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
+  .vc-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:var(--z-toast,400);display:flex;gap:12px;align-items:center;padding:8px 10px 8px 14px;border-radius:10px;background:var(--bg2,#1c2026);border:1px solid var(--border2,rgba(255,255,255,.14));color:var(--text,#d8dce4);font:12.5px var(--ui,system-ui,sans-serif);box-shadow:0 6px 22px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
   .vc-toast button{border:1px solid var(--accent,#5a9e8f);background:transparent;color:var(--accent,#5a9e8f);border-radius:6px;padding:3px 10px;font:600 12px var(--ui,system-ui,sans-serif);cursor:pointer}
-  .hidpop{position:absolute;right:0;top:24px;z-index:6;background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);border-radius:8px;padding:6px 8px;display:flex;flex-wrap:wrap;gap:4px;max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+  .hidpop{position:absolute;right:0;top:24px;z-index:6;/* z-local: held column chrome - --z-pop would lift it over a maxed card */background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);border-radius:8px;padding:6px 8px;display:flex;flex-wrap:wrap;gap:4px;max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
   .it .sc{font-family:ui-monospace,Consolas,monospace;font-size:8.5px;color:var(--dim,#6b7480);flex:0 0 auto}
   .it-hd{display:flex;align-items:center;gap:6px;padding:5px 8px 4px;cursor:pointer;flex:0 0 auto;min-height:18px}
   .it-hd .ic{width:15px;height:15px;border-radius:4px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
@@ -2537,7 +2539,7 @@
   .vc-rr-body{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
   .vc-rr-p{display:none;min-width:0;min-height:0;overflow:auto;max-height:60vh}
   .vc-rr-p.on{display:block}
-  .vc-latest{position:sticky;bottom:8px;float:right;margin:-34px 8px 0 0;z-index:3;padding:4px 10px;border-radius:999px;border:1px solid var(--accent,#5a9e8f);background:var(--bg1,#16181d);color:var(--accent,#5a9e8f);font:600 11px var(--ui,system-ui,sans-serif);cursor:pointer;box-shadow:0 2px 10px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
+  .vc-latest{position:sticky;bottom:8px;float:right;margin:-34px 8px 0 0;z-index:3;/* z-local: held column chrome */padding:4px 10px;border-radius:999px;border:1px solid var(--accent,#5a9e8f);background:var(--bg1,#16181d);color:var(--accent,#5a9e8f);font:600 11px var(--ui,system-ui,sans-serif);cursor:pointer;box-shadow:0 2px 10px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
   .vc-latest:hover{background:color-mix(in srgb,var(--accent,#5a9e8f) 14%,var(--bg1,#16181d))}
   .vc-rr-p > .vc-rbx{max-height:none}
   .vc-rr-doc{font-size:13px;line-height:1.6}
@@ -2843,7 +2845,7 @@
   /* the live items (A16): a terminal, a notebook cell, a whole panel — the board's item head, the live slot */
   .body{position:relative}
   #items{position:relative;min-height:1px}
-  #live{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:4}
+  #live{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:4}   /* z-local: the held column's live layer, over its unbanded cards; the desk sets it auto */
   /* the live layer draws the thing itself — no ground of its own. A terminal and a rendered page bring their own
      (they are surfaces); a widget, a diagram and a graph are marks on the canvas, and a black plate behind them is
      the tile this canvas is getting rid of. */
@@ -2885,7 +2887,7 @@
   .vc-tl-br{position:absolute;top:2px;height:19px;border:1px solid var(--acc,#5a9e8f);border-radius:3px;background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);pointer-events:none;box-sizing:border-box}
   .vc-tl-dot.out{opacity:.2}
   .vc-tl-dot.cur{background:var(--acc,#5a9e8f);opacity:1;transform:scale(1.45)}
-  .vc-tl-sc{position:absolute;top:-5px;width:10px;height:8px;margin-left:-5px;padding:0;border:0;border-radius:2px 2px 5px 5px;background:var(--dim,#6b7480);cursor:ew-resize;z-index:1}
+  .vc-tl-sc{position:absolute;top:-5px;width:10px;height:8px;margin-left:-5px;padding:0;border:0;border-radius:2px 2px 5px 5px;background:var(--dim,#6b7480);cursor:ew-resize;z-index:1}   /* z-local: inside a card */
   .vc-tl-sc::after{content:"";position:absolute;left:4px;top:8px;width:2px;height:15px;background:inherit;opacity:.6;pointer-events:none}
   .vc-tl-sc.on{background:var(--acc,#5a9e8f)}
   .vc-tl-sc:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:2px}
@@ -2943,11 +2945,11 @@
   mark.vc-mdhit{background:color-mix(in srgb,var(--acc3,#c9955a) 35%,transparent);color:inherit;border-radius:2px}mark.vc-mdhit.cur{background:color-mix(in srgb,var(--acc3,#c9955a) 75%,transparent);outline:1px solid var(--acc3,#c9955a)}
   /* the table bar (DU-E-table) */
   .vc-tbarwrap{display:flex;flex-direction:column;min-height:0}
-  .vc-tbar{display:flex;align-items:center;gap:6px;padding:0 0 4px;position:sticky;left:0;top:0;z-index:2;background:var(--s1,var(--bg1,#15181d))}
+  .vc-tbar{display:flex;align-items:center;gap:6px;padding:0 0 4px;position:sticky;left:0;top:0;z-index:2;/* z-local: inside a card */background:var(--s1,var(--bg1,#15181d))}
   .vc-tq{flex:1 1 auto;min-width:60px;font:11px system-ui,sans-serif;padding:2px 6px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit}
   .vc-tn{font:10px system-ui,sans-serif;color:var(--dim,#6b7480);white-space:nowrap}.vc-tbar .ib{font-size:10px;padding:1px 6px}.vc-tbar .ib.on{color:var(--acc,#5a9e8f)}
   .vc-tcols{display:flex;flex-wrap:wrap;gap:4px 10px;padding:2px 0 6px;font:10.5px system-ui,sans-serif}.vc-tcols label{display:flex;align-items:center;gap:3px;cursor:pointer}
-  .vc-tbarwrap .vc-table thead th{position:sticky;top:0;z-index:1;background:var(--s1,var(--bg1,#15181d))}
+  .vc-tbarwrap .vc-table thead th{position:sticky;top:0;z-index:1;/* z-local: inside a card */background:var(--s1,var(--bg1,#15181d))}
   .vc-tsort{all:unset;cursor:pointer;font-weight:600}.vc-tsort:hover,.vc-tsort.on{color:var(--acc,#5a9e8f)}
   .vc-tbarwrap mark{background:color-mix(in srgb,var(--acc3,#c9955a) 40%,transparent);color:inherit;border-radius:2px}
   /* the JSON lens (DU-E-json) */
@@ -2982,7 +2984,7 @@
   /* MAXIMISED: the item takes the canvas and stays there, fixed, until it is restored */
   .mx{font-size:10px;color:var(--dim,#6b7480);flex:0 0 auto;cursor:pointer;padding:0 2px}
   .it:is(:hover,.hov) .it-hd .mx{color:var(--fg,#dce1e8)}.mx.on{color:var(--acc,#5a9e8f)!important}
-  .it.maxed{z-index:8!important;display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15181d))!important;box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px var(--acc,#5a9e8f)!important;transition:none!important;border-radius:8px}
+  .it.maxed{z-index:var(--z-full,150)!important;display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15181d))!important;box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px var(--acc,#5a9e8f)!important;transition:none!important;border-radius:8px}
   .it.maxed > .it-bd{max-height:none!important;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto}
   .it.maxed > .it-bd > *{flex:1 1 auto;min-height:0}
   .it.maxed .vc-codewrap,.it.maxed .vc-diag,.it.maxed .vc-wid,.it.maxed .vc-xp,.it.maxed .vc-term,.it.maxed .vc-panel,.it.maxed .vc-res{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
@@ -3027,9 +3029,9 @@
   .it.sized .vc-live.vc-preview{height:auto}
   .vc-nbout{margin-top:6px;border-left:2px solid var(--ac,var(--acc,#5a9e8f))}
   .vc-pq{margin-top:6px;max-height:160px}
-  .vc-addfloat{position:fixed;z-index:420;width:0;height:0}   /* the add popup with no bar to hang from (WSU-76) */
+  .vc-addfloat{position:fixed;z-index:420;width:0;height:0}   /* the add popup with no bar to hang from (WSU-76); z-local: one step over --z-toast (400), as it was */
   .vc-addfloat > .addpop{top:0;margin-top:0}
-  .addpop{position:absolute;left:0;top:100%;z-index:6;margin-top:4px;min-width:260px;max-width:min(92%,420px);padding:8px;border-radius:var(--ui-radius,8px);background:var(--s1,var(--bg1,#15181d));box-shadow:var(--elev,0 8px 24px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,#2a2f37));display:flex;flex-direction:column;gap:2px}
+  .addpop{position:absolute;left:0;top:100%;z-index:6;/* z-local: inside the add bar / the add float */margin-top:4px;min-width:260px;max-width:min(92%,420px);padding:8px;border-radius:var(--ui-radius,8px);background:var(--s1,var(--bg1,#15181d));box-shadow:var(--elev,0 8px 24px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,#2a2f37));display:flex;flex-direction:column;gap:2px}
   .addpop .pp{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:6px 8px;border:0;border-radius:var(--r-sm,6px);background:transparent;color:var(--t1,var(--fg,#dce1e8));font:inherit;font-size:11px;text-align:left;cursor:pointer}
   .addpop .pp:hover{background:var(--s2,var(--bg2,#1c2026))}
   .addpop .pp span{font-family:var(--f-mono,ui-monospace,monospace);font-size:9.5px;color:var(--t3,var(--dim,#6b7480))}
@@ -3085,7 +3087,7 @@
   :host(:not([data-tier="full"])) .it :is(.vc-rr-n,.vc-rr-ft,.vc-act-n){display:none}
   :host(:not([data-tier="full"])) .it:not(:hover):not(.hov):not(:focus-within):not(.maxed) .vc-ev-chips{display:none}
   :host(:not([data-tier="full"])) .it .vc-rbx{position:relative}
-  :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-tools{position:absolute;left:0;right:0;top:0;z-index:5;margin:0;padding:4px 6px;border-radius:8px;
+  :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-tools{position:absolute;left:0;right:0;top:0;z-index:5;/* z-local: inside a card */margin:0;padding:4px 6px;border-radius:8px;
     background:var(--bg2,#1d2128);box-shadow:0 6px 18px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .15s}
   :host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.maxed) .vc-rbx > .vc-rbx-tools{opacity:1;pointer-events:auto}
   /* over the list, it takes no room: a small card (which drops its tool row in the flow, see deskcard) has it too */
@@ -3126,7 +3128,7 @@
   /* the names and sites are a menu (the names · sites button and its widgets), not rows of pills, unless the full chrome */
   :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-facets{display:none!important}
   .vc-rbx-nbtn{white-space:nowrap}.vc-rbx-nbtn.set{color:var(--acc,#5a9e8f);border-color:color-mix(in srgb,var(--acc,#5a9e8f) 50%,transparent)}
-  .vc-rbx-names{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:2px 0 8px;padding:8px 10px;border:1px solid var(--border,#2a2f37);border-radius:9px;background:var(--bg2,#1d2128);position:relative;z-index:6}
+  .vc-rbx-names{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:2px 0 8px;padding:8px 10px;border:1px solid var(--border,#2a2f37);border-radius:9px;background:var(--bg2,#1d2128);position:relative;z-index:6}   /* z-local: inside a card */
   .vc-rbx-names h5{margin:0 0 4px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim,#8b93a1)}
   .vc-rbx-names vera-widget{display:block;cursor:pointer}
   .it.reading .vc-rr-tabs,.it.reading .vc-rr-q{display:none}
