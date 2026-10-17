@@ -1,0 +1,72 @@
+"""FM-5.2 as an application of the candidate matrix: a run's checkable claims paired with the evidence it read,
+recorded for every judge to answer - no method chosen up front."""
+import json
+import os
+import sys
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from vera.minds import claims_core as CL  # noqa: E402
+from vera.minds import judge_core as JC  # noqa: E402
+from vera.minds import ledger_core as LC  # noqa: E402
+
+pytestmark = pytest.mark.critical
+
+DELIVERABLE = ("### WebGPU Browser Support Summary (October 2026)\n\n"
+               "As of October 17, 2026, **WebGPU** is supported in Chrome 113 and later on Windows and macOS. "
+               "Safari 26 ships it on macOS Tahoe. It is a nice technology. Firefox enabled it in version 141.\n"
+               "- Overall the web is better.")
+EVIDENCE = {"type": "agent_loop_v5.tool_done", "tool": "web.research", "ok": True,
+            "preview": json.dumps({"result": {"items": [
+                {"title": "WebGPU status", "url": "https://caniuse/webgpu",
+                 "text": "WebGPU shipped in Chrome 113 on Windows, macOS and ChromeOS. Firefox 141 enabled WebGPU "
+                         "on Windows."},
+                {"title": "Safari 26", "url": "https://webkit.org/blog",
+                 "text": "Safari 26 brings WebGPU to macOS Tahoe, iOS 26 and iPadOS 26."}]}})}
+DONE = {"type": "agent_loop_v6.done", "summary": DELIVERABLE}
+
+
+def test_only_checkable_sentences_are_claims():
+    cs = CL.claims(DELIVERABLE)
+    assert any("Chrome 113" in c for c in cs) and any("Safari 26" in c for c in cs)
+    assert any("Firefox enabled it in version 141" in c for c in cs)
+    assert not any("nice technology" in c for c in cs) and not any("web is better" in c for c in cs)
+    assert len(CL.claims(DELIVERABLE * 10)) == len(cs)               # deduplicated
+
+
+def test_each_claim_is_paired_with_the_passage_that_shares_most_words():
+    ps = CL.pairs([EVIDENCE, DONE])
+    safari = next(p for p in ps if "Safari 26" in p["claim"])
+    assert "macOS Tahoe" in safari["evidence"] and safari["url"] == "https://webkit.org/blog"
+    assert safari["overlap"] >= CL.OVERLAP_SUPPORTED and CL.baseline(safari) == "supported"
+    assert CL.pairs([DONE]) == []                                    # no evidence read, nothing to check against
+    assert CL.deliverable_of([EVIDENCE, DONE]) == DELIVERABLE
+
+
+def test_a_clipped_preview_still_yields_items():
+    clipped = '{"result": {"items": [{"title": "A", "url": "u1", "text": "Chrome 113 shipped WebGPU'
+    items = CL.evidence_items(clipped)
+    assert items and items[0]["url"] == "u1" and "Chrome 113" in items[0]["text"]
+
+
+def test_the_claim_is_an_application_every_judge_answers():
+    assert CL.QUESTION in JC.QUESTIONS and CL.QUESTION in JC.CARDS
+    assert set(JC.QUESTIONS[CL.QUESTION]["labels"].values()) == set(CL.LABELS)
+    msg = JC.user_message(CL.QUESTION, {"claim": "Safari 26 ships WebGPU", "evidence": "Safari 26 brings WebGPU",
+                                        "title": "Safari 26", "url": "https://webkit.org"})
+    assert msg.startswith("Claim: Safari 26 ships WebGPU\n\nEvidence (Safari 26 | https://webkit.org): ")
+    assert JC.user_message(CL.QUESTION, {"claim": "x"}) is None
+
+
+def test_the_recorded_decision_is_a_valid_ledger_row():
+    p = CL.pairs([EVIDENCE, DONE])[0]
+    row = LC.make_decision(CL.QUESTION, CL.baseline(p), origin="background", surface="loop", qtype="binary",
+                           labels=list(CL.LABELS), state={"claim": p["claim"], "url": p["url"]},
+                           state_ref={"kind": "claim", "id": CL.claim_ref("s1", p["claim"])}, decider="rule",
+                           implementation=CL.RULE, mode="rule", run_id="s1", session_id="s1",
+                           detail={"overlap": p["overlap"]})
+    assert LC.check_decision(row) == []
+    assert CL.claim_ref("s1", "a") != CL.claim_ref("s2", "a")

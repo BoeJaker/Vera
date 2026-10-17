@@ -39,6 +39,11 @@ QUESTIONS: Dict[str, Dict[str, Any]] = {
                    "changed and how many competitor items appeared. Answer with one word: yes if the picture changed "
                    "enough that the reader should be alerted, no if it did not."),
         "labels": {"yes": "alert", "no": "no_alert"}, "kind": "binary"},
+    "output.claim_supported": {
+        "system": ("You check one claim from an AI agent's report against a passage of the evidence it read. Answer "
+                   "with one word: yes if the passage supports the claim (it states the same facts, figures, dates or "
+                   "names), no if it does not support it or says something different."),
+        "labels": {"yes": "supported", "no": "unsupported"}, "kind": "binary"},
     "discovery.page_on_topic": {
         "system": ("A crawler is collecting pages about one topic. Decide whether this page is about that topic. "
                    "Answer with one word: yes if it is on topic, no if it is off topic."),
@@ -63,6 +68,9 @@ CARDS: Dict[str, Dict[str, str]] = {
     "intel.material_change": {
         "alert": "The topic's picture changed materially: the reader should be told now.",
         "no_alert": "Nothing material changed: the new summary restates or refines the old one."},
+    "output.claim_supported": {
+        "supported": "The evidence passage states the claim's facts, figures, dates or names.",
+        "unsupported": "The evidence passage does not state the claim, or states something different."},
     "discovery.page_on_topic": {
         "on_topic": "This page is about the crawl's topic.",
         "off_topic": "This page is not about the crawl's topic."},
@@ -86,6 +94,13 @@ def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:
     """The text put to a model for one stored decision, or None when the inputs lack what it needs."""
     if question_id not in QUESTIONS or not isinstance(state, dict):
         return None
+    if question_id == "output.claim_supported":
+        claim, ev = _s(state.get("claim"), 400), _s(state.get("evidence"), 1200)
+        if not claim or not ev:
+            return None
+        src = " | ".join(x for x in (_s(state.get("title"), 200), _s(state.get("url"), 300)) if x)
+        return (f"Claim: {claim}\n\nEvidence" + (f" ({src})" if src else "") + f": {ev}\n\n"
+                "Does the evidence support the claim? Answer with one word.")
     if question_id == "intel.material_change":
         prev, now = _s(state.get("prev"), 400), _s(state.get("now"), 400)
         if not now:
