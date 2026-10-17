@@ -4179,6 +4179,34 @@
           if (r - l < a.w - 1 || b - t < a.h - 1) { a.w = r - l; a.h = b - t; a.x = l + a.w / 2; a.y = t + a.h / 2; a.fitted = true; }
         });
       }
+      /* NO TWO OPEN CARDS COVER EACH OTHER (owner 2026-10-17: "the elements that are not in windowed mode can cover each other? this
+         shouldnt be possible"). Cards the person placed or sized are fixed, and two fixed cards that met - one dropped on the other,
+         one grown into the other, or both placed on a wider screen - were never separated. Now the one touched longer ago moves
+         aside at its size (and keeps the new place); a locked card and the card under the hand never move. Only a resize the desk
+         has no room for makes a window (see above). */
+      { const touched = (it) => (it.sizing ? Infinity : ((this._actAt || {})[it.id] || 0));
+        const meet = (a, b) => Math.max(0, Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2)) * Math.max(0, Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2));
+        for (let round = 0; round < 3; round++) {
+          const open = plan.filter((it) => !it.strip && !it.win && !wins.has(it) && it.h > 40); const victims = new Set();
+          for (let i = 0; i < open.length; i++) for (let j = i + 1; j < open.length; j++) { const p = open[i], q = open[j]; if (meet(p, q) < 400) continue;
+            const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q); else if (can.length === 1 && [p, q].every((x) => x.fixed)) victims.add(can[0]); }
+          if (!victims.size) break;
+          /* the one making way: the nearest clear room at its own size; none, the largest clear room it fits (down to about 40%,
+             never under a usable 220 x 120); none at all, a pill. Never left on another card. */
+          victims.forEach((v) => { const rest = withStrip(plan).filter((o) => o !== v && !wins.has(o) && (o.strip || o.h > 40)); const g = 8;
+            const clear = (x, y, w, h) => x - w / 2 >= 4 && x + w / 2 <= W - 4 && y - h / 2 >= 4 && y + h / 2 <= H - 4
+              && !(x + w / 2 > R.l - g && x - w / 2 < R.r + g && y + h / 2 > R.t - g && y - h / 2 < R.b + g)
+              && !rest.some((o) => x - w / 2 < o.x + o.w / 2 + g && o.x - o.w / 2 < x + w / 2 + g && y - h / 2 < o.y + o.h / 2 + g && o.y - o.h / 2 < y + h / 2 + g);
+            let best = null;
+            for (const k of [1, 0.85, 0.7, 0.55, 0.42]) { const w = Math.round(v.w * k), h = Math.round(v.h * k); if (w < 220 || h < 120) break;
+              for (let y = h / 2 + 4; y <= H - h / 2 - 4; y += 24) for (let x = w / 2 + 4; x <= W - w / 2 - 4; x += 24) { if (!clear(x, y, w, h)) continue;
+                const d = Math.hypot(x - v.x, y - v.y); if (!best || d < best.d) best = { x, y, w, h, d }; }
+              if (best) break; }
+            const was = this._deskPosGet()[v.id] || {};
+            if (best) { Object.assign(v, { x: best.x, y: best.y, w: best.w, h: best.h, keepSize: true });
+              this._deskPosSet(v.id, Object.assign({}, was, { fx: +(best.x / W).toFixed(4), fy: +(best.y / H).toFixed(4) }, was.w ? { w: best.w, h: best.h } : {})); }
+            else { this._deskPosSet(v.id, { chip: true }); v.strip = false; v.h = 34; v.w = 150; v.toPill = true; } });
+        } }
       /* NO ROOM AT ALL: two cards the desk placed (neither sized nor put there by the person) still overlap after every card
          was pushed aside - a narrow desk with a large card. The one later in the desk's order (the less relevant) goes to the
          pill strip; a locked card or one the person placed never does. */
@@ -4230,7 +4258,7 @@
           /* the person's size, the card free to move (WSU-74): exactly that size wherever the desk puts it */
           : it.own && !it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h) })
           /* moved where only its present size fits: it keeps that size and its face there, or it would grow over its neighbours */
-          : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.face0 || 'chip' })
+          : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.h <= 40 ? 'chip' : (it.face0 || 'chip') })   /* at a pill's height it IS a pill: a held card kept a pill's size with a card's face - a sliver with only its icons */
           : it.maxH ? (() => { const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); if (s0.face === 'chip' || s0.face === 'icon') return s0; const hh = Math.min(s0.h, it.maxH); return Object.assign({}, s0, { h: hh, face: D.faceOf(s0.w, hh) === 'chip' ? 'card' : D.faceOf(s0.w, hh) }); })()
           : D.sizeAt(R, it.x, it.y, it.so, desk);
         const isChip = s.face === 'chip' || s.face === 'icon';
