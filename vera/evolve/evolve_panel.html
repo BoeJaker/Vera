@@ -597,6 +597,7 @@ html.vpb-nav-hosted body{padding-left:0}
       <label class="hint"><input type="checkbox" id="ship-merged" onchange="shipOnChange()"> hide merged</label>
       <span class="hint" id="ship-count"></span>
     </div>
+    <div id="release-status" class="hint" style="padding:4px 0" title="the release in flight, the census it waits on, the last release, node sync"></div>
     <div id="ship-table"><div class="empty">Loading&hellip;</div></div>
     <div class="hint" style="margin-top:6px">In <b>branches</b> a row is a branch: its latest pipeline, gate and decision, its sandbox, its last test run. <b>&#9656;</b> expands it &mdash; a pipeline awaiting a decision shows as its review card (diff, verdict, promote / rollback), the sandbox with every control and its container's log, the test story; an id opens the record. <b>stage</b> is one word: live &rarr; awaiting a decision &rarr; red &rarr; merged / idle; the trunk (main, then the edges) leads. In <b>pipelines</b> a row is one pipeline run, newest first. The commit graph, the branch race, the authorship map, the gate strip and the coverage matrix are below.</div>
   </div>
@@ -982,6 +983,38 @@ async function autonomousRelease(){
 }
 function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300)},3400)}
 function openModal(h){$('modal').innerHTML=h;$('modal-bg').classList.add('on')}
+/* askForm(title, fields, opts) -> Promise<{id: value} | null>: a small form in its OWN overlay, so it never
+   replaces the modal under it (prompt() did not either). fields: [{id, label, value, type: text|textarea|
+   select|number|check, options: [[value, label]], hint, required}]. opts.ok = the button label.
+   looplab-control C2 (17 Oct 2026): the shared panel rule is no prompt(). */
+function askForm(title,fields,opts){
+  opts=opts||{};
+  return new Promise(resolve=>{
+    let ov=document.getElementById('ask-ov');
+    if(!ov){ov=document.createElement('div');ov.id='ask-ov';ov.className='ask-ov';document.body.appendChild(ov)}
+    const fid=f=>'ask-f-'+f.id;
+    const one=f=>{
+      const lab='<label class="fld" for="'+fid(f)+'">'+esc(f.label||f.id)+'</label>';
+      if(f.type==='textarea')return lab+'<textarea id="'+fid(f)+'" rows="'+(f.rows||4)+'" style="width:100%">'+esc(f.value||'')+'</textarea>';
+      if(f.type==='select')return lab+'<select id="'+fid(f)+'" style="width:100%">'+(f.options||[]).map(o=>'<option value="'+esc(o[0])+'"'+(String(o[0])===String(f.value)?' selected':'')+'>'+esc(o[1]||o[0])+'</option>').join('')+'</select>';
+      if(f.type==='check')return '<label class="row" style="gap:6px;margin-top:6px"><input type="checkbox" id="'+fid(f)+'" style="width:auto"'+(f.value?' checked':'')+'> '+esc(f.label||f.id)+'</label>';
+      return lab+'<input id="'+fid(f)+'" type="'+(f.type==='number'?'number':'text')+'" value="'+esc(f.value==null?'':String(f.value))+'" style="width:100%">';
+    };
+    ov.innerHTML='<div class="ask-box" role="dialog" aria-modal="true"><div class="card-h"><span class="card-t">'+esc(title)+'</span></div>'
+      +(opts.text?'<div class="hint" style="white-space:pre-wrap;margin-bottom:6px">'+esc(opts.text)+'</div>':'')
+      +fields.map(f=>'<div style="margin-bottom:6px">'+one(f)+(f.hint?'<div class="hint">'+esc(f.hint)+'</div>':'')+'</div>').join('')
+      +'<div class="row" style="gap:6px;margin-top:8px"><span style="flex:1"></span><button class="btn sm" id="ask-cancel">Cancel</button><button class="btn sm primary" id="ask-ok">'+esc(opts.ok||'OK')+'</button></div></div>';
+    ov.classList.add('on');
+    const done=v=>{ov.classList.remove('on');ov.innerHTML='';document.removeEventListener('keydown',key,true);resolve(v)};
+    const read=()=>{const out={};for(const f of fields){const e=document.getElementById(fid(f));out[f.id]=f.type==='check'?!!e.checked:e.value;
+      if(f.required&&!(f.type==='check'?out[f.id]:String(out[f.id]).trim())){toast((f.label||f.id)+' is required');return null}}return out};
+    const key=ev=>{if(ev.key==='Escape'){ev.stopPropagation();done(null)}else if(ev.key==='Enter'&&ev.target.tagName!=='TEXTAREA'){ev.preventDefault();const v=read();if(v)done(v)}};
+    document.addEventListener('keydown',key,true);
+    document.getElementById('ask-cancel').onclick=()=>done(null);
+    document.getElementById('ask-ok').onclick=()=>{const v=read();if(v)done(v)};
+    const first=ov.querySelector('input,textarea,select');if(first)first.focus();
+  });
+}
 function closeModal(){$('modal-bg').classList.remove('on');try{cenAloStop()}catch(_){}}
 /* A modal must appear on the CLICK, not when its data arrives.
    Every census modal used to `await api(...)` FIRST and only then call
@@ -2288,17 +2321,18 @@ async function boardEdit(id){
   $('bn-labels').value=(it.labels||[]).join(', ');$('bn-repo').value=it.repo||'';$('bn-project').value=it.project||'';$('bn-body').value=it.body||'';
   $('bn-title').focus()}
 async function boardMove(id,lane){const r=await post('/board/item/move',{id,lane});if(r&&r.ok)agentsRefresh();else toast((r&&r.error)||'failed')}
-async function boardClaim(id){const a=prompt('claim as agent:',_boardAgent());if(!a)return;localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));agentsRefresh()}
-async function boardComment(id){const b=prompt('comment (point at file:line, not a dump):');if(!b)return;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');agentsRefresh()}
+async function boardClaim(id){const f=await askForm('Claim board item',[{id:'a',label:'Claim as agent',value:_boardAgent(),required:true}],{ok:'Claim'});if(!f)return;const a=f.a.trim();localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));agentsRefresh()}
+async function boardComment(id){const f=await askForm('Comment',[{id:'b',label:'Comment',type:'textarea',hint:'point at file:line, not a dump',required:true}],{ok:'Post'});if(!f)return;const b=f.b;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');agentsRefresh()}
 async function boardDispatch(id){
-  const ex=prompt('dispatch executor: deterministic | vera | capable','deterministic');if(!ex)return;
+  const f=await askForm('Dispatch board item',[{id:'ex',label:'Executor',type:'select',value:'deterministic',options:[['deterministic','deterministic'],['vera','vera'],['capable','capable']]}],{ok:'Dispatch'});if(!f)return;const ex=f.ex;
   const r=await post('/board/dispatch',{id,executor:ex.trim(),agent:_boardAgent()});
   toast(r&&r.ok?('dispatched ('+(r.status||'running')+')'):(r&&r.error)||'failed');setTimeout(()=>agentsRefresh(),1200)}
 /* ── board item DETAIL drawer: body + meta + comment thread + inline comment + drill-down ── */
 const _CKINDS=['progress','note','help-request','reply','blocked','handoff','steer'];
 async function openBoardItem(id){
+  const _tk=openModalLoading('Board item',id);
   const r=await api('/board/item?id='+encodeURIComponent(id));const it=r&&r.item;
-  if(!it){toast('item not found');return}
+  if(!it){modalFail(_tk,'board item '+id+' not found');return}
   const c=_LANE_COLOR[it.lane]||'#666';
   let h='<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">'
     +'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c+'"></span>'
@@ -2354,7 +2388,7 @@ async function boardPostComment(id){
 async function openBranchSandbox(branch){
   toast('opening dev container for '+branch+'… (may take a moment)');
   const r=await post('/evolve/sandbox/up',{branch});
-  if(r&&(r.ok||r.healthy)){closeModal();nav('ship');const sb=r.sandbox||{};try{embedSandbox(branch,sb.port)}catch(e){toast('sandbox up; open it from the Sandbox tab')}}
+  if(r&&(r.ok||r.healthy)){closeModal();nav('ship');const sb=r.sandbox||{};try{embedSandbox(branch,sb.port)}catch(e){toast('sandbox up; open it from the Ship')}}
   else toast((r&&r.error)||'could not bring up the dev container')}
 async function boardShowContext(id){
   const r=await api('/board/context?id='+encodeURIComponent(id));
@@ -2406,7 +2440,7 @@ async function capRegister(){
   if(!id||!target){toast('seat_id + target required');return}
   const r=await post('/capacity/seat/register',{seat_id:id,target,label:$('cs-label').value.trim(),auth_pool:$('cs-auth').value});
   toast(r&&r.ok?'seat registered':(r&&r.error)||'failed');if(r&&r.ok){['cs-id','cs-target','cs-label'].forEach(i=>{if($(i))$(i).value=''});loadCapacity();agentsRefresh()}}
-async function capCool(id){const s=prompt('cool for how many seconds? (0 clears)','3600');if(s==null)return;const r=await post('/capacity/seat/cool',{seat_id:id,cooling_s:parseInt(s)||0});toast(r&&r.ok?'updated':(r&&r.error)||'failed');loadCapacity()}
+async function capCool(id){const f=await askForm('Cool seat',[{id:'s',label:'Cool for (seconds, 0 clears)',type:'number',value:3600}],{ok:'Set'});if(!f)return;const s=f.s;const r=await post('/capacity/seat/cool',{seat_id:id,cooling_s:parseInt(s)||0});toast(r&&r.ok?'updated':(r&&r.error)||'failed');loadCapacity()}
 async function capRemove(id){if(!confirm('Remove seat '+id+'?'))return;const r=await post('/capacity/seat/remove',{seat_id:id});toast(r&&r.ok?'removed':(r&&r.error)||'failed');loadCapacity()}
 async function loadCapacity(){
   const el=$('cap-seats');if(!el)return;
@@ -3405,7 +3439,7 @@ async function openCensusGoal(run,goal){
 /* ═══ WORK — one table: every task, or every driver run; what is live on top ═══
    Flattening slice 3 (shared-planning/loop-lab-flattening/PLAN.md §3, §6).
    Eight pages held the same facts in eight shapes — Run once, Improve · set
-   up, Improve · live (its list), Suite, Variants, Census, Tasks, Runs. This
+   up, Mission · improve (its list), Suite, Variants, Census, Tasks, Runs. This
    is ONE table with a mode toggle: `runs` is a row per DRIVER RUN (census
    run, suite, improvement session, single run — evolve.work.drivers) and
    `tasks` a row per task with its history from every driver
@@ -3640,7 +3674,7 @@ const _WORK_IMPROVE_FORM=`    <div class="card-h"><span class="card-t">Start imp
       <span class="hint">run → critic scores → editor proposes a better variant → rerun</span>
       <span style="flex:1"></span>
       <span class="hint" id="im-live-link"></span></div>
-    <div class="hint" style="margin-bottom:6px">This page CONFIGURES a session; <a href="#" onclick="event.preventDefault();nav('watch')">Improve · live</a> is the same session running. To run something once instead — a task, a suite, or a census template — use <a href="#" onclick="event.preventDefault();nav('test')">Run once</a>.</div>
+    <div class="hint" style="margin-bottom:6px">This page CONFIGURES a session; <a href="#" onclick="event.preventDefault();nav('watch')">Mission · improve</a> is the same session running. To run something once instead — a task, a suite, or a census template — use <a href="#" onclick="event.preventDefault();nav('test')">Run once</a>.</div>
     <div class="grid">
       <div><label class="fld">Improve (category)</label><select id="im-cat" style="width:100%" onchange="fillTargets('im-cat','im-profile')"></select></div>
       <div><label class="fld">Target</label><select id="im-profile" style="width:100%"></select></div>
@@ -3659,7 +3693,7 @@ const _WORK_IMPROVE_FORM=`    <div class="card-h"><span class="card-t">Start imp
     <div id="im-gen-row" style="display:none;margin-top:8px"><label class="fld">Generate goals to test</label><input id="im-gen" style="width:100%" placeholder="a subsystem or objective, e.g. the fabric discovery system"></div>
     <div class="row" style="margin-top:10px">
       <button class="btn primary" onclick="startImprove()">&#9654; Start &amp; watch</button>
-      <span class="hint">Synthesis runs in the background on <b id="im-editq-lbl">gpt-oss:20b</b> (CPU node). Watch it live in the Watch tab.</span>
+      <span class="hint">Synthesis runs in the background on <b id="im-editq-lbl">gpt-oss:20b</b> (CPU node). Watch it live in the Mission live view.</span>
     </div>`;
 function openImproveForm(){
   openModal('<div class="card-h"><span class="card-t">Start improvement session</span><span class="hint">run → critic scores → editor proposes a better variant → rerun</span></div>'
@@ -4300,8 +4334,8 @@ function _csessActions(s){
   return b||'<span class="hint">—</span>';
 }
 async function csessResume(sid){
-  const inst=prompt('Resume on which instance_id? (auto-dispatch is not built yet — pick the target to run --resume on)',localStorage.getItem('vera_resume_instance')||'');
-  if(!inst)return;localStorage.setItem('vera_resume_instance',inst);
+  const f=await askForm('Resume session',[{id:'inst',label:'Instance id',value:localStorage.getItem('vera_resume_instance')||'',hint:'the target to run --resume on',required:true}],{ok:'Resume'});
+  if(!f)return;const inst=f.inst.trim();localStorage.setItem('vera_resume_instance',inst);
   const r=await post('/ide/claude_sessions/resume',{claude_session_id:sid,instance_id:inst});
   toast(r&&r.ok?('resumed (attempt '+r.attempt+')'):(r&&r.error)||'failed');agentsRefresh();
 }
@@ -4378,7 +4412,8 @@ async function loadEditq(){
   }).join('')+'</table>';
 }
 async function openEditq(id){
-  const r=await api('/evolve/editq/get?id='+encodeURIComponent(id));const a=r&&r.action;if(!a){toast('not found');return}
+  const _tk=openModalLoading('Edit action',id);
+  const r=await api('/evolve/editq/get?id='+encodeURIComponent(id));const a=r&&r.action;if(!a){modalFail(_tk,'edit action '+id+' not found');return}
   const editable=a.status==='queued';
   let h='<div class="card-h"><span class="card-t">Edit action '+esc(id)+'</span><span class="hint">'+esc(a.status)+' · '+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+'</span></div>';
   h+='<label class="fld">prompt'+(editable?' (editable while queued)':'')+'</label><textarea id="eq-prompt" style="min-height:120px" '+(editable?'':'readonly')+'>'+esc(a.prompt||'')+'</textarea>';
@@ -4562,7 +4597,7 @@ async function selftest(){
     ?'<span style="color:var(--warn)">in-process (can touch real Vera)</span>'
     :(up?('sandbox <span class="tag">'+esc(sb.branch||'?')+'</span> :'+esc(String((sbx&&sbx.dev_port)||'')))
         :('<span style="color:var(--warn)">no sandbox up — '+(mode==='require'?'runs will REFUSE':'falls back in-process')+'</span>'
-          +' <button class="btn sm" onclick="closeModal();nav(\'ship\')">open Sandbox tab</button>'));
+          +' <button class="btn sm" onclick="closeModal();nav(\'ship\')">open Ship</button>'));
   let h='<div class="row" style="margin-bottom:6px;gap:8px;align-items:center;flex-wrap:wrap">'
     +(r.ok?'<span class="pill" style="color:var(--ok)">ALL GREEN</span>':'<span class="pill" style="color:var(--err)">problems found</span>')
     +'<span class="hint">runner: '+runner+' · mode <b>'+esc(mode)+'</b></span></div><table>';
@@ -4858,7 +4893,7 @@ function runCommitTags(commits){
    filter live in renderCensusTable. Callers that used to refresh it refresh
    Work and the Test page's recent-runs card instead. */
 async function loadRuns(){ workOnChange(); if(typeof refreshTestRuns==='function')refreshTestRuns(); }
-async function openRun(id){const r=await api('/evolve/run/get?run_id='+encodeURIComponent(id));if(r&&r.run)openRunDetail(r.run);else toast('run not found')}
+async function openRun(id){const _tk=openModalLoading('Run',id);const r=await api('/evolve/run/get?run_id='+encodeURIComponent(id));if(r&&r.run)openRunDetail(r.run);else modalFail(_tk,'run '+id+' not found')}
 function openRunDetail(d){
   const a=d.assessment||{};
   let h='<div class="card-h"><span class="card-t">'+eid('task',d.task,esc(d.task))+'</span><span class="hint">'+esc(d.run_id)+' · '+(d.elapsed_s||0)+'s'+(d.loop_session?(' · '+eid('loop',d.loop_session,'loop '+esc(String(d.loop_session).slice(0,8)),{goal:d.goal_id})):'')+'</span></div>'
@@ -5086,7 +5121,8 @@ function pipeActions(p){
   return h;
 }
 async function openPipe(id){
-  const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(!r||!r.pipeline){toast('not found');return}
+  const _tk=openModalLoading('Pipeline',id);
+  const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(!r||!r.pipeline){modalFail(_tk,'pipeline '+id+' not found');return}
   const p=r.pipeline;
   let h='<div class="card-h"><span class="card-t">Pipeline '+esc(id)+' · '+esc(p.kind)+'</span><span class="hint">'+esc(p.profile)+'</span></div>';
   h+='<div class="row" style="margin-bottom:8px">'+pipeDecision(p.decision)+' <span class="pill">'+esc(p.status||'')+'</span>'
@@ -5310,9 +5346,9 @@ async function toggleReviewDiff(id){
     :'<div class="hint">'+esc((d&&d.error)||'no diff (variant pipeline)')+'</div>';
 }
 async function reviewVerdict(id,verdict){
-  const findings=prompt(verdict==='approved'?'Approval notes (optional):':'Findings — what needs to change:');
-  if(findings===null)return;
-  const r=await post('/evolve/pipeline/review',{id,verdict,findings:findings||(verdict+' via Review tab')});
+  const f=await askForm(verdict==='approved'?'Approve':'Request changes',[{id:'t',type:'textarea',label:verdict==='approved'?'Approval notes (optional)':'Findings - what needs to change',required:verdict!=='approved'}],{ok:verdict==='approved'?'Approve':'Send findings'});
+  if(!f)return;const findings=f.t;
+  const r=await post('/evolve/pipeline/review',{id,verdict,findings:findings||(verdict+' via the Ship review')});
   toast(r&&r.ok?('Reviewed as '+r.reviewer):(r&&r.error)||'failed');
   shipRefresh();
 }
@@ -5355,11 +5391,9 @@ async function toggleWsDiff(id){
   }).join('')||'<div class="hint">no files</div>';
 }
 async function wsAccept(id,branch){
-  const into=prompt('Approve by MERGING  '+branch+'  into which integration branch?\n\n'
-    +'Leave blank for the default bleeding edge ('+_defaultEdge()+'). This merges via git in an isolated '
-    +'worktree — prod\'s live checkout is NOT touched, and it refuses rather than '
-    +'clobber if the target is checked out or the merge conflicts.','');
-  if(into===null)return;
+  const f=await askForm('Merge '+branch,[{id:'into',label:'Into which integration branch',type:'select',value:_defaultEdge(),options:_EDGES.length?_EDGES.map(e=>[e.branch,e.branch]):[[_defaultEdge(),_defaultEdge()]]}],
+    {ok:'Merge',text:'Merges via git in an isolated worktree - prod’s live checkout is not touched, and it refuses rather than clobber if the target is checked out or the merge conflicts.'});
+  if(!f)return;const into=f.into;
   const r=await post('/evolve/sandbox/approve',{branch,proposal_id:id,into:((into||'').trim()||_defaultEdge())});
   if(r&&r.ok){toast('Merged '+branch+' → '+r.into+' @ '+String(r.commit||'').slice(0,8));}
   else if(r&&r.conflicts&&r.conflicts.length){toast('Merge conflict: '+r.conflicts.slice(0,3).join(', '));}
@@ -5410,6 +5444,7 @@ async function loadShip(){
   renderSbxStatusLine(r.runner||{});
   renderSbxCapacity(r.capacity);
   renderEdges({edges:r.edges||[],main:r.main,default:r.edges_default});
+  releaseStatus();
   _utLanes(r.tests||{},{pipelines:[].concat.apply([],_shipRows.map(b=>b.pipelines||[]))});
   renderShipHead(r);
   renderShipTable();
@@ -5715,11 +5750,13 @@ async function releaseNodeSync(){const r=await post('/evolve/release/node_sync',
 async function releaseCancel(){const r=await post('/evolve/release/cancel',{reason:'cancelled from Loop Lab'});toast(r&&r.ok?'release cancelled'+(r.census_resumed?' \u00b7 census resumed':''):(r&&r.error)||'failed');releaseStatus()}
 async function releaseForce(){if(!confirm('Release NOW? The restart pauses the census goal in flight and re-runs it later.'))return;await post('/evolve/release/cancel',{reason:'forcing'});const r=await post('/evolve/release/prod',{confirm:true,force:true,reason:'forced from Loop Lab'});toast(r&&r.ok?('releasing: '+(r.status||'')):(r&&(r.error||r.refused))||'failed');releaseStatus()}
 async function edgeRelease(name,branch){
-  const ok=confirm('RELEASE: fast-forward main to '+branch+' ('+name+') and restart prod?\n\nThis is the deliberate step that moves the branch prod serves. Only proceed on the user\'s explicit, unambiguous go-ahead. It refuses unless main is an ancestor of the edge (no merge commit, no guessing).');
-  if(!ok)return;
-  const mode=(prompt('If a census is in flight, how should the release wait?\n  finish = wait until the census has ended (default)\n  goal   = yield: let the goal in flight finish, park, release, resume after\n  force  = release now (the census goal is paused and re-run)','finish')||'finish').trim().toLowerCase();
-  if(['finish','goal','force'].indexOf(mode)<0){toast('unknown mode '+mode);return}
-  const sync=confirm('Also bring the NODES onto this release once it is done?\n\nOK = sync nlp_server / gpu_inference / model_builder / vllm_server (vLLM is updated, never started), the node workers and the warm model slots (after the restart, never while a census goal is in flight).\nCancel = release prod only.');
+  const f=await askForm('Release '+branch+' to prod',[
+      {id:'go',type:'check',label:'I have the owner’s explicit go-ahead for this release',required:true},
+      {id:'mode',label:'If a census is in flight',type:'select',value:'goal',options:[['goal','yield: the goal in flight finishes, the census parks, release, resume after'],['finish','wait until the census has ended (waits forever on a parked census)'],['force','release now (the census goal is paused and re-run)']]},
+      {id:'sync',type:'check',value:false,label:'also bring the nodes onto this release (nlp_server, gpu_inference, model_builder, vllm_server files, node workers, warm slots) after the restart'}],
+    {ok:'Release',text:'Fast-forward main to '+branch+' ('+name+') and restart prod. This moves the branch prod serves; it refuses unless main is an ancestor of the edge.'});
+  if(!f)return;
+  const mode=f.mode, sync=!!f.sync;
   const r=await post('/evolve/release/prod',{edge:name,confirm:true,census:mode,force:mode==='force',sync_nodes:sync,reason:'Loop Lab release button'});
   if(r&&r.held)toast('release pending ('+mode+'): '+(r.why||''));
   else toast(r&&r.ok?('releasing: '+(r.status||'')+' main @ '+String((r.merge||{}).commit||'').slice(0,8)):(r&&(r.error||r.refused))||'refused');
@@ -5903,8 +5940,9 @@ function _sbxItemHtml(s){
     +'</div>';
 }
 async function sbxPlan(name){
+  const _tk=openModalLoading('Sandbox work plan',name);
   const r=await api('/evolve/sandbox/workplan?name='+encodeURIComponent(name));
-  if(!r||r.error){toast((r&&r.error)||'work plan unavailable');return}
+  if(!r||r.error){modalFail(_tk,(r&&r.error)||'work plan unavailable');return}
   const p=r.workplan||{};
   const boardLinks=(p.board_item_ids||[]).map(id=>'<button class="btn sm" onclick="openBoardItem(\''+esc(id)+'\')">board '+esc(id)+'</button>').join('');
   const noteLinks=(p.notes_refs||[]).map(ref=>'<span class="tag mono" title="durable notes reference">'+esc(ref)+'</span>').join('');
@@ -6319,7 +6357,7 @@ setInterval(pollAutonomous,12000);
 _beNowLoad();setInterval(()=>{if(!document.hidden)_beNowLoad()},60000);
 refreshActiveRun();
 
-/* Branch race lanes (Pipelines tab) → click a run block to open its real
+/* Branch race lanes (Ship) → click a run block to open its real
    detail pipeline in a modal, reusing the existing openModal/closeModal. */
 (function(){
   const pl=$('pipe-lanes');
@@ -6341,6 +6379,9 @@ vera-agent-loop-output.alo-fill{display:block;height:max(360px,calc(100vh - 230p
   --alo-cycles-minh:max(300px,calc(100vh - 330px));--alo-cycles-maxh:max(300px,calc(100vh - 330px))}
 /* Schedule: the calendar takes the page; the lists fold away beside it */
 #sec-schedule .sch-card{display:flex;flex-direction:column;height:max(480px,calc(100vh - 118px));min-height:0;margin-bottom:0;box-sizing:border-box}
+.ask-ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:10050}
+.ask-ov.on{display:flex}
+.ask-ov .ask-box{background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;padding:12px;width:min(520px,92vw);max-height:90%;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.4)}
 #sec-schedule .sch-layers{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 8px;flex:none}
 .sch-ly{font:inherit;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer}
 .sch-ly i{width:11px;height:11px;border-radius:3px;background:var(--c);opacity:.3}
