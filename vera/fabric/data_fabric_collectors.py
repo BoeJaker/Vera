@@ -105,12 +105,27 @@ _HTTP_HEADERS = {
     "Accept":     "application/json, application/xml, text/html",
 }
 
+def _ingress_client(timeout: float = 30, headers=None, *, purpose: str = "api", caller: str = "fabric.collectors",
+                    follow_redirects: bool = True, **kw):
+    """This module's HTTP client (web-ingress WI-9): through the ingress gateway when it is loaded - every response
+    a receipt in the web map, every request on the host's shared slot - else a plain client, as before."""
+    import sys as _sys
+    ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+    if ing is not None and hasattr(ing, "hooked_client"):
+        try:
+            return ing.hooked_client(caller=caller, purpose=purpose, timeout=timeout, headers=headers,
+                                     follow_redirects=follow_redirects, **kw)
+        except Exception as e:  # noqa: BLE001
+            log.debug("ingress client: %s", e)
+    return httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=follow_redirects, **kw)
+
+
 async def _get(url: str, params: dict = None, headers: dict = None,
                delay_key: str = "default", timeout: int = 30) -> Optional[httpx.Response]:
     """Rate-limited GET with shared headers."""
     await asyncio.sleep(_DELAY.get(delay_key, _DELAY["default"]))
     h = {**_HTTP_HEADERS, **(headers or {})}
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
+    async with _ingress_client(timeout=timeout, purpose="api") as c:
         try:
             r = await c.get(url, params=params, headers=h)
             r.raise_for_status()

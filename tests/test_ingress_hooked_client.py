@@ -100,3 +100,19 @@ def test_the_pullers_use_the_ingress_client():
     using = [n.name for n in pullers if "_ingress_client" in ast.dump(n)]
     assert {"_pull_rss", "_pull_api", "_pull_wiki", "_pull_scrape", "_pull_github", "_pull_gitlab"} <= set(using)
     assert "def _ingress_client(" in src
+
+
+def test_the_collectors_and_research_gatherers_use_the_ingress_client():
+    src = (ROOT / "vera" / "fabric" / "data_fabric_collectors.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    get = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_get")
+    assert "_ingress_client" in ast.dump(get) and "httpx.AsyncClient" not in ast.dump(get)
+    src = (ROOT / "vera" / "research" / "researcher_api.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    names = {"_searxng_once", "search_brave", "search_ddg", "gather_arxiv", "gather_hackernews", "_github_crawl_readme",
+             "gather_github", "gather_archive", "_fetch_structured_url", "_gather_nvd"}
+    fns = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name in names}
+    assert set(fns) == names
+    bare = [k for k, f in fns.items() if "httpx.AsyncClient" in ast.dump(f)]
+    assert bare == [], bare
+    assert all("_ingress_client" in ast.dump(f) for f in fns.values())
