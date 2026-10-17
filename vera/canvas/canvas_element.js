@@ -64,6 +64,15 @@
   }
   /* AN APP'S ACTIONS (DA-05d; DESK-SPINE-DESIGN §4.1): the bar over its body - the form of the action asked for (its fields),
      the question of one that changes something (confirm), the line of what the last one did */
+  /* a row's identity across reads (DA-08a): the manifest's live.key, else id / symbol / name / key / title, else the row */
+  function appRowKey(st, x) {
+    if (!x || typeof x !== 'object') return ''; const lk = st && st.manifest && st.manifest.live && st.manifest.live.key;
+    const f = lk && x[lk] != null ? lk : ['id', 'symbol', 'name', 'key', 'title'].find((n) => x[n] != null && x[n] !== '');
+    if (f) return f + '=' + String(x[f]) + (f === 'symbol' && x.exchange ? '@' + x.exchange : '');
+    try { return JSON.stringify(x).slice(0, 200); } catch (e) { return ''; }
+  }
+  /* what an action does to its rows (DA-08a): the manifest says (effect), else its id does */
+  const appEffect = (a) => a.effect || (a.where === 'row' && /^(remove|delete|drop|unwatch|stop)/i.test(a.id) ? 'remove' : a.where !== 'row' && /^(add|create|new|upsert)/i.test(a.id) ? 'create' : 'update');
   function appBarHtml(st) {
     const ui = st.ui || {}; const acts = (st.manifest && st.manifest.actions) || []; const row = (i) => (i != null && st.rows ? st.rows[i] : null);
     const nameOf = (x) => x ? appCell(x.title || x.name || x.symbol || x.node || x.id || x[Object.keys(x)[0]]) : '';
@@ -72,7 +81,9 @@
       + '<button type="button" class="hx on" data-app-run="1">' + esc(a.label) + '</button><button type="button" class="hx" data-app-cancel="1">Cancel</button></div>'; }
     if (ui.confirm) { const a = acts.find((x) => x.id === ui.confirm.aid); if (a) return '<div class="vc-app-bar warn"><b>' + esc(a.label) + (row(ui.confirm.row) ? ' ' + esc(nameOf(row(ui.confirm.row))) : '') + '?</b>'
       + '<button type="button" class="hx on" data-app-yes="1">Yes, ' + esc(a.label.toLowerCase()) + '</button><button type="button" class="hx" data-app-cancel="1">No</button></div>'; }
-    if (ui.msg) return '<div class="vc-app-bar ' + (ui.msg.ok ? 'ok' : 'bad') + '"><span>' + esc(ui.msg.text) + '</span><button type="button" class="hx" data-app-cancel="1" title="Close">\u2715</button></div>';
+    if (ui.msg) return '<div class="vc-app-bar ' + (ui.msg.ok ? 'ok' : 'bad') + '"><span>' + esc(ui.msg.text) + '</span>'
+      + (ui.undo && Date.now() < ui.undo.until ? '<button type="button" class="hx on" data-app-undo="1" title="Put it back (' + esc(ui.undo.a.undo) + ')">Undo</button>' : '')
+      + '<button type="button" class="hx" data-app-cancel="1" title="Close">\u2715</button></div>';
     return '';
   }
   /* what an action answered, in a line */
@@ -91,15 +102,16 @@
   /* the rows part of an app: the list in its view, and the drawer of the row opened */
   function appRowsHtml(st, view) {
     const ui = st.ui || {}; const { cols, list, total } = appView(st.rows || [], ui); const sel = ui.sel;
+    const now = Date.now(), gone = ui.gone || {}, hl = ui.hl || {}; const mark = (x) => { const k = appRowKey(st, x); return (gone[k] ? ' gone' : '') + (hl[k] && now - hl[k] < 4000 ? ' hl' : ''); };   /* DA-08a */
     const shown = list.slice(0, 200);
     let body;
     if (!total) body = '<div class="vc-app-empty">Nothing to show' + (st.manifest && st.manifest.summary ? ' - ' + esc(st.manifest.summary) : '') + '</div>';
     else if (!list.length) body = '<div class="vc-app-empty">No row has "' + esc(ui.q) + '"</div>';
-    else if (view === 'cards') body = '<div class="vc-app-cards">' + shown.map(({ x, i }) => '<div class="vc-app-c' + (sel === i ? ' sel' : '') + '" data-app-row="' + i + '"><b>' + esc(appCell(x[cols[0]])) + '</b>'
+    else if (view === 'cards') body = '<div class="vc-app-cards">' + shown.map(({ x, i }) => '<div class="vc-app-c' + (sel === i ? ' sel' : '') + mark(x) + '" data-app-row="' + i + '"><b>' + esc(appCell(x[cols[0]])) + '</b>'
         + cols.slice(1, 4).map((k) => '<span><i>' + esc(k) + '</i>' + esc(appCell(x[k])) + '</span>').join('') + '</div>').join('') + '</div>';
     else body = '<table class="vc-table vc-app-t"><thead><tr>' + cols.map((k) => { const so = ui.sort && ui.sort[0] === k ? (ui.sort[1] === 'desc' ? ' \u25be' : ' \u25b4') : '';
         return '<th data-app-sort="' + esc(k) + '" title="Sort by ' + esc(k) + '">' + esc(k) + so + '</th>'; }).join('') + '</tr></thead><tbody>'
-      + shown.map(({ x, i }) => '<tr data-app-row="' + i + '"' + (sel === i ? ' class="sel"' : '') + '>' + cols.map((k) => '<td>' + esc(appCell(x[k])) + '</td>').join('') + '</tr>').join('') + '</tbody></table>';
+      + shown.map(({ x, i }) => { const mk = ((sel === i ? 'sel' : '') + mark(x)).trim(); return '<tr data-app-row="' + i + '"' + (mk ? ' class="' + mk + '"' : '') + '>' + cols.map((k) => '<td>' + esc(appCell(x[k])) + '</td>').join('') + '</tr>'; }).join('') + '</tbody></table>';
     if (list.length > shown.length) body += '<div class="vc-app-more">' + (list.length - shown.length) + ' more - filter to find them</div>';
     const d = ui.detail != null && st.rows ? st.rows[ui.detail] : null; const dm = st.manifest && st.manifest.detail;
     const drawer = d ? '<div class="vc-app-dt" data-w="canvas.app.detail"><div class="vc-app-dh"><b>' + esc(appCell(d[cols[0]]) || 'row') + '</b>'
@@ -5239,7 +5251,8 @@
          the drawer's own controls */
       body.addEventListener('click', (ev) => { const t = ev.target; if (!t || !t.closest) return; const box = t.closest('.vc-app'); if (!box) return;
         const it = t.closest('.it[data-key]'); const key = it && it.dataset.key; const st = key && this._apps && this._apps[key];
-        if (st && t.closest('[data-app-cancel],[data-app-run],[data-app-yes],[data-app-rowact]')) { ev.stopPropagation(); const ui = st.ui || (st.ui = {});
+        if (st && t.closest('[data-app-cancel],[data-app-run],[data-app-yes],[data-app-rowact],[data-app-undo]')) { ev.stopPropagation(); const ui = st.ui || (st.ui = {});
+          if (t.closest('[data-app-undo]')) return this._appUndo(key);   /* DA-08a */
           if (t.closest('[data-app-cancel]')) { ui.form = null; ui.confirm = null; ui.msg = null; return this._appDraw(key); }
           if (t.closest('[data-app-rowact]')) return this._appAction(key, t.closest('[data-app-rowact]').dataset.appRowact, ui.detail);
           const acts = (st.manifest && st.manifest.actions) || [];
@@ -5695,7 +5708,10 @@
       if (!forced && !readShaped(st.cap)) return;
       st.reading = true; this._appDraw(key); const t0 = Date.now();
       try { const r = await this.callResult(st.cap, st.args || {});
-        if (r && r.ok === false && r.error) { st.error = String(r.error); } else { st.error = null; st.result = r; st.waiting = null; }
+        if (r && r.ok === false && r.error) { st.error = String(r.error); } else { st.error = null; st.result = r; st.waiting = null;
+          const ui = st.ui; if (ui) { const keys = new Set((appRows(r) || []).map((x) => appRowKey(st, x)));   /* DA-08a */
+            if (ui.before) { keys.forEach((k) => { if (!ui.before.has(k)) (ui.hl || (ui.hl = {}))[k] = Date.now(); }); ui.before = null; }
+            ui.gone = {}; } }
       } catch (e) { st.error = String((e && e.message) || e); }
       st.reading = false; st.at = Date.now(); st.ms = st.at - t0; this._appDraw(key);
     }
@@ -5729,7 +5745,8 @@
       const st = this._apps && this._apps[key]; const a = st && st.manifest && (st.manifest.actions || []).find((x) => x.id === aid); if (!a) return;
       const ui = st.ui || (st.ui = { q: '', sort: null, sel: null, detail: null }); ui.msg = null;
       if (a.fields && a.fields.length) { ui.form = { aid, row: rowIdx }; ui.confirm = null; return this._appDraw(key); }
-      if (a.confirm) { ui.confirm = { aid, row: rowIdx }; ui.form = null; return this._appDraw(key); }
+      if (a.confirm) { ui.confirm = { aid, row: rowIdx }; ui.form = null; clearTimeout(st.confirmT);   /* asked in place for 4 s, then gone (DA-08a) */
+        st.confirmT = setTimeout(() => { if (ui.confirm && ui.confirm.aid === aid) { ui.confirm = null; this._appDraw(key); } }, 4000); return this._appDraw(key); }
       return this._appRun(key, a, rowIdx, {});
     }
     async _appRun(key, a, rowIdx, vals) {
@@ -5737,10 +5754,31 @@
       const row = rowIdx != null && st.rows ? st.rows[rowIdx] : null; const app = this._blockOf(key); const appArgs = (app && app.content && app.content.args) || {};
       const miss = (a.fields || []).filter((f) => f.required && !String((vals || {})[f.key] || '').trim()).map((f) => f.label || f.key);
       if (miss.length) { ui.msg = { ok: false, text: a.label + ' needs ' + miss.join(', ') }; return this._appDraw(key); }
-      st.acting = true; ui.form = null; ui.confirm = null; ui.msg = { ok: true, text: a.label + '…' }; this._appDraw(key);
+      /* ACTIONS ON THE THING (DA-08a, DESK-SPINE §7): a row being removed goes at once (put back if it fails), a changed row
+         is patched from the answer, a new row is lit when it arrives, and a removal the manifest can reverse (undo) offers
+         Undo for 10 s - nothing lands as an item */
+      const eff = appEffect(a), rk = row ? appRowKey(st, row) : '';
+      if (eff === 'create') ui.before = new Set((st.rows || []).map((x) => appRowKey(st, x)));
+      if (eff === 'remove' && rk) (ui.gone || (ui.gone = {}))[rk] = true;
+      ui.undo = null; st.acting = true; ui.form = null; ui.confirm = null; ui.msg = { ok: true, text: a.label + '…' }; this._appDraw(key);
       let res = null; try { res = await this.callResult(a.cap, appActArgs(a, row, appArgs, vals)); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
       st.acting = false; ui.msg = { ok: !(res && (res.ok === false || res.error)), text: appActText(a, res) };
-      if (ui.msg.ok) { ui.detail = null; this._appRead(key, true); } else this._appDraw(key);
+      if (!ui.msg.ok) { if (rk && ui.gone) delete ui.gone[rk]; ui.before = null; return this._appDraw(key); }
+      if (res && res.changed && typeof res.changed === 'object' && row) { Object.assign(row, res.changed); (ui.hl || (ui.hl = {}))[rk] = Date.now(); }
+      if (eff === 'remove' && row && a.undo) ui.undo = { a, row: Object.assign({}, row), until: Date.now() + 10000 };
+      ui.detail = null; this._appRead(key, true);
+    }
+    /* Undo: the manifest's inverse with its arguments from the row that went (undo_args, else the action's own); the row
+       comes back lit */
+    async _appUndo(key) {
+      const st = this._apps && this._apps[key]; const ui = st && st.ui; const u = ui && ui.undo; if (!u || st.acting) return; ui.undo = null;
+      if (Date.now() > u.until) return this._appDraw(key);
+      const app = this._blockOf(key); const appArgs = (app && app.content && app.content.args) || {};
+      ui.before = new Set((st.rows || []).map((x) => appRowKey(st, x))); st.acting = true; ui.msg = { ok: true, text: 'Undoing ' + u.a.label.toLowerCase() + '…' }; this._appDraw(key);
+      let res = null; try { res = await this.callResult(u.a.undo, appActArgs({ args: u.a.undo_args || u.a.args || {} }, u.row, appArgs, {})); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      st.acting = false; const ok = !(res && (res.ok === false || res.error));
+      ui.msg = { ok, text: ok ? u.a.label + ' undone' : 'Undo failed: ' + String((res && res.error) || 'no answer').slice(0, 160) };
+      if (ok) this._appRead(key, true); else { ui.before = null; this._appDraw(key); }
     }
     _appDraw(key) { if (!this._doc) return; clearTimeout(this._appDrawT); this._appDrawT = setTimeout(() => { this._html = null; this.render(this._doc); }, 30); }
     /* refresh only while it is seen: on the desk and open (not a pill, not hidden, not behind another tab of its group), the

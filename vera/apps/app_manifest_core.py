@@ -25,6 +25,7 @@ APPS_DIR = os.path.dirname(os.path.abspath(__file__))
 ID_RE = re.compile(r"^[a-z0-9_-]+(\.[a-z0-9_-]+)+$")   # panel ids have dashes (system-monitor)
 WHERE = ("header", "row", "menu")
 PATCH = ("row", "replace", "append")
+EFFECTS = ("remove", "create", "update")   # what an action does to its rows (DA-08a)
 SIZES = ("s", "m", "l", "xl")
 SETTING_TYPES = ("multi", "select", "toggle", "number", "text")
 TEMPLATE = re.compile(r"\{([a-zA-Z_][\w.]*)\}")
@@ -158,6 +159,14 @@ def check_manifest(m: Any, file: str = "", caps: Optional[Iterable[str]] = None,
                 _p(out, file, app, "error", "action.form", "%s.form is \"schema\" (a form from the capability's input) or absent" % w)
             if a.get("args") is not None and not _is_obj(a["args"]):
                 _p(out, file, app, "error", "action.args", "%s.args is an object" % w)
+            # what it does to its rows, and how a removal is put back (DA-08a): effect, undo_args (templates like args)
+            if a.get("effect") is not None and a["effect"] not in EFFECTS:
+                _p(out, file, app, "error", "action.effect", "%s.effect is one of %s" % (w, EFFECTS))
+            if a.get("undo_args") is not None:
+                if not _is_obj(a["undo_args"]):
+                    _p(out, file, app, "error", "action.undo_args", "%s.undo_args is an object" % w)
+                elif a.get("undo") is None:
+                    _p(out, file, app, "warning", "action.undo_args.orphan", "%s.undo_args without an undo capability" % w)
             if a.get("where") == "row" and a.get("confirm") is None and a.get("undo") is None:
                 _p(out, file, app, "warning", "action.unguarded", "%s acts on a row with neither confirm nor undo" % w)
     det = m.get("detail")

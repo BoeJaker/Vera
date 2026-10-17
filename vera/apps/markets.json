@@ -111,6 +111,9 @@
         "cap": "markets.watchlist.remove",
         "where": "row",
         "confirm": true,
+        "effect": "remove",
+        "undo": "markets.watchlist.add",
+        "undo_args": {"symbol": "{row.symbol}", "exchange": "{row.exchange}", "backfill": false},
         "args": {
           "symbol": "{row.symbol}",
           "exchange": "{row.exchange}"
