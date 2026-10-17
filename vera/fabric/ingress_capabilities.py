@@ -42,7 +42,8 @@ DEFAULT_BUDGET_GB = 20.0
 #: estate hosts the configuration names on top of ingress_core's rules (Redis-free: an env/config list later)
 INTERNAL_HOSTS: List[str] = []
 
-_SW: Dict[str, Any] = {"at": 0.0, "mode": "off", "throttle": "off", "dedupe": "off", "defer": "off", "task": None}
+_SW: Dict[str, Any] = {"at": 0.0, "mode": "off", "throttle": "off", "dedupe": "off", "defer": "off", "novelty": "off",
+                       "task": None}
 
 
 def _has(name: str) -> bool:
@@ -68,7 +69,7 @@ def _pool():
     return getattr(pg, "_pool", None)
 
 
-WRITER = iw.ReceiptWriter(_pool)
+WRITER = iw.ReceiptWriter(_pool, novelty_getter=lambda: _SW["novelty"] == "on")
 
 
 # ── the switch ───────────────────────────────────────────────────────────────
@@ -95,6 +96,7 @@ async def _refresh() -> None:
         _SW["throttle"] = "on" if str(modes.get(SWITCH_THROTTLE) or "off") == "on" else "off"
         _SW["dedupe"] = "on" if str(modes.get("ingress.dedupe") or "off") == "on" else "off"
         _SW["defer"] = "on" if str(modes.get("discovery.defer_enrichment") or "off") == "on" else "off"
+        _SW["novelty"] = "on" if str(modes.get("ingress.novelty") or "off") == "on" else "off"
     except Exception as ex:  # noqa: BLE001
         log.debug("ingress switch read: %s", ex)
 

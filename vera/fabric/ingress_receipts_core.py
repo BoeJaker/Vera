@@ -102,6 +102,10 @@ DDL: Tuple[str, ...] = (
         results     INT,
         result_keys TEXT[])""",
     "CREATE INDEX IF NOT EXISTS web_queries_ts ON web_queries(ts)",
+    # WI-5: novelty per URL (last fetch) and the host's novel yield (an EWMA, already a column)
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty REAL",
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty_kind TEXT",
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS canonical_hash TEXT",
 )
 
 MAP_TABLES = ("web_hosts", "web_urls", "web_fetches", "web_links", "web_content", "web_queries")
@@ -138,6 +142,13 @@ NOTE_RECORD = """INSERT INTO web_content (content_hash, first_key, record_id) VA
     ON CONFLICT (content_hash) DO UPDATE SET record_id = COALESCE(web_content.record_id, EXCLUDED.record_id),
     last_seen = NOW()"""
 LOOKUP_RECORD = "SELECT content_hash, first_key, record_id, seen FROM web_content WHERE content_hash = $1"
+# WI-5: what the map already holds, for a batch
+LOOKUP_HASHES = "SELECT content_hash FROM web_content WHERE content_hash = ANY($1)"
+LOOKUP_BANDS = ("SELECT content_hash, simhash FROM web_content WHERE b0 = ANY($1) OR b1 = ANY($2) OR b2 = ANY($3) "
+                "OR b3 = ANY($4) LIMIT 4000")
+UPDATE_URL_NOVELTY = "UPDATE web_urls SET novelty = $2, novelty_kind = $3, canonical_hash = $4 WHERE url_key = $1"
+UPDATE_HOST_YIELD = ("UPDATE web_hosts SET novel_yield = CASE WHEN novel_yield IS NULL THEN $2 "
+                     "ELSE novel_yield * 0.9 + $2 * 0.1 END WHERE host = $1")
 
 MAX_LINKS_PER_PAGE = 500
 MAX_TITLE = 300
