@@ -73,12 +73,25 @@ async def load_plan() -> Dict[str, Any]:
     return PLAN["plan"]
 
 
+#: implementation id -> the NLP family that answers it live (matrix_core.NLP_FAMILY)
+_NLP = {"zeroshot:deberta-base": "zeroshot", "nli:deberta-large": "nli", "rerank:msmarco-minilm": "rerank"}
+
+
 def impl_for(question_id: str) -> str:
-    """'knn' or 'llm': the plan's student for this question (an LLM for the legacy two)."""
+    """The plan's student for this question: 'knn', 'card', 'nlp:<family>', 'onnx:<slug>' or 'llm' (an LLM for the
+    legacy two and when the plan names none)."""
     if question_id in LEGACY:
         return "llm"
-    p = (PLAN["plan"] or {}).get(question_id) or {}
-    return "knn" if str(p.get("impl") or "") == JC.KNN_IMPL else "llm"
+    i = str(((PLAN["plan"] or {}).get(question_id) or {}).get("impl") or "")
+    if i == JC.KNN_IMPL:
+        return "knn"
+    if i == JC.CARD_IMPL:
+        return "card"
+    if i in _NLP:
+        return "nlp:" + _NLP[i]
+    if i.startswith("onnx:"):
+        return i
+    return "llm"
 
 
 def tau_for(question_id: str) -> float:
@@ -164,8 +177,11 @@ async def ask(question_id: str, system: str, user: str, *, model_name: str = "",
         return None
     if question_id not in LEGACY and not model_name:
         await load_plan()
-        if impl_for(question_id) == "knn":
+        fam = impl_for(question_id)
+        if fam == "knn":
             return await ask_knn(question_id, inputs, user, timeout=timeout)
+        if fam != "llm":
+            return await ask_fast(question_id, fam, inputs, user, timeout=timeout)
     m = (model_name or model()).strip()
     node = instance()
     meta: Dict[str, Any] = {}
@@ -196,6 +212,59 @@ def decides(question_id: str, result: Optional[Dict[str, Any]], mode_name: str =
         return False
     return bool(result) and JC.takes(question_id, result.get("answer"), result.get("p"), tau_for(question_id),
                                      allowed(question_id, mode_name))
+
+
+async def ask_fast(question_id: str, fam: str, inputs: Optional[Dict[str, Any]], text: str = "",
+                   timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """A matrix winner answering live: the label cards ('card'), an NLP-node model ('nlp:<family>') or a trained head
+    ('onnx:<slug>') over the decision's text (built from its inputs exactly as the nightly judges saw it). None (the
+    big model decides) on any failure. Never raises."""
+    t0 = time.monotonic()
+    try:
+        body = JC.user_message(question_id, inputs) if isinstance(inputs, dict) and inputs else text
+        q = JC.QUESTIONS.get(question_id)
+        if not body or not q:
+            return None
+        import sys
+        import Vera.vera.capability_orchestration as _orch
+        try:
+            from Vera.vera.minds import matrix_core as MX
+        except Exception:               # worktree / app-free import
+            from vera.minds import matrix_core as MX  # type: ignore
+        judge = sys.modules.get("judge") or sys.modules.get("Vera.vera.minds.judge")
+        if judge is None:
+            return None
+        budget = timeout or timeout_s()
+        if fam.startswith("nlp:"):
+            probs = await asyncio.wait_for(judge._nlp_probs(fam[4:], str(body)[:2000], JC.CARDS.get(question_id) or {}),
+                                           budget)
+            answer, p = MX.vote(q, probs)
+            impl = {v: k for k, v in _NLP.items()}.get(fam[4:], fam)
+        else:
+            emb = (_orch.CAPABILITY_REGISTRY.get("nlp.embed") or {}).get("func")
+            e = await asyncio.wait_for(emb(texts=[str(body)[:2000]]), budget) if emb else {}
+            vec = ((e or {}).get("embeddings") or [None])[0]
+            if not vec:
+                return None
+            if fam == "card":
+                answer, p = JC.card_vote(JC._unit(vec), await judge._card_vecs(question_id))
+                impl = JC.CARD_IMPL
+            elif fam.startswith("onnx:"):
+                cap = _orch.CAPABILITY_REGISTRY.get("ml.onnx.model." + fam[5:]) or {}
+                fn = cap.get("raw") or cap.get("func")
+                out = await asyncio.wait_for(fn(X=json.dumps([vec])), budget) if fn else {}
+                preds = (out or {}).get("predictions") or []
+                answer, p = MX.head_vote(q, preds[0]) if preds else (None, None)
+                impl = fam
+            else:
+                return None
+        if not answer:
+            return None
+        return {"answer": answer, "p": p, "confidence": JC.confidence(question_id, answer, p), "mass": 1.0,
+                "ms": int((time.monotonic() - t0) * 1000), "impl": impl, "model": impl}
+    except Exception as e:
+        log.debug("student %s %s: %s", fam, question_id, e)
+        return None
 
 
 async def ask_knn(question_id: str, inputs: Optional[Dict[str, Any]], text: str = "",

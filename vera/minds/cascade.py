@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import time
 from typing import Any, Dict
 
@@ -35,7 +36,9 @@ async def build_plan() -> Dict[str, Any]:
     report = await fn(question_id="all")
     if not isinstance(report, dict) or not report.get("questions"):
         return {"ok": False, "error": "the shadow report is empty", "report_keys": list((report or {}).keys())}
-    plan = CC.choose(report, ST.model())
+    judge = sys.modules.get("judge") or sys.modules.get("Vera.vera.minds.judge")
+    heads = [f"onnx:{h['slug']}" for h in (judge.heads() if judge is not None and hasattr(judge, "heads") else [])]
+    plan = CC.choose(report, ST.model(), extra=heads)
     r = getattr(_orch, "REDIS", None)
     if r is not None:
         await r.set(ST.PLAN_KEY, json.dumps(plan), ex=7 * 86400)
