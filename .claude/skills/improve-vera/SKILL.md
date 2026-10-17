@@ -98,10 +98,12 @@ altogether — worth naming explicitly so it isn't repeated.
    the right choice for launching/monitoring a TEST LOOP specifically
    (full control over polling cadence, direct Redis trace access) and
    for any one-off capability call where you want the raw response.
-2. **SMB file edits** (`\\llm.int\boejaker\Vera`, Read/Edit/Write tools)
-   — the right choice when YOU have already diagnosed the exact fix and
-   want to apply it precisely yourself. This is what almost every fix in
-   docs 35/36 used.
+2. **SMB file edits** (Read/Edit/Write tools), **only inside a branch
+   worktree** (`…\.loop-lab-worktrees\<branch>\…`), never the main checkout:
+   the right choice when YOU have already diagnosed the exact fix and want to
+   apply it precisely yourself. The change then lands through
+   `improve-vera-sandboxed` (commit via the host, then the pipeline into
+   `bleeding-edge`).
 3. **MCP tools** — genuinely useful, actively under-used this session
    past the one real restriction:
    - `mcp__vera__dag_run` and the other `dag_agent_loop*`/loop-launch
@@ -227,22 +229,20 @@ or loudly depending on what wraps the call site.
 
 ## 4. Restarting Vera
 
-Vera runs natively (no docker) via `./build.sh run` on the `llm` host.
-A tool already exists for Claude to restart it directly over SSH:
-`C:\Users\User\.vera-ops\Invoke-VeraRestart.ps1` (defaults to a dry run;
-pass `-Confirmed` to actually restart). Before confirming a restart,
-check for other active loop sessions (§0's redis-cli check) that aren't
-your own already-diagnosed test traffic — a restart kills everything
-in flight.
+Vera runs natively (no docker) on the `llm` host, from the `langchain` venv
+(`/home/boejaker/langchain`). Restart it **only** through Vera's own
+capabilities:
+- `sys.dev.restart(confirm=true)`, which re-execs in place and goes through the census gate (pause, ack, cancel owned loops, re-exec, restore);
+- `evolve.release.prod` as part of a release.
 
-If setting this up fresh: the real interpreter with Vera's dependencies
-installed is often a specific venv (e.g. a `langchain` venv), NOT bare
-`python3` on the host's PATH — confirm which one actually has the
-project's dependencies (e.g. `uvicorn`) before assuming a restart
-command is complete. `C:\Users\User\.vera-ops\Check-VeraLog.ps1` and
-`Check-VeraPy.ps1` exist for diagnosing a failed restart (tail the
-remote log / check which Python has the deps) without needing Vera
-itself to be up.
+**Never kill the process** and never restart over SSH by hand: that bypasses the census gate. Before any restart:
+- check `/health` (`census.busy`, `gpu_gate`, `activity`);
+- check that no loop is running (`/workshop/agent_loop/sessions?status=running` is empty);
+- check that no other agent is mid-generation.
+
+A restart ends everything in flight, including delegate jobs and other agents' calls. The old `C:\Users\User\.vera-ops\*.ps1` scripts are not part of the estate any more.
+
+To diagnose a failed restart, read `logs/vera.log*` on the share (`//192.168.0.138/boejaker/Vera/logs/`). The interpreter with the dependencies is the `langchain` venv, not bare `python3`.
 
 ## 5. Background monitoring, not tight polling
 

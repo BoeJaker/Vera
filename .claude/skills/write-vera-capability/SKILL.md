@@ -9,7 +9,7 @@ Vera capabilities are Python async functions decorated with `@capability`. One d
 
 ## Where capabilities live
 
-All capability modules are in `vera/` subdirectories. The orchestrator loads them at startup from a hard-coded list in `vera/capability_orchestration.py` (~line 2997). **To add a new module**, append its path to `_module_files` in that list. To add to an existing module, just add the function — no registration needed beyond the decorator.
+All capability modules are in `vera/` subdirectories. The orchestrator loads them at startup from a hard-coded list in `vera/capability_orchestration.py` (`_module_files = [`). **To add a new module**, append its path to `_module_files` in that list. To add to an existing module, just add the function — no registration needed beyond the decorator.
 
 ```
 vera/
@@ -174,16 +174,27 @@ If the capability serves an HTML panel, register it with `register_ui` after you
 from Vera.vera.capability_orchestration import register_ui
 
 register_ui(
-    "my-panel",         # panel id — must match the HTML file's `data-panel` attr
-    "My Panel",         # display label
+    "my-panel",         # panel_id — must match the HTML file's `data-panel` attr
+    "My Panel",         # label
     "⊞",               # icon (emoji or text)
     html=open(os.path.join(os.path.dirname(__file__), "my_panel.html")).read(),
-    # OR:
-    html_path=os.path.join(os.path.dirname(__file__), "my_panel.html"),
-    mode="tab",         # "tab" (default) | "sidebar" | "modal"
-    tab_order=60,       # controls position in tab bar
+    ui_caps=["mygroup.list", "mygroup.get"],   # capabilities the panel uses
+    mode="tab",         # "inject" (default) | "tab" | "mount" | "element"
+    tab_order=60,       # sort key for auto-tabs (lower = further left; default 100)
 )
 ```
+
+The signature is `register_ui(panel_id, label, icon, html, js="", ui_caps=None,
+mode="inject", tab_order=100, specialist_agent="", specialist_loop_profile="",
+specialist_context_cap="", sections=None, options=None)` (`capability_orchestration.py`).
+There is no `html_path`. The modes are:
+- `inject`: the Media sub-switcher;
+- `tab`: its own top-level tab;
+- `mount`: a pre-declared mount point;
+- `element`: registered and listed but not auto-rendered.
+
+A full-page panel must be served in an iframe (memory note on panel iframe
+registration); follow the `vera-design` skill for the shell.
 
 ## Standard imports for a capability module
 
@@ -199,7 +210,7 @@ from Vera.vera.capability_orchestration import (
     emit_event,
     now_iso,
     register_ui,
-    schedule,      # schedule(fn, delay_s) for deferred async execution
+    schedule,      # schedule(fn, interval, name=None, skip_in_sandbox=False, singleton=False): a PERIODIC job
 )
 from Vera.vera.config import cfg
 
@@ -209,8 +220,17 @@ log = logging.getLogger("vera.mygroup")
 ## Adding a new module
 
 1. Create `vera/<group>/<group>_capabilities.py`
-2. Add its path to `_module_files` in `vera/capability_orchestration.py` (~line 3044)
-3. The orchestrator loads it at startup — no other wiring needed
+2. Add its path to the `_module_files` list in `vera/capability_orchestration.py` (search for `_module_files = [`; line numbers drift)
+3. The orchestrator loads it at startup — no other wiring needed. Entry modules are loaded by path, so use absolute `Vera.vera...` imports, never relative ones (`tests/test_loader_modules_have_no_parent_package.py` guards this), and never import another loader module by a second name (a double import runs it twice and splits its state).
+
+### Rules a new capability must follow (checked in review)
+
+- **Periodic work:** `schedule(fn, interval, name, skip_in_sandbox=..., singleton=...)`. Pass `singleton=True` when the job touches state shared by every process (registries, worktrees, Redis keys others read), or it runs in every orchestrator. Pass `skip_in_sandbox=True` for anything that writes prod state or calls a model on a timer.
+- **Background inference:** once a night, capped, `job_type="idle_*"`, `prefer_gpu=False`. Never a GPU call on a timer.
+- **Effects:** declare `contract=` with `effects` (`read`, `write`, `external`, `money`, `host`) for any POST capability. Upcoming checks read it: the invocation policy (backbone B0.11) and the "safe to run unasked" predicate.
+- **Secrets:** never return a stored secret value from a capability. Seal through `vera/security/secrets.py`. Put secret arguments in `redact_args`. Note that `redact_result` only hides a value from logs, events and the cache, not from the HTTP response.
+- **Model calls:** go through `ollama_generate`/`ollama_embed` (or `llm.*`), never a direct POST to a node.
+- **Tests:** a behaviour test that calls the function. A test that only greps the source does not count.
 
 ## Accessing other backends
 
