@@ -92,5 +92,9 @@ t('U12: a list without any keeps the last ones', !!W.presentationOf('docker.ps')
 W.presentations([]);
 t('U12: an empty list is empty (nothing loaded yet)', !W.presentationOf('docker.ps'));
 
+/* owner 2026-10-17: "the elements that are not in windowed mode can cover each other? this shouldnt be possible" */
+t('no two open cards cover each other: of two fixed cards that meet, the one touched longer ago makes way (its own size, else the largest room it fits, else a pill)', C.includes("const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q);")
+  && C.includes("for (const k of [1, 0.85, 0.7, 0.55, 0.42]) { const w = Math.round(v.w * k), h = Math.round(v.h * k); if (w < 220 || h < 120) break;") && C.includes("else { this._deskPosSet(v.id, { chip: true });"));
+t('a held card at a pill\'s height is a pill (not a sliver with a card\'s face)', C.includes("face: it.h <= 40 ? 'chip' : (it.face0 || 'chip') })"));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
