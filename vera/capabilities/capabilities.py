@@ -2631,6 +2631,15 @@ async def http_get(url: str, timeout: int = 15, trace_id=None):
                                      verify=_verify,
                                      headers={"User-Agent": _WEB_USER_AGENT}) as c:
             t0=time.monotonic(); r=await c.get(url); ms=round((time.monotonic()-t0)*1000)
+        try:    # the web map's receipt (web-ingress WI-3); a missing gateway costs nothing
+            import sys as _sys
+            _ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+            if _ing is not None:
+                _ing.record_response(url, status=r.status_code, content_type=r.headers.get("content-type", ""),
+                                     body=r.text, elapsed_ms=ms, caller="http.get", final_url=str(r.url),
+                                     headers=dict(r.headers))
+        except Exception as _e:
+            log.debug("http.get receipt: %s", _e)
         return {"url":str(r.url),"status":r.status_code,"ok":r.is_success,"latency_ms":ms,
                 "content_type":r.headers.get("content-type",""),"body":r.text[:65536]}
     except Exception as e: return {"url":url,"error":str(e),"ok":False}

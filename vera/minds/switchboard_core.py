@@ -149,6 +149,12 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "(background, never awaited; canvas.surface_rank.report). 'on' needs engagement outcomes first."),
     # intel's modes (FM-13.3; mapping agreed with the intelligence unit 11 Oct, intel_switches_core). intel's config
     # stays the truth: a switch overrides its key only when set; at its default (the first mode) it changes nothing.
+    # the web map (web-ingress WI-3): every fetch through web_client / http.get leaves a receipt in Postgres
+    _f("ingress.recording", ("off", "meta", "on"), "web", "WI-3",
+       "Whether a fetch leaves a receipt in the web map. 'off' (default) = nothing written; 'meta' = hosts, URLs "
+       "and fetches (status, bytes, caller), never a body; 'on' = plus content hashes and links for external pages "
+       "(the owner's 11 Oct decision: external pages in full, internal hosts never, private APIs meta only).",
+       owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),

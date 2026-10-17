@@ -585,6 +585,12 @@ async def _fetch_via_reader(url: str, timeout: float) -> Tuple[str, int, str]:
 # ─────────────────────────────────────────────────────────────────────────────
 # The one fetch
 # ─────────────────────────────────────────────────────────────────────────────
+#: Called with every fetch_page result (web-ingress WI-3): the fabric's ingress gateway registers its receipt
+#: hook here, so every page that comes through this client leaves a receipt in the web map. A hook must be
+#: synchronous and quick (it enqueues); one that raises is skipped, never fatal to the fetch.
+FETCH_HOOKS: List[Callable[[Dict[str, Any]], Any]] = []
+
+
 async def fetch_page(url: str, *,
                      timeout: float = DEFAULT_TIMEOUT,
                      max_chars: int = MAX_PAGE_CHARS,
@@ -592,10 +598,13 @@ async def fetch_page(url: str, *,
                      use_api: bool = True,
                      use_reader: bool = True,
                      use_rewrites: bool = True,
-                     throttle: bool = True) -> Dict[str, Any]:
+                     throttle: bool = True,
+                     caller: str = "",
+                     purpose: str = "") -> Dict[str, Any]:
     """
     Hardened single-page fetch. See module docstring for the pipeline.
     Never raises — transport failures come back as {"error": ...}.
+    `caller` / `purpose` name who asked and why, for the receipt (web map) only.
     """
     url = _url_core.normalize_url(url or "")
     out: Dict[str, Any] = {
@@ -603,7 +612,8 @@ async def fetch_page(url: str, *,
         "status": 0, "html": "", "text": "", "title": "", "chars": 0,
         "blocked": False, "block_reason": "", "via": "direct",
         "via_reader": False, "via_api": "", "elapsed_ms": 0, "error": "",
-        "reader_error": "",
+        "reader_error": "", "content_type": "", "etag": "", "last_modified": "",
+        "caller": caller or "", "purpose": purpose or "",
     }
     if not url:
         out["error"] = "url required"
@@ -613,6 +623,11 @@ async def fetch_page(url: str, *,
     def _done() -> Dict[str, Any]:
         out["elapsed_ms"] = int((time.monotonic() - t0) * 1000)
         out["chars"] = len(out["text"])
+        for _hook in list(FETCH_HOOKS):
+            try:
+                _hook(out)
+            except Exception as _e:  # noqa: BLE001
+                log.debug("fetch hook: %s", _e)
         return out
 
     # 1. Platform API switchover (Reddit OAuth etc.) — cleanest path, try first.
@@ -646,6 +661,9 @@ async def fetch_page(url: str, *,
                                       domain=fetch_domain, throttle=throttle)
         html_body, status = r.text, r.status_code
         out["final_url"] = str(r.url)
+        out["content_type"] = r.headers.get("content-type", "")
+        out["etag"] = r.headers.get("etag", "")
+        out["last_modified"] = r.headers.get("last-modified", "")
     except Exception as e:
         transport_err = str(e)
     finally:

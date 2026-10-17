@@ -55,7 +55,7 @@ class _Disc:
 
 
 def _patch(monkeypatch, disc, events):
-    async def fake_fetch_page(url, timeout=8.0, max_chars=16000):
+    async def fake_fetch_page(url, timeout=8.0, max_chars=16000, **kw):   # caller/purpose: the receipt's, ignored here
         return {"html": "<html><body>hi</body></html>", "text": "hi there",
                 "title": "T", "status": 200}
 
