@@ -58,6 +58,9 @@
         "cap": "cal.event.delete",
         "where": "row",
         "confirm": true,
+        "effect": "remove",
+        "undo": "cal.event.upsert",
+        "undo_args": {"title": "{row.title}", "start": "{row.start}", "end": "{row.end}", "location": "{row.location}"},
         "args": {
           "id": "{row.id}"
         }

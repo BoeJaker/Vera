@@ -110,3 +110,16 @@ def test_list_summary_shape():
     s = A.summary(next(m for m in apps if m["id"] == "markets.symbol"))
     assert s == {"id": "markets.symbol", "panel": "markets", "title": "Symbol", "summary": s["summary"], "icon": "chart",
                  "kind": "series", "needs_args": ["symbol"]}
+
+
+def test_an_action_says_what_it_does_and_how_a_removal_is_put_back():
+    # DA-08a: effect (remove / create / update) and undo_args, the inverse's arguments from the row
+    def issues(a):
+        m = {"id": "x.y", "panel": "markets", "title": "T", "read": {"cap": "a.b.list"}, "view": {"kind": "table"}, "actions": [a]}
+        return [(i.get("level") or i.get("severity"), i["code"]) for i in A.check_manifest(m, "f.json")]
+    base = {"id": "rm", "label": "Remove", "cap": "a.b.remove", "where": "row", "confirm": True}
+    ok = issues(dict(base, effect="remove", undo="a.b.add", undo_args={"k": "{row.k}"}))
+    assert not [c for s, c in ok if s == "error"]
+    assert ("error", "action.effect") in issues(dict(base, effect="explode"))
+    assert ("error", "action.undo_args") in issues(dict(base, undo="a.b.add", undo_args="k"))
+    assert ("warning", "action.undo_args.orphan") in issues(dict(base, undo_args={"k": "v"}))
