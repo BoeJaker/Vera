@@ -7434,7 +7434,11 @@ IMPORTANT:
         const bl=((cv._doc&&cv._doc.blocks)||[]).filter(b=>b&&b.key!=null&&b.state!=='hidden');
         const own=b=>(Array.isArray(b.anchors)?b.anchors:[]).some(a=>a&&(a.mid===mid||a.turn===mid));
         const named=b=>{ const t=String((b.content&&(b.content.title||b.content.caption))||b.key||'').toLowerCase(); return names.some(w=>t.indexOf(w)>=0); };
-        const keys=bl.filter(b=>own(b)||named(b)).map(b=>String(b.key));
+        /* LV-9 / WSU-87: an item the chat put round a reply (enrich:, pre:) comes into the first topic only as the turn's own -
+           never by a name in its title (an earlier turn's could ride in on a word) - and ranks after the reply's own
+           (VeraDesk.topicOrder in setTopic: with no scores here, the pre-turn items had led, landing first in the document) */
+        const pre=b=>{ const k=String(b.key), f=String((b.anchor&&b.anchor.from)||''); return k.indexOf('enrich:')===0||k.indexOf('pre:')===0||f==='enrich'||f==='prepare'; };
+        const keys=bl.filter(b=>own(b)||(named(b)&&!pre(b))).map(b=>String(b.key));
         if(keys.length) cv.setTopic(keys, {}, mid); }catch(_){} }
     _cvTopicWant=mid; clearTimeout(_cvTopicT);
     _cvTopicT=setTimeout(async()=>{ _cvTopicT=null; if(_cvTopicWant!==mid) return;

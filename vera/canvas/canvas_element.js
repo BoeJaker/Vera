@@ -4158,7 +4158,7 @@
        before the record carried it is not lost; it goes up with the next change). */
     _itemHydrate(doc) {
       const pend = this._itemPend || new Set(); let lk = 0, ps = 0, pl = 0, vw = 0, fd = 0;
-      const locks = this._lockGet(), pos = this._deskPosGet(), pills = this._pillGet(), views = viewStore(this), folds = this._folds();
+      const locks = this._lockGet(), pos = this._deskPosGet(), pills = this._pillReal(), views = viewStore(this), folds = this._folds();
       ((doc && doc.blocks) || []).forEach((b) => { const key = b && b.key ? String(b.key) : ''; if (!key || pend.has(key)) return;
         if (b.face === 'pill' || b.face === 'tile') { const on = b.face === 'pill' && b.state !== 'parked'; if (!!pills[key] !== on) { if (on) pills[key] = 1; else delete pills[key]; pl++; } }
         const P = b.place && typeof b.place === 'object' ? b.place : null;
@@ -4453,8 +4453,34 @@
     }
     /* A CARD MINIMISED TO A PILL (owner, 2026-10-11: "id like a way to minimise them to a pill from the top bar controls"):
        kept per canvas; the desk places it on its border as a pill whatever the topic; a click on the pill opens it again */
-    _pillGet() { if (this._pillA) return this._pillA; try { this._pillA = JSON.parse(localStorage.getItem('vera:canvas:deskpill:' + this.canvasId) || '{}') || {}; } catch (e) { this._pillA = {}; } return this._pillA; }
-    _pillSet(key, on) { const m = this._pillGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:deskpill:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } this._itemSet(key, { face: on ? 'pill' : 'tile' }); }
+    _pillReal() { if (this._pillA) return this._pillA; try { this._pillA = JSON.parse(localStorage.getItem('vera:canvas:deskpill:' + this.canvasId) || '{}') || {}; } catch (e) { this._pillA = {}; } return this._pillA; }
+    /* ...and, for this topic only, the pre-turn items it has moved past (LV-9 / WSU-87, _preOutGet): never written - not to this
+       browser, not to the item record - so the person's own pills and places are untouched and come back with the topic */
+    _pillGet() { const m = this._pillReal(), po = this._preOutGet(); if (!po.length) return m; const v = Object.assign({}, m); po.forEach((k) => { v[k] = 1; }); return v; }
+    _pillSet(key, on) { const m = this._pillReal();
+      /* opening a pill the topic made (not the person's): it is kept in until the topic moves, and nothing is written */
+      if (!on && !m[key] && this._preOutGet().indexOf(key) >= 0) { (this._preKeep || (this._preKeep = new Set())).add(key); this._preOutC = null; return; }
+      if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:deskpill:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } this._itemSet(key, { face: on ? 'pill' : 'tile' }); }
+    /* AN ITEM THE CHAT PUT ROUND THE REPLY (VeraDesk.preTurn): an enrichment (enrich:..., anchor from 'enrich') or what was
+       placed before the answer (turn.prepare: pre:..., from 'prepare') */
+    _isPreTurn(key) { const D = root.VeraDesk; const b = this._blockOf ? this._blockOf(key) : null; const a = b && b.anchor && typeof b.anchor === 'object' ? b.anchor : null;
+      const from = a ? String(a.from || '') : ''; return D && D.preTurn ? D.preTurn(key, from) : /^(enrich|pre):/.test(String(key || '')) || from === 'enrich' || from === 'prepare'; }
+    /* THE PRE-TURN ITEMS THE TOPIC HAS MOVED PAST (LV-9 / WSU-87; the rule is VeraDesk.preTurnOut): on a desk that follows the
+       topic, a pre-turn item that is neither in the topic nor made for the turn in focus leaves focus - to the strip, like a
+       pill - even when it carries a place by hand: that place is where it sits when it is in focus (kept for then), it does
+       not hold it in. Pinned and locked items stay; one the person opens again stays until the topic moves. */
+    _preOutGet() {
+      const T = this._topic; if (!T || !T.keys || !T.keys.size || this.getAttribute('bring-in') === 'off') return [];
+      const sig = (this._topicSig || '') + '#' + String(this._rev == null ? '' : this._rev) + '#' + ((this._doc && this._doc.blocks) || []).length;
+      if (this._preOutC && this._preOutC.sig === sig) return this._preOutC.keys;
+      const locks = this._lockGet(), keep = this._preKeep || new Set(), D = root.VeraDesk;
+      const items = ((this._doc && this._doc.blocks) || []).filter((b) => b && b.key != null && (b.state || 'now') !== 'hidden').map((b) => {
+        const a = b.anchor && typeof b.anchor === 'object' ? b.anchor : null; const mids = [];
+        (b.anchors || []).concat(a ? [a] : []).forEach((x) => { if (x && typeof x === 'object') [x.turn, x.mid, x.from].forEach((v) => { if (v) mids.push(String(v)); }); });
+        const key = String(b.key); return { key, from: a ? String(a.from || '') : '', anchors: mids, pinned: b.state === 'pinned', locked: !!locks[key], kept: keep.has(key) }; });
+      const keys = D && D.preTurnOut ? D.preTurnOut(items, [...T.keys], T.mid) : [];
+      this._preOutC = { sig, keys }; return keys;
+    }
     _cmpGet() { if (this._cmpA) return this._cmpA; try { this._cmpA = JSON.parse(localStorage.getItem('vera:canvas:deskfront:' + this.canvasId) || '{}') || {}; } catch (e) { this._cmpA = {}; } return this._cmpA; }
     _cmpSet(m) { this._cmpA = m; const ks = Object.keys(m); if (ks.length > 400) ks.sort((a, b) => m[a] - m[b]).slice(0, ks.length - 400).forEach((k) => delete m[k]);
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
@@ -5276,7 +5302,13 @@
       if (ks && !ks.length && this._topic) return false;
       const sig = (mid || '') + '|' + (ks ? ks.join(',') : '-');
       if (sig === this._topicSig) return false; this._topicSig = sig;
-      this._topic = ks ? { keys: new Set(ks), order: ks.slice().sort((a, b) => val(b) - val(a)), mid: mid || '' } : null;
+      /* PRE-TURN ITEMS RANK LAST AND LEAVE FIRST (LV-9 / WSU-87; VeraDesk.topicOrder, preTurnOut): in the topic every reply
+         item comes before every item the chat put round the reply (enrich:, pre:), so a topic with more than the room beside
+         the chat drops those first; one the topic has moved past goes to the strip even if it was placed by hand (_pillGet) */
+      const D = root.VeraDesk, isPre = (k) => this._isPreTurn(k);
+      const order = ks ? (D && D.topicOrder ? D.topicOrder(ks, val, isPre) : ks.slice().sort((a, b) => val(b) - val(a))) : null;
+      this._topic = ks ? { keys: new Set(ks), order, mid: mid || '' } : null;
+      this._preKeep = null; this._preOutC = null;   /* a pre-turn item the person opened again holds only until the topic moves */
       this._topicAt = Date.now();   /* a combined card's tab picked after this wins over the topic's choice (WSU-71) */
       /* only the cards that joined or left the topic move: those leave the hold (a card that left goes to the border, one that
          joined to the best free room beside what it relates to); every other card keeps its place and its size */
@@ -5707,7 +5739,7 @@
         if (t.closest('textarea')) return;
         /* a card minimised to a pill (its ⋯ / pill control) opens again where the arrangement puts it, on a click */
         const wc = t.closest('.stage .it[data-key]');
-        if (wc && this.deskAlign() && body.contains(wc) && !this._pillGet()[wc.dataset.key] && !(this._wins && this._wins.has(wc.dataset.key))
+        if (wc && this.deskAlign() && body.contains(wc) && !this._pillReal()[wc.dataset.key] && !(this._wins && this._wins.has(wc.dataset.key))
             && (wc.classList.contains('desk-chip') || wc.classList.contains('pill-open')) && !t.closest('[data-act]:not(.it-hd):not(.t)')) {
           const was = wc.classList.contains('desk-chip'); this._winOpen(wc); if (was) { ev.stopPropagation(); return; } }   /* WSU-55 */
         const pc = t.closest('.stage .it.desk-chip[data-key]');
