@@ -45,7 +45,7 @@ t('failed: says so, and why', /Research failed/.test(e) && /Cancelled\./.test(e)
 const chat = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
 t('the chat starts the run item when the card is made, and feeds it on every message and at the end',
   chat.includes('_cvRunStart(jobId, rc)') && chat.includes("rc.push(m); try{ _cvRunFeed(jobId); }") && chat.includes('_cvRunFeed(jobId, { final:true })'));
-t('the run item is written as kind research, one per job', chat.includes("kind:'research', key:r.key") && chat.includes("key:'research-run:'+jobId"));
+t('the run item is written as kind research, one per job', chat.includes("r.L=_cvLive({ key:r.key, kind:'research'") && chat.includes("key:'research-run:'+jobId"));   // on the one live-item core (DA-04c)
 t('with the run item there, no separate sources list or report copy', chat.includes('if(d.job&&_CV_RR[d.job]) return;') && chat.includes('if(jobId&&_CV_RR[jobId]) return 1;'));
 
 const card = fs.readFileSync(path.join(__dirname, '..', 'vera', 'research_card_element.js'), 'utf8');
