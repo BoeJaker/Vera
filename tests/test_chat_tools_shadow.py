@@ -46,11 +46,12 @@ def test_recall_for_both_lists():
 
 def test_the_chat_stream_records_the_shadow_after_the_reply():
     src = open(os.path.join(ROOT, "vera", "agents", "agents.py"), encoding="utf-8").read()
-    assert 'await _switch_mode("tools.shortlist.chat", body.get("minds"), default="legacy") == "shadow"' in src
+    # recorded in shadow and, since 17 Oct, in 'on' too (the safe shortlist offered to the model)
+    assert 'await _switch_mode("tools.shortlist.chat", body.get("minds"), default="legacy") in ("shadow", "on")' in src
     assert "_sl_task = asyncio.create_task(_sl_fn(text=_bare_q, k=28))" in src
     assert "await _sl_task" not in src
     i = src.index("_record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)")
     assert "asyncio.ensure_future(_record_tools_shadow(" in src[i:i + 400]
     from vera.minds import switchboard_core as SB
     f = SB.REGISTRY["tools.shortlist.chat"]
-    assert f.modes == ("legacy", "shadow") and f.default == "legacy" and f.package == "FM-3.3"
+    assert f.modes == ("legacy", "shadow", "on") and f.default == "legacy" and f.package == "FM-3.3"

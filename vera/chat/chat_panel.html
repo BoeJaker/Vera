@@ -5252,6 +5252,27 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
       +'about the conversation itself — those always get a normal reply.';
   }
 
+  /* four-minds FM-3.3 'on' (owner, 17 Oct; switch tools.shortlist.chat): before a non-trivial turn the page asks the
+     server for the most fitting SAFE capabilities from the WHOLE catalogue (caps.chat_shortlist - read / network /
+     model effects only, never shells, secrets, deploys or system controls) and offers them beside the agent's own
+     list. Any other mode, a timeout (900 ms) or an error leaves the page's own scoring exactly as before. */
+  let _chatShortlist={q:'',names:[],mode:''};
+  async function _fetchChatShortlist(msg){
+    _chatShortlist={q:'',names:[],mode:''};
+    if(!document.getElementById('cfgCapInteg')?.checked || _isTrivialChat(msg||'')) return;
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),900);
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},signal:ctl.signal,
+        body:JSON.stringify({name:'caps.chat_shortlist',arguments:{text:String(msg||'').slice(0,1000),k:24}})});
+      const res=await r.json(); const c=(res&&res.type==='tool_result')?res.content:res;
+      if(c&&c.mode==='on'&&Array.isArray(c.tools)){
+        _chatShortlist={q:msg,mode:'on',names:c.tools.map(x=>x&&x.name).filter(n=>n&&ALL_CAPS.some(cd=>cd.name===n))};
+      }
+    }catch(_){ /* the page's own list stands */ }
+    finally{ clearTimeout(t); }
+  }
+  function _chatShortlistFor(query){ return (_chatShortlist.mode==='on' && _chatShortlist.q===query) ? _chatShortlist.names : []; }
+
   function buildCapHint(a,query){
     // Master gate — user opt-out always wins
     if(!document.getElementById('cfgCapInteg')?.checked) return '';
@@ -5259,10 +5280,13 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     if(mode==='none') return '';
 
     const allowedCaps=_getAgentCaps(a);
-    if(!allowedCaps.length) return '';
+    const serverSafe=_chatShortlistFor(query||'');
+    if(!allowedCaps.length && !serverSafe.length) return '';
 
     const autoExec=document.getElementById('cfgCapAutoExec')?.checked;
     let relevantNames=_findRelevantCaps(query||'',allowedCaps,28);
+    // FM-3.3 'on': the server's safe shortlist first, then the agent's own best matches
+    if(serverSafe.length) relevantNames=[...new Set([...serverSafe,...relevantNames.slice(0,10)])].slice(0,34);
     // With a panel mounted, the panel-interaction caps and the panel's own
     // ui_caps are ALWAYS in play regardless of how the message scores —
     // "try again" / "open the query tab" carry no cap-scoring words, yet are
@@ -12302,6 +12326,7 @@ Your task: decide what to do next to advance toward the goal.
     // (capHint/panelStateBlock/generic agent) on any failure, so turning
     // this on can never make a panel-scoped question WORSE than today.
     if(await _tryPanelDeferToSpecialist(msg,bubEl)) return;
+    try{ await _fetchChatShortlist(msg); }catch(_){}
     const capHint=buildCapHint(a,msg);
     _lastUserMessage=msg;
     _lastCapHint=capHint;

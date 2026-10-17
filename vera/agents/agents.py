@@ -2114,7 +2114,7 @@ async def agent_chat_stream_endpoint(request: Request):
     # FM-3.2/3.3 the tool shortlist in shadow (switch tools.shortlist.chat, default legacy): caps.shortlist on the
     # user's words beside the page's own list - started with the turn, never awaited before the model, recorded after
     _sl_task = None
-    if _bare_q.strip() and await _switch_mode("tools.shortlist.chat", body.get("minds"), default="legacy") == "shadow":
+    if _bare_q.strip() and await _switch_mode("tools.shortlist.chat", body.get("minds"), default="legacy") in ("shadow", "on"):
         _sl = CAPABILITY_REGISTRY.get("caps.shortlist") or {}
         _sl_fn = _sl.get("raw") or _sl.get("func")
         if _sl_fn:
