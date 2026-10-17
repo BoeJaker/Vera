@@ -16,19 +16,23 @@ CHANNEL_POLICY = {
     "notebook": ("local_write", "native_log_only", ""),
     "memory": ("local_write", "native_receipt", ""),
     "fabric": ("local_distributed_write", "native_log_only", ""),
-    "phone": ("non_idempotent_write", "unobserved", ""),
+    "phone": ("non_idempotent_write", "downstream_shadow", "homeassistant"),
     "podcast": ("deferred_local_write", "native_log_only", ""),
-    "print": ("non_idempotent_write", "unobserved", ""),
+    "print": ("non_idempotent_write", "downstream_shadow", "printing"),
 }
 
 ACTION_POLICY = {
     "research": ("deferred_local_write", "native_log_only"),
     "discover": ("local_distributed_write", "native_log_only"),
-    "repo": ("external_read_and_local_write", "unobserved"),
+    "repo": ("external_read_and_local_write", "downstream_shadow"),
     "read": ("external_read", "native_log_only"),
     "track": ("local_write", "native_log_only"),
     "sweep": ("external_read_and_local_write", "native_log_only"),
     "watch": ("local_write", "native_log_only"),
+}
+
+ACTION_EVIDENCE_FAMILY = {
+    "repo": "repository",
 }
 
 EXTRA_BOUNDARIES = (
@@ -36,16 +40,20 @@ EXTRA_BOUNDARIES = (
      "classification": "non_idempotent_write", "observation": "downstream_shadow",
      "evidence_family": "telegram"},
     {"id": "alert.phone", "kind": "alert", "capability": "ha.notify",
-     "classification": "non_idempotent_write", "observation": "unobserved"},
+     "classification": "non_idempotent_write", "observation": "downstream_shadow",
+     "evidence_family": "homeassistant"},
     {"id": "narration.telegram", "kind": "delivery", "capability": "tg.send_audio",
      "classification": "non_idempotent_write", "observation": "downstream_shadow",
      "evidence_family": "telegram"},
     {"id": "repo.acquire", "kind": "action", "capability": "intel.repo.get",
-     "classification": "external_read_and_local_write", "observation": "unobserved"},
+     "classification": "external_read_and_local_write", "observation": "downstream_shadow",
+     "evidence_family": "repository"},
     {"id": "n8n.proposal.create", "kind": "automation", "capability": "n8n.workflow.create",
-     "classification": "non_idempotent_write", "observation": "unobserved"},
+     "classification": "non_idempotent_write", "observation": "downstream_shadow",
+     "evidence_family": "n8n"},
     {"id": "n8n.retirement.activate", "kind": "automation", "capability": "n8n.workflow.activate",
-     "classification": "idempotent_write", "observation": "unobserved"},
+     "classification": "idempotent_write", "observation": "downstream_shadow",
+     "evidence_family": "n8n"},
     {"id": "fabric.source.mutate", "kind": "source", "capability": "fabric.sources.add|delete|pull",
      "classification": "external_read_and_local_write", "observation": "native_log_only"},
 )
@@ -86,6 +94,7 @@ def project(channels: Mapping[str, Mapping[str, Any]], actions: Mapping[str, Map
         cap = str(spec.get("cap") or "")
         rows.append(_row(boundary_id=f"action.{name}", kind="action", capability=cap,
                          classification=classification, observation=observation,
+                         evidence_family=ACTION_EVIDENCE_FAMILY.get(name, ""),
                          available=cap in available))
         if name not in ACTION_POLICY:
             rows[-1]["gaps"].append("classification_missing")

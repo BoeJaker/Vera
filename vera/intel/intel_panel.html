@@ -39,7 +39,7 @@ h2{font-size:15px;margin:0 0 10px}h3{font-size:12px;margin:14px 0 6px;color:var(
 #apKeys td .btn{margin:0 4px 4px 0;text-decoration:none;display:inline-block}
 .ws-head h2{margin:0;font-size:17px}
 .state{border-left:3px solid var(--int-acc);padding:6px 10px;margin:6px 0;white-space:pre-wrap}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media (max-width:1100px){.grid2{grid-template-columns:1fr}}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.grid2>*{min-width:0}@media (max-width:1100px){.grid2{grid-template-columns:1fr}}
 .sig{display:grid;grid-template-columns:34px 1fr auto;gap:10px;padding:8px 0;border-top:1px solid var(--line,#2a2f3a)}
 .sig .sc{font-weight:700;text-align:center;border-radius:6px;padding:3px 0;background:var(--bg2,#11141a)}
 .sig .sc.hi{color:var(--green,#9ece6a)}.sig .sc.md{color:var(--yellow,#e0af68)}
@@ -71,6 +71,12 @@ details.card>summary{cursor:pointer;font-weight:600}
 .story .n small{display:block;font-weight:400;font-size:9.5px;color:var(--muted,#9aa3b2)}
 .story a{color:inherit;font-weight:600;text-decoration:none}.story a:hover{text-decoration:underline}
 .story .up{color:var(--green,#9ece6a);white-space:nowrap}
+.evidence-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
+.evidence-cell{border:1px solid var(--line,#2a2f3a);border-radius:8px;padding:9px;background:var(--bg2,#11141a);min-width:0}
+.evidence-cell h3{margin:0 0 6px}.evidence-cell .metric{font-size:18px;font-weight:700;color:var(--text,#e6e8ee)}
+.evidence-cell .detail{margin-top:5px;line-height:1.45}.evidence-cell .chip{margin-top:3px}
+@media (max-width:1200px){.evidence-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:700px){.evidence-grid{grid-template-columns:1fr}}
 </style>
 <link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
@@ -173,6 +179,18 @@ details.card>summary{cursor:pointer;font-weight:600}
   </div>
 
   <div class="pane" id="pane-activity">
+    <div class="card">
+      <div class="row"><div class="grow"><h2 style="margin:0">How Intelligence connects</h2>
+        <div class="small muted">Intelligence keeps ownership of its jobs and records. These read-only views show where their shared execution, model, effect and data evidence joins - and where evidence is still missing.</div></div>
+        <button class="btn" onclick="loadIntelEvidence()">Refresh evidence</button></div>
+      <div class="evidence-grid" aria-live="polite">
+        <section class="evidence-cell"><h3>Job lifecycle</h3><div class="metric">Shared timeline</div>
+          <div class="detail small">Native background jobs appear on the activity timeline below with their portable run state. The Intel queue still executes and controls them.</div></section>
+        <section class="evidence-cell"><h3>Models and placement</h3><div id="acEvidenceModels" class="small muted">loading…</div></section>
+        <section class="evidence-cell"><h3>External actions</h3><div id="acEvidenceEffects" class="small muted">loading…</div></section>
+        <section class="evidence-cell"><h3>Records and projections</h3><div id="acEvidenceRecords" class="small muted">loading…</div></section>
+      </div>
+    </div>
     <div class="grid2">
       <div class="card">
         <h2>Tonight and now</h2>
@@ -912,6 +930,47 @@ async function loadActivity() {
     + ((r.action_items||[]).length ? '<ul>' + r.action_items.slice(0,5).map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '') + `</div><span class="muted">${esc(r.meta||'')}</span></div>`).join('') || '<span class="muted">no notes read yet</span>';
   loadGates();
   $('acProps').innerHTML = (p.rows||[]).slice(0, 15).map(r => `<div class="act"><div class="grow"><b>${esc(r.title)}</b> <span class="chip">${esc(r.category)}</span><div class="muted">${esc((r.rationale||'').slice(0,200))}</div></div><span class="muted">${r.draft_id ? 'draft '+esc(r.draft_id) : esc(r.error||'')}</span></div>`).join('') || '<span class="muted">none yet</span>';
+  await loadIntelEvidence();
+}
+function evidenceGaps(gaps) {
+  gaps = Array.from(new Set((gaps || []).map(x => String(x || '')).filter(Boolean)));
+  return gaps.length ? '<div class="detail">' + gaps.map(x => `<span class="chip warn">${esc(x.replaceAll('_', ' '))}</span>`).join('') + '</div>' : '<div class="detail"><span class="chip ok">evidence connected</span></div>';
+}
+function evidenceError(target, value) {
+  $(target).innerHTML = `<span class="chip err">unavailable</span><div class="detail">${esc((value && value.error) || 'read model unavailable')}</div>`;
+}
+async function loadIntelEvidence() {
+  ['acEvidenceModels','acEvidenceEffects','acEvidenceRecords'].forEach(id => { $(id).className = 'small muted'; $(id).textContent = 'loading…'; });
+  let models;
+  try { models = await call('intel.models'); } catch (e) { models = {error: e.message || String(e)}; }
+  if (!models || models.error) evidenceError('acEvidenceModels', models);
+  else {
+    const counts = models.counts || {}, total = Number(counts.nlp || 0) + Number(counts.roles || 0);
+    $('acEvidenceModels').className = 'small';
+    $('acEvidenceModels').innerHTML = `<div class="metric">${Number(counts.ready || 0)} / ${total}</div><div>consumers have current callable placement evidence</div>`
+      + `<div class="detail muted">${Number(counts.nlp || 0)} NLP paths · ${Number(counts.roles || 0)} routed language-model roles</div>` + evidenceGaps(models.gaps);
+  }
+  let effects;
+  try { effects = await call('intel.effects'); } catch (e) { effects = {error: e.message || String(e)}; }
+  if (!effects || effects.error) evidenceError('acEvidenceEffects', effects);
+  else {
+    const counts = effects.counts || {}, ready = effects.readiness || {};
+    $('acEvidenceEffects').className = 'small';
+    $('acEvidenceEffects').innerHTML = `<div class="metric">${Number(ready.attributed_observations || 0)}</div><div>source-attributed observations retained</div>`
+      + `<div class="detail muted">${Number(counts.external || 0)} external boundaries · ${Number(counts.unobserved || 0)} without an owning observer · enforcement remains off</div>` + evidenceGaps(effects.gaps);
+  }
+  let records;
+  try { records = await call('intel.records', {limit: 200}); } catch (e) { records = {error: e.message || String(e)}; }
+  if (!records || records.error) evidenceError('acEvidenceRecords', records);
+  else {
+    const summary = records.summary || {}, rows = records.reconciliation || {};
+    const line = Object.entries(rows).map(([name, row]) => `<div><b>${esc(name)}</b> · ${esc((row && row.status) || 'unknown')} · ${Number((row && row.matched) || 0)} matched / ${Number((row && row.expected_shared) || 0)} expected</div>`).join('');
+    const memory = ((rows.reports || {}).memory || {});
+    $('acEvidenceRecords').className = 'small';
+    $('acEvidenceRecords').innerHTML = `<div class="metric">${Number(summary.matched || 0)}</div><div>record families reconciled without a reported gap in this bounded read</div>`
+      + `<div class="detail">${line || '<span class="muted">no reconciled families</span>'}</div>`
+      + (memory.projection_identity_available === false ? '<div class="detail"><span class="chip warn">Memory delivery has no projection identity</span></div>' : '');
+  }
 }
 async function loadGates() {
   const g = await call('intel.decisions.stats', {days: 30});
