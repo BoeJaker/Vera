@@ -8031,7 +8031,8 @@ IMPORTANT:
         return { kind:'records', n:items.length+' '+(pr.kind==='reading'?'pages':'records'), k:'records', col:'var(--dv2, #7aa2d6)', d:'records · '+items.length,
                  content:{ title, kind:pr.kind==='reading'?'web':'records', items, total:items.length } }; }
       case 'markdown': { const md=String(r0.data||''); return { kind:'markdown', n:(md.replace(/^#+\s*/,'').split('\n').find(x=>x.trim())||title).slice(0,52), k:'prose', col:'var(--acc2)', d:'written', content:{ md:md.slice(0,20000) } }; }
-      case 'code': { const d=r0.data||{}; if(pr.kind==='diff'){ const t=String(d.diff||''); return { kind:'code', n:'diff · '+t.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'diff', content:{ code:t.slice(0,120000), lang:'diff', filename:'' } }; }
+      case 'code': { const d=r0.data||{}; if(pr.kind==='diff'){ const t=String(d.diff||d.patch||''); if(!t.trim()) return null;   /* a patch too, and the file it is of (the diff adapter's reading, D10 step 2c) */
+          return { kind:'code', n:'diff · '+t.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'diff', content:{ code:t.slice(0,120000), lang:'diff', filename:String(d.path||d.file||'') } }; }
         const code=String(d.code||''), p=String(d.path||''), lang=String(d.lang||'');
         return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' · '+code.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'code', content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; }
       case 'session': { const ls=(r0.data&&r0.data.lines)||[]; const cmd=ls.length&&/^\$ /.test(ls[0])?ls[0].slice(2):''; const out=(cmd?ls.slice(1):ls).join('\n');
@@ -8233,11 +8234,10 @@ IMPORTANT:
       const lang=String(c.lang||c.language||_cvExtLang(p)||'');
       return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' \u00b7 '+code.split('\n').length+' lines', k:'code', col:'#fb923c', d:'code',
                content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; });
-  // a DIFF is code in the diff language: its additions and removals coloured, not a paragraph of + and -
-  cvAdapter('diff',
-    (c)=>!!(c&&typeof c==='object'&&!Array.isArray(c)&&((typeof c.diff==='string'&&c.diff.trim())||(typeof c.patch==='string'&&c.patch.trim()))),
-    (c)=>{ const d=String(c.diff||c.patch); return { kind:'code', n:'diff \u00b7 '+d.split('\n').length+' lines', k:'code', col:'#fb923c', d:'diff',
-      content:{ code:d.slice(0,120000), lang:'diff', filename:String(c.path||c.file||'') } }; });
+  /* a DIFF is code in the diff language: its additions and removals coloured, not a paragraph of + and - (D10 step 2c: the
+     diff adapter went - present()'s fallback reads a diff / patch as one, and the 'present' step below takes it, here,
+     before the generic rules). THE CALENDAR STAYS an adapter: present()'s fallback reads a diary as a table, and "dated
+     things with titles are a month" is a rule it does not have. */
   /* A LIST OF DATED THINGS WITH TITLES IS A MONTH. The table rule below would draw the diary as a grid of
      truncated cells - id, title, start, end, all_day, location, source, colour - which is the data and not the
      answer to "what have I got on". Before the table, after the terminal. */
@@ -8268,6 +8268,7 @@ IMPORTANT:
       /* what the two claimed: a table of two or more columns (one column is a list), or a widget form; a reading as a
          document, a note, records, kv or json is left to the rules below */
       if(pr.element==='table'){ const rows=_cvRowsOf(c); const r0=Array.isArray(rows)&&rows[0]; return !!(r0&&typeof r0==='object'&&Object.keys(r0).filter(k=>r0[k]==null||typeof r0[k]!=='object'||Array.isArray(r0[k])).length>=2); }
+      if(pr.element==='code'&&pr.kind==='diff') return true;   /* a diff / patch (the diff adapter's, D10 step 2c) */
       return pr.element==='widget'&&!!f&&!/^(json|text|table|record|kv)$/.test(f); },
     (c,ctx)=>{ const it=_cvPresented(ctx.cap, c, ctx.args, { fallback:true }); return Array.isArray(it)?(it[0]||null):(it||null); });
 

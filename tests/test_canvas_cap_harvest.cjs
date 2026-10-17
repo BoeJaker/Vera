@@ -237,7 +237,7 @@ const TBL = (c, cap) => { const m = AD(cap, c, {}); return m && !Array.isArray(m
   /* the order IS the behaviour, so it is pinned - a rule that moves above another changes what results become.
      calendar sits above table because the diary drawn as rows of id/title/start/end is the data and not the
      answer; prose sits last because almost every result carries some string. */
-  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,evidence,sources,html,image,code,diff,calendar,present,widget,chat,prose,kv,json,text',   /* present: present()'s fallback in capview's and table's place (D10 step 2b), after the chat-only kinds */
+  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,evidence,sources,html,image,code,calendar,present,widget,chat,prose,kv,json,text',   /* present: present()'s fallback in capview's, table's (D10 step 2b) and diff's (2c) place, after the chat-only kinds */
     REG.map((a) => a.name).join(','));
 
   // and it routes, by shape alone, with no capability named anywhere
@@ -257,6 +257,11 @@ const TBL = (c, cap) => { const m = AD(cap, c, {}); return m && !Array.isArray(m
   t('a file a cap read is a code item', kind('fs.read', { path: '/w/app.py', content: 'print(1)\n' }) === 'code');
   t('code a cap wrote is a code item', kind('code.author', { code: 'def f():\n  return 1', lang: 'python' }) === 'code');
   t('a diff is code in the diff language', (AD('git.diff', { diff: '--- a\n+++ b\n+x' }, {}) || {}).content.lang === 'diff');
+  { const p = AD('x.patch', { patch: '--- a\n+++ b\n-y', path: 'vera/a.py' }, {}) || {};
+    t('a patch too, with the file it is of', p.kind === 'code' && p.content.lang === 'diff' && p.content.filename === 'vera/a.py' && /-y/.test(p.content.code), JSON.stringify(p));
+    const sb = AD('evolve.sandbox.diff', { ok: true, branch: 'feat/x', files: [{ path: 'a.py', status: 'M', adds: 3, dels: 1 }, { path: 'b.py', status: 'A', adds: 9, dels: 0 }], diff: '--- a/a.py\n+++ b/a.py\n+x' }, {}) || {};
+    t('a diff with its file list is still the diff, not a table of files', sb.kind === 'code' && sb.content.lang === 'diff', JSON.stringify(sb.kind));
+    t('an empty diff is no diff item', (AD('x.diff', { diff: '   ' }, {}) || {}).kind !== 'code'); }
   t('an answer to a question is an exchange', kind('agent.consult', { question: 'why?', answer: 'because' }) === 'chat');
   t('a failure is said once, as a failure', kind('x.y', { ok: false, error: 'no route to host' }) === 'note');
   t('a failing COMMAND is still a terminal with its stderr', kind('exec.bash.run', { ok: false, command: 'ls /x', stderr: 'nope', rc: 2 }) === 'session');
