@@ -69,6 +69,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "and then search memory deeply before the model answers - every session and agent, the vector leg when it "
        "answers in time - announced in the throbber, waited on at most 1.5 s. 'off' (default) = the agent's own "
        "memory only; 'rules' = the rules decide (turn_needs_core).", owner="context-and-ui"),
+    _f("decide.site_capture", ("off", "on"), "matrix", "FM-2/FM-12",
+       "Record every short-answer LLM call (<= 40 chars, one line) with its call site, prompt and answer in a capped "
+       "Redis stream (20k), so each call site that behaves like a decision becomes an application of the candidate "
+       "matrix (decide.sites.report: which small model agrees with it). Never chat turns, never the shadow judges' "
+       "own calls. 'off' (default) = nothing recorded; 'on' = recorded.", census=False),
     _f("chat.replay_capture", ("off", "on"), "chat", "FM-0.3",
        "Keep the exact request body of each chat turn (message, history, the browser-built system prefix and cap "
        "hint) in a private Postgres store (chat_replay, credentials redacted, 30 days), so real turns can be replayed "
