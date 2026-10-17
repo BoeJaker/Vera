@@ -47,7 +47,11 @@ t('any item fills the desk in front or behind (its menu; its head while it fills
   C.includes("if (desk && !inHead('[data-act=\"layer-behind\"]')) h += '<hr>' + row('layer-behind', 'Full size, behind',")
   && C.includes("if (b.type !== 'panel' && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];")
   && C.includes("if (this._max === key) { this._max = ''; try { localStorage.removeItem('vera:canvas:max:' + this.canvasId); }")
-  && C.includes("const bk = this._blockOf(key); if (bk && bk.type !== 'panel' && this._doc) { this._html = null; this.render(this._doc); return; }"));t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
+  && C.includes("const bk = this._blockOf(key); if (bk && bk.type !== 'panel' && this._doc) { this._html = null; this.render(this._doc); return; }"));/* owner 2026-10-17: "after re-sizing an element the other elements jump around to different positions allot" */
+t('under the hold each card goes back to where it was whenever that is clear; one pressed only by the card under the hand is trimmed on that side, not moved',
+  C.includes("if (clearOf(it, cand)) { Object.assign(it, cand, { keepSize: true, face0: r.face, held: true, restored: true }); back++; return; }")
+  && C.includes("if (!hits.length || !hits.every(handOn) || (chatBox && ovl(cand, chatBox, -1))) return;")
+  && C.includes(".filter((q) => q.r - q.l >= 220 && q.b - q.t >= 120).sort(") && !C.includes('_rdbg'));t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
 t('U10: windows can be switched off (desk-windows)', C.includes("this.getAttribute('desk-windows') !== 'off'") && C.includes("'desk-fit', 'desk-windows']") && H.includes("cfgCvWindows:['desk-windows','on']") && H.includes("windows:'cfgCvWindows'"));
 t('U2: a drop in a gap keeps a rectangle only when the gap made it smaller', C.includes('!d.own && (gw < d.el.offsetWidth - 2 || gh < d.el.offsetHeight - 2)'));
 /* U3 - by the hand */

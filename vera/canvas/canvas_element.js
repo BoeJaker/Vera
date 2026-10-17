@@ -4837,6 +4837,40 @@
           if (off > 1 && off <= REACH) { const nx = nearLeft ? EDGE + it.w / 2 : W - EDGE - it.w / 2; if (clearAt(it, nx)) { it.x = nx; it.snapped = true; } } });
       }
       }   /* passes */
+      /* ONLY WHAT MUST MAKE WAY MOVES (owner 2026-10-17: "after re-sizing an element the other elements jump around to different
+         positions allot"; "it should be more difficult to disturb the other elements in the UI if resizing or moving"). Measured:
+         a card grown by its corner moved a list it never reached 115 px and re-sized it, and narrowed a chart - the passes above
+         place every card again, not only those in the way. Under the hold, after them, each card goes back to exactly where it
+         was when the move or resize began (or the desk was last at rest) whenever that rectangle is clear of every other card,
+         the pills and the chat - so a neighbour moves only while the card really needs its room, and comes back when it does
+         not. The card under the hand, a window, a lock and the pills are left as the passes put them. */
+      if (hold && !replay && seed) {
+        const ovl = (a, b, g) => a.x - a.w / 2 < b.x + b.w / 2 + g && b.x - b.w / 2 < a.x + a.w / 2 + g && a.y - a.h / 2 < b.y + b.h / 2 + g && b.y - b.h / 2 < a.y + a.h / 2 + g;
+        const chatBox = R && R.r > R.l ? { x: (R.l + R.r) / 2, y: (R.t + R.b) / 2, w: R.r - R.l, h: R.b - R.t } : null;
+        const handOn = (o) => !!(o.sizing || (this._rzLetGo && o.id === this._rzLetGo) || (this._dg && o.id === this._dg.key));
+        const clearOf = (it, q) => !(chatBox && ovl(q, chatBox, -1)) && q.x - q.w / 2 >= 0 && q.y - q.h / 2 >= 0 && q.x + q.w / 2 <= W && q.y + q.h / 2 <= H
+          && !plan.some((o) => o !== it && !o.win && (o.h > 40 || o.strip) && ovl(q, o, 4));
+        for (let round = 0; round < 3; round++) { let back = 0;
+          plan.forEach((it) => { const r = seed[it.id]; if (!r || r.h <= 40 || it.sizing || it.strip || it.win || it.isLock || it.h <= 40) return;
+            if (Math.abs(r.x - it.x) < 1 && Math.abs(r.y - it.y) < 1 && Math.abs(r.w - it.w) < 1 && Math.abs(r.h - it.h) < 1) return;
+            const cand = { x: r.x, y: r.y, w: r.w, h: r.h };
+            if (clearOf(it, cand)) { Object.assign(it, cand, { keepSize: true, face0: r.face, held: true, restored: true }); back++; return; }
+            /* ...and when only the card under the hand is in its way, it gives that card room by the least: the side pressed on is
+               trimmed back to it (never under 220 x 120) and the rest of the card stays where it was - not moved and re-sized
+               about the desk (a list pressed at its top by 110 px went 115 px down and lost a third of its width) */
+            const hits = plan.filter((o) => o !== it && !o.win && (o.h > 40 || o.strip) && ovl(cand, o, 4));
+            if (!hits.length || !hits.every(handOn) || (chatBox && ovl(cand, chatBox, -1))) return;
+            const G = 10, L = cand.x - cand.w / 2, T = cand.y - cand.h / 2, Rr = cand.x + cand.w / 2, B = cand.y + cand.h / 2;
+            let box = { l: L, t: T, r: Rr, b: B };
+            hits.forEach((o) => { const ol = o.x - o.w / 2, ot = o.y - o.h / 2, orr = o.x + o.w / 2, ob = o.y + o.h / 2;
+              const cuts = [{ l: box.l, t: Math.max(box.t, ob + G), r: box.r, b: box.b }, { l: box.l, t: box.t, r: box.r, b: Math.min(box.b, ot - G) },
+                { l: Math.max(box.l, orr + G), t: box.t, r: box.r, b: box.b }, { l: box.l, t: box.t, r: Math.min(box.r, ol - G), b: box.b }]
+                .filter((q) => q.r - q.l >= 220 && q.b - q.t >= 120).sort((p, q) => (q.r - q.l) * (q.b - q.t) - (p.r - p.l) * (p.b - p.t));
+              box = cuts.length ? cuts[0] : null; if (!box) box = { l: 0, t: 0, r: 0, b: 0 }; });
+            const q = { x: (box.l + box.r) / 2, y: (box.t + box.b) / 2, w: box.r - box.l, h: box.b - box.t };
+            if (q.w >= 220 && q.h >= 120 && clearOf(it, q)) { Object.assign(it, q, { keepSize: true, face0: D.faceOf(q.w, q.h) === 'chip' ? 'card' : D.faceOf(q.w, q.h), held: true, restored: true, bw: q.w, bh: q.h }); back++; } });
+          if (!back) break; }
+      }
       const out = [];
       plan.forEach((it) => {
         const c = it.c, key = it.id, s = it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 } : it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
