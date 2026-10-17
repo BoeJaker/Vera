@@ -20,7 +20,7 @@ t('a window let go after a resize is decided again (shrunk to fit, a card); one 
   && C.includes("if (keptWin[it.id] && !it.strip && !it.sizing && it.id !== this._rzLetGo)") && C.includes("if (asChip) { if (this._winKeepGet()[d.key]) { this._winKeepSet(d.key, null);"));
 t('U4: held cards start where they are, at their size', C.includes('if (hr) Object.assign(o, { x: hr.x, y: hr.y, w: hr.w, h: hr.h, bw: hr.bw || hr.w, bh: hr.bh || hr.h, held: true, keepSize: true, face0: hr.face });'));
 t('U4: nothing rises or grows under the hold', C.includes("if (!hold && !modeLaid && typeof D.settle === 'function'") && C.includes("if (!hold && !modeLaid && typeof D.grow === 'function'"));
-t('U4: a card given back to the arrangement ends the hold', C.includes('this._deskPosSet(it.dataset.key, null); this._holdEnd(); this._placeNow();') && C.includes("{ w: u.w, h: u.h, face: u.face, free: true } : null); this._holdEnd(); return this._placeNow(); }"));
+t('U4: a card given back to the arrangement ends the hold (its menu; a double click now expands it, LV-8)', C.includes("{ w: u.w, h: u.h, face: u.face, free: true } : null); this._holdEnd(); return this._placeNow(); }"));
 /* U1 - neighbours make room during a resize */
 t('U1: the desk is placed about every 90 ms while the grip is held', C.includes('if (now - (this._rzPlacedAt || 0) >= 90) { this._rzPlacedAt = now;')  && !C.includes('if (this._rz === r) { try { this._placeNow(); } catch (e) { /* optional */ } } }, 220)'));
 t('U1: during a resize the others start from the desk as it was when it began', C.includes('seed = hold ? ((this._rz && hold.base) || hold.rects) : null'));
@@ -39,7 +39,7 @@ t('U6: a window keeps its size and is over the tiled cards', C.includes(": it.wi
 /* owner 2026-10-17: "there is still some re-positioning of elements happening when no activity is happening"; "if you swap a tab
    on a composite desk item it changes the layout" - a held desk at rest is put back exactly, none of the passes run */
 t('a held desk at rest is put back exactly: same decisions, nothing carried or sized, every card (or its group) already placed', C.includes('let replay = !!(hold && hold.rects && hold.want === wantSig && !this._rz && !this._dg && !this._rzLetGo && plan.length);')
-  && C.includes("passes: { if (replay) break passes;") && C.includes("}   /* passes */") && C.includes("s = it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 }")
+  && C.includes("passes: { if (replay) break passes;") && C.includes("}   /* passes */") && C.includes(": it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 }")
   && C.includes("(grp.membersOf.get(it.c) || []).map((m) => hold.rects[m.dataset.key || '']).find(Boolean)"));
 t('what the person decides is in the replay key (places, locks, pills, windows, groups taken out, sizes, layers)', C.includes('[pp[k] || 0, lk[k] || 0, pl[k] || 0, wk[k] || 0, sp[k] || 0, this._pw[k] || 0, this._px[k] || 0, (this._layer || {})[k] || 0]')
   && C.includes('this._hold.want = wantSig;') && C.includes('rects: base, base, want: lp.want }') && C.includes('face: o.face, nd: o.nd, win: !!o.win };'));/* owner 2026-10-17: "like the ui panels on the desk id like to be able to send full screen to the front and back" */
@@ -69,7 +69,15 @@ t('a tab taken out or a card sent to the pills keeps the desk as it was; putting
 t('a live element (chart, graph, widget) stacks with its card as the card IS (computed z): a card filling the desk is z 150 by its rule, not its style',
   C.includes("m.cs = getComputedStyle(card); m.z = m.cs.zIndex === 'auto' ? '' : m.cs.zIndex;") && C.includes("const z = m.z != null ? m.z : (card.style.zIndex || '');")
   && C.includes("const zc = getComputedStyle(c).zIndex; const z = zc && zc !== 'auto' ? zc : (c.style.zIndex || '');"));/* owner 2026-10-17: "composites of elements that have different aspects are being made i.e. a node graph in a tall slot"; "i dont see any automatic composites happening in slot mode" */
-t('slots: similar items of ONE kind and ONE aspect share a card (turn, subject or topic), besides the overflow', C.includes("const fa = f + '/' + (this._aspectOf(c, c.dataset.key || '') || '');") && C.includes("[c.dataset.mid ? fa + '|m|' + c.dataset.mid : '', s.length >= 4 ? fa + '|s|' + s : '', inTopic(c) ? fa + '|t' : '']"));t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
+t('slots: similar items of ONE kind and ONE aspect share a card (turn, subject or topic), besides the overflow', C.includes("const fa = f + '/' + (this._aspectOf(c, c.dataset.key || '') || '');") && C.includes("[c.dataset.mid ? fa + '|m|' + c.dataset.mid : '', s.length >= 4 ? fa + '|s|' + s : '', inTopic(c) ? fa + '|t' : '']"));/* LV-8 (owner 2026-10-17): "if i double click a top-bar of an element can it auto expand to take up the available space and push the other elements around it -
+   then if i double click the top of another can the last enlarged one give way to it and let the new one expand into that same space" */
+t('a double click on a card head expands it into the free desk; again gives the room back; on another card the expanded one gives way and the new one takes that room',
+  C.includes("body.addEventListener('dblclick', (ev) => { const it = deskHandle(ev); if (!it) return; ev.preventDefault(); this._expandToggle(it.dataset.key); });")
+  && C.includes('_expandToggle(key) {') && C.includes("if (ex) { this._deskPosSet(ex.key, ex.pos); room = ex.room; before = ex.rects; this._expanded = null;"));/* owner 2026-10-17: "shrinking shouldnt be the first method to get out of the way of a dropped element"; cards never left overlapping */
+t('room first, shrinking last: a pressed card moves at its size to the nearest room before it is trimmed; at the end no two open cards overlap (the less firm makes way: room at its size, then smaller, then a pill); a pill in the strip is drawn as one',
+  C.includes('const roomFor = (v, rest, ks, tx, ty) => {') && C.includes("const mv = roomFor(cand, plan.filter((o) => o !== it && !o.win && (o.strip || o.h > 40)), [1], r.x, r.y);")
+  && C.includes('const firmV = (x) => (x.sizing || x.isLock || x.id === exK) ? 3 : (x.fixed || x.stay) ? 2 : x.own ? 1 : 0;') && C.includes("s = it.strip && it.h <= 40 ? { w: it.w, h: it.h, face: it.face0 === 'icon' ? 'icon' : 'chip', nd: 0 }")
+  && C.includes('it.isLock || it.fixed || it.h <= 40) return;'));t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
 t('U10: windows can be switched off (desk-windows)', C.includes("this.getAttribute('desk-windows') !== 'off'") && C.includes("'desk-fit', 'desk-windows']") && H.includes("cfgCvWindows:['desk-windows','on']") && H.includes("windows:'cfgCvWindows'"));
 t('U2: a drop in a gap keeps a rectangle only when the gap made it smaller', C.includes('!d.own && (gw < d.el.offsetWidth - 2 || gh < d.el.offsetHeight - 2)'));
 /* U3 - by the hand */
@@ -126,7 +134,7 @@ W.presentations([]);
 t('U12: an empty list is empty (nothing loaded yet)', !W.presentationOf('docker.ps'));
 
 /* owner 2026-10-17: "the elements that are not in windowed mode can cover each other? this shouldnt be possible" */
-t('no two open cards cover each other: of two fixed cards that meet, the one touched longer ago makes way (its own size, else the largest room it fits, else a pill)', C.includes("const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q);")
+t('no two open cards cover each other: of two fixed cards that meet, the one touched longer ago makes way (its own size, else the largest room it fits, else a pill)', C.includes("const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && x.id !== exK && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q);")
   && C.includes("for (const k of [1, 0.85, 0.7, 0.55, 0.42]) { const w = Math.round(v.w * k), h = Math.round(v.h * k); if (w < 220 || h < 120) break;") && C.includes("else { toStrip(v, pills.length); pills.push(v); v.held = false; } });")
   /* the move is the desk's, for the pass: never written as the person's place or a pill */
   && !C.includes("this._deskPosSet(v.id,"));
