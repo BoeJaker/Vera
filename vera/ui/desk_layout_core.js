@@ -652,9 +652,101 @@
       return !(mid && (x.anchors || []).map(String).indexOf(mid) >= 0); }).map(function (x) { return String(x.key); });
   }
 
+
+  /* LAYOUT v2: SLOTS BY ASPECT (DESK-ARRANGEMENT 7, LV-2; owner 2026-10-17: "define some layouts that can be used to construct any
+     type of layout and try to fit to one of these layouts"; "when the layout runs out of space, instead of making each element in
+     the layout smaller they can composite in their preferred aspect").
+
+     fitLayout(items, region, o) -> { name, slots: [{ id, aspect, l, t, w, h, ids: [front, ...behind] }], pills: [ids], score }
+       items   [{ id, aspect: 'portrait'|'landscape'|'square'|'tile', rank (0 = most relevant) }]
+       region  { l, t, r, b } - the free desk (the chat and the pill strip already taken out)
+       o       { gap, current: { id: { x, y, w, h } (centre and size) }, near: 'left'|'right' (the chat's side), noComposite: { id: 1 } }
+
+     One recipe builds every layout: portrait COLUMNS down one side, and the rest in ROWS - landscape BANDS, a row of SQUARES, a
+     GRID of tiles. The candidates differ in how many columns, which side, and whether the bands go above or below. Each item takes
+     a slot of its aspect, most relevant first; when its aspect has no free slot it JOINS the least full slot of that aspect (a
+     composite) rather than every slot shrinking; tiles join last (they would rather be pills). The best candidate keeps the most
+     items in slots of their own, makes the fewest composites and pills, and - when the desk already shows something (o.current) -
+     moves the fewest cards. Pure: no DOM. */
+  var ASPECT_SIZE = { portrait: { w: 460, minW: 340, maxW: 560, minH: 320 }, landscape: { minW: 480, h: 360, minH: 240, maxH: 600 },
+    square: { w: 500, h: 400, minW: 300, minH: 220, maxW: 720, maxH: 560 }, tile: { w: 280, h: 180 } };
+  function fitLayout(items, region, o) {
+    o = o || {}; var G = o.gap == null ? 10 : o.gap, cur = o.current || {};
+    var reg = { l: region.l, t: region.t, w: Math.max(0, region.r - region.l), h: Math.max(0, region.b - region.t) };
+    var by = { portrait: [], landscape: [], square: [], tile: [] };
+    (items || []).slice().sort(function (a, b) { return (a.rank || 0) - (b.rank || 0); }).forEach(function (it) { (by[it.aspect] || by.square).push(it); });
+    var plans = [], sides = o.near === 'right' ? ['right', 'left'] : ['left', 'right'];
+    /* columns: with nothing but lists they may take the whole desk; with other things, about 3/5 of it */
+    var onlyP = by.landscape.length + by.square.length + by.tile.length === 0;
+    var maxCols = Math.max(0, Math.min(by.portrait.length, onlyP ? 4 : 3, Math.floor(((onlyP ? reg.w : reg.w * 0.62) + G) / (ASPECT_SIZE.portrait.minW + G))));
+    for (var np = maxCols; np >= 0; np--) {
+      for (var si = 0; si < (np ? 2 : 1); si++) for (var lp = 0; lp < 2; lp++) { var pl0 = build(np, sides[si], lp ? 'bottom' : 'top'); if (pl0) plans.push(pl0); }
+    }
+    function build(np, side, lpos) {
+      var slots = [], P = ASPECT_SIZE.portrait;
+      var pw = np ? Math.max(P.minW, Math.min(P.maxW, Math.floor((reg.w - G * np) * (np === 1 ? 0.36 : 0.62) / np))) : 0;
+      if (onlyP && np) pw = Math.min(P.maxW, Math.floor((reg.w - G * (np - 1)) / np));
+      if (np) { pw = Math.min(pw, Math.floor((reg.w - G * (np - 1)) / np)); if (pw < P.minW - 60) return null; }
+      var colsW = np ? np * pw + (np - 1) * G : 0;
+      for (var c = 0; c < np; c++) slots.push({ aspect: 'portrait', l: side === 'left' ? reg.l + c * (pw + G) : reg.l + reg.w - colsW + c * (pw + G), t: reg.t, w: pw, h: reg.h });
+      var rx = side === 'left' ? reg.l + colsW + (np ? G : 0) : reg.l, rw = reg.w - colsW - (np ? G : 0);
+      if (rw >= 240) {
+        var nL = Math.min(by.landscape.length, 2), nS = by.square.length, nT = by.tile.length;
+        var perS = nS ? Math.max(1, Math.min(nS, Math.floor((rw + G) / (ASPECT_SIZE.square.minW + G)))) : 0;
+        var tw = Math.min(ASPECT_SIZE.tile.w, rw);
+        var perT = nT ? Math.max(1, Math.floor((rw + G) / (tw + G))) : 0, rowsT = nT ? Math.min(2, Math.ceil(nT / perT)) : 0;
+        /* a band is wide: no taller than its width / 1.6 (and 600) */
+        var maxBand = Math.min(ASPECT_SIZE.landscape.maxH, Math.floor(rw / 1.6));
+        var hT = rowsT ? rowsT * ASPECT_SIZE.tile.h + (rowsT - 1) * G : 0, hS = perS ? ASPECT_SIZE.square.h : 0, hL = nL ? Math.min(ASPECT_SIZE.landscape.h, maxBand) * nL + (nL - 1) * G : 0;
+        /* too tall for the desk: the rows shrink together, and a row shrunk past use drops out (tiles first, then squares, then a
+           second band) - its items go to the next aspect's slots, or join them */
+        var gaps = function () { return Math.max(0, (hT ? 1 : 0) + (hS ? 1 : 0) + (hL ? 1 : 0) - 1) * G; };
+        for (var guard = 0; guard < 6; guard++) { var sum = hT + hS + hL; if (sum + gaps() <= reg.h) break; var k = (reg.h - gaps()) / Math.max(1, sum);
+          if (hT && hT * k < 110 * rowsT) { if (rowsT > 1) { rowsT = 1; hT = ASPECT_SIZE.tile.h; } else { hT = 0; rowsT = 0; } continue; }
+          if (hS && hS * k < ASPECT_SIZE.square.minH) { hS = 0; perS = 0; continue; }
+          if (hL && nL > 1 && hL * k / nL < ASPECT_SIZE.landscape.minH) { nL = 1; hL = Math.min(ASPECT_SIZE.landscape.h, maxBand); continue; }
+          hT = Math.floor(hT * k); hS = Math.floor(hS * k); hL = Math.floor(hL * k); break; }
+        var spare = reg.h - (hT + hS + hL + gaps());
+        if (hL) { var gl = Math.max(0, Math.min(spare, maxBand * nL + (nL - 1) * G - hL)); hL += gl; spare -= gl; }
+        if (hS) { var gs = Math.max(0, Math.min(spare, ASPECT_SIZE.square.maxH - hS)); hS += gs; spare -= gs; }
+        var rows = []; if (hT) rows.push(['tile', hT]); if (hS) rows.push(['square', hS]); if (hL) rows[lpos === 'top' ? 'unshift' : 'push'](['landscape', hL]);
+        var y = reg.t;
+        rows.forEach(function (row) { var a = row[0], h = row[1];
+          if (a === 'landscape') { var bh = Math.floor((h - (nL - 1) * G) / nL); for (var i = 0; i < nL; i++) slots.push({ aspect: a, l: rx, t: y + i * (bh + G), w: rw, h: bh }); }
+          else if (a === 'square') { var sw = Math.min(ASPECT_SIZE.square.maxW, Math.floor((rw - (perS - 1) * G) / perS)); for (var j = 0; j < perS; j++) slots.push({ aspect: a, l: rx + j * (sw + G), t: y, w: sw, h: h }); }
+          else { var th = Math.floor((h - (rowsT - 1) * G) / rowsT); for (var q = 0; q < rowsT * perT; q++) slots.push({ aspect: a, l: rx + (q % perT) * (tw + G), t: y + Math.floor(q / perT) * (th + G), w: tw, h: th }); }
+          y += h + G; });
+      }
+      slots.forEach(function (sl, i) { sl.id = sl.aspect[0] + i; sl.ids = []; });
+      /* items to slots: their own aspect first; with none free, the least full slot of their aspect (tiles last); with no slot of
+         their aspect at all, the nearest one (portrait -> square -> landscape; tile -> square) */
+      var pills = [], ALT = { portrait: ['square', 'landscape'], landscape: ['square', 'portrait'], square: ['landscape', 'portrait'], tile: ['square'] };
+      ['landscape', 'portrait', 'square', 'tile'].forEach(function (a) { by[a].forEach(function (it) {
+        var own = slots.filter(function (s) { return s.aspect === a; }), free = own.filter(function (s) { return !s.ids.length; });
+        if (!own.length) { for (var z = 0; z < ALT[a].length && !own.length; z++) own = slots.filter(function (s) { return s.aspect === ALT[a][z]; }); free = own.filter(function (s) { return !s.ids.length; }); }
+        if (free.length) { free.sort(function (p, q2) { return slotCost(it, p) - slotCost(it, q2); }); free[0].ids.push(it.id); return; }
+        if (!own.length || (o.noComposite && o.noComposite[it.id]) || (a === 'tile' && own.length < 2)) { pills.push(it.id); return; }
+        own.sort(function (p, q2) { return p.ids.length - q2.ids.length || slotCost(it, p) - slotCost(it, q2); }); own[0].ids.push(it.id); }); });
+      var used = slots.filter(function (s) { return s.ids.length; });
+      return { name: (np ? np + ' column' + (np > 1 ? 's' : '') + ' ' + side : 'rows') + ', bands ' + lpos, slots: used, pills: pills, empty: slots.length - used.length };
+    }
+    /* how far a slot is from where the item is now (0 when it is new) */
+    function slotCost(it, s) { var c0 = cur[it.id]; if (!c0) return 0; var cx = s.l + s.w / 2, cy = s.t + s.h / 2;
+      return Math.hypot(cx - c0.x, cy - c0.y) / 200 + (Math.abs(s.w - c0.w) + Math.abs(s.h - c0.h)) / 400; }
+    var best = null;
+    plans.forEach(function (pl) {
+      var score = 0;
+      pl.slots.forEach(function (s) { s.ids.forEach(function (id, i) { var it = (items || []).find(function (x) { return x.id === id; }) || {}; var wgt = 1 / (1 + (it.rank || 0) * 0.25);
+        score += i === 0 ? 10 * wgt : -4 * wgt; score -= 2 * slotCost(it, s); }); });
+      score -= 12 * pl.pills.length + 0.5 * pl.empty;
+      pl.score = Math.round(score * 100) / 100;
+      if (!best || pl.score > best.score) best = pl; });
+    return best || { name: 'none', slots: [], pills: (items || []).map(function (x) { return x.id; }), score: 0 };
+  }
+
   var api = { DESK: DESK, grow: grow, MODES: MODES, modeOf: modeOf, freeRegion: freeRegion, layoutMode: layoutMode, bestSlot: bestSlot, settle: settle, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
               arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom,
-              latticeOf: latticeOf, preTurn: preTurn, topicOrder: topicOrder, preTurnOut: preTurnOut };
+              latticeOf: latticeOf, preTurn: preTurn, topicOrder: topicOrder, preTurnOut: preTurnOut, fitLayout: fitLayout, ASPECT_SIZE: ASPECT_SIZE };
   root.VeraDesk = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
