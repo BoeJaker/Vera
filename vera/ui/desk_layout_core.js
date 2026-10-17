@@ -546,7 +546,7 @@
     if (mode === 'free') { out.free = true; return out; }
     /* SLOTS (LV-2/3, DESK-ARRANGEMENT 7): fitLayout over the free desk - each item's `aspect` and its place in the order as its rank;
        the front of each slot is a cell, the rest of a slot (its composite tabs, grouped by the canvas before this) and the pills chips */
-    if (mode === 'slots') { var L = fitLayout(live.map(function (it, i) { return { id: it.id, aspect: it.aspect || 'square', rank: i }; }), F, { near: F.farRight ? 'left' : 'right', current: o.current || {}, noComposite: o.noComposite });
+    if (mode === 'slots') { var L = fitLayout(live.map(function (it, i) { return { id: it.id, aspect: it.aspect || 'square', rank: it.rank != null ? it.rank : i }; }), F, { near: F.farRight ? 'left' : 'right', current: o.current || {}, noComposite: o.noComposite });
       L.slots.forEach(function (s) { var id = s.ids[0]; out.cells[id] = cellAt(s.l, s.t, s.w, s.h); used[id] = true; s.ids.slice(1).forEach(function (m) { out.chips.push(m); used[m] = true; }); });
       L.pills.forEach(function (id) { out.chips.push(id); used[id] = true; }); out.fit = L; return rest(); }
 
@@ -731,8 +731,10 @@
         if (free.length) { free.sort(function (p, q2) { return slotCost(it, p) - slotCost(it, q2); }); free[0].ids.push(it.id); return; }
         /* a composite is always of one aspect: another aspect's slot is taken only while it is FREE (a list never a tab of a table) */
         if (!own.length) { for (var z = 0; z < ALT[a].length; z++) { var alt = slots.filter(function (s) { return s.aspect === ALT[a][z] && !s.ids.length; }); if (alt.length) { alt[0].ids.push(it.id); alt[0].aspectOf = a; return; } } pills.push(it.id); return; }
-        if (!own.length || (o.noComposite && o.noComposite[it.id]) || (a === 'tile' && own.length < 2)) { pills.push(it.id); return; }
-        own.sort(function (p, q2) { return p.ids.length - q2.ids.length || slotCost(it, p) - slotCost(it, q2); }); own[0].ids.push(it.id); }); });
+        /* a card holds at most o.maxTabs (8) tabs - past that, a pill of its own (a ninth was split off as a card and took the column) */
+        var room = own.filter(function (s) { return s.ids.length < (o.maxTabs || 8); });
+        if (!room.length || (o.noComposite && o.noComposite[it.id]) || (a === 'tile' && own.length < 2)) { pills.push(it.id); return; }
+        room.sort(function (p, q2) { return p.ids.length - q2.ids.length || slotCost(it, p) - slotCost(it, q2); }); room[0].ids.push(it.id); }); });
       var used = slots.filter(function (s) { return s.ids.length; });
       return { name: (np ? np + ' column' + (np > 1 ? 's' : '') + ' ' + side : 'rows') + ', bands ' + lpos, slots: used, pills: pills, empty: slots.length - used.length };
     }
