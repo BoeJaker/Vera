@@ -629,6 +629,92 @@ async def cap_decide_shadow_nlp(family: str = "zeroshot", question_id: str = "al
     return {"ok": True, "family": family, "question_id": question_id, "scored": scored, "skipped": skipped}
 
 
+def heads() -> List[Dict[str, Any]]:
+    """Every trained student head bound to a judged question (the ML Workshop's ml.onnx.model.<slug> with
+    questions=[...]), from the registry - a new head joins the matrix the night after it is bound."""
+    out = []
+    for name, entry in list(_orch.CAPABILITY_REGISTRY.items()):
+        if not str(name).startswith("ml.onnx.model."):
+            continue
+        for b in (entry or {}).get("models") or []:
+            qs = [q for q in (b.get("questions") or []) if q in JC.QUESTIONS]
+            if qs:
+                out.append({"cap": name, "slug": name[len("ml.onnx.model."):], "questions": qs})
+    return out
+
+
+_SERVES_HEADS = _bind(
+    "decide", "onnx", io_in="state", io_out="label", tier=3, questions=list(JC.QUESTIONS),
+    uses="Answer stored decisions with every trained student head bound to a question (the ML Workshop's ONNX "
+         "models over the MiniLM state vector) - a shadow judge in the candidate matrix; nothing to do until a head "
+         "is bound.",
+    limits="a head trained on another vector layout; questions no head is bound to.")
+
+
+@capability(
+    "decide.shadow.heads", serves=_SERVES_HEADS, http_method="POST", http_path="/decide/shadow/heads",
+    http_tags=["minds"], memory="off",
+    description="The trained-head shadow judge of the candidate matrix (four-minds FM-2): every ML Workshop head "
+                "bound to a question (ml.onnx.model.<slug> with questions) answers that question's recent stored "
+                "decisions from their MiniLM vectors (decision_vectors), recorded as shadow decisions (implementation "
+                "onnx:<slug>). Binary heads give p(positive label); a multi-output head the probability per label. "
+                "Inputs: question_id (str='all'), limit (int=200), since_hours (int=72). Output: {ok, heads, scored}.",
+)
+async def cap_decide_shadow_heads(question_id: str = "all", limit: int = 200, since_hours: int = 72,
+                                  trace_id=None) -> Dict[str, Any]:
+    hs = heads()
+    if not hs:
+        return {"ok": True, "heads": 0, "scored": {}, "note": "no trained head is bound to a question yet"}
+    pool_db = getattr(_orch, "PG_POOL", None)
+    if pool_db is None:
+        return {"ok": False, "error": "postgres unavailable"}
+    try:
+        from Vera.vera.minds import ledger_capabilities as L
+    except Exception:                    # pragma: no cover
+        from vera.minds import ledger_capabilities as L  # type: ignore
+    scored: Dict[str, int] = {}
+    for h in hs:
+        cap = _orch.CAPABILITY_REGISTRY.get(h["cap"]) or {}
+        fn = cap.get("raw") or cap.get("func")
+        if not fn:
+            continue
+        for q in h["questions"]:
+            if question_id not in ("all", q):
+                continue
+            impl = f"onnx:{h['slug']}"
+            async with pool_db.acquire() as conn:
+                rows = await conn.fetch(
+                    """SELECT s.decision_id, l.row, v.vec FROM decision_states s
+                       JOIN decision_ledger l ON l.decision_id = s.decision_id
+                       JOIN decision_vectors v ON v.decision_id = s.decision_id
+                       WHERE s.question_id = $1 AND COALESCE(l.mode, '') <> 'shadow'
+                         AND s.ts >= NOW() - make_interval(hours => $2)
+                         AND NOT EXISTS (SELECT 1 FROM decision_ledger x WHERE x.mode = 'shadow'
+                                         AND x.row->'detail'->>'for' = s.decision_id AND x.row->>'implementation' = $3)
+                       ORDER BY s.ts DESC LIMIT $4""", q, int(since_hours or 72), impl, max(1, min(400, int(limit or 200))))
+            if not rows:
+                continue
+            vecs = [json.loads(r["vec"]) if isinstance(r["vec"], str) else r["vec"] for r in rows]
+            t0 = time.monotonic()
+            try:
+                out = await fn(X=json.dumps(vecs))
+            except Exception as e:
+                log.debug("head %s: %s", h["slug"], e)
+                continue
+            preds = (out or {}).get("predictions") or []
+            ms = int((time.monotonic() - t0) * 1000 / max(1, len(rows)))
+            n = 0
+            for r, pr in zip(rows, preds):
+                answer, p = MX.head_vote(JC.QUESTIONS[q], pr)
+                if not answer:
+                    continue
+                live = json.loads(r["row"]) if isinstance(r["row"], str) else (r["row"] or {})
+                res = await L.append(JC.shadow_decision(live, answer, p, impl, mass=1.0, ms=ms))
+                n += 1 if res.get("ok") else 0
+            scored[f"{h['slug']}|{q}"] = n
+    return {"ok": True, "heads": len(hs), "scored": scored}
+
+
 @capability(
     "decide.matrix.report", http_method="GET", http_path="/decide/matrix/report", http_tags=["minds"],
     contract=_MC.contract("decision.matrix.report", effects=["read"], idempotency="idempotent"),
@@ -643,7 +729,8 @@ async def cap_decide_shadow_nlp(family: str = "zeroshot", question_id: str = "al
 async def cap_decide_matrix_report(days: int = 30, trace_id=None) -> Dict[str, Any]:
     shadow = await cap_decide_shadow_report(question_id="all", days=days)
     models = await matrix_models()
-    cands = [_impl(m) for m in models] + [JC.KNN_IMPL, JC.CARD_IMPL] + list(NLP_IMPL.values())
+    cands = ([_impl(m) for m in models] + [JC.KNN_IMPL, JC.CARD_IMPL] + list(NLP_IMPL.values())
+             + [f"onnx:{h['slug']}" for h in heads()])
     out = MX.report(shadow, cands, APPS.PENDING)
     r = getattr(_orch, "REDIS", None)
     last = {}

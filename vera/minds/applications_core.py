@@ -34,6 +34,11 @@ QUESTIONS: Dict[str, Dict[str, Any]] = {
                    "or only a quick automatic pass. Answer with one word: yes if it deserves the full read, no if "
                    "the quick pass is enough."),
         "labels": {"yes": "model", "no": "nlp_only"}, "kind": "binary"},
+    "intel.material_change": {
+        "system": ("A topic someone follows has a new summary. You get the previous headline, the new one, what "
+                   "changed and how many competitor items appeared. Answer with one word: yes if the picture changed "
+                   "enough that the reader should be alerted, no if it did not."),
+        "labels": {"yes": "alert", "no": "no_alert"}, "kind": "binary"},
     "discovery.page_on_topic": {
         "system": ("A crawler is collecting pages about one topic. Decide whether this page is about that topic. "
                    "Answer with one word: yes if it is on topic, no if it is off topic."),
@@ -55,6 +60,9 @@ CARDS: Dict[str, Dict[str, str]] = {
     "intel.enrich_worth": {
         "model": "A substantial item worth a careful full read, a summary and its claims extracted.",
         "nlp_only": "A thin or routine item where a quick automatic pass is enough."},
+    "intel.material_change": {
+        "alert": "The topic's picture changed materially: the reader should be told now.",
+        "no_alert": "Nothing material changed: the new summary restates or refines the old one."},
     "discovery.page_on_topic": {
         "on_topic": "This page is about the crawl's topic.",
         "off_topic": "This page is not about the crawl's topic."},
@@ -62,8 +70,7 @@ CARDS: Dict[str, Dict[str, str]] = {
 
 #: decision points on the ledger that cannot be tested yet, and why
 PENDING: Dict[str, str] = {
-    "intel.entity_resolve": "its inputs are not stored in the training store",
-    "intel.material_change": "its inputs are not stored in the training store",
+    "intel.entity_resolve": "its stored inputs hold the candidates' Wikidata ids only, no names - nothing to judge",
     "intel.worldview_drift": "no decisions recorded with inputs",
     "memory.seek": "the training store's memory surface is off (owner's call)",
     "memory.chat_recall": "the training store's memory surface is off (owner's call)",
@@ -79,6 +86,13 @@ def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:
     """The text put to a model for one stored decision, or None when the inputs lack what it needs."""
     if question_id not in QUESTIONS or not isinstance(state, dict):
         return None
+    if question_id == "intel.material_change":
+        prev, now = _s(state.get("prev"), 400), _s(state.get("now"), 400)
+        if not now:
+            return None
+        return (f"Topic: {_s(state.get('topic'), 200)}\nPrevious headline: {prev or '(none)'}\nNew headline: {now}\n"
+                f"Changed: {_s(state.get('changed'), 600) or '(nothing listed)'}\n"
+                f"Competitor items: {_s(state.get('comps'), 20) or '0'}\n\nAnswer with one word.")
     if question_id.startswith("intel."):
         title, snippet = _s(state.get("title"), 300), _s(state.get("snippet"))
         if not title and not snippet:

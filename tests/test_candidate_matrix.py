@@ -86,3 +86,24 @@ def test_the_judge_scores_rule_made_decisions_outside_the_loop_and_runs_the_nlp_
     assert "question_id not in JC.LOOP_QUESTIONS)" in src
     assert '"decide.shadow.nlp", serves=_SERVES_NLP' in src and '"decide.matrix.report"' in src
     assert "await matrix_models(), cap)" in src and "jobs, chosen = await _rotate(r, jobs)" in src
+
+
+def test_material_change_is_an_application_and_entity_resolve_says_why_not():
+    st = {"topic": "aiops", "prev": "Growth robust", "now": "Vendors overclaim", "changed": "[]", "comps": "0"}
+    m = JC.user_message("intel.material_change", st)
+    assert "Previous headline: Growth robust\nNew headline: Vendors overclaim" in m
+    assert JC.user_message("intel.material_change", {"prev": "x"}) is None
+    assert "Wikidata ids" in APPS.PENDING["intel.entity_resolve"] and "intel.material_change" not in APPS.PENDING
+
+
+def test_a_trained_heads_output_becomes_a_label():
+    b, c = JC.QUESTIONS["loop.step_done"], JC.QUESTIONS["loop.tier"]
+    assert MX.head_vote(b, [0.83]) == ("end", 0.83) and MX.head_vote(b, 0.2) == ("continue", 0.2)
+    assert MX.head_vote(c, [0.1, 0.6, 0.2, 0.1]) == ("simple", 0.6)
+    assert MX.head_vote(c, [0.9]) == (None, None) and MX.head_vote(b, ["x"]) == (None, None)
+
+
+def test_bound_heads_join_the_matrix_by_registration():
+    src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
+    assert 'startswith("ml.onnx.model.")' in src and '"decide.shadow.heads", serves=_SERVES_HEADS' in src
+    assert '[f"onnx:{h[\'slug\']}" for h in heads()]' in src

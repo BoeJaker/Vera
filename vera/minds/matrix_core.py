@@ -125,3 +125,24 @@ def report(shadow: Mapping[str, Any], candidates: Sequence[str], pending: Mappin
     return {"applications": apps, "pending": dict(pending),
             "pairs_scored": sum(len(a["candidates"]) for a in apps.values()),
             "pairs_untested": sum(len(a["untested"]) for a in apps.values())}
+
+
+def head_vote(question: Mapping[str, Any], pred: Any) -> Tuple[Optional[str], Optional[float]]:
+    """A trained head's output as (label, p): one number = p(positive, the first label) for a binary question; one
+    number per label = a distribution (choice or binary)."""
+    labels = list((question.get("labels") or {}).values())
+    vals = pred if isinstance(pred, (list, tuple)) else [pred]
+    try:
+        vals = [float(v) for v in vals]
+    except (TypeError, ValueError):
+        return None, None
+    if not vals or not labels:
+        return None, None
+    if len(vals) == 1:
+        if question.get("kind") != "binary" or len(labels) < 2:
+            return None, None
+        p = min(1.0, max(0.0, vals[0]))
+        return (labels[0] if p >= 0.5 else labels[1]), round(p, 4)
+    if len(vals) != len(labels):
+        return None, None
+    return vote(question, dict(zip(labels, vals)))
