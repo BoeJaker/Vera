@@ -10,7 +10,11 @@ the app tests drive report.canvas / output.deliver_auto / output.redeliver with 
 stubbed; the chat page and the canvas element are read as source for the wiring.
 """
 import asyncio
+import json
 import pathlib
+import re
+import shutil
+import subprocess
 import sys
 
 import pytest
@@ -209,13 +213,68 @@ def test_every_answer_path_goes_through_one_delivery():
     assert "name:'output.deliver_auto'" in CHAT
 
 
+def _chat_fn(name):
+    """The source of one top-level chat function, by brace matching from its declaration."""
+    m = re.search(r"(?:async\s+)?function\s+" + re.escape(name) + r"\s*\(", CHAT)
+    assert m, name + " is gone from chat_panel.html"
+    depth, k = 0, CHAT.index("{", m.end())
+    for k in range(k, len(CHAT)):
+        depth += {"{": 1, "}": -1}.get(CHAT[k], 0)
+        if depth == 0:
+            return CHAT[m.start():k + 1]
+    raise AssertionError("unbalanced " + name)
+
+
+_HTML_OPENS_HARNESS = r"""
+const vm = require('vm');
+const src = require('fs').readFileSync(0, 'utf8');
+async function run(htmlOpens){
+  const log = {calls: [], opened: [], canvas: 0};
+  const els = {cfgHtmlOpen: {value: htmlOpens}, cfgDelivery: {value: 'chat'}, cfgDeliveryStyle: {value: ''}};
+  const ctx = {
+    BASE: 'http://vera', SID: 's1', console,
+    _MSG_REGISTRY: {m1: {getContent: () => '# Title\nSome body text for the report.'}},
+    document: {getElementById: id => els[id] || null},
+    localStorage: {getItem: () => null, setItem: () => {}},
+    window: {open: (href) => { log.opened.push(href); }},
+    appendSys: () => {}, esc: s => String(s), _galButton: () => '',
+    _pages: new Set(), togglePage: () => { log.canvas++; }, _canvasColumnMount: () => { log.canvas++; },
+    fetch: async (url, opt) => { const b = JSON.parse(opt.body); log.calls.push(b);
+      return {json: async () => ({content: {ok: true, url: '/r/1.html'}})}; },
+  };
+  vm.createContext(ctx);
+  vm.runInContext(src + '\n;this.__f={_msgHtmlReport,_redeliverDo,_dlvReveal};', ctx);
+  await ctx.__f._msgHtmlReport('m1');
+  await ctx.__f._msgHtmlReport('nope', 'Given text from the kit prose row');
+  await ctx.__f._redeliverDo('m1', 'html', null);
+  ctx.__f._dlvReveal('html', 'http://vera/r/2.html');   // a delivery the server routed as plain 'html'
+  return log;
+}
+(async () => { process.stdout.write(JSON.stringify({canvas: await run('canvas'), tab: await run('tab')})); })()
+  .catch(e => { console.error(e); process.exit(1); });
+"""
+
+
 def test_an_html_report_opens_a_tab_only_when_asked():
-    i = CHAT.index("async function _msgHtmlReport(mid){"); body = CHAT[i:i + 2500]
-    assert "where==='canvas'?'report.canvas':'report.html'" in body and "window.open" not in body
-    j = CHAT.index("async function _redeliverDo(mid, channel, btn){"); rd = CHAT[j:j + 2500]
-    assert "if(channel==='html'&&_dlvCfg().html==='canvas') channel='canvas_html';" in rd and "window.open" not in rd
-    k = CHAT.index("function _dlvReveal(channel, href){"); rv = CHAT[k:k + 600]
-    assert "_dlvCfg().html==='tab'" in rv and "window.open" in rv
+    """Runs the chat's real report / re-deliver / reveal code: with "HTML opens" on the canvas the report
+    is drawn there (report.canvas, channel canvas_html) and no tab opens; only "tab" opens one."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not available")
+    src = "\n".join(_chat_fn(n) for n in ("_dlvSaved", "_dlvCfg", "_dlvReveal", "_msgHtmlReport", "_redeliverDo"))
+    p = subprocess.run([node, "-e", _HTML_OPENS_HARNESS], input=src, capture_output=True, text=True, timeout=60)
+    assert p.returncode == 0, p.stderr
+    out = json.loads(p.stdout)
+    cv, tb = out["canvas"], out["tab"]
+    # canvas: both report builds go to report.canvas, the re-deliver goes as canvas_html, the column opens, no tab
+    assert [c["name"] for c in cv["calls"][:2]] == ["report.canvas", "report.canvas"]
+    assert cv["calls"][1]["arguments"]["content"] == "Given text from the kit prose row"
+    assert cv["calls"][2]["name"] == "output.redeliver" and cv["calls"][2]["arguments"]["channel"] == "canvas_html"
+    assert cv["opened"] == [] and cv["canvas"] == 3
+    # tab: report.html, channel html, and a tab per delivery - only because it was asked for
+    assert [c["name"] for c in tb["calls"][:2]] == ["report.html", "report.html"]
+    assert tb["calls"][2]["arguments"]["channel"] == "html"
+    assert tb["opened"] == ["http://vera/r/1.html"] * 3 + ["http://vera/r/2.html"] and tb["canvas"] == 0
 
 
 def test_the_canvas_draws_a_delivered_report_in_a_sandboxed_frame():
