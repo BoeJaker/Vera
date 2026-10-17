@@ -14,6 +14,7 @@ testable without a live Ollama node.
 import asyncio
 import os
 import sys
+import time
 
 import pytest
 
@@ -341,3 +342,69 @@ def test_load_jobs_is_empty_not_an_error_with_no_redis(monkeypatch):
         return await SVC.load_jobs()
 
     assert run(go()) == []
+
+
+# ── reserved windows (intel's night in the Loop Lab schedule, 17 Oct 2026) ──
+
+def test_a_reserved_window_starts_its_kinds_despite_the_gate(store):
+    """Six days of censuses never gave the queue 600 s of quiet. A reservation sets the gate aside for the
+    reserved kinds only; everything else still waits."""
+    ran = []
+
+    async def handler(job, should_continue):
+        ran.append(job["kind"])
+        return {"ok": True}
+
+    SVC.register_handler(IQ.KIND_DREAM, handler)
+    SVC.register_handler(IQ.KIND_NARRATOR, handler)
+
+    async def go():
+        await SVC.submit(IQ.KIND_NARRATOR, "a narration")      # not reserved: must not start
+        await SVC.submit(IQ.KIND_DREAM, "a dream")
+        SVC.reserve((IQ.KIND_DREAM,), until=100.0 + 600, by="test")
+        res = await SVC.drain_once("a census is running", _busy, now=100.0)
+        assert res["action"] == "started" and res["kind"] == IQ.KIND_DREAM, res
+        await SVC._RUNNING["task"]
+        res2 = await SVC.drain_once("a census is running", _busy, now=101.0)
+        assert res2["action"] == "idle" and "reserved" in res2["reason"], res2
+        SVC.release_reservation("test")
+        res3 = await SVC.drain_once("a census is running", _busy, now=102.0)
+        assert res3["action"] == "idle" and res3["reason"] == "a census is running"
+
+    run(go())
+    assert ran == [IQ.KIND_DREAM]
+    assert [j["kind"] for j in store.values()] == [IQ.KIND_NARRATOR]
+
+
+def test_a_reserved_job_is_not_preempted_and_the_reservation_expires(store):
+    seen = []
+
+    async def handler(job, should_continue):
+        seen.append(await should_continue())        # '' while reserved, even though the box says busy
+        return {"ok": True}
+
+    SVC.register_handler(IQ.KIND_EMBED_FABRIC, handler)
+
+    async def go():
+        await SVC.submit(IQ.KIND_EMBED_FABRIC, "a backfill")
+        t0 = time.time()                       # the handler's should_continue reads the real clock
+        SVC.reserve((IQ.KIND_EMBED_FABRIC,), until=t0 + 600, by="test")
+        res = await SVC.drain_once("an agent loop is running", _busy, now=t0)
+        assert res["action"] == "started"
+        busy = await SVC.drain_once("an agent loop is running", _busy, now=t0 + 1)
+        assert busy["action"] == "busy" and "reserved" in busy["note"], busy
+        await SVC._RUNNING["task"]
+        assert SVC.reservation(now=t0 + 599) is not None
+        assert SVC.reservation(now=t0 + 600) is None              # expired: cleared on read
+
+    run(go())
+    assert seen == [""]
+    SVC.release_reservation()
+
+
+def test_only_the_holder_releases_its_reservation():
+    SVC.reserve(("x",), until=10.0, by="a")
+    SVC.release_reservation("b")
+    assert SVC.reservation(now=0.0) is not None
+    SVC.release_reservation("a")
+    assert SVC.reservation(now=0.0) is None
