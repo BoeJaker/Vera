@@ -146,6 +146,10 @@ async def _record_tools_shadow(session_id: str, query: str, message: str, reply:
                               ts=datetime.utcnow().isoformat(timespec="seconds") + "Z")
         await r.lpush(CHAT_TOOLS_SHADOW_KEY, json.dumps(row))
         await r.ltrim(CHAT_TOOLS_SHADOW_KEY, 0, CHAT_TOOLS_SHADOW_CAP - 1)
+        # FM-3.5: the same turn on the ledger as a ranking decision, so the tool-ranking set covers chat
+        _tsm = sys.modules.get("tool_shortlist") or sys.modules.get("Vera.vera.minds.tool_shortlist")
+        if _tsm is not None and hasattr(_tsm, "on_chat_turn"):
+            _tsm.on_chat_turn(session_id, row.get("ts") or "", query, server, list(row.get("used") or []))
     except Exception as e:
         log.debug("chat tools shadow: %s", e)
 try:

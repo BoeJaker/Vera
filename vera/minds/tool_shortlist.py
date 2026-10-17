@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sys
 import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -222,34 +223,70 @@ async def cap_caps_shortlist_report(days: int = 14, trace_id=None) -> Dict[str, 
     return {"summary": TC.summarize([x for x in rows if x[1] > 0]), "index_rows": len(await _rows())}
 
 
-def on_step(run_id: str, step_id: Any, title: str, used: List[str], origin: str = "user") -> None:
-    """A finished loop step: record what the shortlist would have said, and what the step really used.
-    Background, never raises, never waits."""
+def on_step(run_id: str, step_id: Any, title: str, used: List[str], origin: str = "user",
+            failed: Optional[List[str]] = None) -> None:
+    """A finished loop step: record what the shortlist would have said, what the step really used, and what it
+    called that failed (FM-3.5: a negative label). Background, never raises, never waits."""
     try:
-        if not run_id or not str(title or "").strip() or not used:
+        if not run_id or not str(title or "").strip() or not (used or failed):
             return
-        task = asyncio.get_running_loop().create_task(_record(run_id, step_id, str(title), list(used), origin))
+        task = asyncio.get_running_loop().create_task(
+            _record(run_id, step_id, str(title), list(used or []), origin, list(failed or [])))
         _PENDING.add(task)
         task.add_done_callback(_PENDING.discard)
     except Exception as e:
         log.debug("tool shortlist hook: %s", e)
 
 
-async def _record(run_id: str, step_id: Any, title: str, used: List[str], origin: str) -> None:
+def _ledger():
+    try:
+        from Vera.vera.minds import ledger_capabilities as L
+    except Exception:                # pragma: no cover
+        from vera.minds import ledger_capabilities as L  # type: ignore
+    return L
+
+
+async def _record(run_id: str, step_id: Any, title: str, used: List[str], origin: str,
+                  failed: Optional[List[str]] = None) -> None:
     try:
         res = await cap_caps_shortlist(text=title, k=TC.K, exclude_run=run_id)   # keyword only: a @capability wrapper
         names = [t["name"] for t in res.get("tools") or []]
         if not names or res.get("degraded"):
             return
         d = TC.decision(names, run_id=run_id, step_id=step_id, origin=origin)
-        try:
-            from Vera.vera.minds import ledger_capabilities as L
-        except Exception:                # pragma: no cover
-            from vera.minds import ledger_capabilities as L  # type: ignore
-        for row in [d] + TC.outcomes(d, used):
+        L = _ledger()
+        for row in [d] + TC.outcomes(d, used, failed or ()):
             await L.append(row)
     except Exception as e:
         log.debug("tool shortlist record: %s", e)
+
+
+def on_chat_turn(session_id: str, turn_id: str, query: str, server: List[str], used: List[str]) -> None:
+    """A chat turn (tools.shortlist.chat=shadow) onto the ledger as the same ranking question, surface chat
+    (FM-3.5): the server's shortlist as the answer, the reply's tools as outcomes. The words go to the training
+    store, which keeps them only when its `chat` surface is enabled. Background, never raises, never waits."""
+    try:
+        if not session_id or not server or not used:
+            return
+        task = asyncio.get_running_loop().create_task(
+            _record_chat(str(session_id), str(turn_id or ""), str(query or ""), list(server), list(used)))
+        _PENDING.add(task)
+        task.add_done_callback(_PENDING.discard)
+    except Exception as e:
+        log.debug("tool shortlist chat hook: %s", e)
+
+
+async def _record_chat(session_id: str, turn_id: str, query: str, server: List[str], used: List[str]) -> None:
+    try:
+        d = TC.chat_decision(server, session_id=session_id, turn_id=turn_id)
+        L = _ledger()
+        for row in [d] + TC.outcomes(d, used):
+            await L.append(row)
+        ts = sys.modules.get("training_state") or sys.modules.get("Vera.vera.minds.training_state")
+        if ts is not None and query.strip():
+            ts.put(d, {"text": query})
+    except Exception as e:
+        log.debug("tool shortlist chat record: %s", e)
 
 
 async def _night_job() -> None:
@@ -355,3 +392,94 @@ async def cap_caps_shortlist_replay(run: bool = False, history: int = 14, trace_
         except Exception:
             continue
     return {"latest": snaps[0] if snaps else None, "history": snaps}
+
+
+# ── FM-3.5: the tool-ranking training set ─────────────────────────────────────────────────────────────────────────
+def _labels_root():
+    try:
+        from Vera.vera.state_paths import state_dir
+    except Exception:                    # pragma: no cover
+        from vera.state_paths import state_dir  # type: ignore
+    return state_dir("datasets", "caps_shortlist")
+
+
+@capability(
+    "caps.shortlist.labels", http_method="POST", http_path="/caps/shortlist/labels", http_tags=["minds", "caps"],
+    contract=_MC.contract("tool.shortlist.labels", effects=["read", "filesystem"], idempotency="non_idempotent",
+                          filesystem="state_dir"),
+    memory="off",
+    description="Write the tool-ranking training set (four-minds FM-3.5): every recorded loop.caps_shortlist decision "
+                "(loop steps and chat turns) as {text, offered (in order), used, failed, labels: [{tool, rank, label "
+                "1|0, why: used | offered_unused | failed | used_not_offered}], split by run/session}, the text from "
+                "the step index (loop) or the training store (chat, only when its chat surface is on). For a learned "
+                "ranker trained on outcomes, not on the model's choice (the ML Workshop, MW-6). Inputs: days (int=90, "
+                "max 365), surface (all | loop | chat), holdout (float=0.2). Output: {ok, path, counts}; never the rows.",
+)
+async def cap_caps_shortlist_labels(days: int = 90, surface: str = "all", holdout: float = 0.2,
+                                    trace_id=None) -> Dict[str, Any]:
+    pool = getattr(_orch, "PG_POOL", None)
+    if pool is None:
+        return {"ok": False, "error": "postgres unavailable"}
+    if surface not in ("all", "loop", "chat"):
+        return {"ok": False, "error": "surface must be all, loop or chat"}
+    days = max(1, min(365, int(days or 90)))
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT decision_id, row FROM decision_ledger WHERE question_id = $1
+                 AND ($2 = 'all' OR surface = $2) AND ts >= NOW() - make_interval(days => $3)
+               ORDER BY ts DESC LIMIT $4""", TC.QUESTION, surface, days, MAX_ROWS)
+        ids = [r["decision_id"] for r in rows]
+        outs = await conn.fetch("SELECT decision_id, row FROM decision_outcomes WHERE decision_id = ANY($1::text[])",
+                                ids) if ids else []
+        try:
+            states = await conn.fetch("SELECT decision_id, state FROM decision_states WHERE decision_id = ANY($1::text[])",
+                                      ids) if ids else []
+        except Exception:                # the training store may not exist yet
+            states = []
+        lives = [json.loads(r["row"]) if isinstance(r["row"], str) else dict(r["row"]) for r in rows]
+        steps = []
+        for lv in lives:
+            ref = (lv.get("state_ref") or {})
+            if ref.get("kind") == "loop_step" and ":" in str(ref.get("id") or ""):
+                run, step = str(ref["id"]).rsplit(":", 1)
+                steps.append((run, step))
+        titles: Dict[tuple, str] = {}
+        if steps:
+            try:
+                await _ensure(conn)
+                got = await conn.fetch("SELECT run, step, title FROM tool_step_index WHERE run = ANY($1::text[])",
+                                       sorted({s[0] for s in steps}))
+                titles = {(g["run"], str(g["step"])): g["title"] for g in got}
+            except Exception as e:
+                log.debug("labels: step titles: %s", e)
+    by_d: Dict[str, List[Dict[str, Any]]] = {}
+    for o in outs:
+        by_d.setdefault(o["decision_id"], []).append(json.loads(o["row"]) if isinstance(o["row"], str) else dict(o["row"]))
+    texts = {}
+    for st in states:
+        v = json.loads(st["state"]) if isinstance(st["state"], str) else dict(st["state"] or {})
+        if v.get("text"):
+            texts[st["decision_id"]] = str(v["text"])
+    examples = []
+    for lv in lives:
+        ref = lv.get("state_ref") or {}
+        text = texts.get(lv.get("decision_id"), "")
+        if not text and ref.get("kind") == "loop_step" and ":" in str(ref.get("id") or ""):
+            text = titles.get(tuple(str(ref["id"]).rsplit(":", 1)), "")
+        examples.append(TC.ranking_example(lv, by_d.get(lv.get("decision_id"), []), text,
+                                           holdout=max(0.0, min(0.5, float(holdout)))))
+    counts = TC.ranking_counts(examples)
+    snap_id = "snap_" + datetime.utcnow().strftime("%Y%m%dT%H%M%S")
+    manifest = {"snapshot_id": snap_id, "dataset_id": TC.RANK_DATASET_ID, "schema": TC.RANK_SCHEMA,
+                "created_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "filters": {"days": days, "surface": surface, "holdout": holdout}, "counts": counts}
+
+    def _write() -> str:
+        d = _labels_root() / snap_id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "examples.jsonl").write_text("".join(json.dumps(e, sort_keys=True) + "\n" for e in examples),
+                                          encoding="utf-8")
+        (d / "manifest.json").write_text(json.dumps(manifest, indent=1, sort_keys=True), encoding="utf-8")
+        return str(d)
+    path = await asyncio.to_thread(_write)
+    return {"ok": True, "snapshot_id": snap_id, "path": path, "counts": counts}

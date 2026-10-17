@@ -88,16 +88,81 @@ def decision(names: List[str], *, run_id: str, step_id: Any, origin: str = "user
         run_id=str(run_id)[:80], session_id=str(run_id)[:80], detail={"k": len(names)})
 
 
-def outcomes(d: Dict[str, Any], used: Iterable[str]) -> List[Dict[str, Any]]:
-    """One outcome per tool the step used: `used` at its rank, or `missed` when the shortlist lacked it."""
+def chat_decision(names: List[str], *, session_id: str, turn_id: str, minds_digest: str = "default") -> Dict[str, Any]:
+    """A chat turn's shortlist (the server's caps.shortlist on the user's words) as the same ranking question,
+    surface chat (FM-3.5): loop steps and chat turns are one ranking problem, told apart by surface."""
+    return LC.make_decision(
+        QUESTION, [str(n)[:80] for n in names][:K], origin="chat", surface="chat", qtype="ranking", labels=[],
+        state={"session": session_id, "turn": turn_id},
+        state_ref={"kind": "chat_turn", "id": f"{str(session_id)[:80]}:{turn_id}"},
+        decider="student", implementation="knn:steps+prior", mode="shadow", minds_digest=minds_digest,
+        session_id=str(session_id)[:80], turn_id=str(turn_id)[:80], detail={"k": len(names)})
+
+
+def outcomes(d: Dict[str, Any], used: Iterable[str], failed: Iterable[str] = ()) -> List[Dict[str, Any]]:
+    """One outcome per tool the step used: `used` at its rank, or `missed` when the shortlist lacked it; and one per
+    tool it called that FAILED (and never succeeded in the step): `failed`, a negative label (FM-3.5)."""
     pos = {n: i + 1 for i, n in enumerate(d.get("answer") or [])}
     out = []
-    for t in sorted(set(used or [])):
+    ok = set(used or [])
+    for t in sorted(ok):
         if t in pos:
             out.append(LC.make_outcome(d["decision_id"], "used", "step.tools", "strong", detail={"rank": pos[t], "tool": t[:60]}))
         else:
             out.append(LC.make_outcome(d["decision_id"], "missed", "step.tools", "strong", detail={"tool": t[:60]}))
+    for t in sorted(set(failed or ()) - ok):
+        det = {"tool": t[:60]}
+        if t in pos:
+            det["rank"] = pos[t]
+        out.append(LC.make_outcome(d["decision_id"], "failed", "step.tools", "strong", detail=det))
     return out
+
+
+# ── the ranking training set (FM-3.5): every (offered, used, ok) triple a label ──────────────────────────────────
+RANK_DATASET_ID = "vera.caps_shortlist"
+RANK_SCHEMA = "vera.caps_shortlist.example/v0"
+
+
+def ranking_example(live: Dict[str, Any], outs: Iterable[Dict[str, Any]], text: str = "",
+                    holdout: float = 0.2) -> Dict[str, Any]:
+    """One decision as a ranking example: the text it was asked for, what was offered (in order), and a label per
+    tool - 1 used and ok (offered or not), 0 offered and not used, 0 called and failed. Split by run or session,
+    so one goal never sits on both sides."""
+    offered = [str(x) for x in (live.get("answer") or [])]
+    used, failed = set(), set()
+    for o in outs:
+        tool = str(((o or {}).get("detail") or {}).get("tool") or "")
+        if not tool:
+            continue
+        if o.get("label") in ("used", "missed"):
+            used.add(tool)
+        elif o.get("label") == "failed":
+            failed.add(tool)
+    failed -= used
+    pos = {n: i + 1 for i, n in enumerate(offered)}
+    labels = [{"tool": t, "rank": pos.get(t), "label": 1 if t in used else 0,
+               "why": "used" if t in used else ("failed" if t in failed else "offered_unused")}
+              for t in offered]
+    labels += [{"tool": t, "rank": None, "label": 1, "why": "used_not_offered"} for t in sorted(used - set(offered))]
+    labels += [{"tool": t, "rank": None, "label": 0, "why": "failed"} for t in sorted(failed - set(offered))]
+    group = str(live.get("run_id") or live.get("session_id") or live.get("decision_id") or "")
+    import hashlib
+    h = int(hashlib.sha256(group.encode("utf-8")).hexdigest()[:8], 16) / 0xFFFFFFFF
+    return {"schema": RANK_SCHEMA, "decision_id": live.get("decision_id"), "ts": live.get("ts"),
+            "surface": live.get("surface"), "origin": live.get("origin"), "group": group[:80],
+            "split": "test" if h < holdout else "train", "text": str(text or "")[:500], "offered": offered,
+            "used": sorted(used), "failed": sorted(failed), "labels": labels}
+
+
+def ranking_counts(examples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    by_surface: Dict[str, int] = {}
+    for e in examples:
+        by_surface[str(e.get("surface"))] = by_surface.get(str(e.get("surface")), 0) + 1
+    return {"examples": len(examples), "with_text": sum(1 for e in examples if e.get("text")),
+            "with_used": sum(1 for e in examples if e.get("used")),
+            "with_failed": sum(1 for e in examples if e.get("failed")),
+            "train": sum(1 for e in examples if e.get("split") == "train"),
+            "test": sum(1 for e in examples if e.get("split") == "test"), "by_surface": by_surface}
 
 
 REPLAY_KS = (5, 10, 16, 24, 28)
