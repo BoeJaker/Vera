@@ -7496,6 +7496,28 @@ IMPORTANT:
      put their evidence item on the desk the moment they start - the question, "looking up", a progress line - and it
      fills as the lookup goes (info.seek.step events: the stage, what it has checked, the pages it has in hand); the
      answer replaces it in place under the same key. It is not also an activity line. */
+  /* ONE LIVE ITEM (DA-04c, owner 2026-10-17: "one unified implementation, one element ... make sure we are not doubling up
+     elements for the same cap output"). The one core of every item that is a call while it runs - a lookup, a research
+     run, its pages, any call that reports its steps: added once, drawn live between writes (liveUpdate - never written),
+     kept on the server a few seconds apart and once at the end, its writes one at a time and in order.
+       L = _cvLive({ key, kind, size, mid, from, content:(keepLive)=>{...}, onAdded? }) */
+  function _cvLive(o){ return Object.assign({ added:false, chain:Promise.resolve(), t:0, drawn:0 }, o); }
+  function _cvLiveCanvas(){ return document.querySelector('#canvasColumnBody vera-canvas'); }
+  function _cvLiveShow(L){ if(!L||!L.added) return; L.drawn=Date.now(); try{ const cv=_cvLiveCanvas(); if(cv&&typeof cv.liveUpdate==='function') cv.liveUpdate(L.key, L.content(true)); }catch(_){} }
+  function _cvLiveSave(L, final){
+    if(!L||!SID) return Promise.resolve(); clearTimeout(L.t);
+    L.chain=L.chain.then(async()=>{ const content=L.content(false);
+      try{
+        if(!L.added){ const r=await _capCall('canvas.add',{ session_id:SID, kind:L.kind, key:L.key, content, at:'now', size:L.size||'l', anchor:L.mid?Object.assign({ turn:L.mid, mid:L.mid }, L.from?{ from:L.from }:{}):undefined });
+          L.added=!!(r&&r.ok); if(L.added&&r.existing) await _capCall('canvas.update',{ session_id:SID, key:L.key, content });   /* it ran before: this run takes the item */
+          if(L.added){ if(L.onAdded){ try{ L.onAdded(); }catch(_){} } const cv=_cvLiveCanvas(); if(cv){ cv._rev=null; cv.refresh(); } } }
+        else await _capCall('canvas.update',{ session_id:SID, key:L.key, content });
+        if(final&&L.added){ const cv=_cvLiveCanvas(); if(cv){ if(typeof cv.liveDone==='function') cv.liveDone(L.key); cv._rev=null; cv.refresh(); } }
+      }catch(_){} });
+    return L.chain;
+  }
+  function _cvLiveSoon(L, ms){ if(!L) return; clearTimeout(L.t); L.t=setTimeout(()=>_cvLiveSave(L, false), ms); }
+  function _cvLiveRemove(L){ if(!L) return; clearTimeout(L.t); L.chain=L.chain.then(async()=>{ try{ if(L.added){ await _capCall('canvas.remove',{ session_id:SID, key:L.key }); L.added=false; } }catch(_){} }); }
   const _CV_LOOK_RE=/^(info\.seek|web\.research|research\.quick_search|intel\.lookup)$/;
   const _cvLook={}; let _cvLookEs=null, _cvLookN=0;
   function _cvLookQ(args){ const a=args||{}; return String(a.question||a.query||a.q||a.topic||'').replace(/\s+/g,' ').trim(); }
@@ -7503,14 +7525,9 @@ IMPORTANT:
     return { title:'Looked up'+(subj?' · '+subj.slice(0,80):''), kind:'evidence', query:subj||undefined, running:h.state==='running', failed:h.state==='error'||undefined,
       items:h.items.slice(0,12), total:h.items.length,
       evidence:{ need:h.need||'', subject:subj||'', question:h.q, since:'', answerable:true, checked:h.checked.slice(-8), gaps:h.gaps||[], stage:h.stage||'', started:h.t0, ms:h.ms||0, cap:h.cap } }; }
-  function _cvLookDraw(h, save){
-    const content=_cvLookContent(h);
-    try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&h.added&&typeof cv.liveUpdate==='function') cv.liveUpdate(h.key, content); }catch(_){}
-    if(!save) return; clearTimeout(h.t);
-    h.t=setTimeout(()=>{ h.p=(h.p||Promise.resolve()).then(async()=>{ try{
-      if(!h.added){ const r=await _capCall('canvas.add',{ session_id:SID, kind:'records', key:h.key, content:_cvLookContent(h), at:'now', size:'l', anchor:{ turn:h.mid, mid:h.mid, from:'lookup' } }); h.added=!!(r&&r.ok);
-        const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }
-      else await _capCall('canvas.update',{ session_id:SID, key:h.key, content:_cvLookContent(h) }); }catch(_){} }); }, h.added?1200:60);
+  function _cvLookDraw(h, save){   /* on the one live-item core (DA-04c) */
+    const L=h.L||(h.L=_cvLive({ key:h.key, kind:'records', size:'l', mid:h.mid, from:'lookup', content:()=>h.final||_cvLookContent(h) }));
+    _cvLiveShow(L); if(save) _cvLiveSoon(L, L.added?1200:60);
   }
   function _cvLookListen(){
     if(_cvLookEs||!Object.keys(_cvLook).length) return;
@@ -7542,11 +7559,9 @@ IMPORTANT:
     let made=null; try{ made=ok?_cvAdapt(h.cap, content, args):null; }catch(_){ made=null; } if(Array.isArray(made)) made=made[0];
     if(made&&made.content&&made.kind!=='records'){ /* an answer of another kind: the working item goes, the reply's harvest lands it */
       try{ if(h.el) delete h.el.__cvLookKey; }catch(_){}
-      h.p=(h.p||Promise.resolve()).then(async()=>{ try{ clearTimeout(h.t); if(h.added) await _capCall('canvas.remove',{ session_id:SID, key:h.key }); }catch(_){} });
+      _cvLiveRemove(h.L);
     } else if(made&&made.content){ /* the answer, in place of the working item: the same key (a records item, as it was) */
-      const c=Object.assign({}, made.content, { running:false });
-      h.p=(h.p||Promise.resolve()).then(async()=>{ try{ clearTimeout(h.t); await _capCall('canvas.update',{ session_id:SID, key:h.key, content:c });
-        const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ if(cv.liveDone) cv.liveDone(h.key); cv._rev=null; cv.refresh(); } }catch(_){} });
+      h.final=Object.assign({}, made.content, { running:false }); if(h.L) _cvLiveSave(h.L, true);
     } else { h.gaps=[ok?'the answer had nothing to show':'the lookup failed: '+String((content&&(content.error||content.detail))||content||'').slice(0,200)]; h.stage=ok?'done':'failed'; _cvLookDraw(h, true); }
     delete _cvLook[h.key]; if(!Object.keys(_cvLook).length&&_cvLookEs){ try{ _cvLookEs.close(); }catch(_){} _cvLookEs=null; }
   }
@@ -7575,7 +7590,39 @@ IMPORTANT:
     return { mid, call };
   }
   function _cvActEnd(h, ok, content){
-    if(!h) return; h.call.status=ok?'ok':'error'; h.call.ms=Date.now()-h.call.started; h.call.peek=_cvActPeek(content); _cvActWrite(h.mid);
+    if(!h||h.dropped) return; h.call.status=ok?'ok':'error'; h.call.ms=Date.now()-h.call.started; h.call.peek=_cvActPeek(content); _cvActWrite(h.mid);
+  }
+  /* a call that has its own run item leaves the activity line (one place for a call - DA-04c) */
+  function _cvActDrop(h){ if(!h||h.dropped) return; h.dropped=true; const a=_cvAct[h.mid]; if(!a) return; const i=a.calls.indexOf(h.call); if(i>=0) a.calls.splice(i,1); _cvActWrite(h.mid); }
+
+  /* A CALL THAT REPORTS ITS STEPS IS ITS OWN ITEM (DA-04c - the run element). Any capability that sends `<cap>.step` events
+     on the call's trace (emit_step on the server: {stage, done, total, found, text}) gets, at its first step, one `result`
+     item keyed by the call (run:<trace>): what it is doing, how far, how long - and when it ends the answer is drawn in that
+     same item (the result element reads it as any answer). The reply's harvest skips the call and it leaves the activity
+     line, so its output is on the desk once. A call that never reports a step keeps its activity line, as before. */
+  const _cvRuns={};
+  function _cvRunStep(el, cap, args, tid, act, m){
+    if(!SID||!_cvEnrichOn()||!tid||!m) return;
+    let g=_cvRuns[tid];
+    if(!g){ if(g===null) return; const mid=_cvActMid(el); if(!mid) return;
+      g=_cvRuns[tid]={ cap:String(cap), args:Object.assign({}, args||{}), t0:Date.now(), run:{ state:'running', started:Date.now() } };
+      g.L=_cvLive({ key:'run:'+tid, kind:'result', size:'m', mid, from:'run', content:()=>_cvRunItem(g) });
+      try{ el.__cvRunKey=g.L.key; }catch(_){} _cvActDrop(act); _cvLiveSave(g.L, false); }
+    if(g.done) return;
+    ['stage','done','total','found','text'].forEach((k)=>{ if(m[k]!=null&&m[k]!=='') g.run[k]=m[k]; });
+    _cvLiveShow(g.L); _cvLiveSoon(g.L, 2500);
+  }
+  function _cvRunItem(g){
+    const c={ cap:g.cap, args:g.args, run:Object.assign({}, g.run) };
+    if(!g.done) c.running=true; else { c.running=false; c.ok=g.ok; c.ms=g.ms; if(g.ok) c.result=g.result; else c.error=g.error; }   /* said, not left out: a live draw merges over the stored item */
+    return c;
+  }
+  /* the call ended: its answer into its run item (true), or false when it never reported a step */
+  function _cvRunEndCall(tid, ok, content){
+    const g=_cvRuns[tid]; if(!g){ _cvRuns[tid]=null; setTimeout(()=>{ delete _cvRuns[tid]; }, 3000); return false; }   /* a step trailing the answer makes no item */
+    g.done=true; g.ok=ok; g.ms=Date.now()-g.t0; g.run.state=ok?'done':'error';
+    if(ok) g.result=content; else g.error=String((content&&typeof content==='object'&&(content.error||content.detail))||content||'the capability failed').slice(0,400);
+    _cvLiveSave(g.L, true); setTimeout(()=>{ delete _cvRuns[tid]; }, 3000); return true;
   }
   function _cvEnrichToggle(btn){ const on=!_cvEnrichOn(); try{ localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} _cvEnrichPaint(btn); }
   function _cvEnrichPaint(btn){ const b=btn||document.getElementById('cvEnrichBtn'); if(!b) return; const on=_cvEnrichOn(); b.classList.toggle('on',on); b.style.opacity=on?'':'.55'; b.setAttribute('aria-pressed',on?'true':'false'); }
@@ -7624,7 +7671,7 @@ IMPORTANT:
     if(!SID||!d||!d.url) return;
     if(d.job&&_CV_RR[d.job]) return;   // a run with its own item (_cvRunStart): its pages are in it
     const url=String(d.url); const id=url.split('#')[0]; const mid=_cvRelMid||'';
-    const g=_CV_RS[mid]||(_CV_RS[mid]={ key:'research-sources:'+(mid||'session'), items:[], seen:{}, landed:false, t:0 });
+    const g=_CV_RS[mid]||(_CV_RS[mid]={ key:'research-sources:'+(mid||'session'), items:[], seen:{}, t:0 });
     let domain=String(d.domain||''); if(!domain){ try{ domain=new URL(url).host; }catch(_){ domain=''; } }
     let rec=g.seen[id];
     if(!rec){ rec={ id, url, domain:domain.replace(/^www\./,''), title:String(d.title||'')||domain||url, snippet:'', meta:{} }; g.seen[id]=rec; g.items.push(rec); }
@@ -7641,10 +7688,8 @@ IMPORTANT:
     const cited=items.filter(r=>r.cited).length; const q=_cvTurnSubject(mid);
     const content={ title:'Research sources'+(q?' · '+q:''), kind:'research', query:q, items, total:items.length,
                     why:items.length+' page'+(items.length===1?'':'s')+' read'+(cited?' · '+cited+' cited':'') };
-    try{
-      if(!g.landed){ const r=await _capCall('canvas.add',{ session_id:SID, kind:'records', key:g.key, at:'now', size:'l', content, anchor:mid?{ mid, turn:mid }:undefined }); if(r&&r.ok) g.landed=true; }
-      else await _capCall('canvas.update',{ session_id:SID, key:g.key, content });
-    }catch(_){}
+    g.L=g.L||_cvLive({ key:g.key, kind:'records', size:'l', mid, content:()=>g.content });   /* the one live-item core (DA-04c) */
+    g.content=content; return _cvLiveSave(g.L, false);
   }
   /* THE REPORT, ON THE CANVAS. A finished run's report was drawn in the chat and nowhere else: the canvas got its
      sources and, if it had dates in it, a timeline - never the document the run was for. It lands as a document item
@@ -7674,7 +7719,13 @@ IMPORTANT:
   function _cvRunStart(jobId, rc){
     if(!SID||!jobId||!rc||typeof rc.snapshot!=='function') return;
     const mid=_cvRelMid||'';
-    _CV_RR[jobId]={ key:'research-run:'+jobId, rc, mid, q:_cvTurnSubject(mid), landed:false, ended:false, err:'', drawn:0, t:0, chain:Promise.resolve() };
+    const r=_CV_RR[jobId]={ key:'research-run:'+jobId, rc, mid, q:_cvTurnSubject(mid), ended:false, err:'' };
+    /* on the one live-item core (DA-04c); with the canvas open the run is the canvas's item - see onAdded */
+    r.L=_cvLive({ key:r.key, kind:'research', size:'l', mid, content:(keep)=>_cvRunContent(jobId, r, keep), onAdded:()=>{
+      /* ONE PLACE (owner, 2026-10-11: "the research cap family doesnt leave a placeholder chip in chat if the desk / canvas
+         is open - it should, or its being displayed 2 times"): with the canvas open the run is the canvas's item; the
+         chat's research card goes and a chip says where it is (the chat keeps both when the canvas is closed) */
+      const host=(r.rc.closest&&r.rc.closest('.cap-inline'))||r.rc.parentElement||r.rc; _cvOnCanvas({ _el:host, n:'research'+(r.q?' · '+r.q.slice(0,40):'') }, r.key); } });
     _cvRunFeed(jobId);
   }
   function _cvRunContent(jobId, r, keepLive){
@@ -7703,27 +7754,10 @@ IMPORTANT:
     const r=_CV_RR[jobId]; if(!r||r.ended) return; opt=opt||{};
     if(opt.error) r.err=String(opt.error);
     const final=!!(opt.final||opt.error);
-    const now=Date.now();
-    if(r.landed&&(final||now-r.drawn>250)){ r.drawn=now;
-      try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&typeof cv.liveUpdate==='function') cv.liveUpdate(r.key, _cvRunContent(jobId, r, true)); }catch(_){} }
-    clearTimeout(r.t);
-    if(final){ r.ended=true; _cvRunSave(jobId, true); return; }
-    r.t=setTimeout(()=>_cvRunSave(jobId, false), r.landed?2500:300);
-  }
-  function _cvRunSave(jobId, final){
-    const r=_CV_RR[jobId]; if(!r||!SID) return;
-    r.chain=r.chain.then(async()=>{
-      const content=_cvRunContent(jobId, r, false);
-      try{
-        if(!r.landed){ const x=await _capCall('canvas.add',{ session_id:SID, kind:'research', key:r.key, at:'now', size:'l', content, anchor:r.mid?{ mid:r.mid, turn:r.mid }:undefined }); if(x&&x.ok) r.landed=true;
-          /* ONE PLACE (owner, 2026-10-11: "the research cap family doesnt leave a placeholder chip in chat if the desk / canvas
-             is open - it should, or its being displayed 2 times"): with the canvas open the run is the canvas's item; the
-             chat's research card goes and a chip says where it is (the chat keeps both when the canvas is closed) */
-          if(r.landed){ try{ const host=(r.rc.closest&&r.rc.closest('.cap-inline'))||r.rc.parentElement||r.rc; _cvOnCanvas({ _el:host, n:'research'+(r.q?' · '+r.q.slice(0,40):'') }, r.key); }catch(_){} } }
-        else await _capCall('canvas.update',{ session_id:SID, key:r.key, content });
-      }catch(_){}
-      if(final){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&typeof cv.liveDone==='function') cv.liveDone(r.key); }catch(_){} }
-    });
+    const L=r.L;
+    if(L.added&&(final||Date.now()-L.drawn>250)) _cvLiveShow(L);
+    if(final){ r.ended=true; _cvLiveSave(L, true); return; }
+    _cvLiveSoon(L, L.added?2500:300);
   }
 
   /* A PANEL ON THE CANVAS. The canvas already draws one - live in its frame, with query and dispatch over the
@@ -8286,6 +8320,7 @@ IMPORTANT:
       let made = null;
       /* a lookup has its item already (_cvLookStart): its answer went into it in place, so the harvest does not make another */
       if(el.__cvLookKey) return;
+      if(el.__cvRunKey) return;   // a call that reported its steps has its run item, with its answer in it (DA-04c)
       // an event written is not an item in itself - it is a reason to show the month it landed in
       try{ if(/^cal\.(event|todo)\.upsert$/.test(cname)&&cres&&cres.event) _cvLandCalendar(cres.event, _cvRelMid||''); }catch(_){}
       if(cap&&!cap.err&&_cvActionReceipt(cname, cres)) return;   // an action's receipt is its activity line, not an item (DA-08b)
@@ -11559,6 +11594,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const _tid='t-'+String(SID||'page')+'-'+Date.now().toString(36)+'-'+(++_capTraceN);
     let _lookSub=null;
     if(_look&&window.VeraLive){ try{ _look.tid=_tid; _lookSub=VeraLive.subscribe({ trace:[_tid] }, (m)=>{ if((m.event||m.type)==='info.seek.step') _cvLookStep(_look, m); }); await VeraLive.ready(1500); }catch(_){ _lookSub=null; } }
+    /* any other call: its own steps make it a run item (DA-04c) - only when it sends one */
+    else if(window.VeraLive&&_cvActOn(capName)){ try{ _lookSub=VeraLive.subscribe({ trace:[_tid] }, (m)=>{ const t=String(m.event||m.type||''); if(/\.step$/.test(t)) _cvRunStep(el, capName, coercedArgs, _tid, _act, m); }); await VeraLive.ready(400); }catch(_){ _lookSub=null; } }
     try{
       // session_id rides along so the backend can route the call into this
       // session's sandbox container (and scope its events) — the /mcp/call
@@ -11569,6 +11606,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       res=await r.json();
     }catch(e){res=null;}
     try{ const c=res&&res.type==='tool_result'?res.content:null; const bad=!res||res.type!=='tool_result'||(c&&typeof c==='object'&&(c.ok===false||(c.error!=null&&c.error!==''&&c.error!==false)));
+      if(!_look) _cvRunEndCall(_tid, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer');   /* a run item gets its answer (DA-04c) */
       _cvActEnd(_act, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer');
       _cvLookEnd(_look, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer', coercedArgs); }catch(_){}
     if(_lookSub) setTimeout(()=>{ try{ _lookSub.close(); }catch(_){} }, 1500);   // a stage may trail the answer

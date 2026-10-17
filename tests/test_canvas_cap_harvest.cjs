@@ -182,10 +182,10 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
      reads gather into one records item for the turn - each landed as its own card before, dozens of them, and the
      report itself never reached the canvas */
   t('keyed by url so a page announced twice is one row', /const id=url\.split\('#'\)\[0\]/.test(src) && /let rec=g\.seen\[id\];/.test(src));
-  t('one records item per turn, keyed by it', /key:'research-sources:'\+\(mid\|\|'session'\)/.test(src) && /kind:'records', key:g\.key/.test(src));
+  t('one records item per turn, keyed by it', /key:'research-sources:'\+\(mid\|\|'session'\)/.test(src) && /g\.L=g\.L\|\|_cvLive\(\{ key:g\.key, kind:'records'/.test(src));   // on the one live-item core (DA-04c)
   t('and it lands WITHOUT the page body or picture', /rec=\{ id, url, domain:domain\.replace\(\/\^www\\\.\/,''\), title:String\(d\.title\|\|''\)\|\|domain\|\|url, snippet:'', meta:\{\} \}/.test(src));
   t('batched, so a page is not a write', /clearTimeout\(g\.t\); g\.t=setTimeout\(\(\)=>\{ _cvFlushSources\(mid\); \}, 700\);/.test(src));
-  t('updated in place as the run reads on', /else await _capCall\('canvas\.update',\{ session_id:SID, key:g\.key, content \}\)/.test(src));
+  t('updated in place as the run reads on', /g\.content=content; return _cvLiveSave\(g\.L, false\);/.test(src) && /else await _capCall\('canvas\.update',\{ session_id:SID, key:L\.key, content \}\)/.test(src));   // the core's update
   t('the pages the report cited come first, and say so', /\(b\.cited\?1:0\)-\(a\.cited\?1:0\)/.test(src) && /rec\.meta\.cited='cited in the report'/.test(src));
   t('a page that would not load says so', /if\(d\.failed\) rec\.meta\.status='did not load';/.test(src));
   t('and the finished report lands as a document, its citations as its Sources', /async function _cvLandReport\(text, mid, jobId, cits\)/.test(src) && /kind:'markdown', key:'research-report:'/.test(src) && /try\{ _cvLandReport\(fullText, _cvRelMid\|\|'', jobId, cits\); \}catch\(_\)\{\}/.test(src));}

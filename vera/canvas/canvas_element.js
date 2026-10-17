@@ -128,6 +128,17 @@
      in the manifest's layout - dashboard (a grid), tabs (one part at a time), split (two side by side), stack (one under
      another). A part draws as its read arrives: a skeleton while it reads, its error inside it only, else its answer
      through the same reading as any result (resultView), the part's kind used when that reading has only the raw tree. */
+  /* THE RUN STRIP (DA-04c): a running call's latest step - stage, its words, n of m as a bar, what it found so far, how
+     long it has run. Fed by the call's `<cap>.step` events ({stage, done, total, found, text}) through the chat. */
+  function runStrip(r) {
+    r = r || {}; const done = +r.done, total = +r.total; const has = isFinite(done) && isFinite(total) && total > 0;
+    const secs = r.started ? Math.max(0, Math.round((Date.now() - +r.started) / 1000)) : null;
+    const pct = has ? Math.max(0, Math.min(100, Math.round(done / total * 100))) : null;
+    return '<div class="vc-run" data-stage="' + esc(r.stage || '') + '"><div class="vc-run-l"><i class="dot wait"></i><b>' + esc(r.stage || 'starting') + '</b>'
+      + (r.text ? '<span class="vc-run-tx">' + esc(String(r.text).slice(0, 200)) + '</span>' : '')
+      + '<span class="vc-run-n">' + (has ? esc(done + ' of ' + total) : '') + (r.found != null ? (has ? ' · ' : '') + esc(r.found + ' found') : '') + (secs != null ? ' · ' + secs + ' s' : '') + '</span></div>'
+      + (has ? '<div class="vc-run-bar"><i style="width:' + pct + '%"></i></div>' : '') + '</div>';
+  }
   const APP_LAYOUTS = ['dashboard', 'tabs', 'split', 'stack'];
   /* THE JOIN (DA-07b, §6.1): view.join pairs a field of one part with a field of another - {"hosts.name": "containers.host"},
      or a list of such objects / [a, b] pairs. A part named in a join draws its rows as rows you pick; a pick lights the rows
@@ -1572,6 +1583,12 @@
       const a = c.args && typeof c.args === 'object' ? c.args : {};
       const args = Object.keys(a).slice(0, 4).map((k) => k + '=' + String(typeof a[k] === 'object' ? JSON.stringify(a[k]) : a[k]).slice(0, 40)).join(' \u00b7 ');
       const ms = typeof c.ms === 'number' ? (c.ms >= 1000 ? (c.ms / 1000).toFixed(1) + ' s' : c.ms + ' ms') : '';
+      /* A CALL STILL RUNNING (DA-04c - the run element): what it is doing, how far, how long - the answer arrives in this same
+         item when it ends (the chat writes it here; nothing else lands for the call) */
+      if (c.running && ok) {
+        declare(el, key, { sub: '<i class="dot wait"></i>' + esc(cap) + (args ? ' · ' + esc(args) : '') + ' · running', acts: [] });
+        return '<div class="vc-res vc-res-run" data-as="running" data-w="canvas.result">' + runStrip(c.run || {}) + '<div class="vc-app-psk"><i></i><i></i><i></i></div></div>';
+      }
       const v = ok ? resultView(c) : null;
       /* no head of its own (DEEP-29 11A.4): its line - the dot, the capability, its arguments, how long it took - is declared
          for the item's head; Run again is the container's (the head's own buttons) */
@@ -2183,6 +2200,14 @@
   .vc-app-tabs{display:flex;flex-wrap:wrap;gap:4px}
   .vc-app-tabs .hx.bad{color:var(--err,#e06c75)}
   @container (max-width: 520px){ .vc-app-parts[data-layout="split"]{grid-template-columns:1fr} }
+  /* a call still running (DA-04c): its step, a bar when it says how far */
+  .vc-run{display:flex;flex-direction:column;gap:5px;padding:6px 2px 8px;font-size:11.5px}
+  .vc-run-l{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0}
+  .vc-run-l > b{font-weight:600}
+  .vc-run-tx{color:var(--dim,#6b7480);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 120px}
+  .vc-run-n{margin-left:auto;color:var(--dim,#6b7480);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .vc-run-bar{height:4px;border-radius:2px;background:color-mix(in srgb,var(--fg,#dce1e8) 9%,transparent);overflow:hidden}
+  .vc-run-bar > i{display:block;height:100%;background:var(--acc,#5a9e8f);transition:width .25s ease}
   /* the join (DA-07b): the row picked, the rows it lights, the rest dimmed; a part it focuses is outlined */
   .vc-app-pb{position:relative}
   .vc-app-jt{outline:none}
@@ -7855,7 +7880,7 @@
     }
   }
 
-  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
+  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
