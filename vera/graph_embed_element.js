@@ -355,6 +355,13 @@
         defaultLayer: layer,
         layerOpts: params,
         onNodeClick: function (node) {
+          // With `details` (the desk, owner 2026-10-17: "i need to be able to click nodes to see details etc - vera graph
+          // js already has all of this its just not usable from the desk") a click opens vera_graph's own detail drawer and
+          // the host hears it as `vera-graph-detail`; a double click is the host's action (`vera-graph-node`).
+          if (self.hasAttribute('details')) {
+            self.dispatchEvent(new CustomEvent('vera-graph-detail', { detail: { node: node }, bubbles: true, composed: true }));
+            return undefined;
+          }
           self.dispatchEvent(new CustomEvent('vera-graph-node', {
             detail: { node: node },
             bubbles: true,
@@ -362,6 +369,11 @@
           }));
           // Returning false leaves the detail drawer closed — inline graphs are
           // a glance, not a workbench. The full view is one click away.
+          return false;
+        },
+        onNodeDblClick: function (node) {
+          if (!self.hasAttribute('details')) return undefined;   /* unchanged without it: vera_graph's own (expand / collapse) */
+          self.dispatchEvent(new CustomEvent('vera-graph-node', { detail: { node: node }, bubbles: true, composed: true }));
           return false;
         },
       });
