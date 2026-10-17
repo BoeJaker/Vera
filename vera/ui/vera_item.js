@@ -48,9 +48,17 @@
   }
 
   function faceOf(block) {
+    if (block && block.state === 'parked') return 'pill';   // parking wins over a stored face (WSU-58 S2)
     var f = String((block && block.face) || '');
     if (has(FACES, f)) return f;
-    return block && block.state === 'parked' ? 'pill' : 'tile';
+    return 'tile';
+  }
+  /* the face a move to `state` gives (= item_core.face_for_state): park -> pill; off the shelf to now / pinned -> tile */
+  function faceForState(block, state) {
+    var prev = has(STATES, block && block.state) ? block.state : 'now';
+    if (state === 'parked' && prev !== 'parked') return 'pill';
+    if ((prev === 'parked' || prev === 'hidden') && (state === 'now' || state === 'pinned')) return 'tile';
+    return null;
   }
 
   function normPlace(p, prev) {
@@ -111,9 +119,10 @@
     });
     if (probs.length) return { changed: {}, prev: {}, problems: probs };
     if (has(['tile', 'window', 'full'], want.face) && !('state' in want) && block.state === 'parked') want.state = 'now';
-    var changed = {}, prev = {};
+    if ('state' in want && !('face' in want)) { var ff = faceForState(block, want.state); if (ff) want.face = ff; }
+    var changed = {}, prev = {}, face0 = faceOf(block);
     Object.keys(want).forEach(function (k) {
-      var old = k === 'face' ? faceOf(block) : block[k];
+      var old = k === 'face' ? face0 : block[k];
       if (!eq(old, want[k])) { prev[k] = old === undefined ? null : old; changed[k] = want[k]; block[k] = want[k]; }
     });
     return { changed: changed, prev: prev, problems: [] };

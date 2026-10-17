@@ -6820,6 +6820,8 @@
       if (this._doc) this.render(this._doc);
     }
     _toggleMax(key) {
+      // only an item in the now or pinned band can go full (WSU-58 S2 transition: a parked item is a pill on the shelf)
+      if (this._max !== key) { const b0 = this._blockOf(key); if (b0 && ['now', 'pinned'].indexOf(b0.state || 'now') < 0) return; }
       const body = this.shadowRoot.getElementById('body');
       if (this._max !== key && body) this._maxTop = body.scrollTop;   // where the reader was, for when it is restored
       const back = this._max === key; this._max = back ? '' : key;

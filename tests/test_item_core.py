@@ -105,6 +105,54 @@ def test_the_item_view_carries_the_contract_fields_once_set():
     assert doc["item"]["view"] == "cards" and doc["item"]["folded"] is True
 
 
+def test_a_parked_item_reads_as_a_pill_whatever_its_stored_face():
+    # WSU-58 S2: parking wins over a stored face - a parked item whose record says window is a pill on the shelf
+    assert IC.face_of({"face": "window", "state": "parked"}) == "pill"
+    assert IC.normalise({"key": "k", "face": "full", "state": "parked"})["face"] == "pill"
+    assert IC.face_of({"face": "window", "state": "now"}) == "window"
+
+
+def test_state_moves_take_the_face_s2s_transition_gives():
+    b = {"key": "k", "face": "window", "state": "now"}
+    changed, prev, probs = IC.apply_set(b, {"state": "parked"})
+    assert not probs and changed == {"state": "parked", "face": "pill"} and prev == {"state": "now", "face": "window"}
+    changed, prev, _ = IC.apply_set(b, {"state": "now"})
+    assert changed == {"state": "now", "face": "tile"} and prev == {"state": "parked", "face": "pill"}
+    # a face asked with the move is the person's own: it stands
+    b = {"key": "k", "face": "pill", "state": "parked"}
+    changed, _, _ = IC.apply_set(b, {"state": "now", "face": "window"})
+    assert changed == {"state": "now", "face": "window"}
+    # the server's helper agrees with transition('park' / 'unpark' / 'pin' from the shelf)
+    assert IC.face_for_state({"state": "now", "face": "window"}, "parked") == "pill"
+    assert IC.face_for_state({"state": "parked", "face": "window"}, "now") == "tile"
+    assert IC.face_for_state({"state": "parked"}, "pinned") == "tile"
+    assert IC.face_for_state({"state": "now", "face": "window"}, "pinned") is None
+    if hasattr(IC, "transition"):                     # S2 (feat/wsu58-s2-faces) once it is in the base
+        for st, ev in (("now", "park"), ("parked", "unpark"), ("parked", "pin")):
+            s = IC.transition({"state": st, "face": "window"}, ev)
+            assert s["face"] == IC.face_for_state({"state": st, "face": "window"}, s["state"]), (st, ev, s)
+
+
+def test_park_then_bring_back_gives_a_pill_then_a_tile():
+    _fresh()
+    _add("note:p")
+    _run(C.cap_canvas_item_set(session_id=SID, key="note:p", face="window"))
+    r = _run(C.cap_canvas_park(session_id=SID, key="note:p"))
+    assert r["ok"] and r["item"]["face"] == "pill"
+    items = _run(C.cap_canvas_items(session_id=SID, state="parked"))["items"]
+    assert [i["face"] for i in items] == ["pill"]
+    r = _run(C.cap_canvas_add(session_id=SID, key="note:p"))
+    assert r["resolved"] == "shown" and r["item"]["state"] == "now" and r["item"]["face"] == "tile"
+    # pinned straight off the shelf: a tile too
+    _run(C.cap_canvas_item_set(session_id=SID, key="note:p", face="window"))
+    _run(C.cap_canvas_park(session_id=SID, key="note:p"))
+    r = _run(C.cap_canvas_pin(session_id=SID, key="note:p"))
+    assert r["item"]["state"] == "pinned" and r["item"]["face"] == "tile"
+    # a shown item that was never parked keeps its face
+    _run(C.cap_canvas_item_set(session_id=SID, key="note:p", face="window"))
+    assert _run(C.cap_canvas_add(session_id=SID, key="note:p"))["item"]["face"] == "window"
+
+
 def test_every_view_a_body_offers_is_written_and_an_unknown_one_refused():
     # WSU-58 S1: the JSON lens (tree / flat / validate) and an app's own drawn view were refused by canvas.item.set
     for i, v in enumerate(("tree", "flat", "validate", "drawn")):

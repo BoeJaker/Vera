@@ -806,7 +806,10 @@ async def cap_canvas_add(id: str = "", session_id: str = "", kind: str = "note",
     hit = _find_key(doc, key)
     if hit is not None:
         # the resolver's whole point: the same key comes back, it does not double
+        face = _ic.face_for_state(hit, "now")   # un-parked (S2 transition 'unpark'): back as a tile, not its old face
         hit["state"] = "now"
+        if face:
+            hit["face"] = face
         hit["ts"] = now_iso()
         _add_anchor(hit, anchor)
         rev = await _write(doc, "show", key, turn=_anchor_turn(anchor))
@@ -841,7 +844,10 @@ async def _set_state(id: str, session_id: str, key: str, state: str, op: str) ->
     if not hit:
         return {"ok": False, "error": f"unknown key: {key}"}
     prev = hit.get("state")
+    face = _ic.face_for_state(hit, state)    # park -> a pill on the shelf; pinned back off it -> a tile (S2 transition)
     hit["state"] = state
+    if face:
+        hit["face"] = face
     rev = await _write(doc, op, key)
     return {"ok": True, "key": key, "state": state, "prev": prev, "item": _item_view(hit),
             "id": doc["id"], "revision": rev}
@@ -1288,12 +1294,14 @@ async def cap_canvas_session_relevance(session_id: str = "", turn: str = "", tex
         st = b.get("state")
         if live and st == "parked":
             b["state"] = "now"
+            b["face"] = "tile"                     # recalled off the shelf: a tile (S2 transition 'unpark')
             b["ts"] = now_iso()
             if turn:
                 _add_anchor(b, {"turn": turn, "role": "recalled"})
             recalled.append(key)
         elif (not live) and st == "now" and "explicit" not in s["signals"]:
             b["state"] = "parked"
+            b["face"] = "pill"                     # parked: a pill on the shelf (S2 transition 'park')
             parked.append(key)
     rev = int(doc.get("revision") or 0)
     if apply and (recalled or parked):
@@ -1470,7 +1478,11 @@ async def cap_canvas_run(cap: str = "", args: Any = None, id: str = "", session_
     if hit is not None:
         hit["type"] = "result"
         hit["content"] = content
-        hit["state"] = at if at in ITEM_STATES else "now"
+        st = at if at in ITEM_STATES else "now"
+        face = _ic.face_for_state(hit, st)       # park -> pill, back off the shelf -> tile (S2 transition)
+        hit["state"] = st
+        if face:
+            hit["face"] = face
         hit["ts"] = now_iso()
         if size in ITEM_SIZES:
             hit["size"] = size
