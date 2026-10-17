@@ -264,6 +264,39 @@ async def _fetch_robots(host: str):
 schedule(_robots_tick, 60, name="ingress.robots", skip_in_sandbox=True, singleton=True)
 
 
+# ── a client for callers that are not pages (WI-9): receipts + the shared slot by event hooks ──────────────
+
+def hooked_client(*, caller: str, purpose: str = "feed", timeout: float = 30.0, headers: Optional[Dict[str, str]] = None,
+                  verify: Any = True, follow_redirects: bool = True, **kw: Any):
+    """An httpx.AsyncClient whose every response leaves a receipt in the web map and whose every request waits
+    for the host's slot (web_client.throttle_domain). For the fabric's pullers, collectors and research gatherers:
+    the transport changes, the caller's URL, headers, params and parsing do not."""
+    import httpx
+
+    async def _before(request: "httpx.Request") -> None:
+        try:
+            await _wc.throttle_domain(request.url.host or "")
+        except Exception as e:  # noqa: BLE001
+            log.debug("hooked client throttle: %s", e)
+        request.extensions["ingress_t0"] = time.monotonic()
+
+    async def _after(response: "httpx.Response") -> None:
+        try:
+            if mode() == "off":
+                return
+            await response.aread()
+            ct = response.headers.get("content-type", "")
+            body = response.text if (mode() == "on" and len(response.content) <= 2 * 1024 * 1024) else ""
+            record_response(str(response.request.url), status=response.status_code, content_type=ct, body=body,
+                            elapsed_ms=int((time.monotonic() - float(response.request.extensions.get("ingress_t0") or time.monotonic())) * 1000),
+                            caller=caller, purpose=purpose, final_url=str(response.url), headers=dict(response.headers))
+        except Exception as e:  # noqa: BLE001
+            log.debug("hooked client receipt: %s", e)
+
+    return httpx.AsyncClient(timeout=timeout, headers=headers, verify=verify, follow_redirects=follow_redirects,
+                             event_hooks={"request": [_before], "response": [_after]}, **kw)
+
+
 # ── capabilities ─────────────────────────────────────────────────────────────
 
 @capability("fabric.ingress.fetch", http_method="POST", http_path="/fabric/ingress/fetch", http_tags=["fabric", "ingress"],

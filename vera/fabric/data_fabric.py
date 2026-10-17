@@ -3563,6 +3563,21 @@ async def _secret_headers(headers: Dict[str, Any]) -> Dict[str, str]:
     return out
 
 
+def _ingress_client(timeout: float = 30, headers: Optional[Dict[str, str]] = None, *, purpose: str = "feed",
+                    caller: str = "fabric.sources", **kw):
+    """The pullers' HTTP client (web-ingress WI-9): through the ingress gateway when it is loaded - every response a
+    receipt in the web map, every request on the host's shared slot - else a plain client, as before."""
+    import sys as _sys
+    ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+    if ing is not None and hasattr(ing, "hooked_client"):
+        try:
+            return ing.hooked_client(caller=caller, purpose=purpose, timeout=timeout, headers=headers,
+                                     verify=_orch._SSL_CTX, follow_redirects=True, **kw)
+        except Exception as e:  # noqa: BLE001
+            log.debug("ingress client: %s", e)
+    return httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=timeout, follow_redirects=True, headers=headers, **kw)
+
+
 async def _pull_rss(src: dict) -> List[dict]:
     """Fetch RSS/Atom feed via httpx (proper UA + redirects) then parse with
     feedparser. Doing the HTTP ourselves is essential — feedparser's built-in
@@ -3583,7 +3598,7 @@ async def _pull_rss(src: dict) -> List[dict]:
     body: bytes = b""
     final_url = url
     try:
-        async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
+        async with _ingress_client(timeout=30, headers=headers) as c:
             r = await c.get(url)
             final_url = str(r.url)
             # Tolerate 4xx — sometimes feeds 403 but still send the body
@@ -3660,7 +3675,7 @@ async def _pull_api(src: dict) -> List[dict]:
             if isinstance(headers, str): headers = {}
         except Exception:
             headers = {}
-        async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
+        async with _ingress_client(timeout=30, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
             r = await c.get(src["url"], headers=await _secret_headers(headers if isinstance(headers, dict) else {}))
             r.raise_for_status()
             data = r.json()
@@ -3700,7 +3715,7 @@ async def _pull_telegram(src: dict) -> List[dict]:
     if not name:
         log.warning("telegram source %s: no public channel name", src.get("id"))
         return []
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True,
+    async with _ingress_client(timeout=30,
                                  headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
         r = await c.get(f"https://t.me/s/{name}")
         r.raise_for_status()
@@ -3716,7 +3731,7 @@ async def _pull_wiki(src: dict) -> List[dict]:
     params = {"action":"query","titles":page,"prop":"extracts","exintro":"1",
               "explaintext":"1","format":"json","redirects":"1"}
     url = base + "/w/api.php?" + _up.urlencode(params)
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
+    async with _ingress_client(timeout=30, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
         r = await c.get(url); r.raise_for_status()
         data = r.json()
     results = []
@@ -3756,7 +3771,7 @@ async def _pull_scrape(src: dict) -> List[dict]:
         "Chrome/120.0 Safari/537.36 Vera-Fabric/1.0")
     headers.setdefault("Accept", "text/html,application/xhtml+xml")
 
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
+    async with _ingress_client(timeout=30, headers=headers) as c:
         r = await c.get(url)
         # Tolerate non-2xx but only if there is a body — many sites return 403 with content
         if r.status_code >= 400 and not r.content:
@@ -3889,7 +3904,7 @@ async def _pull_recon(src: dict) -> List[dict]:
     # Fast path: we already discovered the API, just hit it
     if saved_endpoint and saved_endpoint.startswith(("http://","https://")):
         try:
-            async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True,
+            async with _ingress_client(timeout=30,
                                           headers={**saved_headers,
                                                    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"}) as c:
                 r = await c.get(saved_endpoint)
@@ -4191,7 +4206,7 @@ async def _pull_gitea(src: dict) -> List[dict]:
     if auth.get("token"):
         headers["Authorization"] = f"token {auth['token']}"
     items: list = []
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
+    async with _ingress_client(timeout=30, headers=headers) as c:
         if mode == "issues":
             if owner and repo:
                 url = f"{base}/api/v1/repos/{owner}/{repo}/issues"
@@ -4268,7 +4283,7 @@ async def _pull_github(src: dict) -> List[dict]:
     if token:
         headers["Authorization"] = f"Bearer {token}"
     items: list = []
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
+    async with _ingress_client(timeout=30, headers=headers) as c:
         if mode == "issues":
             url = (f"{base}/repos/{owner}/{repo}/issues" if (owner and repo)
                     else f"{base}/issues")
@@ -4325,7 +4340,7 @@ async def _pull_gitlab(src: dict) -> List[dict]:
     if auth.get("token"):
         headers["PRIVATE-TOKEN"] = auth["token"]
     items: list = []
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True, headers=headers) as c:
+    async with _ingress_client(timeout=30, headers=headers) as c:
         if mode == "issues":
             url = (f"{base}/api/v4/projects/{project_id}/issues" if project_id
                     else f"{base}/api/v4/issues")
@@ -4549,7 +4564,7 @@ async def _pull_elasticsearch(src: dict) -> List[dict]:
     elif auth.get("user"):
         auth_param = (auth["user"], auth.get("password",""))
     items: list = []
-    async with httpx.AsyncClient(verify=_orch._SSL_CTX, timeout=30, follow_redirects=True,
+    async with _ingress_client(timeout=30,
                                    headers=headers, auth=auth_param) as c:
         r = await c.post(f"{url}/{index}/_search", json=body)
         r.raise_for_status()
