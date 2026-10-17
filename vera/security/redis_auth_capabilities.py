@@ -19,8 +19,9 @@ cap is safe to call again:
                             still connects as `default`, because it would be
                             locked out the moment this runs.
 
-No capability returns a password. Operators read one from OpenBao
-(secstore.kv.get vera/redis/users/<user>) when configuring a client by hand.
+No capability returns a password (secstore.kv.get returns only field names).
+To configure a client by hand, an operator reads the password on the host: from
+OpenBao (`bao kv get` on vera/redis/users/<user>) or the 0600 local file.
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, emit_event
 from Vera.vera.security import redis_auth_core as core
 from Vera.vera.security import secrets as vsecrets
+from Vera.vera.security import secret_reads
 
 log = logging.getLogger("vera.security.redis_auth")
 
@@ -50,10 +52,8 @@ def _s(v) -> str:
 
 
 async def _bao_get(user: str) -> Dict[str, Any]:
-    get = _cap("secstore.kv.get")
-    if not get:
-        return {"error": "secstore.kv.get unavailable (provisioning module not loaded)"}
-    return await get(path=core.BAO_PATH.format(user=user)) or {}
+    # In process: secstore.kv.get returns only metadata (it is reachable over the API).
+    return await secret_reads.read(core.BAO_PATH.format(user=user)) or {}
 
 
 async def credential(user: str) -> str:

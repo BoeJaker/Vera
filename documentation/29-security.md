@@ -356,9 +356,11 @@ The counts of values still on the file key are cached for 5 minutes. Pass
 The related provisioning capabilities are documented in
 [35](./35-infrastructure-provisioning.md): `secstore.bootstrap`, `secstore.unseal`,
 `secstore.kv.put/get/list/delete`, `prov.config.get/save` and
-`pki.bootstrap/root/cert.issue/cert.list`. `secstore.kv.get` *does* return values. It is the
-operator's tool for reading a credential, such as a Redis password, when configuring
-a client by hand.
+`pki.bootstrap/root/cert.issue/cert.list`. `secstore.kv.get` returns only whether a secret
+exists and its field names, never the values, because every capability is reachable over the
+API. Vera's own modules read values in process (`vera/security/secret_reads.py`). To configure a
+client by hand, read the value on the host (the OpenBao CLI), or hand a named secret to a person
+with `secrets.handoff`.
 
 ---
 

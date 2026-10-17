@@ -21,7 +21,7 @@ def test_certificate_records_use_the_vera_prefix_only():
     prefix = next(n.value.value for n in tree.body if isinstance(n, ast.Assign)
                   and any(getattr(t, "id", "") == "PKI_KV_PREFIX" for t in n.targets))
     assert prefix == "vera/pki"
-    kv_paths = re.findall(r"cap_kv_(?:put|get|list)\(path=([^,)]+)", text)
+    kv_paths = re.findall(r"(?:cap_kv_(?:put|get|list)\(path=|(?<!def )kv_read\((?!path\)))([^,)]+)", text)
     assert kv_paths, "pki.cert.* no longer stores through secstore.kv"
     for p in kv_paths:
         assert p.startswith("PKI_KV_PREFIX") or p.startswith('f"{PKI_KV_PREFIX}'), p

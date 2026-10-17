@@ -219,7 +219,7 @@ async function kvList(){
     $('#kvList').innerHTML=(r.keys||[]).map(k=>`<div class="kv-row"><span class="k">${esc(k)}</span><button class="btn sm gho" onclick="kvGet('${esc((path?path+'/':'')+k)}')">View</button><button class="btn sm danger" onclick="kvDel('${esc((path?path+'/':'')+k)}')">✕</button></div>`).join('')||'<span class="hint" style="color:var(--dim)">no keys</span>';
   }catch(e){ toast(e.message,true); }
 }
-async function kvGet(p){ try{ const r=await api('/provisioning/secstore/kv/get','POST',{path:p.replace(/\/$/,'')}); const o=$('#kvOut'); o.style.display='block'; o.textContent=r.ok?JSON.stringify(r.data,null,2):'(not found)'; }catch(e){ toast(e.message,true); } }
+async function kvGet(p){ try{ const r=await api('/provisioning/secstore/kv/get','POST',{path:p.replace(/\/$/,'')}); const o=$('#kvOut'); o.style.display='block'; o.textContent=r.ok?('fields: '+((r.keys||[]).join(', ')||'(none)')+'\nValues are not shown over the API.'):(r.error||'(not found)'); }catch(e){ toast(e.message,true); } }
 async function kvDel(p){ if(!confirm('Delete '+p+'?'))return; try{ await api('/provisioning/secstore/kv/delete','POST',{path:p.replace(/\/$/,'')}); kvList(); }catch(e){ toast(e.message,true); } }
 async function kvPut(){ const path=$('#kvPath').value.trim(),k=$('#kvK').value.trim(),v=$('#kvV').value; if(!path||!k)return toast('path + key required',true);
   try{ const r=await api('/provisioning/secstore/kv/put','POST',{path,data:{[k]:v}}); if(r.error)return toast(r.error,true); toast('stored v'+r.version); $('#kvK').value='';$('#kvV').value=''; kvList(); }catch(e){ toast(e.message,true); } }
