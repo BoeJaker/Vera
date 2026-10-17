@@ -7989,9 +7989,11 @@ IMPORTANT:
      is drawn (presentation, carried by /mcp/tools - VeraWidget.presentations is fed from ALL_CAPS) goes through
      VeraWidget.present, the one reading the canvas and the server share, and becomes the item its element names. A
      capability with no declaration gets undefined here and the adapters below, unchanged. */
-  function _cvPresented(capName, result, args){
+  function _cvPresented(capName, result, args, opts){
     const W=(typeof window!=='undefined'&&window.VeraWidget)||null; if(!W||typeof W.present!=='function'||typeof W.presentationOf!=='function') return undefined;
-    const cap=String(capName||''); if(!cap||!W.presentationOf(cap)) return undefined;
+    /* opts.fallback: an UNDECLARED answer read through present()'s own fallback (the shape rules) - the generic adapters'
+       one reading (D10 step 2b, owner 2026-10-17) */
+    const cap=String(capName||''); if(!cap||(!W.presentationOf(cap)&&!(opts&&opts.fallback))) return undefined;
     let pr=null; try{ pr=W.present(cap, result, { args:args||{} }); }catch(_){ return undefined; }
     if(!pr) return undefined;
     // nothing drawable, a receipt (it updates what it acted on - DA-08) or a job (its live item follows): no item
@@ -8015,7 +8017,10 @@ IMPORTANT:
            order them (DA-04c (d) - a scan's hosts) */
         const flat=(v)=>v==null||typeof v!=='object'||(Array.isArray(v)&&v.every(s=>s==null||typeof s!=='object'));
         const want=((W.presentationOf(cap)||{}).draw||{}).columns;
-        const columns=(Array.isArray(want)&&want.length?want.map(String).filter(k=>rows.some(x=>x[k]!=null)):Object.keys(rows[0]).filter(k=>flat(rows[0][k]))).slice(0,8);   /* as _cvCapTable */
+        /* the columns: a field some of the first 50 rows hold, plain in all of them - not only the first row's (its empty first
+           value dropped a column that the other rows filled; D10 measurement) */
+        const head=rows.slice(0,50), keys=[]; head.forEach(x=>Object.keys(x).forEach(k=>{ if(keys.indexOf(k)<0) keys.push(k); }));
+        const columns=(Array.isArray(want)&&want.length?want.map(String).filter(k=>rows.some(x=>x[k]!=null)):keys.filter(k=>head.some(x=>x[k]!=null)&&head.every(x=>flat(x[k])))).slice(0,8);
         const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':Array.isArray(v)?v.join(', ').slice(0,120):typeof v==='object'?JSON.stringify(v).slice(0,120):String(v).slice(0,120); }));
         return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'var(--dv1, #38bdf8)', d:'table · '+body.length+' rows',
                  content:{ columns, rows:body, caption:title } }; }
@@ -8134,17 +8139,6 @@ IMPORTANT:
     return src.map(x=>({ kind:'source', n:x.title||x.domain||x.url, k:'source', col:'#7aa2d6',
       d:'source \u00b7 '+(x.domain||'web'), key:'source:'+x.url.replace(/^https?:\/\//,'').slice(0,120), content:x }));
   };
-  const _cvCapTable=(c,name)=>{
-    // rows of the same shape are a TABLE - sortable, readable, and the thing the user asked to explore
-    const rows=_cvRowsOf(c);
-    if(!Array.isArray(rows)||!rows.length) return null;
-    const first=rows[0]; if(!first||typeof first!=='object'||Array.isArray(first)) return null;
-    const columns=Object.keys(first).filter(k=>typeof first[k]!=='object').slice(0,8);
-    if(columns.length<2) return null;
-    const body=rows.slice(0,80).map(r=>columns.map(k=>{ const v=r&&r[k]; return v==null?'':String(v).slice(0,120); }));
-    return { kind:'table', n:(name||'result')+' \u00b7 '+body.length+' rows', k:'table', col:'#38bdf8',
-      d:'table \u00b7 '+body.length+' rows', content:{ columns, rows:body, caption:String(name||'') } };
-  };
   const _cvCapWidget=(c,name,args)=>{
     // a shape the widget rule already recognises IS a chart - the same rule the transcript draws by
     if(typeof _widgetFormByShape!=='function'||typeof _widgetRecord!=='function') return null;
@@ -8261,12 +8255,21 @@ IMPORTANT:
   // rows of the same shape: a table with real columns
   /* ── the answer as the widget that fits it (the shared mapping, VeraWidget.fromCapResult): progress, a status, a series,
      a list, a metric ... A table it hands to the chat's own table rule below (real columns); json/text to the generics ── */
-  cvAdapter('capview',
-    (c,ctx)=>!!(window.VeraWidget&&typeof VeraWidget.fromCapResult==='function'),
-    (c,ctx)=>{ const rs=VeraWidget.fromCapResult(ctx.cap, c, {args:ctx.args}); const r=rs&&rs[0]; if(!r||!r.form||/^(json|text|table|record|kv)$/.test(r.form)) return null;
-      const title=r.title||ctx.cap||r.form; return { kind:'widget', n:String(title).slice(0,52), k:'widget', col:'#a78bfa', d:'widget \u00b7 '+r.form,
-        content:Object.assign({}, r, {widget:r.form, form:r.form, title, record:r}) }; });
-  cvAdapter('table', (c,ctx)=>!!_cvCapTable(c,ctx.cap), (c,ctx)=>_cvCapTable(c,ctx.cap));
+  /* ONE READING FOR UNDECLARED ANSWERS TOO (D10 step 2b, owner 2026-10-17: "yes proceed"). The capview and table adapters
+     were a second reading of what present() already reads: its fallback (the shape rules, VeraWidget.fromCapResult) - the
+     measurement found them the same on real answers (table 33/35, the two others its empty-first-value column; capview
+     6/6). Here, in their place: present()'s fallback, taken when it reads the answer as a table or as a widget form that
+     fits; a reading as json / text / kv / record goes on to the rules below (chat, prose, kv, json), as it did. */
+  const _cvFallbackOf=(cap,c,args)=>{ const W=window.VeraWidget; if(!W||typeof W.present!=='function') return null;
+    let pr=null; try{ pr=W.present(String(cap||''), c, { args:args||{} }); }catch(_){ return null; }
+    return pr&&pr.records&&pr.records.length?pr:null; };
+  cvAdapter('present',
+    (c,ctx)=>{ const pr=_cvFallbackOf(ctx.cap, c, ctx.args); if(!pr) return false; const f=String(pr.records[0].form||'');
+      /* what the two claimed: a table of two or more columns (one column is a list), or a widget form; a reading as a
+         document, a note, records, kv or json is left to the rules below */
+      if(pr.element==='table'){ const rows=_cvRowsOf(c); const r0=Array.isArray(rows)&&rows[0]; return !!(r0&&typeof r0==='object'&&Object.keys(r0).filter(k=>r0[k]==null||typeof r0[k]!=='object'||Array.isArray(r0[k])).length>=2); }
+      return pr.element==='widget'&&!!f&&!/^(json|text|table|record|kv)$/.test(f); },
+    (c,ctx)=>{ const it=_cvPresented(ctx.cap, c, ctx.args, { fallback:true }); return Array.isArray(it)?(it[0]||null):(it||null); });
 
   // a shape the chat's own widget rule recognises IS that chart
   cvAdapter('widget', (c,ctx)=>!!_cvCapWidget(c,ctx.cap,ctx.args), (c,ctx)=>_cvCapWidget(c,ctx.cap,ctx.args));
@@ -8300,8 +8303,8 @@ IMPORTANT:
   cvAdapter('kv',
     (c)=>{ if(!c||typeof c!=='object'||Array.isArray(c)) return false; const ks=Object.keys(c);
       return ks.length>=2&&ks.length<=24&&ks.every(k=>c[k]==null||typeof c[k]!=='object'); },
-    (c,ctx)=>({ kind:'kv', n:(ctx&&ctx.cap)||'record', k:'kv', col:'#94a3b8', d:'record \u00b7 '+Object.keys(c).length+' fields',
-                content:{ title:String((ctx&&ctx.cap)||''), fields:c } }));
+    (c,ctx)=>{ const it=_cvPresented((ctx&&ctx.cap)||'record', c, (ctx&&ctx.args)||{}, { fallback:true });   /* built by present() (D10 step 2b) */
+      return it&&!Array.isArray(it)&&it.kind==='kv'?it:null; });
   // anything else with structure: a tree you can open, not braces in a fence
   cvAdapter('json',
     (c)=>!!(c&&typeof c==='object'&&(Array.isArray(c)?c.length:Object.keys(c).length)),

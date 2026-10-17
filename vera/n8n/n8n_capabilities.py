@@ -123,6 +123,7 @@ def _mcp_url(cfg: Dict[str, Any], test: bool = False) -> str:
     http_tags=["n8n"], memory="off",
     description="Read the n8n connection config (secrets redacted). "
                 "Output: {base_url, api_key, mcp_path, mcp_url, verify_tls, configured}.",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
 )
 async def cap_config_get(trace_id=None):
     cfg = await _load_config()

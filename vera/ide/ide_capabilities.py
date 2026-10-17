@@ -2427,6 +2427,7 @@ async def ide_git_branches(path: str = "", base: str = "main", trace_id=None):
     description="Get git diff for a repository. "
                 "Input: path (str!), staged (bool). "
                 "Output: {diff, path}.",
+    contract={"presentation": {"kind": "diff", "map": {"diff": "diff"}}},
 )
 async def ide_git_diff(path: str, staged: bool = False, trace_id=None):
     args = ["diff"]

@@ -4204,7 +4204,11 @@
       if (ca.ctx) h += row('ctx', ca.ctx.on ? '✓ In context' : 'Put in context', ca.ctx.on ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ca.ctx.on);
       if (b.type === 'result' && b.content && b.content.cap && !inHead('[data-act="rerun"]')) h += row('rerun', 'Run again', 'Run ' + b.content.cap + ' again with the same arguments');
       if (peek) h += row('remove', 'Take it off the desk', 'Take it off the desk');
-      if (b.type === 'panel' && !inHead('[data-act="prefresh"]')) h += '<hr>' + (desk ? row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front') : '')
+      /* FULL SIZE, IN FRONT OR BEHIND - ANY ITEM (owner 2026-10-17: "like the ui panels on the desk id like to be able to send full
+         screen to the front and back"): a chart, a table, a list fills the free desk over the other items or under them, as a
+         panel does; pressed again it goes back among them */
+      if (desk && !inHead('[data-act="layer-behind"]')) h += '<hr>' + row('layer-behind', 'Full size, behind', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'Full size, in front', 'Fill the free desk, over the other items', L === 'front' || this._max === key);
+      if (b.type === 'panel' && !inHead('[data-act="prefresh"]')) h += '<hr>'
         + row('pquery', 'Query', 'panel.query - what the panel holds') + row('pdispatch', 'Dispatch…', 'panel.dispatch - drive it') + row('prefresh', 'Refresh', 'Reload the panel') + row('pstand', 'Open standalone ↗', 'Open it in a tab of its own');
       /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
       { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
@@ -4258,9 +4262,13 @@
     setLayer(key, mode) {
       key = String(key || ''); if (!key) return;
       if (mode === 'behind' || mode === 'front') this._layer[key] = mode; else delete this._layer[key];
+      /* a card made to fill the desk (its maximise) sent behind or in front: that layer is its place now, not the maximise */
+      if (this._max === key) { this._max = ''; try { localStorage.removeItem('vera:canvas:max:' + this.canvasId); } catch (e) { /* this page only */ } delete this.dataset.maxed; this._html = null; if (this._doc) { this.render(this._doc); } }
       const picks = layersLoad(); picks[key] = (mode === 'behind' || mode === 'front') ? mode : 'among'; layersSave(picks);
       const card = this.shadowRoot && [...this.shadowRoot.querySelectorAll('.stage .it')].find((c) => c.dataset.key === key);
       if (card) card.querySelectorAll('[data-act^="layer-"]').forEach((bt) => bt.classList.toggle('on', bt.dataset.act === 'layer-' + this._layer[key]));
+      /* any other item's head gains (or loses) its Behind / Front with the layer: drawn again (a panel's are always there) */
+      const bk = this._blockOf(key); if (bk && bk.type !== 'panel' && this._doc) { this._html = null; this.render(this._doc); return; }
       try { this._placeNow(); } catch (e) { /* placed on the next paint */ }
     }
     /* SIMILAR ITEMS ON ONE TOPIC, ONE CARD (owner, 2026-10-10: "id like similar elements on similar topics to be able to
@@ -4870,6 +4878,40 @@
           if (off > 1 && off <= REACH) { const nx = nearLeft ? EDGE + it.w / 2 : W - EDGE - it.w / 2; if (clearAt(it, nx)) { it.x = nx; it.snapped = true; } } });
       }
       }   /* passes */
+      /* ONLY WHAT MUST MAKE WAY MOVES (owner 2026-10-17: "after re-sizing an element the other elements jump around to different
+         positions allot"; "it should be more difficult to disturb the other elements in the UI if resizing or moving"). Measured:
+         a card grown by its corner moved a list it never reached 115 px and re-sized it, and narrowed a chart - the passes above
+         place every card again, not only those in the way. Under the hold, after them, each card goes back to exactly where it
+         was when the move or resize began (or the desk was last at rest) whenever that rectangle is clear of every other card,
+         the pills and the chat - so a neighbour moves only while the card really needs its room, and comes back when it does
+         not. The card under the hand, a window, a lock and the pills are left as the passes put them. */
+      if (hold && !replay && seed) {
+        const ovl = (a, b, g) => a.x - a.w / 2 < b.x + b.w / 2 + g && b.x - b.w / 2 < a.x + a.w / 2 + g && a.y - a.h / 2 < b.y + b.h / 2 + g && b.y - b.h / 2 < a.y + a.h / 2 + g;
+        const chatBox = R && R.r > R.l ? { x: (R.l + R.r) / 2, y: (R.t + R.b) / 2, w: R.r - R.l, h: R.b - R.t } : null;
+        const handOn = (o) => !!(o.sizing || (this._rzLetGo && o.id === this._rzLetGo) || (this._dg && o.id === this._dg.key));
+        const clearOf = (it, q) => !(chatBox && ovl(q, chatBox, -1)) && q.x - q.w / 2 >= 0 && q.y - q.h / 2 >= 0 && q.x + q.w / 2 <= W && q.y + q.h / 2 <= H
+          && !plan.some((o) => o !== it && !o.win && (o.h > 40 || o.strip) && ovl(q, o, 4));
+        for (let round = 0; round < 3; round++) { let back = 0;
+          plan.forEach((it) => { const r = seed[it.id]; if (!r || r.h <= 40 || it.sizing || it.strip || it.win || it.isLock || it.h <= 40) return;
+            if (Math.abs(r.x - it.x) < 1 && Math.abs(r.y - it.y) < 1 && Math.abs(r.w - it.w) < 1 && Math.abs(r.h - it.h) < 1) return;
+            const cand = { x: r.x, y: r.y, w: r.w, h: r.h };
+            if (clearOf(it, cand)) { Object.assign(it, cand, { keepSize: true, face0: r.face, held: true, restored: true }); back++; return; }
+            /* ...and when only the card under the hand is in its way, it gives that card room by the least: the side pressed on is
+               trimmed back to it (never under 220 x 120) and the rest of the card stays where it was - not moved and re-sized
+               about the desk (a list pressed at its top by 110 px went 115 px down and lost a third of its width) */
+            const hits = plan.filter((o) => o !== it && !o.win && (o.h > 40 || o.strip) && ovl(cand, o, 4));
+            if (!hits.length || !hits.every(handOn) || (chatBox && ovl(cand, chatBox, -1))) return;
+            const G = 10, L = cand.x - cand.w / 2, T = cand.y - cand.h / 2, Rr = cand.x + cand.w / 2, B = cand.y + cand.h / 2;
+            let box = { l: L, t: T, r: Rr, b: B };
+            hits.forEach((o) => { const ol = o.x - o.w / 2, ot = o.y - o.h / 2, orr = o.x + o.w / 2, ob = o.y + o.h / 2;
+              const cuts = [{ l: box.l, t: Math.max(box.t, ob + G), r: box.r, b: box.b }, { l: box.l, t: box.t, r: box.r, b: Math.min(box.b, ot - G) },
+                { l: Math.max(box.l, orr + G), t: box.t, r: box.r, b: box.b }, { l: box.l, t: box.t, r: Math.min(box.r, ol - G), b: box.b }]
+                .filter((q) => q.r - q.l >= 220 && q.b - q.t >= 120).sort((p, q) => (q.r - q.l) * (q.b - q.t) - (p.r - p.l) * (p.b - p.t));
+              box = cuts.length ? cuts[0] : null; if (!box) box = { l: 0, t: 0, r: 0, b: 0 }; });
+            const q = { x: (box.l + box.r) / 2, y: (box.t + box.b) / 2, w: box.r - box.l, h: box.b - box.t };
+            if (q.w >= 220 && q.h >= 120 && clearOf(it, q)) { Object.assign(it, q, { keepSize: true, face0: D.faceOf(q.w, q.h) === 'chip' ? 'card' : D.faceOf(q.w, q.h), held: true, restored: true, bw: q.w, bh: q.h }); back++; } });
+          if (!back) break; }
+      }
       const out = [];
       plan.forEach((it) => {
         const c = it.c, key = it.id, s = it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 } : it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
@@ -5420,6 +5462,8 @@
             if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane').sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
               .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
             (d.acts || []).filter((a) => !a.lead).forEach(dact);
+            if (b.type !== 'panel' && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];
+              hx('data-act="layer-behind"', 'Behind', 'Behind the other items, still filling the free desk - again to put it back among them', L1 === 'behind'); hx('data-act="layer-front"', 'Front', 'Over the other items, filling the free desk - again to put it back among them', L1 === 'front'); }
             if (b.type === 'panel') { if (desk) { const L0 = (this._layer || {})[key] || ''; hx('data-act="layer-behind"', 'Behind', 'Fill the free desk, under the other items', L0 === 'behind'); hx('data-act="layer-front"', 'Front', 'Fill the free desk, over the other items', L0 === 'front'); }
               hx('data-act="prefresh"', 'Refresh', 'Reload the panel'); hx('data-act="pquery"', 'Query', 'panel.query - what the panel holds'); hx('data-act="pdispatch"', 'Dispatch', 'panel.dispatch - drive it'); hx('data-act="pstand"', 'Standalone ↗', 'Open it in a tab of its own'); }
             if (b.type === 'result' && c.cap) hx('data-act="rerun"', 'Run again', 'Run ' + c.cap + ' again with the same arguments');

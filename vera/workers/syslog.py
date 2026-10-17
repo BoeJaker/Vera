@@ -984,6 +984,8 @@ async def syslog_clear(keep: int = 500, trace_id=None):
     "syslog.status", memory="off",
     http_method="GET", http_path="/syslog/status", http_tags=["syslog"],
     description="Syslog status: record count, monitor state, recent error summary.",
+    contract={"presentation": {"kind": "log", "map": {
+        "events": "recent_errors", "t": "ts", "text": "msg", "kind": "cap"}}},
 )
 async def syslog_status(trace_id=None):
     r = _redis()
