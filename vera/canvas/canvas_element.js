@@ -514,6 +514,22 @@
     return out;
   }
   const tblUi = (el, key) => { if (!el || !key) return { sort: -1, dir: 1, q: '', hide: {}, cols: false }; const m = el._tblUi || (el._tblUi = {}); return m[key] || (m[key] = { sort: -1, dir: 1, q: '', hide: {}, cols: false }); };
+  /* A DIAGRAM'S SOURCE, EDITED BESIDE ITS DRAWING (DU-E-diagram): per item - open, the draft, the last source that drew,
+     the error. Nothing here is written to the item; only Save writes (canvas.update). */
+  const dgUi = (el, key) => { const m = el._dgUi || (el._dgUi = {}); return m[key] || (m[key] = { open: false, draft: '', good: '', err: '' }); };
+  /* does a draft parse? '' when it does. Each line's brackets and quotes first (the drawing element's parser is lenient and
+     reads past an unclosed one), then the estate element's own parser (vera-mermaid's _build) - no second renderer. */
+  const dgCheck = (inner, code) => {
+    const src = String(code || '').trim(); if (!src) return 'the source is empty';
+    const lines = src.split('\n'); const OPEN = { ')': '(', ']': '[', '}': '{' };
+    for (let i = 0; i < lines.length; i++) { const ln = lines[i].replace(/%%.*$/, '');
+      if ((ln.match(/"/g) || []).length % 2) return 'line ' + (i + 1) + ': a quote is not closed';
+      const st = []; for (const ch of ln.replace(/"[^"]*"/g, '')) { if (ch === '(' || ch === '[' || ch === '{') st.push(ch); else if (OPEN[ch] && st[st.length - 1] === OPEN[ch]) st.pop(); }
+      if (st.length) return 'line ' + (i + 1) + ': "' + st[st.length - 1] + '" is not closed'; }
+    if (inner && typeof inner._build === 'function') { let t = null; try { t = typeof inner._theme === 'function' ? inner._theme() : {}; } catch (e) { t = null; }
+      if (t) { try { inner._build(src, t); } catch (e) { return String((e && e.message) || e); } } }
+    return '';
+  };
   const tblNum = (v) => { const s = String(v == null ? '' : v).replace(/[,%$£€\s]/g, ''); return s !== '' && isFinite(+s) ? +s : null; };
   /* the rows the bar shows, in its order: [index into the answer's rows, row] */
   function tblRows(c, ui) {
@@ -843,11 +859,21 @@
          style and the relevant options for along the top same as the rendered code output"): the kit's bar - Copy, Edit,
          Source, Pop out, Save, Send to - over the column's live drawing; Pop out is the canvas's own "open in the chat" */
       const VO = root.VeraOut;
-      if (key && VO && typeof VO.diagram === 'function') return `<div class="vc-codewrap vc-diagwrap" data-w="canvas.diagram">`
+      /* EDIT SOURCE (DU-E-diagram): the source in a box on the left, the drawing on the right (stacked on a narrow card); it
+         redraws as it is typed, a source that does not parse says so under the box and the last good drawing stays */
+      const ui = key && el && el._dgUi && el._dgUi[key] && el._dgUi[key].open ? el._dgUi[key] : null;
+      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui };
+      const ACTS = [{ act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }];
+      if (ui) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · editing', acts: [EDA].concat(ACTS) })
+        + `<div class="vc-dgedw" data-w="canvas.diagram.edit"><div class="vc-dged" data-dged="${esc(key)}"><div class="vc-dged-l">`
+        + `<textarea class="vc-dged-src" data-dg-src="${esc(key)}" spellcheck="false" aria-label="Mermaid source">${esc(ui.draft)}</textarea>`
+        + `<div class="vc-dged-err" role="status"${ui.err ? '' : ' hidden'}>${esc(ui.err)}</div>`
+        + `<div class="vc-dged-bar"><button type="button" class="vc-dged-save" data-act="dgsave"${ui.err ? ' disabled' : ''} title="Write this source into the item">Save</button><button type="button" data-act="dgcancel" title="Leave without writing anything (Esc)">Cancel</button><span class="vc-dim">redraws as you type</span></div></div>`
+        + `<div class="vc-dged-r vc-diag"><div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div></div></div></div>` + cap;
+      if (key && VO && typeof VO.diagram === 'function') return declare(el, key, { acts: [EDA] }) + `<div class="vc-codewrap vc-diagwrap" data-w="canvas.diagram">`
         + VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit', bar: false,
           body: `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div>` }) + `</div>` + cap;
-      if (key) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · ' + src.split('\n').length + ' lines', acts: [
-          { act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }] })
+      if (key) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · ' + src.split('\n').length + ' lines', acts: ACTS.concat([EDA]) })
         + `<div class="vc-diag" data-w="canvas.diagram"><div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div><pre class="vc-pre vc-dgsrc" hidden><code>${esc(src)}</code></pre></div>` + cap;
       return `<vera-mermaid class="vc-mm" bare title="${esc(title)}">${esc(src)}</vera-mermaid>` + cap;
     },
@@ -2491,6 +2517,18 @@
   .vc-json details{margin-left:2px}.vc-json summary{cursor:pointer;color:var(--dim,#6b7480);list-style:none}.vc-json summary::before{content:'\u25b8 ';font-size:9px}.vc-json details[open] > summary::before{content:'\u25be '}
   .vc-json .j-row{display:flex;gap:6px;padding-left:12px;min-width:0}.vc-json .j-k{color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-json .j-k::after{content:':'}
   .vc-json .j-str{color:var(--acc2,#8fb87a);word-break:break-word}.vc-json .j-num{color:var(--acc3,#c9955a)}.vc-json .j-null,.vc-json .j-more{color:var(--dim,#6b7480)}
+  /* a diagram's source edited beside its drawing (DU-E-diagram): side by side, stacked on a narrow card */
+  .vc-dgedw{container:dged / inline-size;display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+  .vc-dged{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:8px;min-height:0;flex:1 1 auto}
+  .vc-dged-l{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0}
+  .vc-dged-src{flex:1 1 auto;min-height:180px;resize:vertical;box-sizing:border-box;width:100%;font:11px/1.5 var(--mono,ui-monospace,monospace);padding:6px 8px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit;white-space:pre;overflow:auto;tab-size:2}
+  .vc-dged-src:focus{outline:none;border-color:var(--acc,#5a9e8f)}
+  .vc-dged-err{font:10.5px/1.45 var(--mono,ui-monospace,monospace);color:var(--err,#e06c75);white-space:pre-wrap;word-break:break-word}
+  .vc-dged-bar{display:flex;align-items:center;gap:6px}.vc-dged-bar .vc-dim{margin-left:auto;font-size:10px;color:var(--dim,#6b7480)}
+  .vc-dged-bar button{font:11px system-ui,sans-serif;padding:2px 10px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit;cursor:pointer}
+  .vc-dged-bar .vc-dged-save{border-color:var(--acc,#5a9e8f);color:var(--acc,#5a9e8f)}.vc-dged-bar button:disabled{opacity:.45;cursor:default}
+  .vc-dged-r{min-width:0;min-height:0}.vc-dged .vc-live{min-height:160px}
+  @container dged (max-width: 440px) { .vc-dged{grid-template-columns:minmax(0,1fr)} }
   /* a command that ran (DU-E-session) */
   .vc-rc{font:10px system-ui,sans-serif;padding:0 6px;border-radius:9px;border:1px solid currentColor;white-space:nowrap}.vc-rc.ok{color:var(--ok,#8fb87a)}.vc-rc.bad{color:var(--err,#e06c75)}
   .vc-ran-ask{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;margin:4px 0;border:1px solid var(--warn,#e5c07b);border-radius:6px;font:11px system-ui,sans-serif}.vc-ran-when{font-size:10px;margin:2px 0}
@@ -5433,6 +5471,18 @@
       body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.mdQ == null || ev.key !== 'Enter') return; ev.preventDefault();
         mdStep(q.closest('.vc-mdwrap'), mdUi(this, q.dataset.mdQ), ev.shiftKey ? -1 : 1); });
       this.addEventListener('vera:canvas:placed', () => { try { this._mdAgain(); } catch (e) { /* optional */ } });
+      /* a diagram's source typed (DU-E-diagram): nothing is re-rendered (the box keeps its focus) - after a pause the draft is
+         checked; one that parses is drawn into the item's own live element, one that does not says why and the drawing stays */
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null) return;
+        const key = q.dataset.dgSrc; const ui = dgUi(this, key); if (!ui.open) return; ui.draft = String(q.value || ''); const T = this._dgT || (this._dgT = {}); clearTimeout(T[key]);
+        T[key] = setTimeout(() => { if (!ui.open) return; const lv = (this._live || {})[key]; const inner = lv && lv.firstChild;
+          const err = dgCheck(inner, ui.draft); ui.err = err;
+          const box = [...body.querySelectorAll('.vc-dged[data-dged]')].find((x) => x.dataset.dged === key);
+          const eb = box && box.querySelector('.vc-dged-err'); if (eb) { eb.textContent = err; eb.hidden = !err; }
+          const sv = box && box.querySelector('[data-act="dgsave"]'); if (sv) sv.disabled = !!err;
+          if (err) return; ui.good = ui.draft.trim(); if (inner) this._mermaidInto(inner, key); }, 300); });
+      body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null || ev.key !== 'Escape') return;
+        ev.preventDefault(); ev.stopPropagation(); const box = q.closest('.vc-dged'); const b = box && box.querySelector('[data-act="dgcancel"]'); if (b) this._act(b, ev); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.tblQ == null) return;   /* the table bar's filter (DU-E-table) */
         const key = q.dataset.tblQ; tblUi(this, key).q = String(q.value || ''); clearTimeout(this._tblQT);
         this._tblQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
@@ -5936,6 +5986,27 @@
       if (act === 'hdmore') return this._hdMenu(key, btn);
       /* a command that ran (DU-E-session): run again - asked first, in place; then the same capability with the same
          arguments, its answer written into this item (output, exit code, when) */
+      /* a diagram's source edited beside its drawing (DU-E-diagram): open, Save (the one write), Cancel / Esc (no write) */
+      if (act === 'dgedit' || act === 'dgsave' || act === 'dgcancel') { const ui = dgUi(this, key);
+        if (act === 'dgedit' && !ui.open) { const c = this._contentOf(key) || {}; const s = String(c.mermaid || c.code || c.source || '').trim(); Object.assign(ui, { open: true, draft: s, good: s, err: '' }); }
+        else if (act === 'dgsave') { if (ui.err) return; const c = this._contentOf(key) || {}; const s = String(ui.draft || '').trim(); const was = String(c.mermaid || c.code || c.source || '').trim();
+          if (s && s !== was) { const nc = Object.assign({}, c, { mermaid: s }); if (c.code != null) nc.code = s; if (c.source != null) nc.source = s;
+            const b = this._blockOf(key); if (b && b.type === 'diagram') b.content = Object.assign({}, b.content || {}, nc);   /* drawn as saved until the refresh brings it back */
+            this.call('canvas.update', Object.assign(this._ref(key), { content: nc })); }
+          ui.open = false; }
+        else ui.open = false;
+        if (!ui.open) Object.assign(ui, { draft: '', good: '', err: '' });
+        clearTimeout((this._dgT || {})[key]); this._html = null; if (this._doc) this.render(this._doc);
+        /* the card grows for the editor on the desk (as a code card's edit does) and lets the height go when it ends */
+        setTimeout(() => { const it2 = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!it2) return;
+          if (!ui.open) { try { this._editFit(it2, true); } catch (e) { /* optional */ } return; }
+          const ta = it2.querySelector('[data-dg-src]'); if (ta) { ta.focus(); try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) { /* optional */ } }
+          if (!this.deskAlign()) return; const bd = it2.querySelector(':scope > .it-bd'); if (!bd) return;
+          const E = this._editGrow || (this._editGrow = {}); const H = (this._deskGeo && this._deskGeo.H) || 800;
+          const need = Math.round(it2.offsetHeight - bd.clientHeight + Math.max(bd.scrollHeight, 300) + 8);
+          if (need > H * 0.7) { if (this._max !== key) { this._toggleMax(key); E[key] = 'max'; } return; }
+          if (need > it2.offsetHeight + 4) { (this._minH || (this._minH = {}))[key] = need; E[key] = E[key] || 'grow'; this._placeNow(); } }, 60);
+        return; }
       if (act === 'tagain' || act === 'tagainno') { (this._ranAsk = this._ranAsk || {})[key] = act === 'tagain'; if (this._doc) this.render(this._doc); return; }
       if (act === 'tagainok') { const c = this._contentOf(key) || {}; (this._ranAsk = this._ranAsk || {})[key] = false; if (!c.cap) return;
         (this._ranBusy = this._ranBusy || {})[key] = true; if (this._doc) this.render(this._doc);
@@ -6551,7 +6622,8 @@
     /* the diagram's source into the estate's mermaid element (loaded once from the page); a changed source redraws it;
        the host's own window.mermaid draws when the element cannot be had, the source shows when nothing can */
     _mermaidInto(inner, key) {
-      const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || '').trim();
+      const c = this._contentOf(key) || {}; const dg = this._dgUi && this._dgUi[String(key)];   /* being edited: the draft's last good source (DU-E-diagram) */
+      const code = dg && dg.open && dg.good ? dg.good : String(c.mermaid || c.code || c.source || '').trim();
       const live = !!(this._liveOv && this._liveOv[String(key)]);
       /* the same source again is nothing to do - unless it was last drawn as a stream and the stream is over (drawn whole now) */
       if (!inner || (inner._mmCode === code && (live || inner._mmWhole))) return; inner._mmCode = code; inner._mmWhole = !live;
