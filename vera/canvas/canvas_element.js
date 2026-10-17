@@ -38,7 +38,8 @@
     return Array.isArray(b) ? Math.min(b[1], b[0] + Math.max(0, Math.round(n || 0))) : b; };
   /* A BODY DRAWS NO HEAD (DEEP-29 11A.4 Decision 4). It declares, as it is drawn, what its head used to hold - a line about
      it (sub, html) and its actions ({act, label, title, on} run through the item's one dispatcher, {href, download} a link;
-     lead: true puts one first in the head, ahead of the kit's, so a narrow card still shows it)
+     lead: true puts one first in the head, ahead of the kit's, so a narrow card still shows it; replaces: '<kit act>' leaves
+     that kit action out - head and menu - where the body's own stands for it)
      and any dropdowns of its own (menus, html) - and the item's container draws them: the line beside the title, the rest
      in the item's menu. A body drawn by the shared kit (code, a diagram, a file) is asked for its actions instead
      (VeraOut.barActions). Returns '' so a renderer can declare in an expression. */
@@ -1264,7 +1265,7 @@
          redraws as it is typed, a source that does not parse says so under the box and the last good drawing stays */
       const ui = key && el && el._dgUi && el._dgUi[key] && el._dgUi[key].open ? el._dgUi[key] : null;
       /* lead: first in the head, ahead of the kit's actions - a narrow card (under 640 px keeps four) still shows it */
-      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui, lead: true };
+      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui, lead: true, replaces: 'edit' };   /* the code kit's own Edit would be a second edit button */
       const ACTS = [{ act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }];
       if (ui) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · editing', acts: [EDA].concat(ACTS) })
         + `<div class="vc-dgedw" data-w="canvas.diagram.edit"><div class="vc-dged" data-dged="${esc(key)}"><div class="vc-dged-l">`
@@ -4219,7 +4220,8 @@
       const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; let o = '';
         (d.acts || []).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : x.aid ? '[data-app-action="' + x.aid + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { if (x.aid) { o += `<button class="ib" data-act="appact" data-app-action="${esc(x.aid)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label)}</button>`; return; } o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
         const card = this._kitCard(host, lead); const VO = root.VeraOut; const kit = card && VO && typeof VO.barActions === 'function' ? VO.barActions(card) : { acts: [], menus: [] };
-        kit.acts.filter((x) => !SKIP_VO.has(x.vo) && (kk !== key || !inHead('[data-vo-act="' + x.vo + '"]'))).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
+        const repl = new Set((d.acts || []).map((x) => x.replaces).filter(Boolean));   /* a declared action standing for a kit one (replaces) */
+        kit.acts.filter((x) => !SKIP_VO.has(x.vo) && !repl.has(x.vo) && (kk !== key || !inHead('[data-vo-act="' + x.vo + '"]'))).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
         return o + (d.menus || []).concat(kit.menus).map((m) => `<div class="hd-dd">${m}</div>`).join(''); };
       const mine = own(key, c, true); if (mine) h += '<hr>' + mine;
       c.querySelectorAll('.fu-p[data-key]').forEach((f) => { const o = own(f.dataset.key, f, false); const t = f.querySelector('.fu-t > b');
@@ -5458,8 +5460,10 @@
             const RANK = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'];
             /* a declared action marked lead goes first, ahead of the kit's: it is the one a narrow card keeps (data-pri) */
             const dact = (a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"` + (a.aid ? ` data-app-action="${esc(a.aid)}"` : ''), a.label, a.title, a.on); };
+            /* a declared action that replaces a kit action (replaces: 'edit' - the diagram's Edit source for the code kit's Edit) leaves it out */
+            const repl = new Set((d.acts || []).map((a) => a.replaces).filter(Boolean));
             (d.acts || []).filter((a) => a.lead).forEach(dact);
-            if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane').sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
+            if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane' && !repl.has(a.vo)).sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
               .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
             (d.acts || []).filter((a) => !a.lead).forEach(dact);
             if (b.type !== 'panel' && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];
