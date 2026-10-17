@@ -723,14 +723,15 @@
           y += h + G; });
       }
       slots.forEach(function (sl, i) { sl.id = sl.aspect[0] + i; sl.ids = []; });
-      /* items to slots: their own aspect first; with none free, the least full slot of their aspect (tiles last); with no slot of
-         their aspect at all, the nearest one (portrait -> square -> landscape; tile -> square) */
+      /* items to slots: their own aspect only; with none free, the least full slot of their aspect (tiles last) */
       var pills = [], ALT = { portrait: ['square', 'landscape'], landscape: ['square', 'portrait'], square: ['landscape', 'portrait'], tile: ['square'] };
       ['landscape', 'portrait', 'square', 'tile'].forEach(function (a) { by[a].forEach(function (it) {
         var own = slots.filter(function (s) { return s.aspect === a; }), free = own.filter(function (s) { return !s.ids.length; });
         if (free.length) { free.sort(function (p, q2) { return slotCost(it, p) - slotCost(it, q2); }); free[0].ids.push(it.id); return; }
         /* a composite is always of one aspect: another aspect's slot is taken only while it is FREE (a list never a tab of a table) */
-        if (!own.length) { for (var z = 0; z < ALT[a].length; z++) { var alt = slots.filter(function (s) { return s.aspect === ALT[a][z] && !s.ids.length; }); if (alt.length) { alt[0].ids.push(it.id); alt[0].aspectOf = a; return; } } pills.push(it.id); return; }
+        /* never in a slot of another aspect (owner 2026-10-17: "composites of elements that have different aspects are being made i.e. a node
+           graph in a tall slot"): no slot of its aspect - a pill; the score then prefers the layouts that have its slot */
+        if (!own.length) { pills.push(it.id); return; }
         /* a card holds at most o.maxTabs (8) tabs - past that, a pill of its own (a ninth was split off as a card and took the column) */
         var room = own.filter(function (s) { return s.ids.length < (o.maxTabs || 8); });
         if (!room.length || (o.noComposite && o.noComposite[it.id]) || (a === 'tile' && own.length < 2)) { pills.push(it.id); return; }
