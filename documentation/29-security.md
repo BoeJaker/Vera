@@ -519,8 +519,9 @@ What the framework does provide:
     ([41](./41-system-inventory.md)).
 - **Confirmation flags on high-impact operations.** Examples are
   `markets.broker.order` (needs `confirm=true`, trading **armed** with an
-  out-of-band code that expires, and the account's limits; see
-  [15](./15-markets.md)), `secrets.delete` (`confirm`), and dry-run-by-default capabilities
+  out-of-band code that expires, and the account's limits, and it runs only
+  from the studio panel's own route: the `money` tag refuses loops, agents,
+  schedules, widgets, bridges and `/mcp/call`; see [15](./15-markets.md)), `secrets.delete` (`confirm`), and dry-run-by-default capabilities
   (`secrets.setup`, `secrets.migrate`).
 - **Agent tool allowlists.** Agent loops and specialist profiles run with
   `allowed_caps` lists ([19](./19-agents-chat.md)).

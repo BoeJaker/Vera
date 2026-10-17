@@ -926,7 +926,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "markets.broker.arm", http_method="POST", http_path="/markets/broker/arm",
-        http_tags=["markets"], memory="off",
+        http_tags=["markets"], memory="off", tags=["markets", "money"],
         description="Start enabling REAL trading on a linked account: sends a 6-digit arm code "
                     "out of band (Telegram, and a 0600 file on the Vera host). The code is never "
                     "returned here. Pass it to markets.broker.set_trading or markets.broker.limits.set "
@@ -965,7 +965,7 @@ if _CAP_AVAILABLE:
     @capability(
         "markets.broker.set_trading", http_method="POST",
         http_path="/markets/broker/set_trading", http_tags=["markets"], memory="on",
-        redact_args=["arm_code"],
+        redact_args=["arm_code"], tags=["markets", "money"],
         description="Enable or disable REAL order placement on a linked account (off by default). "
                     "Enabling needs the arm code from markets.broker.arm and lasts `hours` "
                     "(default 8, max 24), then expires. Disabling needs no code. Input: id (str!), "
@@ -995,7 +995,7 @@ if _CAP_AVAILABLE:
     @capability(
         "markets.broker.limits.set", http_method="POST",
         http_path="/markets/broker/limits/set", http_tags=["markets"], memory="on",
-        redact_args=["arm_code"],
+        redact_args=["arm_code"], tags=["markets", "money"],
         description="Set an account's REAL-order limits; needs the arm code from markets.broker.arm. "
                     "0 means no cap. Inputs: id (str!), arm_code (str!), max_order_amount (float, base "
                     "units), max_order_notional (float), max_daily_notional (float), symbols (list - "
@@ -1023,7 +1023,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "markets.broker.order", http_method="POST", http_path="/markets/broker/order",
-        http_tags=["markets"], memory="on",
+        http_tags=["markets"], memory="on", tags=["markets", "money"],
         description="Place a REAL order on a linked exchange. GUARDED: trading must be armed and "
                     "unexpired (markets.broker.arm + set_trading), the order must pass the account's "
                     "limits, and confirm must be true. client_order_id makes it idempotent: the same "

@@ -172,7 +172,7 @@ DEFAULT_TEST_DENYLIST = [
     "mail.", "tg.", "exec.", "docker.", "git.", "provision.", "ssh.", "mesh.",
     "deploy.", "comms.", "netsec.", "ide.remote.", "sandbox.host.",
     "loops.run", "dream.cycle.run", "dream.scheduler.", "evolve.",
-    "markets.evolve.", "business.", "commerce.", "accounts.",
+    "markets.evolve.", "markets.broker.", "business.", "commerce.", "accounts.",
 ]
 
 DEFAULT_CONFIG: Dict[str, Any] = {

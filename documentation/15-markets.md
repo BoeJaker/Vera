@@ -778,6 +778,17 @@ and the markers refresh with each bar update.
 | `markets.broker.order` | Place a **real** order: `id`, `symbol`, `side` (buy/sell), `type` (market/limit), `amount` (base units), `price` (required for limit), `confirm`, `client_order_id`. It is refused unless trading is armed and unexpired, the account's limits allow it, **and** `confirm=true`. `client_order_id` makes it idempotent: the same id never places a second order. Every attempt is recorded in `mkt_broker_orders`. An exception marks it `unknown` (it may still have been placed; it counts toward the daily cap). It emits a `markets.broker` event and sends a Telegram notice when Telegram is loaded. |
 | `markets.broker.unlink` | Remove an account and its sealed keys. |
 
+**Only the owner, from the panel.** `arm`, `set_trading`, `limits.set` and
+`order` carry the `money` tag. They run only through their own HTTP route
+(the studio's buttons), as the outermost capability and outside background
+work. A loop, an agent turn, a dream, a DAG step, a schedule or trigger, a
+widget read, an MCP bridge and `/mcp/call` (which the chat's cap-in-chat and
+the copilots use) all get `{ok: false, refused: "money"}` and a `cap.denied`
+event. `markets.broker.` is also in the Loop Lab test denylist. Until
+caller tokens land (B0.3b), a server-side HTTP client calling the route over
+loopback is not told apart from the panel; the arm code, expiry and limits
+still apply to it.
+
 Linked accounts are stored in the `mkt_broker` table.
 
 ---
@@ -891,7 +902,7 @@ Bars live in `fabric_records` under `mkt.*` datasets ([06](./06-data-fabric.md))
 | Gaps in a series | Run `markets.history.audit`, then `markets.history.repair`. |
 | `backtrader` engine missing | It is optional. `markets.backtest.engines` shows availability. Use `native` for shorts and leverage. |
 | Sentiment returns *"no headlines found"* | `web.search` is unavailable or returned nothing. |
-| `markets.broker.order` refused | Arm trading (`markets.broker.arm`, then `markets.broker.set_trading` with the code), check the account's limits in `markets.broker.list`, and pass `confirm=true`. |
+| `markets.broker.order` refused | Arm trading (`markets.broker.arm`, then `markets.broker.set_trading` with the code), check the account's limits in `markets.broker.list`, and pass `confirm=true`. `refused: "money"` means it was not called from the studio panel's own route. |
 | The trader director never acts | Check `markets.trader.status`: is it enabled, has `interval_min` elapsed, and is a sim account set for sim mode? |
 
 ---

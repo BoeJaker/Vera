@@ -34,6 +34,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .capability_enforcement import PolicyEnforcementDenied, enforcement_projection
+from . import money_guard_core as _money_guard
 # Pure context-budget decisions — window vs prompt vs output vs retained prefix.
 # Imports nothing from Vera, so it is safe this early and cannot cycle. Pinned by
 # tests/test_ctx_policy.py, which is the point: these were inline and untestable.
@@ -7404,6 +7405,7 @@ def capability(
                 if not _props[_k].get("description"):
                     _props[_k]["description"] = _frag["description"]
         group  = name.split(".")[0]
+        _is_money = _money_guard.TAG in (tags or ())
         _redact_args = frozenset(str(key) for key in (redact_args or ()))
         _alias_for = str(compatibility_alias_for or "").strip()
         if _alias_for and (_alias_for == name or not re.fullmatch(
@@ -7428,6 +7430,21 @@ def capability(
                         return _estate_guard.refusal(name)
                 except Exception as _eg:              # pragma: no cover
                     log.debug("estate guard skipped for %s: %s", name, _eg)
+            # MONEY: a capability tagged "money" (real broker orders, arming) runs only when
+            # the owner asks for it directly - its own route or the browser's /mcp/call, as
+            # the outermost capability, outside any background driver. Loops, agents,
+            # dreams, schedules, widgets and bridges are refused (money_guard_core).
+            if _is_money:
+                _ok, _why = _money_guard.allowed(
+                    name=name, running_caps=RUNNING_CAPS.get(), http_cap=CURRENT_HTTP_CAP.get(""),
+                    mcp_call=MCP_CALL_ACTIVE.get(False), caller_kind=CALLER_KIND.get(""),
+                    background=BACKGROUND_LLM.get(""))
+                if not _ok:
+                    log.warning("money guard: refused %s (%s)", name, _why)
+                    await emit_event({"type": "cap.denied", "name": name, "group": group,
+                                      "rule": "money", "reason": _why})
+                    return {"ok": False, "error": f"refused: {_why}", "refused": "money",
+                            "capability": name}
             # READ-THROUGH: a dev sandbox has no estate of its own (its Redis and SQLite are its own, empty); a read-only
             # estate capability is answered by prod, one way — see sandbox_guard.read_through_allowed. Prod itself
             # never takes this branch, and neither does a process that merely imported this module (a test, a script):
