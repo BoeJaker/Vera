@@ -52,5 +52,11 @@ t('...with the caret it had (selection restored)', /const dgFocus[\s\S]{0,1000}t
 t('...called right after the open render', C.includes("if (ui.open) dgFocus(this, key, act === 'dgedit');"));
 t('...and again after each placement while it held the focus', C.includes("this.addEventListener('vera:canvas:placed', () => { const m = this._dgUi || {}; Object.keys(m).forEach((k) => { if (m[k] && m[k].open && m[k].had) dgFocus(this, k, false); }); });"));
 t('the caret is tracked as it is typed / moved', C.includes("['input', 'keyup', 'pointerup', 'select'].forEach((t) => body.addEventListener(t, dgCaret));"));
+// ONE edit button: Edit source stands for the code kit's own Edit (replaces), so the kit's is left out of the head and the menu
+t('Edit source replaces the kit’s Edit', /act: 'dgedit'[^\n]*replaces: 'edit' \}/.test(C));
+t('...the head leaves a replaced kit action out', C.includes("if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane' && !repl.has(a.vo)).sort("));
+t('...and so does the item menu', C.includes("kit.acts.filter((x) => !SKIP_VO.has(x.vo) && !repl.has(x.vo) && (kk !== key ||"));
+{ const el = {}; mod.BLOCK.diagram({ mermaid: SRC }, 'l', 'diagram:rep', el); const d = (el._decl || {})['diagram:rep'] || {};
+  t('...as the diagram declares it', (d.acts || []).some((a) => a.act === 'dgedit' && a.replaces === 'edit')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

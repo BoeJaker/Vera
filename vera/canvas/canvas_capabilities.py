@@ -243,6 +243,10 @@ async def _target(id: str = "", session_id: str = "", create: bool = True) -> Op
     doc = await _load(cid)
     if doc or not create:
         return doc
+    # NO STORE, NO CANVAS (mirror-diag 2026-10-17): with Redis absent the save is a no-op, and a "created" canvas that was
+    # never stored made canvas.session.resolve answer ok/created while /canvas/get said "unknown canvas". Say there is none.
+    if not _redis():
+        return None
     doc = {"id": cid, "title": "Session canvas", "mode": "session", "topic": "",
            "session": str(session_id), "created": now_iso(), "updated": now_iso(),
            "blocks": [], "revision": 0, "timeline": []}
