@@ -133,6 +133,11 @@ UPSERT_CONTENT = """INSERT INTO web_content (content_hash, first_key, size, read
     ON CONFLICT (content_hash) DO UPDATE SET last_seen = NOW(), seen = web_content.seen + 1"""
 INSERT_QUERY = """INSERT INTO web_queries (query, engine, caller, purpose, results, result_keys)
     VALUES ($1, $2, $3, $4, $5, $6)"""
+#: a page ingest tells the map which fabric record holds a content hash (the first one wins)
+NOTE_RECORD = """INSERT INTO web_content (content_hash, first_key, record_id) VALUES ($1, $2, $3)
+    ON CONFLICT (content_hash) DO UPDATE SET record_id = COALESCE(web_content.record_id, EXCLUDED.record_id),
+    last_seen = NOW()"""
+LOOKUP_RECORD = "SELECT content_hash, first_key, record_id, seen FROM web_content WHERE content_hash = $1"
 
 MAX_LINKS_PER_PAGE = 500
 MAX_TITLE = 300

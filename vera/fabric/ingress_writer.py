@@ -108,8 +108,10 @@ class ReceiptWriter:
             self.stats["dropped_no_store"] += len(batch)
             return {"dropped": len(batch)}
         t0 = time.monotonic()
-        fetches = [b for b in batch if "query" not in b]
+        fetches = [b for b in batch if "query" not in b and "record" not in b]
         queries = [b for b in batch if "query" in b]
+        notes = [(b["record"]["content_hash"], b["record"].get("key") or "", b["record"]["record_id"])
+                 for b in batch if "record" in b and b["record"].get("content_hash") and b["record"].get("record_id")]
         if self._rows_in_thread:
             rows = await asyncio.to_thread(lambda: [rc.rows_for(b) for b in fetches])
         else:
@@ -136,6 +138,8 @@ class ReceiptWriter:
                         await conn.executemany(rc.UPSERT_LINK, links)
                     if qrows:
                         await conn.executemany(rc.INSERT_QUERY, qrows)
+                    if notes:
+                        await conn.executemany(rc.NOTE_RECORD, notes)
         except Exception as e:  # noqa: BLE001
             self.stats["errors"] += 1
             self.stats["last_error"] = str(e)[:200]

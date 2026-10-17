@@ -185,6 +185,33 @@ def near_duplicate(a: int, b: int, bits: int = NEAR_DUP_BITS) -> bool:
     return hamming(a, b) <= bits
 
 
+def shingle_jaccard(a: str, b: str, shingle: int = 3) -> float:
+    """Jaccard similarity of word shingles: the near-duplicate measure for SHORT texts, where a 64-bit simhash
+    over a few dozen shingles is too coarse (one changed word moved the fixture's near-duplicate 20 bits)."""
+    def grams(t: str):
+        w = _TOKEN.findall(str(t or "").lower())
+        if len(w) < shingle:
+            return {" ".join(w)} if w else set()
+        return {" ".join(w[i:i + shingle]) for i in range(len(w) - shingle + 1)}
+    ga, gb = grams(a), grams(b)
+    if not ga and not gb:
+        return 1.0
+    return len(ga & gb) / max(1, len(ga | gb))
+
+
+SHORT_TEXT_WORDS = 400
+NEAR_DUP_JACCARD = 0.8
+
+
+def near_duplicate_text(a: str, b: str) -> bool:
+    """Two texts that say the same thing with a few words changed: simhash within NEAR_DUP_BITS for long texts,
+    shingle Jaccard >= NEAR_DUP_JACCARD when either is short (under SHORT_TEXT_WORDS words)."""
+    na, nb = len(str(a or "").split()), len(str(b or "").split())
+    if min(na, nb) < SHORT_TEXT_WORDS:
+        return shingle_jaccard(a, b) >= NEAR_DUP_JACCARD
+    return near_duplicate(simhash64(a), simhash64(b))
+
+
 def lsh_bands(sim: int, bands: int = 4) -> List[int]:
     """The simhash split into `bands` equal slices (4 × 16 bits): two hashes within 3 bits share at least one
     band, so a candidate lookup is an equality query per band, not a scan."""

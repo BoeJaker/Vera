@@ -2135,6 +2135,10 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     entities_llm = bool(config.get("extract_entities_llm", True))
     reconcile_ent = bool(config.get("reconcile_entities", False))
     llm_tagging  = bool(config.get("llm_tagging", False))
+    # WI-4: the second-order pass (entities, LLM tags) runs after the crawl, on the idle queue, when the switch
+    # discovery.defer_enrichment is on and the caller did not ask for it inline (want_tiers includes "t3")
+    _defer_t3 = (_ingress_defer_on() and "t3" not in set(config.get("want_tiers") or ()))
+    _deferred_t3: List[Dict] = []
     min_relevance = float(config.get("min_relevance", 0.0) or 0.0)
     topic        = config.get("topic", "") or ""
     topic_dropoff = int(config.get("topic_dropoff", 3))
@@ -2707,12 +2711,15 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
             if do_entities or (llm_tagging and topic):
                 ck = "code" if (structure.get("code_blocks") and
                                 len(structure.get("code_blocks", [])) >= 2) else "web"
-                try:
-                    _pq_put_nowait((full_text, title, rid, ds_id, ck, page_url,
-                                    bool(llm_tagging and topic),
-                                    bool(do_entities), bool(entities_llm)))
-                except Exception as e:
-                    log.debug("enqueue proc %s: %s", page_url, e)
+                if _defer_t3:
+                    _deferred_t3.append({"rid": rid, "ck": ck, "url": page_url})
+                else:
+                    try:
+                        _pq_put_nowait((full_text, title, rid, ds_id, ck, page_url,
+                                        bool(llm_tagging and topic),
+                                        bool(do_entities), bool(entities_llm)))
+                    except Exception as e:
+                        log.debug("enqueue proc %s: %s", page_url, e)
             if rep_dropoff > 0 and full_text:
                 pg=set(re.sub(r"[^a-z0-9]"," ",full_text[:4000].lower()).split())
                 if pg:
@@ -2961,6 +2968,15 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
         if pending:
             await asyncio.wait(pending)
 
+    # WI-4: the deferred second-order pass goes to the idle queue as one job for this crawl
+    if _deferred_t3:
+        try:
+            r = await _submit_t3(ds_id, _deferred_t3, crawl_id=crawl_id, llm_ent=bool(entities_llm),
+                                 reconcile=bool(reconcile_ent), topic=(topic if llm_tagging else ""))
+            await _emit("enrichment_deferred", pages=len(_deferred_t3), dataset_id=ds_id, job=r.get("id", ""),
+                        message=f"entities for {len(_deferred_t3)} pages queued for a quiet window")
+        except Exception as e:
+            log.warning("deferred enrichment %s: %s", ds_id, e)
     # Wait for the background 2nd-order queue to finish (it ran in tandem
     # throughout the crawl — this only awaits the small tail), then stop workers.
     try:
@@ -3179,6 +3195,120 @@ def _page_rid(dataset_id: str, url: str) -> str:
 # run the live fetch/search, then refresh the discovery entity graph.
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ── WI-4: the web map's dedupe and the deferred second-order pass ──────────────
+try:
+    from Vera.vera.fabric import ingress_parse_core as _pc
+except ImportError:                    # pragma: no cover
+    from vera.fabric import ingress_parse_core as _pc
+
+
+def _ingress_mod():
+    import sys as _sys
+    return _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+
+
+def _ingress_dedupe_on() -> bool:
+    m = _ingress_mod()
+    try:
+        return bool(m and m.dedupe_on())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ingress_defer_on() -> bool:
+    m = _ingress_mod()
+    try:
+        return bool(m and m.defer_on())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ingress_hash(text: str) -> str:
+    try:
+        return _pc.ic.content_hash(text) if text else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def _ingress_lookup(content_hash: str):
+    m = _ingress_mod()
+    if m is None:
+        return None
+    try:
+        return await m.lookup_record(content_hash)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ingress_note(content_hash: str, rid: str, url: str) -> None:
+    m = _ingress_mod()
+    if m is not None:
+        try:
+            m.note_record(content_hash, rid, _pc.ic.url_key(url))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _idle_svc():
+    try:
+        from Vera.vera import idle_queue_service as s
+        return s
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _submit_t3(ds_id: str, items: List[Dict], *, crawl_id: str = "", llm_ent: bool = False,
+                     reconcile: bool = False, topic: str = "") -> Dict:
+    """One idle-queue job for a crawl's deferred entity pass; without a queue it runs now, in the background."""
+    job = _pc.t3_job(ds_id, items, crawl_id=crawl_id, llm_ent=llm_ent, reconcile=reconcile, llm_tag_topic=topic)
+    svc = _idle_svc()
+    if svc is None:
+        asyncio.create_task(_t3_handler({"payload": job["payload"]}, None))
+        return {"queued": False, "id": ""}
+    return await svc.submit(job["kind"], job["title"], dedupe_key=job["dedupe_key"], payload=job["payload"],
+                            total=job["total"])
+
+
+async def _t3_handler(job: Dict, should_continue) -> Dict:
+    """The deferred second-order pass: entities (and relations) for each record the crawl stored, one at a time,
+    yielding when the box gets busy (the queue re-queues what is left)."""
+    p = job.get("payload") or {}
+    ds_id, recs = str(p.get("dataset_id") or ""), list(p.get("records") or [])
+    done, found = int(((job.get("progress") or {}).get("done") or 0)), 0
+    svc = _idle_svc()
+    for i, rec in enumerate(recs):
+        if i < done:
+            continue
+        if should_continue is not None:
+            why = await should_continue()
+            if why:
+                return {"yielded": f"pre-empted: {why}", "items": i}
+        rid = rec.get("rid") or ""
+        try:
+            row = _sqlite_conn().execute("SELECT text FROM fabric_records WHERE id=?", (rid,)).fetchone()
+            text = row["text"] if row else ""
+            if text:
+                found += await extract_entities_for_record(text, rid, ds_id, rec.get("ck") or "web",
+                                                           llm_assist=bool(p.get("llm_ent")),
+                                                           reconcile=bool(p.get("reconcile")))
+        except Exception as e:  # noqa: BLE001
+            log.debug("t3 %s: %s", rid, e)
+        if svc is not None and job.get("id"):
+            try:
+                await svc.report_progress(job["id"], done=i + 1, total=len(recs))
+            except Exception:  # noqa: BLE001
+                pass
+    return {"ok": True, "items": len(recs), "entities": found}
+
+
+try:
+    _svc_t3 = _idle_svc()
+    if _svc_t3 is not None and not _svc_t3.has_handler(_pc.T3_KIND):
+        _svc_t3.register_handler(_pc.T3_KIND, _t3_handler)
+except Exception as _e:  # noqa: BLE001
+    log.debug("t3 handler not registered: %s", _e)
+
+
 async def discover_ingest_page(
     url: str, *, dataset_id: str = "", html: str = "", text: str = "",
     title: str = "", structure: Optional[Dict] = None,
@@ -3242,8 +3372,20 @@ async def discover_ingest_page(
     extra_tags = list(tags or []) + ["web", "discovery"]
 
     rid = _page_rid(ds_id, url)
+    # WI-4 dedupe (switch ingress.dedupe): the same record with the same content is not ingested again; content
+    # already held under another record is linked to it and skips the entity pass
+    _chash = _ingress_hash(full_text)
+    _canonical = ""
+    if _chash and _ingress_dedupe_on():
+        _dec = _pc.dedupe_decision(_chash, await _ingress_lookup(_chash), ds_id, rid)
+        if _dec["action"] == "skip":
+            return {"ok": True, "record_id": rid, "dataset_id": ds_id, "url": url, "title": title,
+                    "chars": len(full_text), "entities": 0, "full_fetch": bool(full_fetch), "deduped": "same"}
+        if _dec["action"] == "link":
+            _canonical, extract_entities = _dec["canonical"], False
     record = {
         "id": rid, "text": full_text, "title": title, "url": url,
+        "content_hash": _chash, "canonical_record": _canonical,
         "hostname": urlparse(url).netloc,
         "headings": headings[:20],
         "links": [{"url": ln.get("url", ""), "anchor": ln.get("anchor", "")[:80]}
@@ -3256,6 +3398,8 @@ async def discover_ingest_page(
     except Exception as e:
         log.warning("discover_ingest_page ingest %s: %s", url, e)
         return {"error": f"ingest: {e}", "url": url, "dataset_id": ds_id}
+    if _chash and not _canonical:
+        _ingress_note(_chash, rid, url)         # the map learns which record holds this content
 
     # Mirror into fabric_pages so discover_recall / gather_discovery can find it
     try:
