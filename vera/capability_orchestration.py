@@ -12459,6 +12459,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "minds/training_state.py"),
         os.path.join(_here, "minds/judge.py"),
         os.path.join(_here, "minds/cascade.py"),
+        os.path.join(_here, "minds/claims.py"),
         os.path.join(_here, "minds/tool_shortlist.py"),
         os.path.join(_here, "minds/label_capabilities.py"),
         os.path.join(_here, "minds/export.py"),
