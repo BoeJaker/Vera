@@ -757,6 +757,180 @@
     if (box) box.querySelectorAll('.vc-tl-e').forEach((r) => r.classList.toggle('cur', dots[i] && r.dataset.i === dots[i].dataset.tlGo));
   }
 
+  /* THE RECORDS BROWSER, IN PARTS (DU-E-records, ESTATE-UI-REVIEW 4.5: the largest element - reader, names menu, evidence and
+     pills in one 155-line function, "a hot spot for regressions"). The same drawing, byte for byte (rec_snap: 30 cases before
+     and after), built from parts that share one context: recCtx (what is shown and the small pieces every part uses), recOpened
+     (one record opened: its facts, its reader, its text, its neighbours), recBody (list / cards / table / graph), recEvidence
+     (a lookup's head and foot), recGlance (where the pages came from and when), recDraw (the bar, the names menu, the facets,
+     the pager). BLOCK.records is recDraw(recCtx(...)). */
+  function recCtx(c, size, key, el) {
+    const all = Array.isArray(c.items) ? c.items.filter((r) => r && typeof r === 'object') : [];
+    const st = recState(el, key);
+    // the view the item asks for (the fabric's: graph) is where it starts; the reader's own choice wins after that
+    if (!st._v0) { st._v0 = true; if (c.view) st.view = String(c.view); }
+    /* WHAT THE PAGES NAME: each row's page's entities, from the reader cache (_srcPrefetch fills them, in memory - never
+       the web), as facets beside the sites - the people, organisations and places two or more of the pages name.
+       Choosing one shows the pages that name it; each row carries its own top three; and the shared names make a
+       graph of the pages and what links them. */
+    const ents = (el && el._recEnts && el._recEnts[String(key)]) || {};
+    const entsOf = (r) => ents[String(r.id)] || [];
+    const entN = {}; all.forEach((r) => entsOf(r).forEach((e) => { entN[e[0]] = (entN[e[0]] || 0) + 1; }));
+    const entList = Object.keys(entN).filter((n) => entN[n] >= 2).sort((a, b) => entN[b] - entN[a]).slice(0, size === 'xl' ? 12 : 6);
+    const canGraph = c.kind === 'memory' || c.view === 'graph' || entList.length > 0;
+    if (st.view === 'graph' && !canGraph) st.view = 'list';
+    const q = String(st.q || '').toLowerCase().trim();
+    let rows = all.filter((r) => (!st.ent || entsOf(r).some((e) => e[0] === st.ent)) && (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
+    if (st.sort === 'newest') rows = rows.slice().sort((a, b) => (Date.parse(b.when) || 0) - (Date.parse(a.when) || 0));
+    else if (st.sort === 'title') rows = rows.slice().sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
+    const per = st.view === 'cards' ? ({ s: 4, m: 6, l: 9, xl: 18 }[size] || 6) : ({ s: 4, m: 6, l: 10, xl: 20 }[size] || 8);
+    const pages = Math.max(1, Math.ceil(rows.length / per)); const page = Math.min(Math.max(0, st.page | 0), pages - 1);
+    const shown = rows.slice(page * per, page * per + per);
+    const K = esc(key || '');
+    const icon = { web: '\u{1F310}', news: '\u{1F4F0}', memory: '◈', research: '\u{1F50E}', evidence: '\u{1F50E}' }[c.kind] || '☰';
+    const doms = {}; all.forEach((r) => { if (r.domain) doms[r.domain] = (doms[r.domain] || 0) + 1; });
+    const domList = Object.keys(doms).sort((a, b) => doms[b] - doms[a]).slice(0, size === 'xl' ? 12 : 6);
+    const hue = (s) => { let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
+    /* a source's badge in one of the theme's category colours (--dv1..7), the same site always the same colour */
+    /* a lookup's evidence carries the number the reply cites it by: that is its badge (see the evidence strip below) */
+    const badge = (r) => c.kind === 'evidence' && r.n ? `<span class="vc-rbx-fav vc-rbx-num${r.kind === 'intel' ? ' intel' : ''}" title="cited as [${esc(r.n)}]${r.kind === 'intel' ? ' - from a tracked topic' : ''}">${esc(r.n)}</span>` : badge0(r);
+    const badge0 = (r) => { const d = r.domain || (r.meta && (r.meta.dataset_id || r.meta.source)) || c.kind || '?'; const h = hue(d); return `<span class="vc-rbx-fav" style="--dvc:var(--dv${1 + (h % 7)},hsl(${h} 45% 60%))">${esc(String(d).replace(/^www\./, '').charAt(0).toUpperCase())}</span>`; };
+    const ago = (t) => { const x = Date.parse(t); if (!isFinite(x)) return String(t || '').slice(0, 10); const s = (Date.now() - x) / 1000; return s < 3600 ? Math.max(1, Math.round(s / 60)) + 'm' : s < 172800 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd'; };
+    const actBtn = (act, id, label, t) => `<button class="vc-rbx-b" data-rec-act="${act}" data-rec-key="${K}" data-rec-arg="${esc(id)}" title="${esc(t || '')}">${label}</button>`;
+    const paras = (s) => String(s || '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{1,}/g, '\n\n').trim();
+    const title = (r) => r.url ? `<a class="vc-rbx-t" href="${esc(r.url)}" target="_blank" rel="noopener" data-rec-stop="1">${esc(r.title || r.url)}</a>` : `<span class="vc-rbx-t">${esc(r.title || r.id)}</span>`;
+    const score = (r) => r.score != null ? `<span class="vc-rbx-sc" title="relevance ${esc(r.score)}"><i style="width:${Math.round(Math.max(0, Math.min(1, +r.score)) * 100)}%"></i></span>` : '';
+    return { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score };
+  }
+  function recOpened(x, r) {
+    const { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score } = x;
+      const b = (st.body || {})[r.id] || {};
+      const isRec = !!(r.ref && r.ref.record_id);
+      /* a page in the list does everything a source item does (see ONE PAGE VIEW): reader mode, its picture, its explode,
+         to the canvas, open - and once read, who wrote it, what it names, where it points */
+      const acts = `<button class="vc-rbx-b rb-back" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}" title="close the page - the card goes back where it was">← back</button>` + (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)')
+          + actBtn('shot', r.id, b.shot ? 'hide the picture' : 'see the page', 'a picture of the page as it looks (browser.screenshot)')
+          + ((b.reader && b.reader.markdown) || b.text ? actBtn('xpl', r.id, 'explode', 'a structured diagram of the page - its sections, what it names, how they connect') : '')
+          + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
+        + (isRec ? actBtn('rec', r.id, b.text ? 'read again' : 'read the record', 'the record in full, in pages (fabric.record.get)')
+                 + actBtn('nb', r.id, b.nb ? 'neighbours \u21bb' : 'neighbours', 'the records nearest this one, across every dataset (fabric.loom.record_match)') : '');
+      const facts = []; const fact = (k, vHtml) => { if (vHtml != null && vHtml !== '') facts.push(`<span><i>${esc(k)}</i>${vHtml}</span>`); };
+      if (r.domain) fact('site', esc(r.domain));
+      if (r.when) fact('when', esc(String(r.when).slice(0, 19).replace('T', ' ')));
+      if (r.score != null && isFinite(+r.score) && +r.score > 0) fact('relevance', esc(Math.round(+r.score * 100) + '%'));   // no score is not a score of 0
+      Object.keys(r.meta || {}).forEach((k) => fact(k, esc(r.meta[k])));
+      const rec = b.rec || null;
+      if (rec) { const s = rec.source || {}; if (s.url) fact('source', `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.label || s.url)}</a>`); else if (s.label) fact('source', esc(s.label));
+        if (rec.created_at) fact('written', esc(String(rec.created_at).slice(0, 19))); if (rec.total_chars) fact('length', esc(rec.total_chars > 1000 ? (rec.total_chars / 1000).toFixed(1) + 'k chars' : rec.total_chars + ' chars')); }
+      const tags = (Array.isArray(r.tags) && r.tags.length ? r.tags : (rec && rec.tags) || []).slice(0, 12);
+      const fields = rec && rec.data && typeof rec.data === 'object' ? Object.keys(rec.data) : [];
+      /* the same chunk three times over (a document indexed in overlapping pieces) is ONE neighbour, counted */
+      const nbList = []; if (Array.isArray(b.nb)) { const bySig = {}; b.nb.forEach((m) => { const sg = String(m.snippet || m.id).replace(/\s+/g, ' ').trim().slice(0, 80).toLowerCase(); if (bySig[sg]) { bySig[sg].n++; return; } const x = Object.assign({ n: 1 }, m); bySig[sg] = x; nbList.push(x); }); }
+      const nbHtml = Array.isArray(b.nb) ? `<div class="vc-rbx-nb"><h5>nearest records \u00b7 ${nbList.length}</h5>` + (nbList.length ? nbList.map((m) => {
+          const on = !!(b.nbOpen || {})[m.id]; const nt = (b.nbText || {})[m.id];
+          const head = String(m.snippet || m.id).replace(/\s+/g, ' ').trim();
+          return `<div class="vc-rbx-nbr${on ? ' on' : ''}" data-rec-act="nbopen" data-rec-key="${K}" data-rec-arg="${esc(r.id + '|' + m.id)}">`
+            + `<div class="vc-rbx-nbh"><b>${esc(head.slice(0, 90))}</b>${m.n > 1 ? `<small title="the same text in ${m.n} records">\u00d7${m.n}</small>` : ''}<small>${esc(m.dataset_id || '')}</small></div>`
+            + (on ? (nt ? `<div class="vc-rbx-nbt">${mdx(paras(String(nt).slice(0, 6000)))}</div>` : `<div class="vc-rbx-busy">\u2026 reading</div>`) : '')
+            + `</div>`; }).join('') : '<div class="vc-rbx-empty">nothing near it</div>') + `</div>` : '';
+      return `<div class="vc-rbx-open">${r.snippet && !r.text ? `<div class="vc-rbx-full">${esc(r.snippet)}</div>` : ''}`
+        + (facts.length ? `<div class="vc-rbx-meta">${facts.join('')}</div>` : '')
+        + (tags.length ? `<div class="vc-rbx-tags">${tags.map((x) => `<span>#${esc(x)}</span>`).join('')}</div>` : '')
+        + (fields.length ? `<details class="vc-rbx-fields"><summary>fields \u00b7 ${fields.length}</summary><div class="vc-rbx-kv">${fields.map((k) => `<span class="k">${esc(k)}</span><span class="v">${esc(rec.data[k] == null ? '' : String(rec.data[k]))}</span>`).join('')}</div></details>` : '')
+        + (b.reader ? pageExtras(b.reader, r.domain || '') : '')   /* who wrote it, what it names, where it points - as a source item shows */
+        + `<div class="vc-rbx-acts">${acts}</div>`
+        + (b.shot ? `<img class="vc-src-shot" src="${esc(b.shot)}" alt="${esc(r.title || r.url || '')}">` : '')
+        + (b.busy ? `<div class="vc-rbx-busy">… ${esc(b.busy)}</div>` : '')
+        + (b.err ? `<div class="vc-rbx-err">${esc(b.err)}</div>` : '')
+        + (b.reader ? `<div class="vc-rbx-body rd">${readerHtml(b.reader)}</div>`
+           : r.text ? `<div class="vc-rbx-body rd"><div class="vc-reader"><div class="vc-rd-body">${mdx(paras(String(r.text).slice(0, 20000)))}</div></div></div>` : '')
+        + (b.text ? `<div class="vc-rbx-body rd"><div class="vc-reader"><div class="vc-rd-body">${mdx(paras(String(b.text).slice(0, 60000)))}</div></div></div>` + (b.next != null ? actBtn('more', r.id, 'more of it ↓', 'the next page of the record') : '') : '')
+        + nbHtml
+        + `</div>`;
+  }
+  function recBody(x) {
+    const { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score } = x; const opened = (r) => recOpened(x, r);
+    let body = '';
+    if (!all.length) body = `<div class="vc-rbx-empty">${c.running ? 'searching - the pages appear here as they are found' : 'nothing in it'}</div>`;
+    else if (!rows.length) body = `<div class="vc-rbx-empty">nothing matches “${esc(st.q || st.dom)}”</div>`;
+    else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list; a name, the pages that name it</div></div>`;
+    else if (st.view === 'table') {
+      body = `<div class="vc-tablewrap"><table class="vc-table vc-rbx-tbl"><thead><tr><th>title</th><th>source</th><th>when</th>${all.some((r) => r.score != null) ? '<th>score</th>' : ''}</tr></thead><tbody>`
+        + shown.map((r) => `<tr class="${(st.open || {})[r.id] ? 'on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}"><td>${title(r)}</td><td class="mono">${esc(r.domain || (r.meta && (r.meta.dataset_id || r.meta.engine)) || '')}</td><td class="mono">${esc(r.when ? ago(r.when) : '')}</td>${all.some((x) => x.score != null) ? `<td>${score(r)}</td>` : ''}</tr>` + ((st.open || {})[r.id] ? `<tr class="vc-rbx-tr-open"><td colspan="4">${opened(r)}</td></tr>` : '')).join('')
+        + `</tbody></table></div>`;
+    } else {
+      body = `<div class="vc-rbx-${st.view === 'cards' ? 'cards' : 'list'}">` + shown.map((r) => {
+        const on = !!(st.open || {})[r.id];
+        return `<div class="vc-rbx-row${on ? ' on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}">`
+          + `<div class="vc-rbx-hd">${badge(r)}<div class="vc-rbx-tt">${title(r)}${entsOf(r).length ? `<div class="vc-rbx-ents">${entsOf(r).slice(0, 3).map((e) => `<span title="${esc(e[1])}">${esc(e[0])}</span>`).join('')}</div>` : ''}<div class="vc-rbx-sub">${r.domain ? `<span>${esc(r.domain)}</span>` : ''}${r.when ? `<span>${esc(ago(r.when))}</span>` : ''}${r.meta && r.meta.engine ? `<span>${esc(r.meta.engine)}</span>` : ''}${r.meta && r.meta.dataset_id ? `<span>${esc(r.meta.dataset_id)}</span>` : ''}${score(r)}</div></div></div>`
+          + (!on && r.snippet ? `<div class="vc-rbx-s">${esc(String(r.snippet).slice(0, 400))}</div>` : '')
+          + (on ? opened(r) : '') + `</div>`;
+      }).join('') + `</div>`;
+    }
+    return body;
+  }
+  function recEvidence(x) {
+    const { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score } = x;
+    /* A LOOKUP'S EVIDENCE (info.seek): what was asked and how - the need, since when, whether it could be answered, the
+       topic it tracks - over the pages; what it checked and the gaps it could not fill under them */
+    const ev = c.kind === 'evidence' && c.evidence && typeof c.evidence === 'object' ? c.evidence : null;
+    const evChip = (k, v, cls) => `<span class="vc-ev-chip${cls ? ' ' + cls : ''}"><i>${esc(k)}</i>${esc(v)}</span>`;
+    /* still looking (the chat's lookup item, before the answer): what it is doing now, how long, a moving line */
+    const secs = ev && ev.started ? Math.max(0, Math.round((Date.now() - +ev.started) / 1000)) : 0;
+    const evRun = ev && c.running ? `<div class="vc-ev-run"><span class="vc-rr-dot"></span><b>${esc(ev.stage || 'looking it up')}</b><span class="t">${secs ? secs + ' s' : ''}</span></div><div class="vc-rr-bar"><i></i></div>` : '';
+    const evHead = ev ? `<div class="vc-ev${c.running ? ' running' : ''}">${evRun}${ev.question && ev.question !== ev.subject ? `<div class="vc-ev-q">${esc(ev.question.slice(0, 200))}</div>` : ''}<div class="vc-ev-chips">`
+      + (ev.need ? evChip('need', ev.need) : '') + (ev.since ? evChip('since', String(ev.since).slice(0, 10)) : '')
+      + (ev.tracked ? evChip('tracked', ev.tracked) : '') + (c.running ? (ev.cap ? evChip('', ev.cap) : '') : evChip('', ev.answerable ? 'answerable' : 'not answered', ev.answerable ? 'ok' : 'bad'))
+      + (ev.ms ? evChip('took', (ev.ms / 1000).toFixed(ev.ms < 10000 ? 1 : 0) + ' s') : '') + (ev.job ? evChip('report', 'job ' + ev.job) : '') + `</div></div>` : '';
+    const evFoot = ev && ((ev.checked || []).length || (ev.gaps || []).length) ? `<details class="vc-ev-foot"${(ev.gaps || []).length ? ' open' : ''}><summary>checked ${(ev.checked || []).length}${(ev.gaps || []).length ? ' · <b>' + ev.gaps.length + ' gap' + (ev.gaps.length === 1 ? '' : 's') + '</b>' : ''}</summary>`
+      + ((ev.gaps || []).length ? `<ul class="vc-ev-gaps">${ev.gaps.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : '')
+      + `<ul class="vc-ev-chk">${(ev.checked || []).map((g) => `<li>${esc(g)}</li>`).join('')}</ul></details>` : '';
+    return { evHead, evFoot };
+  }
+  function recGlance(x) {
+    const { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score } = x;
+    /* A RESEARCH RUN AT A GLANCE (a web or research answer): where its pages came from - one bar, each site its share,
+       a site's part choosing it - and, when the pages carry dates, when they were written, each a dot that opens its page */
+    let glance = '';
+    if ((c.kind === 'research' || c.kind === 'web' || c.kind === 'evidence') && all.length > 2) {
+      const sites = Object.keys(doms).sort((a, b) => doms[b] - doms[a]); const top = sites.slice(0, 10); const rest = all.length - top.reduce((s, d) => s + doms[d], 0);
+      const map = sites.length > 1 ? `<div class="vc-rbx-map" title="where the pages came from">${top.map((d) => `<button class="${st.dom === d ? 'on' : ''}" style="flex:${doms[d]};--h:${hue(d)}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}" title="${esc(d)} · ${doms[d]}"><span>${esc(d.replace(/^www\./, ''))}</span></button>`).join('')}${rest > 0 ? `<i style="flex:${rest}" title="${rest} more"></i>` : ''}</div>` : '';
+      const dated = all.map((r) => [r, Date.parse(r.when)]).filter((x) => isFinite(x[1]));
+      let tl = '';
+      if (dated.length >= 2) {
+        const t0 = Math.min(...dated.map((x) => x[1])), t1 = Math.max(...dated.map((x) => x[1])), span = Math.max(1, t1 - t0);
+        const day = (t) => new Date(t).toISOString().slice(0, 10);
+        tl = `<div class="vc-rbx-tl" title="when the pages were written"><span>${day(t0)}</span><div class="vc-rbx-tlb">${dated.map(([r, t]) => `<button style="left:${(100 * (t - t0) / span).toFixed(1)}%;--h:${hue(r.domain || '')}" data-rec-act="goto" data-rec-key="${K}" data-rec-arg="${esc(r.id)}" title="${esc(day(t) + ' · ' + (r.title || r.url || ''))}"></button>`).join('')}</div><span>${day(t1)}</span></div>`;
+      }
+      if (map || tl) glance = `<div class="vc-rbx-glance">${map}${tl}</div>`;
+    }
+    return glance;
+  }
+  function recDraw(x) {
+    const { c, size, key, el, all, st, ents, entsOf, entN, entList, canGraph, q, rows, per, pages, page, shown, K, icon, doms, domList, hue, badge, badge0, ago, actBtn, paras, title, score } = x; const body = recBody(x); const { evHead, evFoot } = recEvidence(x); const glance = recGlance(x);
+    const seg = (name, opts) => `<span class="vc-rbx-seg seg-${name}">${opts.map((o) => `<button class="${(st[name] || opts[0][0]) === o[0] ? 'on' : ''}" data-rec-act="${name}" data-rec-key="${K}" data-rec-arg="${o[0]}" title="${esc(o[2] || '')}">${o[1]}</button>`).join('')}</span>`;
+    const from = rows.length ? page * per + 1 : 0, to = Math.min(rows.length, page * per + per);
+    const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
+    return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
+      + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
+      + evHead + glance
+      + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">`
+      /* WHAT THE PAGES NAME AND WHERE THEY CAME FROM, BEHIND A MENU (owner, 2026-10-11: "it has a list of names and counts
+         ... this could be displayed as a widget and in a menu rather than upfront as pills"): one button, and under it two
+         ranked-bar widgets (the widget system's own drawing) - the names the pages share and the sites - a bar choosing
+         that filter. The choice in force shows on the button. */
+      + ((entList.length || domList.length > 1) ? `<button class="vc-rbx-b vc-rbx-nbtn${st.namesOpen ? ' on' : ''}${st.ent || st.dom ? ' set' : ''}" data-rec-act="names" data-rec-key="${K}" data-rec-arg="" title="the names the pages share and the sites they came from - a choice filters the list">${esc(st.ent || st.dom || 'names · sites')}${st.ent || st.dom ? ' ✕' : ' ▾'}</button>` : '')
+      + `${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags and names they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
+      + (st.namesOpen ? (() => { const wjson = (title, rows) => esc(JSON.stringify({ form: 'ranked', title, data: rows }));
+          return `<div class="vc-rbx-names" data-rec-key="${K}" data-w="canvas.records.names">`
+            + (entList.length ? `<div class="vc-rbx-nw" data-pick="ent"><h5>names the pages share</h5><vera-widget bare size="m" record="${wjson('Names', entList.map((n) => ({ name: n, value: entN[n] })))}"></vera-widget></div>` : '')
+            + (domList.length > 1 ? `<div class="vc-rbx-nw" data-pick="dom"><h5>sites</h5><vera-widget bare size="m" record="${wjson('Sites', domList.map((d) => ({ name: d, value: doms[d] })))}"></vera-widget></div>` : '')
+            + `</div>`; })() : '')
+      + (entList.length ? `<div class="vc-rbx-facets vc-rbx-efacets"><span class="vc-rbx-fl">names</span>${entList.map((n) => `<button class="${st.ent === n ? 'on' : ''}" data-rec-act="ent" data-rec-key="${K}" data-rec-arg="${esc(n)}">${esc(n)}<i>${entN[n]}</i></button>`).join('')}</div>` : '')
+      + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
+      + body + evFoot
+      + `<div class="vc-rbx-foot"><span>${from}–${to} of ${rows.length}${rows.length !== all.length ? ' (of ' + all.length + ')' : ''}</span><span class="vc-rbx-pg">${pages > 1 ? `<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="prev" ${page ? '' : 'disabled'}>‹</button>${dots}<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="next" ${page < pages - 1 ? '' : 'disabled'}>›</button>` : ''}</span>${c.next && c.next.cap ? actBtn('loadmore', '', 'more from ' + esc(c.next.cap), 'fetch the next page from the source') : ''}</div>`
+      + `</div>`;
+  }
   const BLOCK = {
     /* a document item draws with the reader's renderer (mdx): a research report's tables, numbered lists, quotes and
        figures were pipes and bare lines under the note subset */
@@ -1094,162 +1268,7 @@
        fabric record's text through memory.read in pages - or lands as its own source item. The browser's state
        (page, filter, sort, view, what is open) is the element's, per item: it does not write the canvas on every
        click; what is fetched is kept for the session's look. */
-    records: (c, size, key, el) => {
-      const all = Array.isArray(c.items) ? c.items.filter((r) => r && typeof r === 'object') : [];
-      const st = recState(el, key);
-      // the view the item asks for (the fabric's: graph) is where it starts; the reader's own choice wins after that
-      if (!st._v0) { st._v0 = true; if (c.view) st.view = String(c.view); }
-      /* WHAT THE PAGES NAME: each row's page's entities, from the reader cache (_srcPrefetch fills them, in memory - never
-         the web), as facets beside the sites - the people, organisations and places two or more of the pages name.
-         Choosing one shows the pages that name it; each row carries its own top three; and the shared names make a
-         graph of the pages and what links them. */
-      const ents = (el && el._recEnts && el._recEnts[String(key)]) || {};
-      const entsOf = (r) => ents[String(r.id)] || [];
-      const entN = {}; all.forEach((r) => entsOf(r).forEach((e) => { entN[e[0]] = (entN[e[0]] || 0) + 1; }));
-      const entList = Object.keys(entN).filter((n) => entN[n] >= 2).sort((a, b) => entN[b] - entN[a]).slice(0, size === 'xl' ? 12 : 6);
-      const canGraph = c.kind === 'memory' || c.view === 'graph' || entList.length > 0;
-      if (st.view === 'graph' && !canGraph) st.view = 'list';
-      const q = String(st.q || '').toLowerCase().trim();
-      let rows = all.filter((r) => (!st.ent || entsOf(r).some((e) => e[0] === st.ent)) && (!st.dom || r.domain === st.dom) && (!q || (String(r.title || '') + ' ' + String(r.snippet || '') + ' ' + String(r.domain || '') + ' ' + JSON.stringify(r.meta || {})).toLowerCase().includes(q)));
-      if (st.sort === 'newest') rows = rows.slice().sort((a, b) => (Date.parse(b.when) || 0) - (Date.parse(a.when) || 0));
-      else if (st.sort === 'title') rows = rows.slice().sort((a, b) => String(a.title || '').localeCompare(String(b.title || '')));
-      const per = st.view === 'cards' ? ({ s: 4, m: 6, l: 9, xl: 18 }[size] || 6) : ({ s: 4, m: 6, l: 10, xl: 20 }[size] || 8);
-      const pages = Math.max(1, Math.ceil(rows.length / per)); const page = Math.min(Math.max(0, st.page | 0), pages - 1);
-      const shown = rows.slice(page * per, page * per + per);
-      const K = esc(key || '');
-      const icon = { web: '\u{1F310}', news: '\u{1F4F0}', memory: '◈', research: '\u{1F50E}', evidence: '\u{1F50E}' }[c.kind] || '☰';
-      const doms = {}; all.forEach((r) => { if (r.domain) doms[r.domain] = (doms[r.domain] || 0) + 1; });
-      const domList = Object.keys(doms).sort((a, b) => doms[b] - doms[a]).slice(0, size === 'xl' ? 12 : 6);
-      const hue = (s) => { let h = 0; for (const ch of String(s || '')) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
-      /* a source's badge in one of the theme's category colours (--dv1..7), the same site always the same colour */
-      /* a lookup's evidence carries the number the reply cites it by: that is its badge (see the evidence strip below) */
-      const badge = (r) => c.kind === 'evidence' && r.n ? `<span class="vc-rbx-fav vc-rbx-num${r.kind === 'intel' ? ' intel' : ''}" title="cited as [${esc(r.n)}]${r.kind === 'intel' ? ' - from a tracked topic' : ''}">${esc(r.n)}</span>` : badge0(r);
-      const badge0 = (r) => { const d = r.domain || (r.meta && (r.meta.dataset_id || r.meta.source)) || c.kind || '?'; const h = hue(d); return `<span class="vc-rbx-fav" style="--dvc:var(--dv${1 + (h % 7)},hsl(${h} 45% 60%))">${esc(String(d).replace(/^www\./, '').charAt(0).toUpperCase())}</span>`; };
-      const ago = (t) => { const x = Date.parse(t); if (!isFinite(x)) return String(t || '').slice(0, 10); const s = (Date.now() - x) / 1000; return s < 3600 ? Math.max(1, Math.round(s / 60)) + 'm' : s < 172800 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd'; };
-      const actBtn = (act, id, label, t) => `<button class="vc-rbx-b" data-rec-act="${act}" data-rec-key="${K}" data-rec-arg="${esc(id)}" title="${esc(t || '')}">${label}</button>`;
-      /* A RECORD, OPENED, WITH ITS DEPTH (owner, 2026-09-29: the web results need "better depth and rendering of results &
-         their text"; the fabric's "doesnt show enough depth on each record i.e. its neighbors, meta data"). Its facts -
-         where it came from, when, how relevant, its tags, its fields; the page's own text when the answer carried it
-         (web.research reads its pages); a page in reader mode; a fabric record read in full and its NEIGHBOURS - the
-         records nearest it across every dataset, each readable in place, and drawn into the graph. */
-      const paras = (s) => String(s || '').replace(/\r/g, '').replace(/[ \t]+\n/g, '\n').replace(/\n{1,}/g, '\n\n').trim();
-      const opened = (r) => {
-        const b = (st.body || {})[r.id] || {};
-        const isRec = !!(r.ref && r.ref.record_id);
-        /* a page in the list does everything a source item does (see ONE PAGE VIEW): reader mode, its picture, its explode,
-           to the canvas, open - and once read, who wrote it, what it names, where it points */
-        const acts = `<button class="vc-rbx-b rb-back" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}" title="close the page - the card goes back where it was">← back</button>` + (r.url ? actBtn('read', r.id, b.reader || b.text ? 'read again' : 'reader mode', 'the page as the article it is - its body (or a composite of its parts) formatted (browser.reader)')
-            + actBtn('shot', r.id, b.shot ? 'hide the picture' : 'see the page', 'a picture of the page as it looks (browser.screenshot)')
-            + ((b.reader && b.reader.markdown) || b.text ? actBtn('xpl', r.id, 'explode', 'a structured diagram of the page - its sections, what it names, how they connect') : '')
-            + actBtn('land', r.id, 'to the canvas', 'land it as its own source item') + `<a class="vc-rbx-b" href="${esc(r.url)}" target="_blank" rel="noopener">open ↗</a>` : '')
-          + (isRec ? actBtn('rec', r.id, b.text ? 'read again' : 'read the record', 'the record in full, in pages (fabric.record.get)')
-                   + actBtn('nb', r.id, b.nb ? 'neighbours \u21bb' : 'neighbours', 'the records nearest this one, across every dataset (fabric.loom.record_match)') : '');
-        const facts = []; const fact = (k, vHtml) => { if (vHtml != null && vHtml !== '') facts.push(`<span><i>${esc(k)}</i>${vHtml}</span>`); };
-        if (r.domain) fact('site', esc(r.domain));
-        if (r.when) fact('when', esc(String(r.when).slice(0, 19).replace('T', ' ')));
-        if (r.score != null && isFinite(+r.score) && +r.score > 0) fact('relevance', esc(Math.round(+r.score * 100) + '%'));   // no score is not a score of 0
-        Object.keys(r.meta || {}).forEach((k) => fact(k, esc(r.meta[k])));
-        const rec = b.rec || null;
-        if (rec) { const s = rec.source || {}; if (s.url) fact('source', `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.label || s.url)}</a>`); else if (s.label) fact('source', esc(s.label));
-          if (rec.created_at) fact('written', esc(String(rec.created_at).slice(0, 19))); if (rec.total_chars) fact('length', esc(rec.total_chars > 1000 ? (rec.total_chars / 1000).toFixed(1) + 'k chars' : rec.total_chars + ' chars')); }
-        const tags = (Array.isArray(r.tags) && r.tags.length ? r.tags : (rec && rec.tags) || []).slice(0, 12);
-        const fields = rec && rec.data && typeof rec.data === 'object' ? Object.keys(rec.data) : [];
-        /* the same chunk three times over (a document indexed in overlapping pieces) is ONE neighbour, counted */
-        const nbList = []; if (Array.isArray(b.nb)) { const bySig = {}; b.nb.forEach((m) => { const sg = String(m.snippet || m.id).replace(/\s+/g, ' ').trim().slice(0, 80).toLowerCase(); if (bySig[sg]) { bySig[sg].n++; return; } const x = Object.assign({ n: 1 }, m); bySig[sg] = x; nbList.push(x); }); }
-        const nbHtml = Array.isArray(b.nb) ? `<div class="vc-rbx-nb"><h5>nearest records \u00b7 ${nbList.length}</h5>` + (nbList.length ? nbList.map((m) => {
-            const on = !!(b.nbOpen || {})[m.id]; const nt = (b.nbText || {})[m.id];
-            const head = String(m.snippet || m.id).replace(/\s+/g, ' ').trim();
-            return `<div class="vc-rbx-nbr${on ? ' on' : ''}" data-rec-act="nbopen" data-rec-key="${K}" data-rec-arg="${esc(r.id + '|' + m.id)}">`
-              + `<div class="vc-rbx-nbh"><b>${esc(head.slice(0, 90))}</b>${m.n > 1 ? `<small title="the same text in ${m.n} records">\u00d7${m.n}</small>` : ''}<small>${esc(m.dataset_id || '')}</small></div>`
-              + (on ? (nt ? `<div class="vc-rbx-nbt">${mdx(paras(String(nt).slice(0, 6000)))}</div>` : `<div class="vc-rbx-busy">\u2026 reading</div>`) : '')
-              + `</div>`; }).join('') : '<div class="vc-rbx-empty">nothing near it</div>') + `</div>` : '';
-        return `<div class="vc-rbx-open">${r.snippet && !r.text ? `<div class="vc-rbx-full">${esc(r.snippet)}</div>` : ''}`
-          + (facts.length ? `<div class="vc-rbx-meta">${facts.join('')}</div>` : '')
-          + (tags.length ? `<div class="vc-rbx-tags">${tags.map((x) => `<span>#${esc(x)}</span>`).join('')}</div>` : '')
-          + (fields.length ? `<details class="vc-rbx-fields"><summary>fields \u00b7 ${fields.length}</summary><div class="vc-rbx-kv">${fields.map((k) => `<span class="k">${esc(k)}</span><span class="v">${esc(rec.data[k] == null ? '' : String(rec.data[k]))}</span>`).join('')}</div></details>` : '')
-          + (b.reader ? pageExtras(b.reader, r.domain || '') : '')   /* who wrote it, what it names, where it points - as a source item shows */
-          + `<div class="vc-rbx-acts">${acts}</div>`
-          + (b.shot ? `<img class="vc-src-shot" src="${esc(b.shot)}" alt="${esc(r.title || r.url || '')}">` : '')
-          + (b.busy ? `<div class="vc-rbx-busy">… ${esc(b.busy)}</div>` : '')
-          + (b.err ? `<div class="vc-rbx-err">${esc(b.err)}</div>` : '')
-          + (b.reader ? `<div class="vc-rbx-body rd">${readerHtml(b.reader)}</div>`
-             : r.text ? `<div class="vc-rbx-body rd"><div class="vc-reader"><div class="vc-rd-body">${mdx(paras(String(r.text).slice(0, 20000)))}</div></div></div>` : '')
-          + (b.text ? `<div class="vc-rbx-body rd"><div class="vc-reader"><div class="vc-rd-body">${mdx(paras(String(b.text).slice(0, 60000)))}</div></div></div>` + (b.next != null ? actBtn('more', r.id, 'more of it ↓', 'the next page of the record') : '') : '')
-          + nbHtml
-          + `</div>`;
-      };      const title = (r) => r.url ? `<a class="vc-rbx-t" href="${esc(r.url)}" target="_blank" rel="noopener" data-rec-stop="1">${esc(r.title || r.url)}</a>` : `<span class="vc-rbx-t">${esc(r.title || r.id)}</span>`;
-      const score = (r) => r.score != null ? `<span class="vc-rbx-sc" title="relevance ${esc(r.score)}"><i style="width:${Math.round(Math.max(0, Math.min(1, +r.score)) * 100)}%"></i></span>` : '';
-      let body = '';
-      if (!all.length) body = `<div class="vc-rbx-empty">${c.running ? 'searching - the pages appear here as they are found' : 'nothing in it'}</div>`;
-      else if (!rows.length) body = `<div class="vc-rbx-empty">nothing matches “${esc(st.q || st.dom)}”</div>`;
-      else if (st.view === 'graph') body = `<div class="vc-rbx-graph"><div class="vc-live" data-live="rgraph" data-key="${K}"><span class="vc-dim">drawing the graph…</span></div><div class="vc-rbx-gnote">a record's node opens it in the list; a name, the pages that name it</div></div>`;
-      else if (st.view === 'table') {
-        body = `<div class="vc-tablewrap"><table class="vc-table vc-rbx-tbl"><thead><tr><th>title</th><th>source</th><th>when</th>${all.some((r) => r.score != null) ? '<th>score</th>' : ''}</tr></thead><tbody>`
-          + shown.map((r) => `<tr class="${(st.open || {})[r.id] ? 'on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}"><td>${title(r)}</td><td class="mono">${esc(r.domain || (r.meta && (r.meta.dataset_id || r.meta.engine)) || '')}</td><td class="mono">${esc(r.when ? ago(r.when) : '')}</td>${all.some((x) => x.score != null) ? `<td>${score(r)}</td>` : ''}</tr>` + ((st.open || {})[r.id] ? `<tr class="vc-rbx-tr-open"><td colspan="4">${opened(r)}</td></tr>` : '')).join('')
-          + `</tbody></table></div>`;
-      } else {
-        body = `<div class="vc-rbx-${st.view === 'cards' ? 'cards' : 'list'}">` + shown.map((r) => {
-          const on = !!(st.open || {})[r.id];
-          return `<div class="vc-rbx-row${on ? ' on' : ''}" data-rec-act="open" data-rec-key="${K}" data-rec-arg="${esc(r.id)}">`
-            + `<div class="vc-rbx-hd">${badge(r)}<div class="vc-rbx-tt">${title(r)}${entsOf(r).length ? `<div class="vc-rbx-ents">${entsOf(r).slice(0, 3).map((e) => `<span title="${esc(e[1])}">${esc(e[0])}</span>`).join('')}</div>` : ''}<div class="vc-rbx-sub">${r.domain ? `<span>${esc(r.domain)}</span>` : ''}${r.when ? `<span>${esc(ago(r.when))}</span>` : ''}${r.meta && r.meta.engine ? `<span>${esc(r.meta.engine)}</span>` : ''}${r.meta && r.meta.dataset_id ? `<span>${esc(r.meta.dataset_id)}</span>` : ''}${score(r)}</div></div></div>`
-            + (!on && r.snippet ? `<div class="vc-rbx-s">${esc(String(r.snippet).slice(0, 400))}</div>` : '')
-            + (on ? opened(r) : '') + `</div>`;
-        }).join('') + `</div>`;
-      }
-      /* A RESEARCH RUN AT A GLANCE (a web or research answer): where its pages came from - one bar, each site its share,
-         a site's part choosing it - and, when the pages carry dates, when they were written, each a dot that opens its page */
-      let glance = '';
-      /* A LOOKUP'S EVIDENCE (info.seek): what was asked and how - the need, since when, whether it could be answered, the
-         topic it tracks - over the pages; what it checked and the gaps it could not fill under them */
-      const ev = c.kind === 'evidence' && c.evidence && typeof c.evidence === 'object' ? c.evidence : null;
-      const evChip = (k, v, cls) => `<span class="vc-ev-chip${cls ? ' ' + cls : ''}"><i>${esc(k)}</i>${esc(v)}</span>`;
-      /* still looking (the chat's lookup item, before the answer): what it is doing now, how long, a moving line */
-      const secs = ev && ev.started ? Math.max(0, Math.round((Date.now() - +ev.started) / 1000)) : 0;
-      const evRun = ev && c.running ? `<div class="vc-ev-run"><span class="vc-rr-dot"></span><b>${esc(ev.stage || 'looking it up')}</b><span class="t">${secs ? secs + ' s' : ''}</span></div><div class="vc-rr-bar"><i></i></div>` : '';
-      const evHead = ev ? `<div class="vc-ev${c.running ? ' running' : ''}">${evRun}${ev.question && ev.question !== ev.subject ? `<div class="vc-ev-q">${esc(ev.question.slice(0, 200))}</div>` : ''}<div class="vc-ev-chips">`
-        + (ev.need ? evChip('need', ev.need) : '') + (ev.since ? evChip('since', String(ev.since).slice(0, 10)) : '')
-        + (ev.tracked ? evChip('tracked', ev.tracked) : '') + (c.running ? (ev.cap ? evChip('', ev.cap) : '') : evChip('', ev.answerable ? 'answerable' : 'not answered', ev.answerable ? 'ok' : 'bad'))
-        + (ev.ms ? evChip('took', (ev.ms / 1000).toFixed(ev.ms < 10000 ? 1 : 0) + ' s') : '') + (ev.job ? evChip('report', 'job ' + ev.job) : '') + `</div></div>` : '';
-      const evFoot = ev && ((ev.checked || []).length || (ev.gaps || []).length) ? `<details class="vc-ev-foot"${(ev.gaps || []).length ? ' open' : ''}><summary>checked ${(ev.checked || []).length}${(ev.gaps || []).length ? ' · <b>' + ev.gaps.length + ' gap' + (ev.gaps.length === 1 ? '' : 's') + '</b>' : ''}</summary>`
-        + ((ev.gaps || []).length ? `<ul class="vc-ev-gaps">${ev.gaps.map((g) => `<li>${esc(g)}</li>`).join('')}</ul>` : '')
-        + `<ul class="vc-ev-chk">${(ev.checked || []).map((g) => `<li>${esc(g)}</li>`).join('')}</ul></details>` : '';
-      if ((c.kind === 'research' || c.kind === 'web' || c.kind === 'evidence') && all.length > 2) {
-        const sites = Object.keys(doms).sort((a, b) => doms[b] - doms[a]); const top = sites.slice(0, 10); const rest = all.length - top.reduce((s, d) => s + doms[d], 0);
-        const map = sites.length > 1 ? `<div class="vc-rbx-map" title="where the pages came from">${top.map((d) => `<button class="${st.dom === d ? 'on' : ''}" style="flex:${doms[d]};--h:${hue(d)}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}" title="${esc(d)} · ${doms[d]}"><span>${esc(d.replace(/^www\./, ''))}</span></button>`).join('')}${rest > 0 ? `<i style="flex:${rest}" title="${rest} more"></i>` : ''}</div>` : '';
-        const dated = all.map((r) => [r, Date.parse(r.when)]).filter((x) => isFinite(x[1]));
-        let tl = '';
-        if (dated.length >= 2) {
-          const t0 = Math.min(...dated.map((x) => x[1])), t1 = Math.max(...dated.map((x) => x[1])), span = Math.max(1, t1 - t0);
-          const day = (t) => new Date(t).toISOString().slice(0, 10);
-          tl = `<div class="vc-rbx-tl" title="when the pages were written"><span>${day(t0)}</span><div class="vc-rbx-tlb">${dated.map(([r, t]) => `<button style="left:${(100 * (t - t0) / span).toFixed(1)}%;--h:${hue(r.domain || '')}" data-rec-act="goto" data-rec-key="${K}" data-rec-arg="${esc(r.id)}" title="${esc(day(t) + ' · ' + (r.title || r.url || ''))}"></button>`).join('')}</div><span>${day(t1)}</span></div>`;
-        }
-        if (map || tl) glance = `<div class="vc-rbx-glance">${map}${tl}</div>`;
-      }
-      const seg = (name, opts) => `<span class="vc-rbx-seg seg-${name}">${opts.map((o) => `<button class="${(st[name] || opts[0][0]) === o[0] ? 'on' : ''}" data-rec-act="${name}" data-rec-key="${K}" data-rec-arg="${o[0]}" title="${esc(o[2] || '')}">${o[1]}</button>`).join('')}</span>`;
-      const from = rows.length ? page * per + 1 : 0, to = Math.min(rows.length, page * per + per);
-      const dots = pages > 1 ? Array.from({ length: Math.min(pages, 9) }, (_, i) => { const n = pages <= 9 ? i : Math.round(i * (pages - 1) / 8); return `<button class="vc-rbx-dot${n === page ? ' on' : ''}" data-rec-act="page" data-rec-key="${K}" data-rec-arg="${n}" title="page ${n + 1}"></button>`; }).join('') : '';
-      return `<div class="vc-rbx k-${esc(c.kind || 'rows')} s-${esc(size || 'm')}">`
-        + `<div class="vc-rbx-top"><span class="vc-rbx-ic">${icon}</span><div class="vc-rbx-h"><b>${esc(c.title || 'Records')}</b><small>${all.length} ${all.length === 1 ? 'record' : 'records'}${c.source ? ' · ' + esc(c.source) : ''}${c.why ? ' · ' + esc(c.why) : ''}</small></div></div>`
-        + evHead + glance
-        + `<div class="vc-rbx-tools"><input class="vc-rbx-q" data-rec-q="${K}" placeholder="filter ${all.length}…" value="${esc(st.q || '')}">`
-        /* WHAT THE PAGES NAME AND WHERE THEY CAME FROM, BEHIND A MENU (owner, 2026-10-11: "it has a list of names and counts
-           ... this could be displayed as a widget and in a menu rather than upfront as pills"): one button, and under it two
-           ranked-bar widgets (the widget system's own drawing) - the names the pages share and the sites - a bar choosing
-           that filter. The choice in force shows on the button. */
-        + ((entList.length || domList.length > 1) ? `<button class="vc-rbx-b vc-rbx-nbtn${st.namesOpen ? ' on' : ''}${st.ent || st.dom ? ' set' : ''}" data-rec-act="names" data-rec-key="${K}" data-rec-arg="" title="the names the pages share and the sites they came from - a choice filters the list">${esc(st.ent || st.dom || 'names · sites')}${st.ent || st.dom ? ' ✕' : ' ▾'}</button>` : '')
-        + `${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags and names they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
-        + (st.namesOpen ? (() => { const wjson = (title, rows) => esc(JSON.stringify({ form: 'ranked', title, data: rows }));
-            return `<div class="vc-rbx-names" data-rec-key="${K}" data-w="canvas.records.names">`
-              + (entList.length ? `<div class="vc-rbx-nw" data-pick="ent"><h5>names the pages share</h5><vera-widget bare size="m" record="${wjson('Names', entList.map((n) => ({ name: n, value: entN[n] })))}"></vera-widget></div>` : '')
-              + (domList.length > 1 ? `<div class="vc-rbx-nw" data-pick="dom"><h5>sites</h5><vera-widget bare size="m" record="${wjson('Sites', domList.map((d) => ({ name: d, value: doms[d] })))}"></vera-widget></div>` : '')
-              + `</div>`; })() : '')
-        + (entList.length ? `<div class="vc-rbx-facets vc-rbx-efacets"><span class="vc-rbx-fl">names</span>${entList.map((n) => `<button class="${st.ent === n ? 'on' : ''}" data-rec-act="ent" data-rec-key="${K}" data-rec-arg="${esc(n)}">${esc(n)}<i>${entN[n]}</i></button>`).join('')}</div>` : '')
-        + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
-        + body + evFoot
-        + `<div class="vc-rbx-foot"><span>${from}–${to} of ${rows.length}${rows.length !== all.length ? ' (of ' + all.length + ')' : ''}</span><span class="vc-rbx-pg">${pages > 1 ? `<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="prev" ${page ? '' : 'disabled'}>‹</button>${dots}<button data-rec-act="page" data-rec-key="${K}" data-rec-arg="next" ${page < pages - 1 ? '' : 'disabled'}>›</button>` : ''}</span>${c.next && c.next.cap ? actBtn('loadmore', '', 'more from ' + esc(c.next.cap), 'fetch the next page from the source') : ''}</div>`
-        + `</div>`;
-    },
-
+    records: (c, size, key, el) => recDraw(recCtx(c, size, key, el)),
     table: (c, size, key, el) => {
       const cols = c.columns || [];
       const rows = c.rows || [];
