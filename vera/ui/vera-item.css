@@ -19,4 +19,5 @@
   --z-menu: 240;          /* surface menus */
   --z-chat: 250;          /* the chat over the desk */
   --z-sheet: 300;         /* sheets, dialogs */
+  --z-toast: 400;         /* a host's toast: over its sheets and every item */
 }

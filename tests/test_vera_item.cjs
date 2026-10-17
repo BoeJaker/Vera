@@ -48,9 +48,9 @@ t('the z table: ranges stay in their band, and vera-item.css says the same numbe
   const v = (name) => Number((css.match(new RegExp('--z-' + name + ':\\s*(\\d+)')) || [])[1]);
   const want = { back: I.Z.back, 'layer-behind': I.Z.layerBehind, tile: I.Z.tile[0], 'tile-top': I.Z.tile[1], pill: I.Z.pill,
     'tile-focus': I.Z.tileFocus, window: I.Z.window[0], 'window-top': I.Z.window[1], full: I.Z.full, 'layer-front': I.Z.layerFront,
-    flash: I.Z.flash, drag: I.Z.drag, pop: I.Z.pop, menu: I.Z.menu, chat: I.Z.chat, sheet: I.Z.sheet };
+    flash: I.Z.flash, drag: I.Z.drag, pop: I.Z.pop, menu: I.Z.menu, chat: I.Z.chat, sheet: I.Z.sheet, toast: I.Z.toast };
   Object.entries(want).forEach(([k, x]) => assert.strictEqual(v(k), x, '--z-' + k));
-  const order = ['back', 'layerBehind', 'pill', 'tileFocus', 'full', 'layerFront', 'flash', 'drag', 'pop', 'menu', 'chat', 'sheet'].map((k) => I.Z[k]);
+  const order = ['back', 'layerBehind', 'pill', 'tileFocus', 'full', 'layerFront', 'flash', 'drag', 'pop', 'menu', 'chat', 'sheet', 'toast'].map((k) => I.Z[k]);
   assert.deepStrictEqual(order, order.slice().sort((a, b) => a - b), 'the bands are in order');
 });
 console.log(n + ' passed');

@@ -30,7 +30,7 @@
   /* Decision 6: one z table. A tile's z rises with its closeness to the chat (10-110); a window's with how recently it
      was focused (130-149). Every item host reads these and only these. */
   var Z = { back: 1, layerBehind: 2, tile: [10, 110], pill: 115, tileFocus: 120, window: [130, 149], full: 150,
-            layerFront: 155, flash: 180, drag: 200, pop: 230, menu: 240, chat: 250, sheet: 300 };
+            layerFront: 155, flash: 180, drag: 200, pop: 230, menu: 240, chat: 250, sheet: 300, toast: 400 };
 
   function has(a, v) { return a.indexOf(v) >= 0; }
   function num(v) { if (v === null || v === undefined || v === '' || typeof v === 'boolean') return null; var f = Number(v); return isFinite(f) ? f : null; }
