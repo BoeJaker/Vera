@@ -77,7 +77,10 @@
     const ui = st.ui || {}; const acts = (st.manifest && st.manifest.actions) || []; const row = (i) => (i != null && st.rows ? st.rows[i] : null);
     const nameOf = (x) => x ? appCell(x.title || x.name || x.symbol || x.node || x.id || x[Object.keys(x)[0]]) : '';
     if (ui.form) { const a = acts.find((x) => x.id === ui.form.aid); if (a) return '<div class="vc-app-bar" data-app-form="' + esc(a.id) + '"><b>' + esc(a.label) + (row(ui.form.row) ? ' · ' + esc(nameOf(row(ui.form.row))) : '') + '</b>'
-      + (a.fields || []).map((f) => '<input class="vc-app-f" data-app-f="' + esc(f.key) + '" type="' + esc(f.type || 'text') + '" placeholder="' + esc(f.label || f.key) + (f.required ? ' *' : '') + '" value="' + esc(f.default == null ? '' : String(f.default)) + '" spellcheck="false">').join('')
+      + (a.fields || []).map((f) => { const ph = esc(f.label || f.key) + (f.required ? ' *' : ''), tip = f.title ? ' title="' + esc(f.title) + '"' : '', dv = f.default == null ? '' : String(f.default);   /* a select, a box or an input (a form from the schema, DA-04) */
+        if (f.type === 'select') return '<select class="vc-app-f" data-app-f="' + esc(f.key) + '"' + tip + ' aria-label="' + ph + '">' + (f.required ? '' : '<option value="">' + ph + '</option>') + (f.options || []).map((o) => '<option' + (String(o) === dv ? ' selected' : '') + '>' + esc(o) + '</option>').join('') + '</select>';
+        if (f.type === 'checkbox') return '<label class="vc-app-fc"' + tip + '><input class="vc-app-f" data-app-f="' + esc(f.key) + '" data-app-ft="checkbox" type="checkbox"' + (f.default === true || dv === 'true' ? ' checked' : '') + '> ' + esc(f.label || f.key) + '</label>';
+        return '<input class="vc-app-f" data-app-f="' + esc(f.key) + '"' + (f.type === 'number' ? ' data-app-ft="number"' : '') + tip + ' type="' + esc(f.type || 'text') + '" placeholder="' + ph + '" value="' + esc(dv) + '" spellcheck="false">'; }).join('')
       + '<button type="button" class="hx on" data-app-run="1">' + esc(a.label) + '</button><button type="button" class="hx" data-app-cancel="1">Cancel</button></div>'; }
     if (ui.confirm) { const a = acts.find((x) => x.id === ui.confirm.aid); if (a) return '<div class="vc-app-bar warn"><b>' + esc(a.label) + (row(ui.confirm.row) ? ' ' + esc(nameOf(row(ui.confirm.row))) : '') + '?</b>'
       + '<button type="button" class="hx on" data-app-yes="1">Yes, ' + esc(a.label.toLowerCase()) + '</button><button type="button" class="hx" data-app-cancel="1">No</button></div>'; }
@@ -2136,6 +2139,8 @@
   .vc-app-bar > span,.vc-app-bar > b{flex:1 1 auto;min-width:0}
   .vc-app-bar .hx{border:0;background:transparent;color:var(--dim2,#8a92a0);cursor:pointer;font-size:10.5px;padding:3px 8px;border-radius:5px}.vc-app-bar .hx.on{color:var(--acc,#5a9e8f)}.vc-app-bar .hx:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}
   .vc-app-f{flex:1 1 120px;min-width:90px;height:24px;padding:0 7px;border-radius:6px;border:1px solid var(--border,#2a2f37);background:var(--bg0,#0e0f12);color:var(--fg,#dce1e8);font:11.5px var(--f-ui,var(--sans,system-ui,sans-serif))}
+  .vc-app-fc{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;white-space:nowrap}
+  .vc-app-fc > .vc-app-f{flex:none;min-width:0;width:14px;height:14px;padding:0}
   /* an app's list (DA-05c): the filter row, the rows (a table or cards), the drawer of the row opened */
   .vc-app-rowsapp{display:flex;flex-direction:column;min-height:0;height:100%;gap:6px}
   .vc-app-tb{display:flex;align-items:center;gap:8px;flex:0 0 auto}
@@ -5472,7 +5477,8 @@
           const acts = (st.manifest && st.manifest.actions) || [];
           if (t.closest('[data-app-yes]') && ui.confirm) { const a = acts.find((x) => x.id === ui.confirm.aid); if (a) this._appRun(key, a, ui.confirm.row, {}); return; }
           if (t.closest('[data-app-run]') && ui.form) { const a = acts.find((x) => x.id === ui.form.aid); const vals = {};
-            box.querySelectorAll('[data-app-f]').forEach((x) => { vals[x.dataset.appF] = x.value; }); if (a) this._appRun(key, a, ui.form.row, vals); return; } }
+            box.querySelectorAll('[data-app-f]').forEach((x) => { const ft = x.dataset.appFt;
+              vals[x.dataset.appF] = ft === 'checkbox' ? x.checked : ft === 'number' && x.value !== '' && isFinite(+x.value) ? +x.value : x.value; }); if (a) this._appRun(key, a, ui.form.row, vals); return; } }
         if (st && st.parts && t.closest('[data-app-tab]')) { ev.stopPropagation(); (st.ui || (st.ui = {})).tab = t.closest('[data-app-tab]').dataset.appTab; return this._appDraw(key); }   /* a composite's tab (DA-07a) */
         if (st && st.parts && t.closest('[data-app-prow]')) { ev.stopPropagation(); return this._appPick(key, t.closest('[data-app-part]').dataset.appPart, +t.closest('[data-app-prow]').dataset.appProw); }   /* a pick (DA-07b) */
         if (!t.closest('.vc-app-rowsapp')) return; const a = this._appUi(t); if (!a) return;

@@ -145,6 +145,30 @@ def test_a_composite_names_its_parts_and_lays_them_out():
     assert ("warning", "view.layout.split") in got({"layout": "split"}, read=reads + [{"as": "news", "cap": "info.seek"}])
 
 
+def test_a_form_from_the_capabilitys_own_inputs():
+    # form: "schema" with no fields: the fields come from the capability's input schema, minus what the action fills
+    schema = {"type": "object", "required": ["symbol"], "properties": {
+        "exchange": {"type": "string", "default": "binance", "description": "Where it trades"},
+        "symbol": {"type": "string"}, "backfill": {"type": "boolean", "default": True},
+        "days": {"type": "integer"}, "tf": {"type": "string", "enum": ["1h", "1d"], "default": "1d"},
+        "opts": {"type": "object"}, "trace_id": {"type": "string"}, "row_id": {"type": "string"}}}
+    f = A.schema_fields(schema, {"row_id": "{row.id}"})
+    assert [x["key"] for x in f] == ["symbol", "exchange", "backfill", "days", "tf"]   # required first; filled / carried / structured left out
+    assert f[0] == {"key": "symbol", "label": "Symbol", "required": True}
+    assert f[1]["default"] == "binance" and f[1]["title"] == "Where it trades"
+    assert f[2]["type"] == "checkbox" and f[2]["default"] is True
+    assert f[3]["type"] == "number" and f[4] == {"key": "tf", "label": "Tf", "type": "select", "options": ["1h", "1d"], "default": "1d"}
+    assert A.schema_fields(None) == [] and A.schema_fields({"properties": "x"}) == []
+    app = {"id": "x.y", "actions": [{"id": "a", "form": "schema", "cap": "c.add", "args": {"days": 3}},
+                                    {"id": "b", "form": "schema", "cap": "c.add", "fields": [{"key": "symbol"}]},
+                                    {"id": "c", "cap": "c.add"}]}
+    served = A.with_schema_forms(app, lambda cap: schema)
+    assert [x["key"] for x in served["actions"][0]["fields"]] == ["symbol", "exchange", "backfill", "tf", "row_id"]   # days is filled by args
+    assert served["actions"][1]["fields"] == [{"key": "symbol"}] and "fields" not in served["actions"][2]   # written fields win
+    assert "fields" not in app["actions"][0]   # the manifest itself is not changed
+    assert A.with_schema_forms(app, lambda cap: 1 / 0)["actions"][0]["fields"] == []   # a schema it cannot get: no fields, no failure
+
+
 def test_a_composite_joins_its_parts_by_field():
     # DA-07b: view.join pairs "as.field" sides of two different reads
     reads = [{"as": "hosts", "cap": "nodes.list"}, {"as": "containers", "cap": "docker.ps"}]
