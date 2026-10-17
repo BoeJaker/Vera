@@ -2977,6 +2977,9 @@ _COMMON_PORTS = [22, 80, 443, 3389, 5985, 8006, 6443, 2375, 2376, 9090, 3000]
                 "save_to_fabric (bool=true — persist results to fabric dataset), "
                 "fabric_dataset (str='netscan_lan' — target dataset id). "
                 "Output: {cidr, alive: [{ip, hostname, mac, open_ports, alive_via}], count, elapsed_ms}.",
+    # on the desk: the hosts found, as a table with their open ports (DA-04c (d); the graph is netscan.graph's)
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "alive"},
+                               "draw": {"columns": ["ip", "hostname", "open_ports", "alive_via", "mac"]}}},
 )
 async def cap_netscan_lan(
     cidr:            str,
@@ -4057,6 +4060,7 @@ _NETSCAN_LABEL_SET = "|".join(_NETSCAN_LABELS)
     description="Fetch the full network asset graph (cytoscape-friendly). "
                 "Output: {nodes: [{data:{id,label,type,...}}], "
                 "edges: [{data:{id,source,target,label}}], counts}.",
+    contract={"presentation": {"kind": "graph", "form": "vgraph", "draw": {"chrome": "min"}}},   # the network map (DA-04c (d))
 )
 async def cap_netscan_graph(trace_id=None) -> Dict:
     fn = _fabric_neo()

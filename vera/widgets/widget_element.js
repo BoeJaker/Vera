@@ -2343,8 +2343,10 @@
      has registered). The graph lives in the element's light DOM (a slot), so the page's graph styles reach it, and it
      is kept across refreshes (a new answer is loaded into it only when its nodes or edges changed). Without the element
      (VeraWidget.draw alone) the slot shows the flat node graph as its fallback. */
-  const toVeraGraph = (d) => { const src = d && typeof d === 'object' ? d : {}; const N = Array.isArray(src) ? src : (src.nodes || src.vertices || []);
-    const E = src.edges || src.links || src.rels || src.relationships || [];
+  /* a cytoscape-shaped element ({data:{id, label, ...}} / {data:{source, target}} - netscan.graph's answer) is read as its data */
+  const cyUnwrap = (x) => (x && typeof x === 'object' && x.data && typeof x.data === 'object' && !Array.isArray(x.data) && (x.data.id != null || x.data.source != null) ? Object.assign({}, x.data) : x);
+  const toVeraGraph = (d) => { const src = d && typeof d === 'object' ? d : {}; const N = (Array.isArray(src) ? src : (src.nodes || src.vertices || [])).map(cyUnwrap);
+    const E = (src.edges || src.links || src.rels || src.relationships || []).map(cyUnwrap);
     // a node's words: a Neo4j-shaped node (labels[]) keeps its TYPE in label and its words in name/text; a topology node's
     // label is its words and kind its type
     const nodes = (Array.isArray(N) ? N : []).filter((n) => n && typeof n === 'object').map((n) => { const id = String(n.id ?? n.name ?? n.key ?? ''); const typed = Array.isArray(n.labels);

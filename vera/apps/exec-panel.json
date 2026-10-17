@@ -1,0 +1,45 @@
+[
+  {
+    "id": "exec-panel.netmap",
+    "panel": "exec-panel",
+    "title": "Network map",
+    "icon": "network",
+    "summary": "Every host, port and service the network scans have found, and how they connect",
+    "view": {
+      "kind": "graph"
+    },
+    "read": {
+      "cap": "netscan.graph",
+      "args": {},
+      "refresh": {
+        "every_s": 120
+      }
+    },
+    "actions": [
+      {
+        "id": "scan",
+        "label": "Scan a network",
+        "cap": "netscan.lan.scan",
+        "where": "header",
+        "title": "Find the hosts on a network (TCP ping of common ports, ICMP fallback) and add them to the map",
+        "effect": "create",
+        "fields": [
+          {
+            "key": "cidr",
+            "label": "Network (CIDR)",
+            "required": true,
+            "default": "192.168.0.0/24"
+          }
+        ]
+      }
+    ],
+    "related": [
+      "estate.glance",
+      "estate.nodes"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
+  }
+]

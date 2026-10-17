@@ -207,6 +207,29 @@
   "form": "vgraph",
   "kind": "graph"
  },
+ "netscan.graph": {
+  "draw": {
+   "chrome": "min"
+  },
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "netscan.lan.scan": {
+  "draw": {
+   "columns": [
+    "ip",
+    "hostname",
+    "open_ports",
+    "alive_via",
+    "mac"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "alive"
+  }
+ },
  "obs.cluster": {
   "kind": "table",
   "map": {
