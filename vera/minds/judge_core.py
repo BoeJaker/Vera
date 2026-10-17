@@ -446,3 +446,27 @@ def card_vote(vec: Optional[Iterable[float]], card_vecs: Dict[str, Iterable[floa
     ex = {lab: math.exp(temp * (s - top)) for lab, s in sims.items()}
     best = max(sims, key=sims.get)
     return best, round(ex[best] / sum(ex.values()), 4)
+
+
+# ── the candidate matrix (owner, 17 Oct): decision points beyond the loop, scored by every judge ──────────────────
+# applications_core holds them in this file's shape; merged here so the LLM judges (any model), kNN, cards, zero-shot,
+# NLI and the cross-encoder all score them with no further wiring. LOOP_QUESTIONS keeps the loop's own six apart
+# (the loop student, the cascade switches and the live-model filters are about those).
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import applications_core as _APPS
+except Exception:                        # worktree / app-free import
+    from vera.minds import applications_core as _APPS  # type: ignore
+
+LOOP_QUESTIONS = tuple(QUESTIONS)
+for _q, _d in _APPS.QUESTIONS.items():
+    QUESTIONS.setdefault(_q, _d)
+for _q, _d in _APPS.CARDS.items():
+    CARDS.setdefault(_q, _d)
+_loop_user_message = user_message
+
+
+def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:  # noqa: F811 - extends the loop's
+    """The question put to the model: an application's own builder, else the loop's."""
+    if question_id in _APPS.QUESTIONS:
+        return _APPS.user_message(question_id, state)
+    return _loop_user_message(question_id, state)

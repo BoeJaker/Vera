@@ -57,9 +57,11 @@ def plan(bindings: Iterable[Mapping[str, Any]], questions: Sequence[str], models
                                  "since_hours": SINCE_HOURS}, f"{qid}|{model}"))
         else:
             short = cap.rsplit(".", 1)[-1]
-            rest.append((int(b.get("tier") or 0), cap,
-                         (cap, f"shadow judge: {short} ({b.get('id') or cap}), all questions",
-                          {"question_id": "all", "limit": ALL_LIMIT, "since_hours": SINCE_HOURS}, short)))
+            sel = {str(k): v for k, v in sorted((b.get("selector") or {}).items())}
+            key = short + "".join(f"-{v}" for v in sel.values())     # one job per model on a multi-model judge
+            rest.append((int(b.get("tier") or 0), key,
+                         (cap, f"shadow judge: {key} ({b.get('id') or cap}), all questions",
+                          dict({"question_id": "all", "limit": ALL_LIMIT, "since_hours": SINCE_HOURS}, **sel), key)))
     # the LLM jobs model by model, as before; the others lowest tier first
     llm.sort(key=lambda j: (list(models).index(j[2]["model"]), known.index(j[2]["question_id"])))
     rest.sort(key=lambda r: (r[0], r[1]))
