@@ -114,6 +114,8 @@ async def cap_agents_work_heartbeat(id: str = "", status: str = "", note: str = 
             upd[k] = v
     try:
         rec = core.normalize(upd, prev=prev)
+        if status == "done":
+            rec = core.roll(rec) or rec          # B2: a repeating trigger re-arms at its next fire
         await _put(rec)
     except (ValueError, RuntimeError) as ex:
         return {"ok": False, "error": str(ex)}
@@ -143,11 +145,12 @@ async def cap_agents_work_list(session: str = "", kind: str = "", include_done: 
                          "agents.work.pending and acks it. Output: {ok, entry}."))
 async def cap_agents_work_request(session: str = "", title: str = "", what: str = "", board_items: Any = None,
                                   when: str = "", window_end: str = "", limits: Any = None, owner: str = "",
-                                  trace_id=None) -> Dict[str, Any]:
+                                  repeat: str = "", trace_id=None) -> Dict[str, Any]:
     try:
         rec = core.normalize({"kind": "request", "session": session, "title": title, "what": what,
                               "board_items": board_items or [], "when": when, "window_end": window_end,
-                              "limits": _obj(limits), "owner": owner or "owner", "status": "pending"})
+                              "limits": _obj(limits), "owner": owner or "owner", "status": "pending",
+                              "repeat": repeat})
         await _put(rec)
     except (ValueError, RuntimeError) as ex:
         return {"ok": False, "error": str(ex)}
@@ -182,9 +185,54 @@ async def cap_agents_work_ack(id: str = "", status: str = "claimed", session: st
         upd["session_id"] = session
     try:
         rec = core.normalize(upd, prev=prev)
+        if status == "done":
+            rec = core.roll(rec) or rec          # B2: a repeating request comes back at its next time
         await _put(rec)
     except (ValueError, RuntimeError) as ex:
         return {"ok": False, "error": str(ex)}
     await emit_event({"type": "agents.work.changed", "id": rec["id"], "kind": "request",
                       "session": rec["session"], "status": rec["status"]})
     return {"ok": True, "entry": rec}
+
+
+
+# ── looplab-control B2/B5 (17 Oct 2026): read one, cancel one, cancel a session's whole schedule ─────
+@capability("agents.work.get", memory="off", silent=True,
+            http_method="GET", http_path="/agents/work/get", http_tags=["agents", "schedule"],
+            description="One work entry with its view_status (as `state`). Input: id (str!). Output: {entry, state}.")
+async def cap_agents_work_get(id: str = "", trace_id=None) -> Dict[str, Any]:
+    e = await _get((id or "").strip())
+    if not e:
+        return {"error": "no work entry %r" % id}
+    return {"entry": e, "state": core.view_status(e)}
+
+
+@capability("agents.work.cancel", memory="off",
+            http_method="POST", http_path="/agents/work/cancel", http_tags=["agents", "schedule"],
+            description="Cancel one trigger or request (it stops repeating). Input: id (str!), note. Output: {ok, entry}.")
+async def cap_agents_work_cancel(id: str = "", note: str = "", trace_id=None) -> Dict[str, Any]:
+    prev = await _get((id or "").strip())
+    if not prev:
+        return {"ok": False, "error": "no work entry %r" % id}
+    rec = dict(prev, status="cancelled", note=(note or prev.get("note") or "")[:400],
+               updated_at=core._iso())
+    await _put(rec)
+    await emit_event({"type": "agents.work.changed", "id": rec["id"], "kind": rec["kind"],
+                      "session": rec["session"], "status": "cancelled"})
+    return {"ok": True, "entry": rec}
+
+
+@capability("agents.work.cancel_session", memory="off",
+            http_method="POST", http_path="/agents/work/cancel_session", http_tags=["agents", "schedule"],
+            description="Cancel everything scheduled for or by one session (its triggers and the requests for it). "
+                        "Input: session (str!). Output: {ok, cancelled}.")
+async def cap_agents_work_cancel_session(session: str = "", trace_id=None) -> Dict[str, Any]:
+    s = (session or "").strip()
+    if not s:
+        return {"ok": False, "error": "session is required"}
+    n = 0
+    for e in await _all():
+        if e.get("session") == s and core.view_status(e) in ("armed", "running", "pending", "claimed"):
+            await cap_agents_work_cancel(id=e["id"], note="cancelled with the session's schedule")
+            n += 1
+    return {"ok": True, "cancelled": n}

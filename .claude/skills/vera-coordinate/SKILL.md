@@ -113,6 +113,28 @@ the plan**, or it didn't happen.
   narrative twice.
 - Details and examples: `references/status-handover.md`.
 
+## 4b. Scheduled work and wake-ups - the central cron
+
+Vera keeps ONE view of everything scheduled on the box: `evolve.schedule.all` (Loop Lab schedules, every
+session's triggers, Vera's own periodic jobs, the host crontab and systemd timers), drawn in the Loop Lab
+Schedule calendar. A session's own timers are invisible to it unless the session says so - so:
+
+- **Register every timer you set**: each `CronCreate`, `ScheduleWakeup`, `/loop` cadence or nohup/setsid host
+  job gets `agents.work.register {entry: {kind: session_cron | host_job | one_shot, title, session: <your
+  name>, session_id, when (next fire, ISO UTC), repeat ("every 30m", "daily", or cron "cron: 7 2 * * 2,4,6"),
+  what, log}}`. Keep the returned id.
+- **Heartbeat it** when it fires (`agents.work.heartbeat {id, status: running}`) and when it ends
+  (`status: done` - a repeating entry re-arms itself at its next fire; `failed` with a note otherwise).
+  Cancel what you abandon (`agents.work.cancel {id}`); a session's whole schedule can be cancelled with
+  `agents.work.cancel_session {session}`.
+- **Pick up work scheduled FOR you.** The owner (or a `claude_session` Loop Lab schedule) writes requests;
+  Vera never starts or resumes a Claude process to deliver them (owner, 17 Oct 2026). A live session checks
+  `agents.work.pending {session: <your name>}` at every wake-up and at least every 30 minutes while it runs
+  (a `/loop` or a cron of its own), then `agents.work.ack {id, status: claimed}` -> does it -> `ack done`
+  (or `declined` with the reason). A request for `any` goes to whichever session claims it first.
+- **Obey the night rules** in `shared-planning/NIGHT-BOOKINGS.md` for anything a timer starts: nothing new
+  03:30-05:00, nothing of yours in the owner's evening, and only on your unit's booked nights.
+
 ## 5. When Vera is unreachable (degraded mode)
 
 - Board files are plain markdown on the share (`vera-state/board/*.md`). **Read them freely; never write them by

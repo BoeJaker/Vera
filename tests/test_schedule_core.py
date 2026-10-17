@@ -266,4 +266,4 @@ def test_layer_of_every_event():
     assert sc.layer_of({"source": "loop-lab", "kind": "census", "board_id": "b1"}) == "board"
     assert sc.layer_of({"source": "loop-lab-run", "kind": "board"}) == "board"
     assert sc.layer_of({"source": "local"}) == "calendar" and sc.layer_of({"source": "google"}) == "calendar"
-    assert set(sc.LAYERS) == {"windows", "runs", "results", "board", "calendar"}
+    assert set(sc.LAYERS) == {"windows", "runs", "results", "board", "calendar", "agents", "host"}
