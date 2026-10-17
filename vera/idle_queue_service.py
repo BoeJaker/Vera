@@ -87,6 +87,45 @@ _HANDLERS: Dict[str, Callable[..., Awaitable[Any]]] = _shared.HANDLERS
 #: The one job in flight, if any: {"id", "kind", "task", "asked_to_stop_at"}.
 _RUNNING: Dict[str, Any] = _shared.RUNNING
 
+#: A reserved window: {"kinds": (...), "until": epoch, "by": str}. While it holds, the quiet gate is set aside
+#: for those kinds ONLY - a Loop Lab schedule has promised the box to them (an exclusive scheduled cap such as
+#: intel.night.run keeps censuses off meanwhile). Nothing else starts, and a reserved job is not pre-empted by
+#: the busy signal the box gives off while it runs. 12-17 Oct 2026: censuses, probes and landings filled every
+#: night, the queue never saw 600 s of quiet, and intel's batch (and its narrations) waited six days.
+if not hasattr(_shared, "RESERVATION"):
+    _shared.RESERVATION = {}
+_RESERVATION: Dict[str, Any] = _shared.RESERVATION
+
+
+def reserve(kinds: Any, until: float, by: str = "") -> Dict[str, Any]:
+    """Set the quiet gate aside for `kinds` until `until` (epoch seconds). One reservation at a time: a new one
+    replaces the old."""
+    _RESERVATION.clear()
+    _RESERVATION.update({"kinds": tuple(str(k) for k in (kinds or ())), "until": float(until), "by": str(by or "")})
+    return dict(_RESERVATION)
+
+
+def release_reservation(by: str = "") -> None:
+    """End the reservation - only the holder's own, when `by` is given."""
+    if not by or _RESERVATION.get("by") == by:
+        _RESERVATION.clear()
+
+
+def reservation(now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """The reservation in force, or None (an expired one is cleared here)."""
+    if not _RESERVATION:
+        return None
+    t = float(now if now is not None else time.time())
+    if t >= float(_RESERVATION.get("until") or 0):
+        _RESERVATION.clear()
+        return None
+    return dict(_RESERVATION)
+
+
+def reserved_for(kind: Any, now: Optional[float] = None) -> bool:
+    r = reservation(now)
+    return bool(r and str(kind) in r["kinds"])
+
 
 # ── handler registry ────────────────────────────────────────────────────────
 def register_handler(kind: str, fn: Callable[..., Awaitable[Any]]) -> None:
@@ -327,6 +366,8 @@ def _should_continue(job_id: str, busy_probe: Callable[[], Awaitable[str]]):
     async def _cb() -> str:
         if _RUNNING.get("id") == job_id and _RUNNING.get("asked_to_stop_at"):
             return "pre-empted by the idle queue"
+        if _RUNNING.get("id") == job_id and reserved_for(_RUNNING.get("kind", "")):
+            return ""                    # the window is ours: the box's own busyness is not a reason to stop
         try:
             return await busy_probe()
         except Exception:
@@ -433,7 +474,11 @@ async def drain_once(busy_reason: str,
     #    itself the reason the box looks busy, so stopping it on that signal
     #    would cancel our own work moments after starting it. See
     #    idle_queue.PREEMPTIBLE_KINDS.
+    held = reservation(t)
     if busy_reason and _still_running():
+        if held and _RUNNING.get("kind", "") in held["kinds"]:
+            return {"action": "busy", "running": _RUNNING.get("id"),
+                    "note": "%s holds a reserved window - letting it finish" % _RUNNING.get("kind", "")}
         if _iq.is_preemptible(_RUNNING.get("kind", "")):
             await _stop_running(busy_reason, t)
             return {"action": "preempting", "reason": busy_reason}
@@ -447,7 +492,16 @@ async def drain_once(busy_reason: str,
 
     # 2. Otherwise start the next job, if the box has been quiet long enough.
     jobs = await load_jobs()
-    nxt = _iq.next_job(jobs, busy_reason)
+    if held:
+        # A reserved window: only the reserved kinds may start, and the quiet gate does not apply to them.
+        # Running jobs stay in the candidate list so next_job's one-at-a-time rule still holds.
+        cand = [j for j in jobs if j.get("kind") in held["kinds"] or j.get("state") == _iq.RUNNING]
+        nxt = _iq.next_job(cand, "")
+        if nxt is None:
+            return {"action": "idle", "reason": "nothing queued for the reserved kinds (%s)" % ", ".join(held["kinds"]),
+                    "depth": len(_iq.pending(jobs)), "reserved": held}
+    else:
+        nxt = _iq.next_job(jobs, busy_reason)
     if nxt is None:
         return {"action": "idle", "reason": busy_reason or "nothing queued",
                 "depth": len(_iq.pending(jobs))}

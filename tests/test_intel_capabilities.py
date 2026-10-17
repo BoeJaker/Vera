@@ -495,6 +495,92 @@ def test_the_night_refits_the_calibration_curves(tmp_path):
     assert rec and rec.get("at") and "labelled" in rec
 
 
+class _FakeSvc:
+    """The idle queue as intel.night.run sees it: jobs run when drained, never on their own."""
+    def __init__(self, mod):
+        self.mod, self.jobs, self.reserved, self.released, self.drains = mod, [], None, [], 0
+
+    async def submit(self, kind, title="", *, dedupe_key="", payload=None, total=None, priority=None):
+        self.jobs.append({"id": f"{kind}:{len(self.jobs)}", "kind": kind, "state": "waiting", "payload": payload})
+        return {"queued": True, "id": self.jobs[-1]["id"]}
+
+    async def load_jobs(self):
+        return [dict(j) for j in self.jobs]
+
+    async def report_progress(self, *a, **k):
+        pass
+
+    async def submit_mode(self, mode, title, *, key, payload=None, priority=None):
+        """intel's _submit, queueing (the harness's default runs jobs at once)."""
+        return await self.submit("intel", title, dedupe_key=f"intel:{key}", payload=dict(payload or {}, mode=mode),
+                                 total=1, priority=priority)
+
+    def reserve(self, kinds, until, by=""):
+        self.reserved = (tuple(kinds), until, by)
+
+    def release_reservation(self, by=""):
+        self.released.append(by)
+
+    async def drain_once(self, busy, probe, now=None):
+        self.drains += 1
+        assert self.reserved and busy == ""                      # drained only inside the reserved window
+        w = [j for j in self.jobs if j["state"] == "waiting"]
+        if not w:
+            return {"action": "idle"}
+        await self.mod._intel_job(w[0], probe)
+        self.jobs.remove(w[0])
+        return {"action": "started", "kind": w[0]["kind"]}
+
+
+def test_night_run_reserves_the_queue_and_drains_the_batch_to_the_brief(tmp_path, monkeypatch):
+    # 12-17 Oct: the night batch waited six days for 600 s of quiet; in a scheduled window it runs regardless
+    mod, orch = _load(tmp_path)
+    _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])
+    fake = _FakeSvc(mod)
+    monkeypatch.setattr(mod, "_svc", lambda: fake)
+    monkeypatch.setattr(mod, "_submit", fake.submit_mode)
+    monkeypatch.setattr(mod, "_NIGHT_RUN_POLL_S", 0.0)
+    r = _R(orch, "intel.night.run", minutes=30)
+    assert r["ok"] and r["reason"] == "brief written" and r["ran"] >= 3 and r["remaining"] == 0, r
+    assert fake.reserved[0] == ("intel",) and fake.reserved[2] == "intel.night.run"
+    assert fake.released == ["intel.night.run"]                  # always, even when the loop ends early
+    night = mod.store().get_kv("night")
+    assert night["pending"] == [] and night["brief"] not in ("", "-")
+    assert any(e.get("type", "").endswith("night_run") or e.get("kind") == "night_run" or "night_run" in str(e)
+               for e in orch.EVENTS)
+    # a second call the same night does not start the batch again
+    r2 = _R(orch, "intel.night.run", minutes=30)
+    assert r2["ok"] and r2["ran"] == 0 and r2["reason"] == "brief written"
+
+
+def test_night_run_without_an_idle_queue_runs_inline(tmp_path, monkeypatch):
+    mod, orch = _load(tmp_path)
+    _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])
+    monkeypatch.setattr(mod, "_svc", lambda: None)
+    r = _R(orch, "intel.night.run")
+    assert r["ok"] and "inline" in r["reason"]
+    assert mod.store().get_kv("night")["brief"] not in ("", "-")
+
+
+def test_night_schedule_is_an_exclusive_cap_entry_and_idempotent(tmp_path):
+    mod, orch = _load(tmp_path)
+    calls = []
+
+    async def upsert(schedule=None, trace_id=None):
+        calls.append(schedule)
+        return {"ok": True, "schedule": dict(schedule, id="sched1"), "next": {"start": "x", "end": "y"}}
+
+    orch.CAPABILITY_REGISTRY["evolve.schedule.upsert"] = {"func": upsert, "raw": upsert, "meta": {}}
+    r = _R(orch, "intel.night.schedule", start="00:10", end="02:40", minutes=120)
+    assert r["ok"] and r["schedule"]["id"] == "sched1"
+    rec = calls[0]
+    assert rec["kind"] == "cap" and rec["target"] == {"name": "intel.night.run", "arguments": {"minutes": 120}}
+    assert rec["exclusive"] is True and rec["repeat"] == "once_per_window" and rec["days"] == [0, 1, 2, 3, 4, 5, 6]
+    assert rec["start"] == "00:10" and rec["end"] == "02:40" and "id" not in rec
+    _R(orch, "intel.night.schedule", days="0,2,4", enabled=False)
+    assert calls[1]["id"] == "sched1" and calls[1]["days"] == [0, 2, 4] and calls[1]["enabled"] is False
+
+
 def test_drop_folders(tmp_path):
     mod, orch = _load(tmp_path)
     r = _run(mod.run_drop_folders(None))

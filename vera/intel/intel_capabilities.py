@@ -3783,6 +3783,103 @@ async def cap_calibration_status(refit: bool = False, trace_id=None):
 schedule(_tick, 300, name="intel.tick", skip_in_sandbox=True, singleton=True)
 
 
+# ── the night as a Loop Lab schedule entry ───────────────────────────────────
+# 12-17 Oct 2026: the background queue needs 600 s of quiet and a night of censuses, probes and landings never
+# gave it one, so the deep assessments and the narrations waited six days. The owner's call: intel's run goes in
+# the Loop Lab schedule. An exclusive scheduled cap keeps censuses off the box while it runs; inside it the idle
+# queue is reserved for intel's jobs, so the quiet gate no longer applies to them.
+
+_NIGHT_RUN_POLL_S = 5.0
+
+
+async def _box_busy() -> str:
+    """The box's busy reason (background.status), '' when quiet or unknown. Used once the reserved window has
+    passed: a job that overran still yields to a person."""
+    try:
+        if _has("background.status"):
+            return str((await _call("background.status")).get("busy_reason") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+@capability("intel.night.run", http_method="POST", http_path="/intel/night/run", http_tags=["intel"],
+            description="Run tonight's intelligence batch now, inside a window that is Vera's to use: start the "
+                        "night if it has not started, reserve the idle queue for intel's jobs for up to `minutes` "
+                        "(default 150) and drain them one after another until the brief is written or the time "
+                        "is up. Meant to be the target of an exclusive Loop Lab schedule entry (intel.night.schedule), "
+                        "which keeps censuses off meanwhile; called by hand it does not check the box first. "
+                        "Input: minutes. Output: {ok, night, ran, remaining, minutes, reason}.")
+async def cap_night_run(minutes: int = 150, trace_id=None):
+    st = store()
+    now = _local_now()
+    night = _night_of(now, int(config().get("sweep_hour", 23)))
+    if not st.topics("active"):
+        return {"ok": False, "night": night, "error": "no active topics"}
+    if st.get_kv("nightly_day") != night:
+        st.set_kv("nightly_day", night)
+        await _start_night(night)
+    svc = _svc()
+    if svc is None or not hasattr(svc, "reserve"):
+        return {"ok": True, "night": night, "ran": 0, "remaining": 0, "minutes": 0,
+                "reason": "no idle queue - the batch ran inline"}
+    budget = max(5, min(int(minutes or 150), 600)) * 60
+    t0 = time.time()
+    ran, reason = 0, "brief written"
+    svc.reserve((KIND_INTEL,), t0 + budget, by="intel.night.run")
+    try:
+        while True:
+            jobs = [j for j in await svc.load_jobs()
+                    if j.get("kind") == KIND_INTEL and j.get("state") in ("waiting", "running")]
+            n = st.get_kv("night", {}) or {}
+            if not jobs:
+                reason = "brief written" if (n.get("id") == night and n.get("brief")) else "nothing queued"
+                break
+            if time.time() - t0 >= budget:
+                reason = "time is up"
+                break
+            r = await svc.drain_once("", _box_busy, time.time())
+            if r.get("action") == "started":
+                ran += 1
+            await asyncio.sleep(_NIGHT_RUN_POLL_S)
+    finally:
+        svc.release_reservation("intel.night.run")
+    left = sum(1 for j in await svc.load_jobs() if j.get("kind") == KIND_INTEL and j.get("state") == "waiting")
+    await _event("night_run", night=night, ran=ran, remaining=left, reason=reason)
+    return {"ok": True, "night": night, "ran": ran, "remaining": left,
+            "minutes": round((time.time() - t0) / 60, 1), "reason": reason}
+
+
+@capability("intel.night.schedule", http_method="POST", http_path="/intel/night/schedule", http_tags=["intel"],
+            description="Give the night batch a protected window in the Loop Lab schedule: an exclusive scheduled "
+                        "cap intel.night.run (censuses stay off while it runs), every night, 00:10-02:40 local by "
+                        "default. Idempotent: it updates the entry it made before. Input: start, end (HH:MM), "
+                        "minutes, enabled, days (weekday numbers 0=Mon..6=Sun; default every day). "
+                        "Output: {ok, schedule, next}.")
+async def cap_night_schedule(start: str = "00:10", end: str = "02:40", minutes: int = 150, enabled: bool = True,
+                             days: Any = None, trace_id=None):
+    if not _has("evolve.schedule.upsert"):
+        return {"error": "the Loop Lab schedule is not available"}
+    if isinstance(days, str):
+        days = [int(x) for x in re.findall(r"\d", days)]
+    rec: Dict[str, Any] = {
+        "kind": "cap", "title": "Intel night",
+        "target": {"name": "intel.night.run", "arguments": {"minutes": int(minutes)}},
+        "days": list(days) if days is not None else [0, 1, 2, 3, 4, 5, 6],
+        "start": start, "end": end, "repeat": "once_per_window", "exclusive": True, "at_window_end": "finish",
+        "enabled": bool(enabled),
+        "notes": "intel's night batch (sweeps, assessments, brief, narration) in a window censuses keep out of",
+    }
+    prev = store().get_kv("night_schedule_id")
+    if prev:
+        rec["id"] = prev
+    r = await _call("evolve.schedule.upsert", schedule=rec)
+    sid = ((r or {}).get("schedule") or {}).get("id")
+    if sid:
+        store().set_kv("night_schedule_id", sid)
+    return r
+
+
 # ── drop folders (notes / inbox / print / podcast) ──────────────────────────
 
 def _notes_topic() -> Dict[str, Any]:
