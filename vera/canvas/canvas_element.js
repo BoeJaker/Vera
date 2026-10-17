@@ -2219,6 +2219,8 @@
   /* the records browser: a record already read is quieter; the keys' cursor is a bar at its edge */
   .vc-rbx-row.seen .vc-rbx-t,.vc-rbx-tbl tr.seen .vc-rbx-t{color:var(--dim2,#8a92a0);font-weight:400}
   .vc-rbx-row.cur,.vc-rbx-tbl tr.cur td:first-child{box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
+  /* a card carried over another: the one it would join (LV-11) */
+  :host([align="desk"]) .stage .it.join-target{outline:2px dashed var(--acc,#5a9e8f);outline-offset:-3px;box-shadow:0 0 0 4px color-mix(in srgb,var(--acc,#5a9e8f) 18%,transparent)}
   /* the board of small items (LV-10): a frame the desk places as one block; its items sit in its cells */
   :host([align="desk"]) .stage > .desk-board{position:absolute;border:1px solid color-mix(in srgb,var(--border,#2a2f37) 80%,transparent);border-radius:10px;background:color-mix(in srgb,var(--bg1,#15181d) 70%,transparent);pointer-events:none}
   :host([align="desk"]) .stage > .desk-board > .bh{font-size:10.5px;letter-spacing:.02em;color:var(--dim2,#8a92a0);padding:4px 10px;height:22px;box-sizing:border-box}
@@ -3869,7 +3871,7 @@
            hold, its topics' layouts and what was settling belong to the canvas left - an item of the same key here (the enrichments every
            session has) was taken as already placed and slid across from where it sat on the other desk. Here every card is new: unseen
            until it is still. */
-        this._placed = null; this._lastPlan = null; this._hold = null; this._topicMem = null; this._topicMemK = null; this._newSeen = null; this._expanded = null; this._hist = null; this._slotWant = null;
+        this._placed = null; this._lastPlan = null; this._hold = null; this._topicMem = null; this._topicMemK = null; this._newSeen = null; this._expanded = null; this._hist = null; this._slotWant = null; this._joinA = null; this._sepA = null;
         this.refresh();
       }
       if (name === 'columns' && this._doc) this.render(this._doc);
@@ -4400,13 +4402,16 @@
         const cc = this._contentOf(c.dataset.key || '') || {}; const fm = String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, '');
         return CHART.test(fm) ? 'charts' : GRAPH.test(fm) ? 'graphs' : /^(reading|news|feed|headlines|articles|sources)$/.test(fm) ? 'reading' : 'widgets'; };   /* news and web read together */
       const slotsU = this._slotUnion;   /* the slots arrangement: who shares a slot (see _placeDesk), nothing else */
-      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && (slotsU || famOf(c)) && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
+      const joins = this._joinGet(), joinedTo = new Set(Object.values(joins));
+      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && (slotsU || famOf(c) || joins[k] || joinedTo.has(k)) && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
       const T0 = this._topic; const inTopic = (c) => !!(T0 && T0.keys && (T0.keys.has(c.dataset.key || '') || c.classList.contains('pinned')));
       /* joined by family when they share a turn or a subject - or, ACROSS TURNS, when both are in the conversation's context
          now (WSU-84: "be able to group over turns if they share context") */
       const par = new Map(elig.map((c) => [c, c]));
       const find = (c) => { while (par.get(c) !== c) { par.set(c, par.get(par.get(c))); c = par.get(c); } return c; };
       const by = {};
+      /* cards the person dropped on one another share a card, whatever they are (LV-11) */
+      { const byJ = new Map(elig.map((c) => [c.dataset.key || '', c])); Object.keys(joins).forEach((k) => { const a = byJ.get(k), b2 = byJ.get(joins[k]); if (a && b2) par.set(find(a), find(b2)); }); }
       if (slotsU) { const byK = new Map(elig.map((c) => [c.dataset.key || '', c])); elig.forEach((c) => { const f0 = slotsU[c.dataset.key || '']; if (f0 && byK.has(f0)) par.set(find(c), find(byK.get(f0))); });
         /* ...and, as in the other arrangements, similar items share a card - but only of ONE aspect (owner 2026-10-17: "i dont see any automatic
            composites happening in slot mode"; "composites of elements that have different aspects are being made"): the same kind and the same
@@ -4574,6 +4579,9 @@
     _cmpGet() { if (this._cmpA) return this._cmpA; try { this._cmpA = JSON.parse(localStorage.getItem('vera:canvas:deskfront:' + this.canvasId) || '{}') || {}; } catch (e) { this._cmpA = {}; } return this._cmpA; }
     _cmpSet(m) { this._cmpA = m; const ks = Object.keys(m); if (ks.length > 400) ks.sort((a, b) => m[a] - m[b]).slice(0, ks.length - 400).forEach((k) => delete m[k]);
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
+    /* JOINED BY THE PERSON (LV-11, WSU-97): a card dropped on another - {member key: the card it was dropped on}, per canvas, in this browser */
+    _joinGet() { if (this._joinA) return this._joinA; try { this._joinA = JSON.parse(localStorage.getItem('vera:canvas:deskjoin:' + this.canvasId) || '{}') || {}; } catch (e) { this._joinA = {}; } return this._joinA; }
+    _joinSet(key, to) { const m = this._joinGet(); if (to) m[key] = to; else delete m[key]; try { localStorage.setItem('vera:canvas:deskjoin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } }
     _sepGet() { if (this._sepA) return this._sepA; try { this._sepA = JSON.parse(localStorage.getItem('vera:canvas:desksep:' + this.canvasId) || '{}') || {}; } catch (e) { this._sepA = {}; } return this._sepA; }
     _sepSet(key, on) { const m = this._sepGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:desksep:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
     _placeDesk(st, cards) {
@@ -6100,7 +6108,7 @@
         const far = d.sr ? Math.max(d.sr.top - ev.clientY, ev.clientY - d.sr.bottom, d.sr.left - ev.clientX, ev.clientX - d.sr.right) : Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0);
         if (!d.out && far > 28) { d.out = true; d.tab.classList.add('tab-out'); } });
       tdoc.addEventListener('mouseup', (ev) => { const d = this._tabDrag; this._tabDrag = null; if (!d) return; d.tab.classList.remove('tab-out'); if (!d.out) return;
-        this._tabDragAt = Date.now(); const stg = this.shadowRoot.getElementById('stage'); this._histPush('cmpsep', d.key); this._sepSet(d.key, true);
+        this._tabDragAt = Date.now(); const stg = this.shadowRoot.getElementById('stage'); this._histPush('cmpsep', d.key); this._joinSet(d.key, null); this._sepSet(d.key, true);
         if (stg) { const b = stg.getBoundingClientRect(), Z = stg.offsetWidth ? (b.width / stg.offsetWidth) || 1 : 1, W0 = stg.clientWidth || 1, H0 = stg.clientHeight || 1;
           const x = (ev.clientX - b.left) / Z, y = (ev.clientY - b.top) / Z; if (x > 0 && y > 0 && x < W0 && y < H0) this._deskPosSet(d.key, { fx: +(x / W0).toFixed(4), fy: +(y / H0).toFixed(4) }); }
         (this._actAt = this._actAt || {})[d.key] = Date.now(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); });
@@ -6183,6 +6191,12 @@
         const ox = (d.cx0 - d.sx) / d.w0, oy = (d.cy0 - d.sy) / d.h0;
         const cx = Math.max(10, Math.min(g.W - 10, px + ox * w)), cy = Math.max(10, Math.min(g.H - 10, py + oy * h));
         d.cx = cx; d.cy = cy; d.own = own;
+        /* DROPPED ON ANOTHER CARD IT JOINS IT (LV-11; owner 2026-10-17: "id like to be able to re-combine composite elements by dragging and dropping
+           them on one another"): the pointer well inside another open card (not near its edges) marks it the target */
+        { let tgt = null; if (!onStrip) [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].forEach((o) => { if (tgt || o === d.el || !o.getClientRects().length || o.classList.contains('cmp-behind') || /chip|icon/.test(o.dataset.deskFace || '') || o.classList.contains('desk-new')) return;
+            const ol = parseFloat(o.style.left) || 0, ot = parseFloat(o.style.top) || 0, ow = o.offsetWidth, oh = o.offsetHeight, mx = Math.min(60, ow * 0.18), my = Math.min(50, oh * 0.18);
+            if (px > ol + mx && px < ol + ow - mx && py > ot + my && py < ot + oh - my) tgt = o; });
+          if (d.joinEl && d.joinEl !== tgt) d.joinEl.classList.remove('join-target'); d.joinEl = tgt; d.joinTo = tgt ? tgt.dataset.key : null; if (tgt) tgt.classList.add('join-target'); }
         /* the face changes with a margin: a card held near a boundary (chip | card | full) flipped its contents back and
            forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
         const TH = { chip: 0.25, card: 0.6 }, M = 0.05, cur = d.el.dataset.deskFace || s.face;
@@ -6206,6 +6220,13 @@
            pills put near the furthest point should kinda stick to it so they align on whatever side is furthest from chat"):
            let go on the desk, it stays there (and a card minimised to a pill is a pill no more); let go where a card is a
            pill, it joins the border's column of pills - no exact spot is kept, so it lines up with them */
+        if (d.joinEl) d.joinEl.classList.remove('join-target');
+        if (d.joinTo && d.joinTo !== d.key) { const to = d.joinTo;
+          this._histPush('cmpjoin-drop', d.key); this._sepSet(d.key, false); this._sepSet(to, false); this._joinSet(d.key, to); this._deskPosSet(d.key, null);
+          if (this._pillGet()[d.key]) this._pillSet(d.key, false);
+          const m = this._cmpGet(); m[to] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[to] = Date.now();
+          if (this._hold && this._hold.rects) { delete this._hold.rects[d.key]; if (this._hold.base) delete this._hold.base[d.key]; }
+          (this._actAt = this._actAt || {})[to] = Date.now(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
         const asChip = /^(chip|icon)$/.test(d.el.dataset.deskFace || '');
         const g = this._deskGeo;
         if (g && d.cx != null) {
@@ -6999,7 +7020,7 @@
             requestAnimationFrame(() => requestAnimationFrame(() => { const stg = this.shadowRoot.getElementById('stage'); const n = stg && [...stg.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
               if (n && n.classList.contains('desk-chip')) { if (wasWin) this._winOpen(n); else this._pillCard(n); } })); } }
         if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
-        else { if (act === 'cmpsep') this._histPush('cmpsep', key); else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
+        else { if (act === 'cmpsep') { this._histPush('cmpsep', key); this._joinSet(key, null); } else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
       /* a command that ran (DU-E-session): run again - asked first, in place; then the same capability with the same
