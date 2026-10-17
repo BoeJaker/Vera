@@ -469,9 +469,38 @@ Serial (thermal printers) and webcam/microphone access.
 
 > [!WARNING]
 > The orchestrator's HTTP API, including `/mcp/call` and every capability route,
-> has **no built-in authentication**. CORS allows all origins. Anyone who can
-> reach the port can call any capability. Keep the port on a trusted network or
-> behind an authenticating proxy, and treat reachability as the outer boundary.
+> has **no caller authentication yet**: any program that can reach the port can
+> call any capability. The edge guard below stops *web pages on other sites*
+> from doing so through the owner's browser, but not a program on the network.
+> Keep the port on a trusted network and treat reachability as the outer boundary.
+
+### The edge guard (cross-site requests)
+
+`vera/edge_guard.py` is the outermost middleware (pure ASGI, so it also sees
+WebSocket handshakes). Its rules are in `vera/edge_guard_core.py`:
+
+| Request | Allowed when | Refused with |
+|---|---|---|
+| A POST, PUT, PATCH or DELETE, or any WebSocket handshake, that carries `Origin` | the Origin's host:port equals the request's `Host` (Vera's own page, under any name the owner uses), or it is listed in `VERA_ALLOWED_ORIGINS` | 403, or WebSocket close 1008 before accept |
+| The same, with `Origin: null` | never | 403 |
+| The same without `Origin`, but with `Sec-Fetch-Site: cross-site` or `same-site` | never (another site, or another port of this host) | 403 |
+| A GET or HEAD API read from another site (not a navigation, not a static asset) | the Origin is one of this machine's own host names (any port: Vera's panels in sandboxes and mirrors read prod), or listed | 403 |
+| A `Host` that is not this machine (DNS rebinding) | the name is in the local list or `VERA_ALLOWED_HOSTS` | 421, only when `VERA_EDGE_GUARD_HOST=enforce` (default observe) |
+| A program that sends neither `Origin` nor `Sec-Fetch-*` (the MCP bridge, sandboxes, n8n, tools) | always | — |
+
+CORS answers only this machine's own origins (any port) and
+`VERA_ALLOWED_ORIGINS`, so other sites cannot read API responses.
+
+- **Mode:** `VERA_EDGE_GUARD`: `enforce` (default), `observe` (records, refuses
+  nothing) or `off`. `GET /auth/edge/status` shows the mode, counts by rule, the
+  Origins and Hosts seen, and the last 50 refusals (no headers or bodies).
+- **Evidence:** refusals emit `auth.refused` events and a log warning, at most one
+  per rule, origin and path per minute.
+- **Break-glass:** run `SET vera:auth:mode observe EX 3600` on the host's Redis.
+  It always needs a TTL, so the override lapses within the hour. No capability can
+  switch the guard off.
+- **Behind a reverse proxy**, list the proxy's address in `VERA_TRUSTED_PROXIES`, so
+  its `X-Forwarded-Host` counts as the request's host.
 
 What the framework does provide:
 
@@ -486,8 +515,9 @@ What the framework does provide:
   - `system.inventory` likewise reports `[redacted]` for secret-looking keys
     ([41](./41-system-inventory.md)).
 - **Confirmation flags on high-impact operations.** Examples are
-  `markets.broker.order` (needs `confirm=true` **and** trading enabled on the
-  account), `secrets.delete` (`confirm`), and dry-run-by-default capabilities
+  `markets.broker.order` (needs `confirm=true`, trading **armed** with an
+  out-of-band code that expires, and the account's limits; see
+  [15](./15-markets.md)), `secrets.delete` (`confirm`), and dry-run-by-default capabilities
   (`secrets.setup`, `secrets.migrate`).
 - **Agent tool allowlists.** Agent loops and specialist profiles run with
   `allowed_caps` lists ([19](./19-agents-chat.md)).
