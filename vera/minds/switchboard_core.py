@@ -96,6 +96,16 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "an allowed label (VERA_DECIDE_STUDENT_CONTROLLER_LABELS, default continue) at confidence >= "
        "VERA_DECIDE_STUDENT_TAU (default 0.95), else the big model decides. A student's continue carries no "
        "findings or steer for the next step - turn 'first' on only when shadow shows that costs nothing."),
+    # Every other loop question at once (owner, 17 Oct: "set up all the evaluations and training in parallel"):
+    # which student answers - the kNN judge, the in-slot LLM, a bound trained head - and from what confidence comes
+    # from the cascade plan (decide.cascade.plan: the lowest threshold where its precision on outcomes is at least
+    # the live model's accuracy). The loop asks through the same student hook; compute-roles wires each site.
+    *[_f(f"decide.student.{q.split('.', 1)[1]}", ("off", "shadow", "first"), "loop", "FM-2.5",
+         f"The System 1 student on {q} (four-minds FM-2.5, the cascade plan). 'off' (default) = the big model only; "
+         "'shadow' = the plan's student answers beside it, recorded as a shadow; 'first' = the student answers "
+         "first and its answer stands at the plan's confidence threshold, else the big model decides. With no "
+         "eligible student in the plan, 'first' behaves as 'shadow'.")
+      for q in ("loop.step_done", "loop.prestep_needed", "loop.intent", "loop.tier")],
     _f("discovery.recall_index", ("off", "pg"), "discovery", "FM-7.1",
        "Where discover_recall (the fabric's own pages beside every web.search) finds pages for a query. 'off' "
        "(default) = SQLite LIKE per word, newest first; 'pg' = the Postgres page search index (weighted tsvector, "
