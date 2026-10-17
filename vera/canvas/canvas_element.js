@@ -606,6 +606,33 @@
     PANEL_SRC[id] = src; return src;
   }
 
+  /* THE CALENDAR MOVED AND ADDED TO IN PLACE (DU-E-calendar). Its state per item, on the element: a drag in progress,
+     the add form's day and draft, and per event a move waiting on the diary (pend) or the error it came back with (err),
+     and the event just written (lit). None of it is written anywhere: the only writes are cal.event.upsert. */
+  const calUi = (el, key) => { const z = () => ({ drag: null, add: null, pend: {}, err: {}, lit: null }); if (!el || !key) return z();
+    const m = el._calUi || (el._calUi = {}); const u = m[key] || (m[key] = z()); u.pend = u.pend || {}; u.err = u.err || {}; return u; };
+  /* day arithmetic on the DATE PART only, in UTC: a local Date across a clock change is 23 or 25 hours long, and a
+     move counted in milliseconds lands an hour off or on the wrong day */
+  const calYmd = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null; };
+  const calDayAdd = (day, n) => { const t = calYmd(day); return t == null ? '' : new Date(t + n * 86400000).toISOString().slice(0, 10); };
+  const calDayDiff = (a, b) => { const x = calYmd(a), y = calYmd(b); return x == null || y == null ? null : Math.round((y - x) / 86400000); };
+  /* an event carried to another day: the new day at the same time of day (whatever follows the date is kept as it
+     was - the time, the seconds, a zone), the end moved by the same number of days, all-day kept. Null for the same
+     day or a date it cannot read. */
+  const calShift = (e, day) => { const s = String((e && e.start) || ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return null;
+    const n = calDayDiff(s, day); if (!n) return null;
+    const out = { start: day + s.slice(10) }; const en = String((e && e.end) || '');
+    if (calYmd(en) != null) out.end = calDayAdd(en, n) + en.slice(10);
+    if (e && e.all_day) out.all_day = true;
+    return out; };
+  /* the add form's time: empty is all day; '9', '9:30', '21.15', '9pm' are read; anything else is null */
+  const calTime = (s) => { s = String(s || '').trim(); if (!s) return ''; const m = /^(\d{1,2})(?:[:.](\d{2}))?\s*(am|pm)?$/i.exec(s); if (!m) return null;
+    let h = +m[1]; const mi = +(m[2] || 0); if (m[3]) { if (h < 1 || h > 12) return null; h = (h % 12) + (/pm/i.test(m[3]) ? 12 : 0); }
+    if (h > 23 || mi > 59) return null; return (h < 10 ? '0' : '') + h + ':' + (mi < 10 ? '0' : '') + mi; };
+  /* what the add form writes: a title, the day (at the time, if one was given), all day when not */
+  const calAddArgs = (day, title, time) => { const t = calTime(time); if (t == null || !String(title || '').trim() || calYmd(day) == null) return null;
+    return t ? { title: String(title).trim(), start: day + 'T' + t + ':00' } : { title: String(title).trim(), start: day, all_day: true }; };
+
   /* THE TIMELINE'S BRUSH AND SCRUBBER (DU-E-timeline). A position on the axis is the timeline's own number for a date
      (year + (month-1)/12 + (day-1)/366); the brush is two of them, the scrubber one. Per item, on the element, never
      written to the canvas: looking along a timeline is not an edit. */
@@ -688,8 +715,17 @@
        The week starts Monday. Days carry a dot per event up to three and then a count, because a grid where a
        busy day and a quiet one look alike is a decoration; and the selected day's events are listed underneath
        with their times, since that is the question a calendar is actually asked. */
-    calendar: (c, size, key, el) => {
-      const evs = Array.isArray(c.events) ? c.events : [];
+    /* DU-E-calendar: an event (its dot, its row) is carried to another day and written there through the diary - shown on
+       the new day at once ("moving…"), back with the error if the write fails; a double-click on a day (or "+ add" on
+       the selected one) opens a small form on that day's week. The state is el._calUi (calUi above). */
+    calendar: Object.assign((c, size, key, el) => {
+      const ui = calUi(el, key), pend = ui.pend, errs = ui.err, add = ui.add, lit = ui.lit;
+      const kq = esc(key || '');
+      const evs = (Array.isArray(c.events) ? c.events : []).map((e) => (e && e.id != null && pend[String(e.id)] ? Object.assign({}, e, pend[String(e.id)], { _pend: true }) : e));
+      const evId = (e) => (e && e.id != null ? String(e.id) : '');
+      const evCls = (e) => { const id = evId(e); if (!id) return ''; return (e._pend ? ' pend' : '') + (errs[id] ? ' err' : '') + (lit && String(lit.id) === id ? ' lit' : ''); };
+      // only an event the diary can take back is carried: one with an id, not a read-only overlay (a dream's)
+      const evAttr = (e) => (evId(e) && !e.read_only && key ? ' data-cal-ev="' + esc(evId(e)) + '" data-cal-key="' + kq + '"' : '');
       const pad = (n) => (n < 10 ? '0' : '') + n;
       const today = new Date();
       const todayKey = today.getFullYear() + '-' + pad(today.getMonth() + 1) + '-' + pad(today.getDate());
@@ -704,22 +740,35 @@
       const sel = /^\d{4}-\d{2}-\d{2}$/.test(String(c.selected || '')) ? String(c.selected) : '';
       const MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
       let cells = '';
+      // the add form is a row of its own under the week of its day (a field cannot sit inside a day's button)
+      const addD = add && String(add.day || '').slice(0, 7) === month ? +String(add.day).slice(8, 10) : 0;
+      const wk = (d) => Math.floor((lead + d - 1) / 7);
+      const addRow = () => { const t = String(add.day); const err = add.err ? '<span class="vc-cal-aerr">' + esc(String(add.err)) + '</span>' : '';
+        return '<div class="vc-cal-add" data-cal-add="' + kq + '" data-cal-for="' + esc(t) + '">'
+          + '<span class="vc-cal-ad">' + esc((+t.slice(8, 10)) + ' ' + MON[M - 1].slice(0, 3)) + '</span>'
+          + '<input class="vc-cal-ai" data-cal-in="title" data-cal-key="' + kq + '" placeholder="title" aria-label="The event\u2019s title" value="' + esc(String(add.title || '')) + '"' + (add.busy ? ' disabled' : '') + '>'
+          + '<input class="vc-cal-ai tm" data-cal-in="time" data-cal-key="' + kq + '" placeholder="time" title="A time (9:30, 2pm) - empty is all day" aria-label="Time, empty for all day" value="' + esc(String(add.time || '')) + '"' + (add.busy ? ' disabled' : '') + '>'
+          + '<button class="vc-cal-b" data-act="calsave" data-cal-key="' + kq + '" title="Write it to the diary (Enter)">' + (add.busy ? 'saving\u2026' : 'add') + '</button>'
+          + '<button class="vc-cal-b" data-act="calcancel" data-cal-key="' + kq + '" title="Cancel (Esc)">\u00d7</button>' + err + '</div>'; };
       for (let i = 0; i < lead; i++) cells += '<span class="vc-cal-d out"></span>';
       for (let d = 1; d <= days; d++) {
         const k = month + '-' + pad(d);
         const on = byDay[k] || [];
-        const dots = on.slice(0, 3).map((e) => '<i style="background:' + esc(String(e.color || 'var(--acc,#5a9e8f)')) + '"></i>').join('');
-        cells += '<button class="vc-cal-d' + (k === todayKey ? ' today' : '') + (k === sel ? ' on' : '') + (on.length ? ' has' : '')
+        const dots = on.slice(0, 3).map((e) => { const cl = evCls(e).trim(); return '<i' + evAttr(e) + (cl ? ' class="' + cl + '"' : '') + ' style="background:' + esc(String(e.color || 'var(--acc,#5a9e8f)')) + '"></i>'; }).join('');
+        cells += '<button class="vc-cal-d' + (k === todayKey ? ' today' : '') + (k === sel ? ' on' : '') + (on.length ? ' has' : '') + (d === addD ? ' adding' : '')
           + '" data-cal-day="' + k + '" data-cal-key="' + esc(key || '') + '"'
           + ' title="' + esc(k + (on.length ? ' \u00b7 ' + on.length + ' event' + (on.length === 1 ? '' : 's') : '')) + '">'
           + '<b>' + d + '</b><span class="vc-cal-dots">' + dots + (on.length > 3 ? '<em>+' + (on.length - 3) + '</em>' : '') + '</span></button>';
+        if (addD && ((lead + d) % 7 === 0 || d === days) && wk(d) === wk(addD)) cells += addRow();
       }
       const listFor = sel ? (byDay[sel] || []) : evs.slice().sort((a, b) => String(a.start || '').localeCompare(String(b.start || ''))).slice(0, 8);
       const timeOf = (e) => { const s = String(e.start || ''); if (e.all_day || s.length <= 10) return 'all day'; const t = s.slice(11, 16); return t || ''; };
-      const rows = listFor.map((e) => '<div class="vc-cal-e">'
+      const rows = listFor.map((e) => '<div class="vc-cal-e' + evCls(e) + '"' + evAttr(e) + '>'
         + '<span class="vc-cal-t">' + esc(timeOf(e)) + '</span>'
         + '<span class="vc-cal-n" style="border-color:' + esc(String(e.color || 'var(--acc,#5a9e8f)')) + '">' + esc(String(e.title || 'event'))
-        + (e.location ? ' <em>' + esc(String(e.location)) + '</em>' : '') + '</span></div>').join('')
+        + (e.location ? ' <em>' + esc(String(e.location)) + '</em>' : '')
+        + (e._pend ? ' <span class="vc-cal-mk">moving\u2026</span>' : '')
+        + (errs[evId(e)] ? ' <span class="vc-cal-mk err" title="' + esc(String(errs[evId(e)])) + '">not moved: ' + esc(String(errs[evId(e)])) + '</span>' : '') + '</span></div>').join('')
         || '<div class="vc-cal-none">' + (sel ? 'Nothing on this day.' : 'Nothing in this month.') + '</div>';
       return '<div class="vc-cal"><div class="vc-cal-in">'
         + '<div class="vc-cal-hd">'
@@ -727,13 +776,14 @@
         + '<span class="vc-cal-m">' + esc(MON[M - 1] + ' ' + Y) + '</span>'
         + '<button class="vc-cal-b" data-cal-mv="1" data-cal-key="' + esc(key || '') + '" title="The month after">\u203a</button>'
         + '<span class="vc-cal-sp"></span>'
+        + (sel && key ? '<button class="vc-cal-b" data-act="caladd" data-cal-key="' + kq + '" data-cal-for="' + esc(sel) + '" title="Add an event on ' + esc(sel) + ' (or double-click a day)">+ add</button>' : '')
         + '<button class="vc-cal-b" data-cal-mv="0" data-cal-key="' + esc(key || '') + '" title="Back to this month">today</button>'
         + '</div>'
         + '<div class="vc-cal-w">' + ['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d) => '<span>' + d + '</span>').join('') + '</div>'
         + '<div class="vc-cal-g">' + cells + '</div>'
         + '<div class="vc-cal-l">' + rows + '</div>'
         + '</div></div>';
-    },
+    }, { shift: calShift, time: calTime, addArgs: calAddArgs, dayAdd: calDayAdd }),
 
     /* DATED EVENTS IN ORDER. `when` is whatever precision the prose had - a year, a month, a day - and it is
        shown as it was read rather than padded out to a fake day so the axis looks tidy. A run of events in the
@@ -2608,6 +2658,26 @@
   /* a command that ran (DU-E-session) */
   .vc-rc{font:10px system-ui,sans-serif;padding:0 6px;border-radius:9px;border:1px solid currentColor;white-space:nowrap}.vc-rc.ok{color:var(--ok,#8fb87a)}.vc-rc.bad{color:var(--err,#e06c75)}
   .vc-ran-ask{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;margin:4px 0;border:1px solid var(--warn,#e5c07b);border-radius:6px;font:11px system-ui,sans-serif}.vc-ran-when{font-size:10px;margin:2px 0}
+  /* the calendar carried and added to (DU-E-calendar) */
+  .vc-cal [data-cal-ev]{cursor:grab}
+  .vc-cal-dots i[data-cal-ev]{position:relative}.vc-cal-dots i[data-cal-ev]::after{content:"";position:absolute;inset:-4px}
+  .vc-cal.dragging,.vc-cal.dragging *{cursor:grabbing}
+  .vc-cal [data-cal-ev].drag{opacity:.35}
+  .vc-cal-d.drop{border-color:var(--acc,#5a9e8f);background:color-mix(in srgb,var(--acc,#5a9e8f) 18%,transparent)}
+  .vc-cal-d.adding{border-color:var(--acc,#5a9e8f)}
+  .vc-cal-dots i.pend{outline:1px dashed var(--dim,#6b7480);outline-offset:1px}
+  .vc-cal-dots i.err{box-shadow:0 0 0 1.5px var(--err,#e06c75)}
+  .vc-cal-dots i.lit,.vc-cal-e.lit{animation:vccallit 1.6s ease-out}
+  .vc-cal-e.lit{background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent)}
+  @keyframes vccallit{0%{box-shadow:0 0 0 3px var(--acc,#5a9e8f)}100%{box-shadow:0 0 0 0 transparent}}
+  .vc-cal-e.pend{opacity:.7}
+  .vc-cal-mk{font-family:var(--mono,monospace);font-size:8.5px;color:var(--dim,#6b7480)}.vc-cal-mk.err{color:var(--err,#e06c75)}
+  .vc-cal-add{grid-column:1/-1;display:flex;align-items:center;gap:4px;flex-wrap:wrap;padding:4px 5px;margin:1px 0 2px;border:1px solid var(--acc,#5a9e8f);border-radius:5px}
+  .vc-cal-ad{font-family:var(--mono,monospace);font-size:9px;color:var(--dim,#6b7480)}
+  .vc-cal-ai{flex:1 1 90px;min-width:60px;font:10.5px system-ui,sans-serif;padding:2px 5px;border:1px solid var(--line,#2a2f36);border-radius:4px;background:transparent;color:inherit}
+  .vc-cal-ai.tm{flex:0 0 58px}
+  .vc-cal-ai:focus{outline:none;border-color:var(--acc,#5a9e8f)}
+  .vc-cal-aerr{flex-basis:100%;font-size:9.5px;color:var(--err,#e06c75)}
   /* the long document (DU-E-markdown) */
   .vc-mdwrap{container-type:inline-size;display:flex;flex-direction:column;min-height:0}
   .vc-mdbar{display:flex;align-items:center;gap:5px;padding:0 0 6px;opacity:.6;transition:opacity .15s}.it:is(:hover,:focus-within) .vc-mdbar,.vc-mdbar:has(.vc-mdq:not(:placeholder-shown)){opacity:1}
@@ -5542,6 +5612,37 @@
         if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); this._rzLetGo = key; try { this._placeNow(); } catch (e) { /* optional */ } finally { this._rzLetGo = null; } }
         if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage') && !this.deskAlign()) this._placeNow(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
+      /* THE CALENDAR'S EVENTS CARRIED AND ADDED (DU-E-calendar). A press on an event (its dot in the grid, its row in the
+         list) that moves past 4 px carries it: the event dims and the day under the pointer lights, in place, no redraw;
+         let go on another day and it is written there through the diary (_calMove). Never a card drag - the press stops
+         here. A double-click on a day opens the add form under its week; Enter saves, Esc cancels. */
+      const calDayAt = (e, box) => { const p = e.composedPath ? e.composedPath() : []; let d = null;
+        for (const n of p) { if (n === body) break; if (n && n.dataset && n.dataset.calDay) { d = n; break; } }
+        if (!d) { let x = null; try { x = this.shadowRoot.elementFromPoint(e.clientX, e.clientY); } catch (_) { /* optional */ } d = x && x.closest ? x.closest('[data-cal-day]') : null; }
+        return d && box && box.contains(d) ? d : null; };
+      body.addEventListener('mousedown', (ev) => { const t = ev.target; if (ev.button !== 0 || !t || !t.closest) return; const h = t.closest('[data-cal-ev][data-cal-key]'); if (!h || !body.contains(h)) return;
+        ev.preventDefault(); ev.stopPropagation();
+        const k = h.dataset.calKey, id = h.dataset.calEv, box = h.closest('.vc-cal'), doc = this.ownerDocument || document, ui = calUi(this, k);
+        const x0 = ev.clientX, y0 = ev.clientY; const dr = ui.drag = { id, moved: false }; let over = null;
+        const sel = '[data-cal-ev="' + (window.CSS && CSS.escape ? CSS.escape(id) : id) + '"]';
+        const light = (d) => { if (d === over) return; if (over) over.classList.remove('drop'); over = d; if (over) over.classList.add('drop'); };
+        const mv = (e) => { if (!dr.moved && Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) < 4) return; e.preventDefault();
+          if (!dr.moved) { dr.moved = true; if (box) { box.classList.add('dragging'); box.querySelectorAll(sel).forEach((n) => n.classList.add('drag')); } }
+          light(calDayAt(e, box)); };
+        const up = (e) => { doc.removeEventListener('mousemove', mv, true); doc.removeEventListener('mouseup', up, true);
+          const d = dr.moved ? calDayAt(e, box) : null; light(null); if (ui.drag === dr) ui.drag = null;
+          if (box) { box.classList.remove('dragging'); box.querySelectorAll('.drag').forEach((n) => n.classList.remove('drag')); }
+          if (!dr.moved) return;
+          this._dgEnd = Date.now();   /* the click this release makes is not a day press */
+          if (d) this._calMove(k, id, d.dataset.calDay); };
+        doc.addEventListener('mousemove', mv, true); doc.addEventListener('mouseup', up, true); });
+      body.addEventListener('dblclick', (ev) => { const t = ev.target; const d = t && t.closest ? t.closest('[data-cal-day][data-cal-key]') : null; if (!d || !body.contains(d) || !d.dataset.calKey) return;
+        ev.preventDefault(); ev.stopPropagation(); this._calAddOpen(d.dataset.calKey, d.dataset.calDay); });
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.calIn == null) return; const ui = calUi(this, q.dataset.calKey); if (!ui.add) return;
+        const f = q.dataset.calIn === 'time' ? 'time' : 'title'; ui.add[f] = String(q.value || ''); ui.add.f = f; });   /* the draft, kept across a redraw; nothing drawn */
+      body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.calIn == null || (ev.key !== 'Enter' && ev.key !== 'Escape')) return;
+        ev.preventDefault(); ev.stopImmediatePropagation(); const k = q.dataset.calKey; if (ev.key === 'Escape') this._calAddClose(k); else this._calAddSave(k); });
+      this.addEventListener('vera:canvas:placed', () => { const m = this._calUi || {}; Object.keys(m).forEach((k) => { if (m[k] && m[k].add) this._calFocus(k); }); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.mdQ == null) return;   /* find in a long document (DU-E-markdown) */
         const ui = mdUi(this, q.dataset.mdQ); ui.q = String(q.value || ''); ui.i = -1; clearTimeout(this._mdQT);
         this._mdQT = setTimeout(() => { const wrap = q.closest('.vc-mdwrap'); if (mdMark(wrap, ui.q)) mdStep(wrap, ui, 1); }, 150); });
@@ -6142,6 +6243,10 @@
           if (need > it2.offsetHeight + 4) { (this._minH || (this._minH = {}))[key] = need; E[key] = E[key] || 'grow'; this._placeNow(); } }, 60);
         return; }
       /* the timeline's brush (DU-E-timeline): clear the range */
+      /* the calendar's add form (DU-E-calendar): open on the selected day, save (the one write), cancel (none) */
+      if (act === 'caladd' || act === 'calsave' || act === 'calcancel') { const k = btn.dataset.calKey || key; if (ev && ev.stopPropagation) ev.stopPropagation();
+        if (act === 'caladd') this._calAddOpen(k, btn.dataset.calFor || ''); else if (act === 'calsave') this._calAddSave(k); else this._calAddClose(k);
+        return; }
       if (act === 'tlclear') { const u = tlUi(this, btn.dataset.tlKey || key); u.b0 = u.b1 = null; if (this._doc) this.render(this._doc); return; }
       if (act === 'tagain' || act === 'tagainno') { (this._ranAsk = this._ranAsk || {})[key] = act === 'tagain'; if (this._doc) this.render(this._doc); return; }
       if (act === 'tagainok') { const c = this._contentOf(key) || {}; (this._ranAsk = this._ranAsk || {})[key] = false; if (!c.cap) return;
@@ -7016,7 +7121,8 @@
        fixed when it landed would be wrong by the next event written, and it is a calendar - being current is the
        whole of what it is for. The month's events are re-read from cal.events.list and written into the item, so
        the answer survives a reload and the next look costs nothing. */
-    async _calAct(key, act) {
+    /* `then` (DU-E-calendar): the same month read again after a write - `then(events, month)` takes the answer instead */
+    async _calAct(key, act, then) {
       const b = this._blockOf(key); const c = (b && b.content) || null; if (!c) return;
       const pad = (n) => (n < 10 ? '0' : '') + n;
       const now = new Date();
@@ -7025,7 +7131,8 @@
       if (/^-?\d+$/.test(String(act))) {
         const step = +act;
         let month;
-        if (step === 0) month = now.getFullYear() + '-' + pad(now.getMonth() + 1);
+        if (step === 0 && typeof then === 'function') month = cur;
+        else if (step === 0) month = now.getFullYear() + '-' + pad(now.getMonth() + 1);
         else { const [Y, M] = cur.split('-').map(Number); const d = new Date(Y, M - 1 + step, 1);
           month = d.getFullYear() + '-' + pad(d.getMonth() + 1); }
         this._readout(key, '\u2026 ' + month);
@@ -7040,12 +7147,85 @@
         const r = await this.callResult('cal.events.list', { start: from, end: to });
         const events = ((r && Array.isArray(r.events)) ? r.events : [])
           .filter((e) => String(e && e.start || '').slice(0, 7) === month);
+        if (typeof then === 'function') return then(events, month, r);
         return this.call('canvas.update', { key, content: Object.assign({}, c, { month, selected: '', events }) });
       }
       // a day: local only, the month's events are already here
       const day = String(act || '');
       const next = Object.assign({}, c, { selected: c.selected === day ? '' : day });
       return this.call('canvas.update', { key, content: next });
+    }
+    /* DU-E-calendar. The month read again after a write, through _calAct's own read: the answer is drawn at once (the
+       item's content here, so the moved / added event is in place before the canvas's refresh) and written into the item */
+    _calReread(key, sel, after) {
+      return this._calAct(key, '0', (events, month, r) => {
+        const b = this._blockOf(key); const c = (b && b.content) || {};
+        const ok = !!(r && Array.isArray(r.events));   /* a failed read leaves the month as it was drawn */
+        const next = Object.assign({}, c, ok ? { month, events } : {}, sel ? { selected: sel } : {});
+        if (b) b.content = next;
+        if (typeof after === 'function') after(next);
+        if (this._doc) this.render(this._doc);
+        return ok || sel ? this.call('canvas.update', { key, content: next }) : null; });
+    }
+    /* an event carried to another day: shown there now ("moving…"), written through the diary, put back with the error if
+       the write fails; the month is read again either way. The same day writes nothing. */
+    async _calMove(key, id, day) {
+      const ui = calUi(this, key); id = String(id);
+      const c = this._contentOf(key) || {}; const e = (Array.isArray(c.events) ? c.events : []).find((x) => x && String(x.id) === id);
+      const nx = e && !e.read_only ? calShift(e, day) : null;
+      if (!nx) { if (this._doc) this.render(this._doc); return false; }
+      delete ui.err[id]; ui.pend[id] = nx; if (this._doc) this.render(this._doc);
+      /* the diary's upsert writes the whole event: what it carries besides the fields asked for (its colour, its notes,
+         its tags) goes back with it, or the move would wipe them */
+      const args = { id: e.id, title: String(e.title || ''), start: nx.start, all_day: !!(e.all_day || String(e.start || '').length <= 10) };
+      if (nx.end) args.end = nx.end;
+      if (e.location) args.location = e.location;
+      if (e.description) args.description = e.description;
+      if (Array.isArray(e.tags) && e.tags.length) args.tags = e.tags;
+      if (e.color) args.color = e.color;
+      const r = await this.callResult('cal.event.upsert', args);
+      const bad = !r || r.ok === false || (r.error && !r.event);
+      if (bad) { delete ui.pend[id]; ui.err[id] = String((r && (r.error || r.detail)) || 'the diary did not take it'); if (this._doc) this.render(this._doc); }
+      // moved: it stays drawn on the new day until the month read again has it there
+      await this._calReread(key, '', () => { if (ui.pend[id] === nx) delete ui.pend[id]; });
+      if (ui.pend[id] === nx) { delete ui.pend[id]; if (this._doc) this.render(this._doc); }
+      return !bad;
+    }
+    /* the add form: opened on a day, closed with nothing written, saved through the diary (the new event lit a moment) */
+    _calAddOpen(key, day) {
+      const ui = calUi(this, key); if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return;
+      ui.add = { day: String(day), title: '', time: '', err: '', busy: false };
+      if (this._doc) this.render(this._doc); this._calFocus(key, true);
+    }
+    _calAddClose(key) { const ui = calUi(this, key); if (!ui.add) return; ui.add = null; if (this._doc) this.render(this._doc); }
+    async _calAddSave(key) {
+      const ui = calUi(this, key); const a = ui.add; if (!a || a.busy) return;
+      const f = this.shadowRoot && this.shadowRoot.querySelector('[data-cal-add="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]');
+      if (f) { const ti = f.querySelector('[data-cal-in="title"]'), tm = f.querySelector('[data-cal-in="time"]'); if (ti) a.title = String(ti.value || ''); if (tm) a.time = String(tm.value || ''); }
+      if (!String(a.title || '').trim()) { a.err = 'a title is needed'; if (this._doc) this.render(this._doc); this._calFocus(key, true); return; }
+      const args = calAddArgs(a.day, a.title, a.time);
+      if (!args) { a.err = 'a time reads like 9:30 or 2pm (empty: all day)'; if (this._doc) this.render(this._doc); this._calFocus(key, true); return; }
+      a.busy = true; a.err = ''; if (this._doc) this.render(this._doc);
+      const r = await this.callResult('cal.event.upsert', args);
+      if (!r || r.ok === false || (r.error && !r.event)) { a.busy = false; a.err = String((r && (r.error || r.detail)) || 'the diary did not take it'); if (this._doc) this.render(this._doc); this._calFocus(key, true); return; }
+      const nid = r.event && r.event.id != null ? String(r.event.id) : (r.id != null ? String(r.id) : '');
+      ui.add = null;
+      await this._calReread(key, a.day, (next) => {
+        // lit by its id, or (an answer without one) by the title on that day
+        const hit = nid ? nid : String(((next.events || []).find((x) => x && String(x.start || '').slice(0, 10) === a.day && String(x.title || '') === args.title) || {}).id || '');
+        if (!hit) return; ui.lit = { id: hit }; clearTimeout(this._calLitT);
+        this._calLitT = setTimeout(() => { if (ui.lit && ui.lit.id === hit) { ui.lit = null; if (this._doc) this.render(this._doc); } }, 1800); });
+    }
+    /* the form's box being typed in keeps the focus across a redraw (the canvas's poll draws the card again under the typing) */
+    _calFocus(key, force) {
+      const go = () => { const ui = calUi(this, key); if (!ui.add || ui.add.busy || !this.shadowRoot) return;
+        const f = this.shadowRoot.querySelector('[data-cal-add="' + (window.CSS && CSS.escape ? CSS.escape(key) : key) + '"]'); if (!f) return;
+        const a = this.shadowRoot.activeElement; if (a && f.contains(a)) return;
+        /* a redraw drops the focus to nothing; anything that HAS it (another field, a control, the chat outside) keeps it */
+        const doc = this.ownerDocument || document, da = doc.activeElement;
+        if (!force && (a || (da && da !== this && da !== doc.body))) return;
+        const q = f.querySelector('[data-cal-in="' + (ui.add.f === 'time' ? 'time' : 'title') + '"]'); if (!q) return; q.focus({ preventScroll: true }); try { q.setSelectionRange(q.value.length, q.value.length); } catch (_) { /* optional */ } };
+      go(); requestAnimationFrame(go); setTimeout(go, 120);
     }
     /* a widget, read again. Its record says which capability it draws and with what arguments - the same pair the
        chat used when it placed it - so this is that cap called once more and the answer put back in the item. */
