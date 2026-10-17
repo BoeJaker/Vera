@@ -4135,6 +4135,26 @@
     }
     /* the desk dealt afresh: a card given back to the arrangement goes to its place, and the others with it */
     _holdEnd() { this._hold = null; }
+    /* EXPANDED BY A DOUBLE CLICK (LV-8): the card takes the free desk beside the chat (about two thirds of its width, its whole height) and
+       the others are pushed round it; the desk as it was is kept. A double click on it again gives the room back - every card where it was.
+       A double click on ANOTHER card: the expanded one gives way (back where it was, the desk as it was) and the new one takes that same
+       room. */
+    _expandToggle(key) {
+      key = String(key || ''); if (!key || !this.deskAlign()) return false;
+      const copy = (m) => { const o = {}; Object.keys(m || {}).forEach((k) => { o[k] = Object.assign({}, m[k]); }); return o; };
+      const lp = this._lastPlan || {}; const ex = this._expanded; let room = null, before = null;
+      if (ex) { this._deskPosSet(ex.key, ex.pos); room = ex.room; before = ex.rects; this._expanded = null;
+        this._hold = { sig: lp.sig, sb: lp.sb, keys: Object.keys(ex.rects), rects: copy(ex.rects), base: copy(ex.rects) };
+        if (ex.key === key) { this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return false; } }
+      const g = this._deskGeo, D = root.VeraDesk; if (!g || !D) return false;
+      if (!room) { const F = D.freeRegion(g.R, g.desk, g.W < 760 ? 46 : 170); const fw = Math.max(0, F.r - F.l), w = Math.round(Math.max(Math.min(fw, 420), fw * 0.68));
+        room = { l: F.farRight === false ? F.r - w : F.l, t: F.t, w, h: Math.max(120, F.b - F.t) }; }
+      const pos = this._deskPosGet()[key];
+      this._expanded = { key, room, rects: before || copy((this._hold && this._hold.rects) || lp.rects), pos: pos ? Object.assign({}, pos) : null };
+      this._deskPosSet(key, { fx: +((room.l + room.w / 2) / g.W).toFixed(4), fy: +((room.t + room.h / 2) / g.H).toFixed(4), w: Math.round(room.w), h: Math.round(room.h) });
+      (this._actAt = this._actAt || {})[key] = Date.now(); if (!this._hold) this._holdStart(key);
+      this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return true;
+    }
     /* LAYOUTS WALK BACKWARDS (DESK-ARRANGEMENT 7 principle 8, LV-7; owner 2026-10-17: "layouts should be able to walk backwards if actions
        are undone i.e. i split a composite and some elements move away from the chat area and shrink to make space - if i then re-combine
        to the composite the layout should be able to go back as it was"). Before a card is taken out of its composite or sent to the
@@ -4553,7 +4573,7 @@
       const R = side === 'float' && cr.length === 4 && cr.every((n) => isFinite(n)) && cr[2] > 0
         ? { l: cr[0], t: cr[1], r: cr[0] + cr[2], b: cr[1] + cr[3] }
         : side === 'right' ? { l: W, t: 0, r: W + 440, b: H } : { l: -440, t: 0, r: 0, b: H };
-      const fm = this._focusMid || '';
+      const fm = this._focusMid || ''; this._deskGeo = { R, desk, W, H };
       /* a maximised item on the desk is a front layer: the free part of the desk, never over the chat (owner, 2026-10-06:
          "fullscreen (not including the chat area)") */
       const layOf = (c) => (this._max && this._max === c.dataset.key) ? 'front' : this._layer[c.dataset.key || ''];
@@ -4817,6 +4837,19 @@
         replay = plan.every((it) => !it.sizing && !!rOf(it));
         if (replay) plan.forEach((it) => { const hr0 = rOf(it); Object.assign(it, { x: hr0.x, y: hr0.y, w: hr0.w, h: hr0.h, bw: hr0.bw || hr0.w, bh: hr0.bh || hr0.h, face0: hr0.face, nd0: hr0.nd, win: !!hr0.win, replay: true, held: true, maxH: undefined, maxW: undefined, minH: undefined }); }); }
       this._lastReplay = replay;
+      /* ROOM FIRST, SHRINKING LAST (owner 2026-10-17: "when moving elements around stuff doesnt move out of the way instead it resizes if an
+         element is dropped on it ... shrinking shouldnt be the first method to get out of the way of a dropped element"): the nearest clear
+         room for a card - at its own size first, smaller only when there is none (down to about 40 %, never under 220 x 120) */
+      let stripFn = null;
+      const roomFor = (v, rest, ks, tx, ty) => { const g = 8; const X = tx == null ? v.x : tx, Y = ty == null ? v.y : ty;
+        const clear = (x, y, w, h) => x - w / 2 >= 4 && x + w / 2 <= W - 4 && y - h / 2 >= 4 && y + h / 2 <= H - 4
+          && !(R && R.r > R.l && x + w / 2 > R.l - g && x - w / 2 < R.r + g && y + h / 2 > R.t - g && y - h / 2 < R.b + g)
+          && !rest.some((o) => x - w / 2 < o.x + o.w / 2 + g && o.x - o.w / 2 < x + w / 2 + g && y - h / 2 < o.y + o.h / 2 + g && o.y - o.h / 2 < y + h / 2 + g);
+        for (const k of ks) { const w = Math.round(v.w * k), h = Math.round(v.h * k); if (k < 1 && (w < 220 || h < 120)) break; let best = null;
+          for (let y = h / 2 + 4; y <= H - h / 2 - 4; y += 16) for (let x = w / 2 + 4; x <= W - w / 2 - 4; x += 16) { if (!clear(x, y, w, h)) continue;
+            const d = Math.hypot(x - X, y - Y); if (!best || d < best.d) best = { x, y, w, h, d }; }
+          if (best) return best; }
+        return null; };
       passes: { if (replay) break passes;
       const sepSize = (xx, yy, it) => {
         /* a size the person gave is kept wherever the card is pushed - re-sized by its distance from the chat, a card
@@ -4849,7 +4882,7 @@
         Object.assign(it, { x: cx, y: SGAP + CHH / 2 + row * (CHH + SGAP), w: CHW, h: CHH, fixed: true, strip: true, keepSize: true, face0: iconStrip ? 'icon' : 'chip' }); };
       /* under the hold the strip keeps its order: the pills it holds stay in their slots, a new one joins at the end */
       if (hold) { const slot = (it) => it.held ? Math.floor((farRight ? W - it.x : it.x) / (CHW + SGAP)) * 1e5 + it.y : 1e9 + plan.indexOf(it); pills.sort((p, q) => slot(p) - slot(q)); }
-      pills.forEach(toStrip);
+      pills.forEach(toStrip); stripFn = (it) => { toStrip(it, pills.length); pills.push(it); it.held = false; };
       const stripW = cols ? cols * (CHW + SGAP) + SGAP : 0;
       const stripBox = stripW ? { id: '__strip', fixed: true, strip: true, x: farRight ? W - stripW / 2 : stripW / 2, y: H / 2, w: stripW, h: H } : null;
       /* where a carried card becomes a pill at once: over the strip, or the column where the first pills would go */
@@ -4938,7 +4971,8 @@
         for (let round = 0; round < 3; round++) {
           const open = plan.filter((it) => !it.strip && !it.win && !wins.has(it) && it.h > 40); const victims = new Set();
           for (let i = 0; i < open.length; i++) for (let j = i + 1; j < open.length; j++) { const p = open[i], q = open[j]; if (meet(p, q) < 400) continue;
-            const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q); else if (can.length === 1 && [p, q].every((x) => x.fixed)) victims.add(can[0]); }
+            const exK = this._expanded && this._expanded.key;   /* the card expanded by a double click never makes way (LV-8) */
+            const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && x.id !== exK && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q); else if (can.length === 1 && [p, q].every((x) => x.fixed)) victims.add(can[0]); }
           if (!victims.size) break;
           /* the one making way: the nearest clear room at its own size; none, the largest clear room it fits (down to about 40%,
              never under a usable 220 x 120); none at all, a pill. Never left on another card. */
@@ -4998,6 +5032,19 @@
           if (off > 1 && off <= REACH) { const nx = nearLeft ? EDGE + it.w / 2 : W - EDGE - it.w / 2; if (clearAt(it, nx)) { it.x = nx; it.snapped = true; } } });
       }
       }   /* passes */
+      /* NOTHING LEFT ON TOP OF ANOTHER (owner 2026-10-17: cards could still overlap - a card the arrangement placed beside one the person placed or
+         expanded): of two open cards that meet, the less firm makes way - placed by the arrangement before placed by the person, the older
+         touch before the newer; never the card under the hand, a locked one or the expanded one - to the nearest room at its size, then
+         smaller, then the pills */
+      if (!replay) { const exK = this._expanded && this._expanded.key, act0 = this._actAt || {};
+        const firmV = (x) => (x.sizing || x.isLock || x.id === exK) ? 3 : (x.fixed || x.stay) ? 2 : x.own ? 1 : 0;
+        const ov = (a, b) => Math.max(0, Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2)) * Math.max(0, Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2));
+        for (let round = 0; round < 4; round++) { const open = plan.filter((it) => !it.strip && !it.win && it.h > 40); let moved = 0;
+          for (let i = 0; i < open.length; i++) for (let j = i + 1; j < open.length; j++) { const p0 = open[i], q0 = open[j]; if (p0.strip || q0.strip || ov(p0, q0) < 400) continue;
+            const v = firmV(p0) !== firmV(q0) ? (firmV(p0) < firmV(q0) ? p0 : q0) : ((act0[p0.id] || 0) <= (act0[q0.id] || 0) ? p0 : q0); if (firmV(v) >= 3) continue;
+            const best = roomFor(v, plan.filter((o) => o !== v && !o.win && (o.strip || o.h > 40)), [1, 0.85, 0.7, 0.55, 0.42]);
+            if (best) Object.assign(v, { x: best.x, y: best.y, w: best.w, h: best.h, keepSize: true }); else if (stripFn) stripFn(v); else continue; moved++; }
+          if (!moved) break; } }
       /* ONLY WHAT MUST MAKE WAY MOVES (owner 2026-10-17: "after re-sizing an element the other elements jump around to different
          positions allot"; "it should be more difficult to disturb the other elements in the UI if resizing or moving"). Measured:
          a card grown by its corner moved a list it never reached 115 px and re-sized it, and narrowed a chart - the passes above
@@ -5012,7 +5059,9 @@
         const clearOf = (it, q) => !(chatBox && ovl(q, chatBox, -1)) && q.x - q.w / 2 >= 0 && q.y - q.h / 2 >= 0 && q.x + q.w / 2 <= W && q.y + q.h / 2 <= H
           && !plan.some((o) => o !== it && !o.win && (o.h > 40 || o.strip) && ovl(q, o, 4));
         for (let round = 0; round < 3; round++) { let back = 0;
-          plan.forEach((it) => { const r = seed[it.id]; if (!r || r.h <= 40 || it.sizing || it.strip || it.win || it.isLock || it.h <= 40) return;
+          /* not a card the person gave a place AND a size (or expanded): that is where they put it (it was taken back to its old place - an expand by
+             double click undone at once); a card only moved by the person keeps the size it was held at */
+          plan.forEach((it) => { const r = seed[it.id]; if (!r || r.h <= 40 || it.sizing || it.strip || it.win || it.isLock || it.fixed || it.h <= 40) return;
             if (Math.abs(r.x - it.x) < 1 && Math.abs(r.y - it.y) < 1 && Math.abs(r.w - it.w) < 1 && Math.abs(r.h - it.h) < 1) return;
             const cand = { x: r.x, y: r.y, w: r.w, h: r.h };
             if (clearOf(it, cand)) { Object.assign(it, cand, { keepSize: true, face0: r.face, held: true, restored: true }); back++; return; }
@@ -5021,6 +5070,9 @@
                about the desk (a list pressed at its top by 110 px went 115 px down and lost a third of its width) */
             const hits = plan.filter((o) => o !== it && !o.win && (o.h > 40 || o.strip) && ovl(cand, o, 4));
             if (!hits.length || !hits.every(handOn) || (chatBox && ovl(cand, chatBox, -1))) return;
+            /* moved, at its size, to the nearest room to where it was - trimmed only when there is none */
+            { const mv = roomFor(cand, plan.filter((o) => o !== it && !o.win && (o.strip || o.h > 40)), [1], r.x, r.y);
+              if (mv) { Object.assign(it, { x: mv.x, y: mv.y, w: mv.w, h: mv.h, keepSize: true, face0: r.face, held: true, restored: true }); back++; return; } }
             const G = 10, L = cand.x - cand.w / 2, T = cand.y - cand.h / 2, Rr = cand.x + cand.w / 2, B = cand.y + cand.h / 2;
             let box = { l: L, t: T, r: Rr, b: B };
             hits.forEach((o) => { const ol = o.x - o.w / 2, ot = o.y - o.h / 2, orr = o.x + o.w / 2, ob = o.y + o.h / 2;
@@ -5034,7 +5086,8 @@
       }
       const out = [];
       plan.forEach((it) => {
-        const c = it.c, key = it.id, s = it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 } : it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
+        /* a card in the pill strip IS a pill, whatever size it was given (a resized card sent there was drawn as a card 150 x 34) */
+        const c = it.c, key = it.id, s = it.strip && it.h <= 40 ? { w: it.w, h: it.h, face: it.face0 === 'icon' ? 'icon' : 'chip', nd: 0 } : it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 } : it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
           : it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 }
           /* grown into the free desk: that size, its face from it (a card grown past a full card's size is a full card) */
           : it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) })
@@ -5943,9 +5996,11 @@
         this._dg = { el: it, key: it.dataset.key, x0: ev.clientX, y0: ev.clientY, Z,
           sx: (ev.clientX - S0.left) / Z, sy: (ev.clientY - S0.top) / Z, w0: it.offsetWidth || 1, h0: it.offsetHeight || 1,
           cx0: (parseFloat(it.style.left) || 0) + it.offsetWidth / 2, cy0: (parseFloat(it.style.top) || 0) + it.offsetHeight / 2, moved: false }; });
-      body.addEventListener('dblclick', (ev) => { const it = deskHandle(ev); if (!it) return;
-        if (!this._deskPosGet()[it.dataset.key]) return; ev.preventDefault();
-        this._deskPosSet(it.dataset.key, null); this._holdEnd(); this._placeNow(); });
+      /* A DOUBLE CLICK ON A CARD'S HEAD EXPANDS IT (DESK-ARRANGEMENT 7 principle 9, LV-8; owner 2026-10-17: "if i double click a top-bar of an
+         element can it auto expand to take up the available space and push the other elements around it - then if i double click the top
+         of another can the last enlarged one give way to it and let the new one expand into that same space"). See _expandToggle. Back to
+         the arrangement (what a double click did before) is in the card's menu. */
+      body.addEventListener('dblclick', (ev) => { const it = deskHandle(ev); if (!it) return; ev.preventDefault(); this._expandToggle(it.dataset.key); });
       /* a click that ends a drag is not a click on what was under it */
       body.addEventListener('click', (ev) => { if (Date.now() - (this._dgEnd || 0) < 250) { ev.stopPropagation(); ev.preventDefault(); } }, true);
       const doc = this.ownerDocument || document;
