@@ -817,7 +817,8 @@
     const all = Array.isArray(c.items) ? c.items.filter((r) => r && typeof r === 'object') : [];
     const st = recState(el, key);
     // the view the item asks for (the fabric's: graph) is where it starts; the reader's own choice wins after that
-    if (!st._v0) { st._v0 = true; if (c.view) st.view = String(c.view); }
+    // (the reader's kept choice - this browser's copy of the item record's view, WSU-58 S1 - before the item's own)
+    if (!st._v0) { st._v0 = true; const kept = el ? viewOf(el, key, '') : ''; if (kept || c.view) st.view = String(kept || c.view); }
     /* WHAT THE PAGES NAME: each row's page's entities, from the reader cache (_srcPrefetch fills them, in memory - never
        the web), as facets beside the sites - the people, organisations and places two or more of the pages name.
        Choosing one shows the pages that name it; each row carries its own top three; and the shared names make a
@@ -4212,9 +4213,21 @@
         const all = this._itemQ || {}; this._itemQ = {}; const base = (window._veraBase || '').replace(/\/$/, '');
         /* one after another: the canvas is still saved whole, so two writes at once would lose the first (B1 - per-item
            storage - is the cure; until then the page never races itself) */
-        const id = this.canvasId; this._itemChain = Object.keys(all).reduce((p, k) => p.then(() => fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: 'canvas.item.set', arguments: Object.assign({ id, key: k }, all[k]) }) })
-          .catch(() => { /* the cache keeps it */ }).finally(() => { setTimeout(() => this._itemPend && this._itemPend.delete(k), 1500); })), this._itemChain || Promise.resolve()); }, 400);
+        /* THE ANSWER IS READ (WSU-58 S1): canvas.item.set refuses a whole call when one field is bad, so the view - the
+           field most likely to be new to the record - goes on its own call, and a refused call that carried more than one
+           field is sent again a field at a time: only the field the record refuses is lost, never a place or lock queued
+           beside it, and the refusal is told on the console, not swallowed */
+        const id = this.canvasId;
+        const send = (k, f) => fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'canvas.item.set', arguments: Object.assign({ id, key: k }, f) }) })
+          .then((r) => r.json()).then((j) => { const a = unwrap(j); return a && typeof a === 'object' && a.ok === false ? a : null; })
+          .catch(() => null /* unreachable: the cache keeps it */);
+        const warn = (k, f, bad) => { try { console.warn('[vera-canvas] canvas.item.set refused', k, Object.keys(f).join(','), (bad && bad.error) || bad); } catch (e) { /* no console */ } };
+        const one = (k, f) => send(k, f).then((bad) => { if (!bad) return null; const ks = Object.keys(f); warn(k, f, bad); if (ks.length < 2) return null;
+          return ks.reduce((p, n) => p.then(() => send(k, { [n]: f[n] }).then((b2) => { if (b2) warn(k, { [n]: f[n] }, b2); })), Promise.resolve()); });
+        this._itemChain = Object.keys(all).reduce((p, k) => p.then(() => { const f = Object.assign({}, all[k]); const v = 'view' in f ? { view: f.view } : null; delete f.view;
+          return (Object.keys(f).length ? one(k, f) : Promise.resolve()).then(() => (v ? one(k, v) : null)); })
+          .catch(() => { /* the cache keeps it */ }).finally(() => { setTimeout(() => this._itemPend && this._itemPend.delete(k), 1500); }), this._itemChain || Promise.resolve()); }, 400);
     }
     /* ...and read back from it: where the record says how an item is shown, it wins over this browser's copy - unless a change
        of ours to that item is still on its way. A record that says nothing leaves the copy as it is (so what was kept here
@@ -4228,7 +4241,7 @@
         if (P && 'locked' in P) { if (P.locked && P.fx != null) { const v = { fx: P.fx, fy: P.fy, w: P.w, h: P.h, face: b.face === 'pill' ? 'chip' : 'card' }; if (JSON.stringify(locks[key]) !== JSON.stringify(v)) { locks[key] = v; lk++; } } else if (!P.locked && locks[key]) { delete locks[key]; lk++; } }
         if (P && P.by === 'person' && !P.locked && P.fx != null) { const v = { fx: P.fx, fy: P.fy }; if (P.w) v.w = P.w; if (P.h) v.h = P.h; if (JSON.stringify(pos[key]) !== JSON.stringify(v)) { pos[key] = v; ps++; } }
         else if (P && P.by === 'auto' && pos[key]) { delete pos[key]; ps++; }
-        if (b.view && views[key] !== b.view) { views[key] = b.view; vw++; }
+        if (b.view && views[key] !== b.view) { views[key] = b.view; vw++; if (this._recUi && this._recUi[key]) this._recUi[key].view = b.view; }
         if (typeof b.folded === 'boolean' && !!folds[key] !== b.folded) { folds[key] = b.folded; fd++; } });
       const save = (n, k, v) => { if (n) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* this page only */ } } };
       save(lk, 'vera:canvas:desklock:' + this.canvasId, locks); save(ps, 'vera:canvas:deskpos:' + this.canvasId, pos); save(pl, 'vera:canvas:deskpill:' + this.canvasId, pills);
@@ -7020,7 +7033,8 @@
           if (sp && sp.textContent.trim()) btn.textContent = sp.textContent.trim(); }); } return; }
       /* a view chosen (see VIEWS): a records item keeps it with its browsing state, any other kind in the view store */
       if (act === 'setview') { const v = btn.dataset.view; const b = this._blockOf(key); if (!v || !b) return;
-        if (b.type === 'records') { const st = recState(this, key); st.view = v; st.page = 0; } else viewSet(this, key, v);
+        if (b.type === 'records') { const st = recState(this, key); st.view = v; st.page = 0; }
+        viewSet(this, key, v);   /* written to the record like every other kind's (WSU-58 S1) */
         if (this._doc) this.render(this._doc); return; }
       const focusMid = this.dataset.focusMid || '';
       /* a fused pane's own control: take THIS item out of the group it was drawn into and give it its card back.

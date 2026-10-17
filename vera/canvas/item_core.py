@@ -29,7 +29,9 @@ FACES = ("pill", "tile", "window", "full")
 SIZES = ("xs", "s", "m", "l", "xl")
 LAYERS = ("among", "behind", "front")
 PLACED_BY = ("auto", "person")
-VIEWS = ("list", "cards", "table", "graph", "chart", "chips", "fields", "code", "structure", "both")
+# every view a body can offer (WSU-58 S1: the JSON lens's tree / flat / validate and an app's own drawn view were missing,
+# so canvas.item.set refused them and the choice never reached the record)
+VIEWS = ("list", "cards", "table", "graph", "chart", "chips", "fields", "code", "structure", "both", "tree", "flat", "validate", "drawn")
 
 # the fields canvas.item.set may change, one call, one event (Decision 2)
 SETTABLE = ("face", "place", "view", "size", "locked", "folded", "group", "state")

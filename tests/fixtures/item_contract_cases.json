@@ -54,6 +54,21 @@
     {"name": "fields outside the contract are ignored",
      "block": {"type": "note", "key": "note:h"},
      "fields": {"content": {"text": "no"}, "key": "other", "folded": true},
-     "want": {"changed": {"folded": true}, "prev": {"folded": null}, "problems": []}}
+     "want": {"changed": {"folded": true}, "prev": {"folded": null}, "problems": []}},
+    {"name": "the JSON lens's tree view is a view (WSU-58 S1)",
+     "block": {"type": "json", "key": "json:a"}, "fields": {"view": "tree"},
+     "want": {"changed": {"view": "tree"}, "prev": {"view": null}, "problems": []}},
+    {"name": "the JSON lens's flat view is a view (WSU-58 S1)",
+     "block": {"type": "json", "key": "json:b", "view": "tree"}, "fields": {"view": "flat"},
+     "want": {"changed": {"view": "flat"}, "prev": {"view": "tree"}, "problems": []}},
+    {"name": "the JSON lens's validate view is a view (WSU-58 S1)",
+     "block": {"type": "json", "key": "json:c"}, "fields": {"view": "validate"},
+     "want": {"changed": {"view": "validate"}, "prev": {"view": null}, "problems": []}},
+    {"name": "an app's own drawn view is a view (WSU-58 S1)",
+     "block": {"type": "app", "key": "app:d"}, "fields": {"view": "drawn"},
+     "want": {"changed": {"view": "drawn"}, "prev": {"view": null}, "problems": []}},
+    {"name": "an unknown view is refused",
+     "block": {"type": "note", "key": "note:i"}, "fields": {"view": "radar"},
+     "want": {"changed": {}, "prev": {}, "problems": ["view must be one of list|cards|table|graph|chart|chips|fields|code|structure|both|tree|flat|validate|drawn"]}}
   ]
 }
