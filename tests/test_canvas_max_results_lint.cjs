@@ -75,7 +75,7 @@ t('and a swap is at most every half second', /Math\.max\(0, 500 - \(Date\.now\(\
   const bad = V.BLOCK.result({ cap: 'x.y', ok: false, error: 'boom' }, 'm', 'result:x', null);
   t('a failed run says so', /vc-res-err/.test(bad) && /boom/.test(bad));
   g.VeraCanvasAdapt = was;
-  t('run again goes through canvas.run with the same key', /this\.call\('canvas\.run', \{ cap: c\.cap, args: c\.args \|\| \{\}, key \}\)/.test(SRC));
+  t('run again goes through canvas.run with the same key', /this\.call\('canvas\.run', \{ cap: c\.cap, args: c\.args \|\| \{\}, key \}, \{ trace: tr\.tid \}\)/.test(SRC));   // on its own trace, for its steps (DA-04c (e))
   t('a result\'s live slot reads the element it is drawn as', /if \(b\.type === 'result'\) \{ const v = resultView\(b\.content \|\| \{\}\);/.test(SRC));
   t('the chat hands the element its registry', /window\.VeraCanvasAdapt=_cvAdapt;/.test(CHAT));
   t('the new elements exist', ['json', 'kv', 'chat', 'result', '_many'].every((k) => typeof V.BLOCK[k] === 'function'));
