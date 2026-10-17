@@ -42,6 +42,7 @@ sys.modules.setdefault("student_training_core", core)
 
 RUNS_KEY = "vera:students:runs"            # newest first, the last 200 runs
 DONE_KEY = "vera:students:done:{q}:{day}"  # one run per question per night
+TRIES_KEY = "vera:students:tries:{q}:{day}"  # errors so far tonight (core.ATTEMPTS ends the night)
 ENABLED_KEY = "vera:students:enabled"      # "0" pauses the nightly tick
 POLL_S = 5
 TRAIN_TIMEOUT_S = 1800
@@ -460,7 +461,9 @@ async def cap_decide_student_enable(enabled: bool = True, trace_id=None) -> Dict
 
 async def _nightly():
     """Every 10 min: in the window, train each question once per night when the
-    box is not busy; a busy box retries on a later tick."""
+    box is not busy; a busy box retries on a later tick, and so does an error
+    (no node with room, a lost job - e.g. workers restarting after a Redis
+    drop, 17 Oct) up to core.ATTEMPTS times a night."""
     if not core.in_window(datetime.now().hour):
         return
     r = getattr(_orch, "REDIS", None)
@@ -474,6 +477,13 @@ async def _nightly():
         res = await cap_decide_student_train(question_id=q, dry_run=False)
         if res.get("skipped"):
             return                                   # busy or disk: try again next tick
+        if res.get("error"):
+            tries = int(await r.incr(TRIES_KEY.format(q=q, day=day)) or 0)
+            await r.expire(TRIES_KEY.format(q=q, day=day), 86400)
+            if tries < core.ATTEMPTS:
+                log.info("students: %s failed (%d of %d tonight), retrying next tick: %s",
+                         q, tries, core.ATTEMPTS, res["error"])
+                return
         await r.set(key, json.dumps({"state": res.get("state") or ("error" if res.get("error") else "done")}),
                     ex=86400)
 

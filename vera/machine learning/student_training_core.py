@@ -27,6 +27,7 @@ MIN_CLASS = 10           # nor when either class has fewer examples (>= 2 per cl
 FOLDS = 5                # stratified cross-validation folds (the evaluation)
 AUC_MIN = 0.7            # a student below this is not bound
 KEEP = 3                 # artifacts kept per question
+ATTEMPTS = 3             # failed runs (errors) per question per night before giving up
 DISK_MAX_PCT = 90.0      # nothing written above this
 DIM = 384                # MiniLM-L6 (nlp.embed)
 EPOCHS = 60
