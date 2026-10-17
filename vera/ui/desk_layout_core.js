@@ -518,7 +518,7 @@
      happened), board (columns by status), map (clusters of what shares context), free (the person's places; automation
      only fills holes). Items: [{id, kind, rel:[keys], status, t, border}] in the desk's order, the most relevant first.
      A layout returns {cells:{id:{x,y,w,h}} (centre and size), chips:[id], lanes:[{x,y,w,h,label}]}. */
-  var MODES = ['auto', 'focus', 'compare', 'flow', 'board', 'map', 'free'];
+  var MODES = ['auto', 'focus', 'compare', 'flow', 'board', 'map', 'free', 'slots'];
   var LEGACY_MODE = { orbit: 'auto', stack: 'auto', kind: 'map', timeline: 'flow' };
   function modeOf(m) { m = String(m || ''); if (LEGACY_MODE[m]) return LEGACY_MODE[m]; return MODES.indexOf(m) >= 0 ? m : 'auto'; }
 
@@ -544,6 +544,11 @@
     var rest = function () { live.forEach(function (it) { if (!used[it.id]) out.chips.push(it.id); }); return out; };
     if (!live.length || fw < 160 || fh < 90) { live.forEach(function (it) { out.chips.push(it.id); }); return out; }
     if (mode === 'free') { out.free = true; return out; }
+    /* SLOTS (LV-2/3, DESK-ARRANGEMENT 7): fitLayout over the free desk - each item's `aspect` and its place in the order as its rank;
+       the front of each slot is a cell, the rest of a slot (its composite tabs, grouped by the canvas before this) and the pills chips */
+    if (mode === 'slots') { var L = fitLayout(live.map(function (it, i) { return { id: it.id, aspect: it.aspect || 'square', rank: i }; }), F, { near: F.farRight ? 'left' : 'right', current: o.current || {}, noComposite: o.noComposite });
+      L.slots.forEach(function (s) { var id = s.ids[0]; out.cells[id] = cellAt(s.l, s.t, s.w, s.h); used[id] = true; s.ids.slice(1).forEach(function (m) { out.chips.push(m); used[m] = true; }); });
+      L.pills.forEach(function (id) { out.chips.push(id); used[id] = true; }); out.fit = L; return rest(); }
 
     if (mode === 'focus') {
       var lead = live[0]; var leadW = Math.round(fw * 0.6), leadH = Math.round(Math.min(fh, leadW * 0.85));
@@ -723,8 +728,9 @@
       var pills = [], ALT = { portrait: ['square', 'landscape'], landscape: ['square', 'portrait'], square: ['landscape', 'portrait'], tile: ['square'] };
       ['landscape', 'portrait', 'square', 'tile'].forEach(function (a) { by[a].forEach(function (it) {
         var own = slots.filter(function (s) { return s.aspect === a; }), free = own.filter(function (s) { return !s.ids.length; });
-        if (!own.length) { for (var z = 0; z < ALT[a].length && !own.length; z++) own = slots.filter(function (s) { return s.aspect === ALT[a][z]; }); free = own.filter(function (s) { return !s.ids.length; }); }
         if (free.length) { free.sort(function (p, q2) { return slotCost(it, p) - slotCost(it, q2); }); free[0].ids.push(it.id); return; }
+        /* a composite is always of one aspect: another aspect's slot is taken only while it is FREE (a list never a tab of a table) */
+        if (!own.length) { for (var z = 0; z < ALT[a].length; z++) { var alt = slots.filter(function (s) { return s.aspect === ALT[a][z] && !s.ids.length; }); if (alt.length) { alt[0].ids.push(it.id); alt[0].aspectOf = a; return; } } pills.push(it.id); return; }
         if (!own.length || (o.noComposite && o.noComposite[it.id]) || (a === 'tile' && own.length < 2)) { pills.push(it.id); return; }
         own.sort(function (p, q2) { return p.ids.length - q2.ids.length || slotCost(it, p) - slotCost(it, q2); }); own[0].ids.push(it.id); }); });
       var used = slots.filter(function (s) { return s.ids.length; });

@@ -44,4 +44,7 @@ const slotOf = (L, id) => L.slots.find((s) => s.ids.includes(id));
     if (!inside(L, reg) || !noOverlap(L) || placed.size !== n) fails++; worst = Math.max(worst, L.pills.length); }
   t('300 random desks: every item placed once (a slot, a tab or a pill), inside the desk, no overlaps', fails === 0, { fails }); }
 
+{ const items = ['l1', 'l2', 'l3', 'l4', 'l5', 'l6'].map((x, i) => it(x, 'portrait', i)).concat([it('c', 'landscape', 6), it('s1', 'square', 7), it('s2', 'square', 8)]);
+  const L = D.fitLayout(items, REG, {}); const mixed = L.slots.filter((s) => s.ids.length > 1 && new Set(s.ids.map((id) => items.find((x) => x.id === id).aspect)).size > 1);
+  t('a composite is always of one aspect (many lists: list columns with tabs, never lists as tabs of a table)', mixed.length === 0 && L.slots.some((s) => s.aspect === 'portrait'), L); }
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);

@@ -4339,14 +4339,16 @@
       const famOf = (c) => { const t = c.dataset.type || ''; if (t !== 'widget') return FAM[t];
         const cc = this._contentOf(c.dataset.key || '') || {}; const fm = String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, '');
         return CHART.test(fm) ? 'charts' : GRAPH.test(fm) ? 'graphs' : /^(reading|news|feed|headlines|articles|sources)$/.test(fm) ? 'reading' : 'widgets'; };   /* news and web read together */
-      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && famOf(c) && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
+      const slotsU = this._slotUnion;   /* the slots arrangement: who shares a slot (see _placeDesk), nothing else */
+      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && (slotsU || famOf(c)) && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
       const T0 = this._topic; const inTopic = (c) => !!(T0 && T0.keys && (T0.keys.has(c.dataset.key || '') || c.classList.contains('pinned')));
       /* joined by family when they share a turn or a subject - or, ACROSS TURNS, when both are in the conversation's context
          now (WSU-84: "be able to group over turns if they share context") */
       const par = new Map(elig.map((c) => [c, c]));
       const find = (c) => { while (par.get(c) !== c) { par.set(c, par.get(par.get(c))); c = par.get(c); } return c; };
       const by = {};
-      elig.forEach((c) => { const f = famOf(c); const s = subjOf(titleOf(c));
+      if (slotsU) { const byK = new Map(elig.map((c) => [c.dataset.key || '', c])); elig.forEach((c) => { const f0 = slotsU[c.dataset.key || '']; if (f0 && byK.has(f0)) par.set(find(c), find(byK.get(f0))); }); }
+      else elig.forEach((c) => { const f = famOf(c); const s = subjOf(titleOf(c));
         [c.dataset.mid ? f + '|m|' + c.dataset.mid : '', s.length >= 4 ? f + '|s|' + s : '', inTopic(c) ? f + '|t' : ''].filter(Boolean)
           .forEach((b) => { if (by[b]) par.set(find(c), find(by[b])); else by[b] = c; }); });
       const sets0 = new Map(); elig.forEach((c) => { const r = find(c); if (!sets0.has(r)) sets0.set(r, []); sets0.get(r).push(c); });
@@ -4535,6 +4537,23 @@
       cards = cards.filter((c) => !layOf(c));
       /* SIMILAR ITEMS ON ONE TOPIC ARE ONE CARD (see _deskGroups): only the tab in front is placed; the others take its
          rectangle, unseen, after the placement below */
+      /* SLOTS - WHO SHARES A SLOT IS DECIDED BEFORE ANYTHING IS DRAWN (DESK-ARRANGEMENT 7, LV-3 / LV-4; owner 2026-10-17: "when the layout
+         runs out of space ... they can composite in their preferred aspect"; "sometimes they combine after they have entered the desk -
+         they should be smoothly integrated into the right place"): in the slots arrangement the layout is fitted once here over the
+         cards it will place (not locked, placed, pilled, windowed, layered or out of the topic), and the cards that share a slot are
+         made one card with tabs (_deskGroups) in this same pass - an arrival joins its composite before it is shown. A tab the person
+         took out (its separate mark) never joins one. */
+      this._slotUnion = null;
+      if (D.modeOf && D.modeOf(this.getAttribute('desk-arrange')) === 'slots' && typeof D.fitLayout === 'function' && this.getAttribute('desk-combine') !== 'off') {
+        const up0 = this._deskPosGet(), lk0 = this._lockGet(), pl0 = this._pillGet(), wk0 = this._winKeepGet(), sp0 = this._sepGet(), T0 = this._topic;
+        const tAt0 = {}; if (T0 && T0.order) T0.order.forEach((k, i) => { tAt0[k] = i; });
+        const cand = cards.filter((c) => { const k = c.dataset.key || ''; return k && !lk0[k] && !pl0[k] && !wk0[k] && !(up0[k] && (isFinite(up0[k].fx) || up0[k].chip))
+          && !(this._rz && this._rz.el === c) && !layOf(c) && (!T0 || !T0.keys || !T0.keys.size || T0.keys.has(k) || c.classList.contains('pinned')); });
+        const F0 = D.freeRegion(R, desk, W < 760 ? 46 : 170);
+        const L0 = D.fitLayout(cand.map((c, i) => ({ id: c.dataset.key, aspect: this._aspectOf(c, c.dataset.key) || 'square', rank: tAt0[c.dataset.key] != null ? tAt0[c.dataset.key] : 100 + i })),
+          F0, { near: F0.farRight ? 'left' : 'right', current: this._lastPlan ? this._lastPlan.rects : {}, noComposite: sp0 });
+        const un = {}; L0.slots.forEach((sl) => sl.ids.slice(1).forEach((m) => { un[m] = sl.ids[0]; })); this._slotUnion = un;
+      }
       const grp = this._deskGroups(cards);
       cards = cards.filter((c) => !grp.behind.has(c));
       this._deskGeo = { R, desk, W, H };   /* a drag sizes the card it moves with the same rules, live */
@@ -4632,10 +4651,10 @@
       const statusOf = (c) => { if (c.classList.contains('waiting')) return 'needs'; const cc = this._contentOf(c.dataset.key || '') || {}; const st = String(cc.status || cc.state || '').toLowerCase();
         return /run|live|stream|pending|queued|writ/.test(st) ? 'running' : /done|complete|error|fail|^ok$/.test(st) ? 'done' : 'todo'; };
       const info = ranked.map((x) => { const age = x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null;
-        return { id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '', age, t: age == null ? 0 : 1000 - age, border: outside.has(x.c.dataset.key || ''), rel: relOf(x.c), status: statusOf(x.c) }; });
+        return { id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '', age, t: age == null ? 0 : 1000 - age, border: outside.has(x.c.dataset.key || ''), rel: relOf(x.c), status: statusOf(x.c), aspect: this._aspectOf(x.c, x.c.dataset.key || '') }; });
       const relByKey = {}; info.forEach((x) => { relByKey[x.id] = x.rel; });
       const pos = D.arrange('orbit', R, info, desk);
-      const ML = mode !== 'auto' && D.layoutMode ? D.layoutMode(mode, R, info, desk, { strip: W < 760 ? 46 : 170 }) : null;
+      const ML = mode !== 'auto' && D.layoutMode ? D.layoutMode(mode, R, info, desk, { strip: W < 760 ? 46 : 170, current: this._lastPlan ? this._lastPlan.rects : {}, noComposite: this._sepGet() }) : null;
       if (ML) { const farX = side === 'right' ? 30 : W - 30;
         Object.keys(ML.cells).forEach((id) => { const cc = ML.cells[id]; const p = [cc.x, cc.y]; p.size = { w: cc.w, h: cc.h }; pos[id] = p; });
         ML.chips.forEach((id) => { pos[id] = [farX, H / 2]; }); }
@@ -4687,7 +4706,7 @@
         if (fx) { const lw = Math.min(W - 16, fx.w), lh = Math.min(H - 8, fx.h); if (us) c.classList.add('desk-placed');
           return { c, id: key, so: {}, fixed: true, lock: fx, isLock: !!lk, x: Math.max(lw / 2, Math.min(W - lw / 2, fx.fx * W)), y: Math.max(lh / 2, Math.min(H - lh / 2, fx.fy * H)), w: lw, h: lh }; }
         const fresh = !userAt(key) && ((freeMode && !(seed && seed[key])) || (hold && !(seed && seed[key]) && !outside.has(key)));
-        const p = (!pilledKey && userAt(key)) || (fresh && slotFor(key)) || pos[key] || [W - 90, H - 30];
+        const p = (!pilledKey && userAt(key)) || (fresh && !(mode === 'slots' && ML && ML.cells[key]) && slotFor(key)) || pos[key] || [W - 90, H - 30];
         if (freeMode && userAt(key)) { const ua = userAt(key); slotted.push({ x: ua[0], y: ua[1], w: 300, h: 200, rel: relByKey[key] || [] }); }
         c.classList.toggle('desk-placed', !!userAt(key));
         /* the person's size: the drag in progress, else what the canvas remembers for the item (this._pw / this._px) -

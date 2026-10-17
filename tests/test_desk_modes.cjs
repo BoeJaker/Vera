@@ -71,7 +71,7 @@ t('the canvas lays a mode out by the kernel, cells sizing the cards; rise and gr
   assert(C.includes('if (!hold && !modeLaid && typeof D.grow'));
 });
 t('a newcomer is placed by the score; the hold survives arrivals', () => {
-  assert(C.includes("(this._hold.keys || []).forEach((k) => { if (!now.has(k) && this._hold.rects) delete this._hold.rects[k]; });") && C.includes('const p = (!pilledKey && userAt(key)) || (fresh && slotFor(key)) || pos[key]'));
+  assert(C.includes("(this._hold.keys || []).forEach((k) => { if (!now.has(k) && this._hold.rects) delete this._hold.rects[k]; });") && C.includes('const p = (!pilledKey && userAt(key)) || (fresh && !(mode === \'slots\' && ML && ML.cells[key]) && slotFor(key)) || pos[key]'));
 });
 t('lanes and the proposal are drawn on the desk', () => {
   assert(C.includes("el.className = 'desk-lane';") && C.includes('    _propose(st, mode, info, T, W) {') && C.includes("this._propUndo = { from: this.getAttribute('desk-arrange') || 'auto'"));
@@ -80,4 +80,11 @@ t('the chat offers the new modes, keeps a proposal on the Settings sheet, and a 
   assert(H.includes('<option value="focus">Focus') && H.includes("['board','board','Columns: to do, running, needs you, done']"));
   assert(H.includes("el.addEventListener('vera:canvas:mode'") && H.includes("localStorage.setItem('vera:canvas:modepin', a.n==='auto'?'':'1')"));
 });
+/* LV-3 / LV-4: the slots arrangement - the kernel mode, the pre-pass that composites before anything is drawn */
+t('slots: a mode of the kernel that fits by aspect; the canvas composites who shares a slot before drawing', () => { const Dk = require(path.join(__dirname, '..', 'vera', 'ui', 'desk_layout_core.js'));
+  assert(Dk.MODES.includes('slots') && Dk.modeOf('slots') === 'slots');
+  const R0 = { l: -440, t: 0, r: 0, b: 1000 }; const it = (id, aspect) => ({ id, kind: 'widget', aspect, rel: [] });
+  const ML = Dk.layoutMode('slots', R0, [it('chart', 'landscape'), it('news', 'portrait'), it('t1', 'square'), it('t2', 'square')], { W: 1240, H: 1000, m: 8, top: 4 }, { strip: 170 });
+  assert(ML && ML.cells.chart && ML.cells.news && ML.cells.t1 && ML.cells.t2 && ML.fit && ML.cells.news.h > 900 && ML.cells.chart.w > ML.cells.chart.h);
+  assert(C.includes('this._slotUnion = un;') && C.includes('if (slotsU) { const byK') && C.includes("status: statusOf(x.c), aspect: this._aspectOf(x.c, x.c.dataset.key || '') }; });")); });
 console.log(n + ' passed');
