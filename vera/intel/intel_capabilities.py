@@ -78,6 +78,7 @@ try:
     from Vera.vera.intel import intel_effect_inventory as intel_effects
     from Vera.vera.intel import intel_repo_effects
     from Vera.vera.intel import intel_record_reconciliation as intel_records
+    from Vera.vera.intel import intel_replay_core as intel_replay
     from Vera.vera.integrations import effect_observation_context as effect_context
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
@@ -99,6 +100,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_effect_inventory as intel_effects
     from vera.intel import intel_repo_effects
     from vera.intel import intel_record_reconciliation as intel_records
+    from vera.intel import intel_replay_core as intel_replay
     from vera.integrations import effect_observation_context as effect_context
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
@@ -2940,6 +2942,17 @@ async def cap_effects(trace_id=None):
     return intel_effects.project(core.CHANNELS, core.ACTIONS,
                                  available_caps=tuple(CAPABILITY_REGISTRY),
                                  attributed_evidence=evidence)
+
+
+@capability("intel.replay.evaluate", http_method="GET", http_path="/intel/replay/evaluate",
+            http_tags=["intel", "evaluation"], memory="off", silent=True,
+            description="Evaluate Intel's versioned synthetic replay corpus through its real pure scoring, "
+                        "enrichment, snapshot, report and delivery-planning seams. Returns aggregate accuracy, "
+                        "coverage, determinism and opaque failed-case IDs only. Never calls a model, network, "
+                        "provider or capability and never writes state.")
+async def cap_replay_evaluate(trace_id=None):
+    corpus_path = Path(__file__).resolve().parents[2] / "evaluations" / "intel-replay-v1.json"
+    return intel_replay.evaluate_corpus(intel_replay.load_corpus(corpus_path))
 
 
 async def _intel_fabric_records(dataset_id: str, limit: int) -> Dict[str, Any]:
