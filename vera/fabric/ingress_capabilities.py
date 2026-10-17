@@ -22,11 +22,13 @@ from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability, 
 try:
     from Vera.vera.fabric import ingress_core as ic
     from Vera.vera.fabric import ingress_receipts_core as rc
+    from Vera.vera.fabric import ingress_topic_core as tc
     from Vera.vera.fabric import ingress_writer as iw
     from Vera.vera.web import web_client as _wc
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.fabric import ingress_core as ic
     from vera.fabric import ingress_receipts_core as rc
+    from vera.fabric import ingress_topic_core as tc
     from vera.fabric import ingress_writer as iw
     from vera.web import web_client as _wc
 
@@ -427,3 +429,103 @@ def _plain(row: Any) -> Optional[Dict[str, Any]]:
         elif k == "simhash" and v is not None:
             d[k] = rc.unsigned64(v)
     return d
+
+
+# ── topic maps (WI-8a) ────────────────────────────────────────────────────────
+
+def _as_list(x: Any) -> List[str]:
+    if isinstance(x, str):
+        return [p.strip() for p in x.split(",") if p.strip()]
+    return [str(p).strip() for p in (x or ()) if str(p).strip()]
+
+
+@capability("fabric.map.topic.touch", http_method="POST", http_path="/fabric/map/topic/touch", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="Create or update a topic map and add members. Keyed on the intel topic id (the canonical "
+                        "topic id). Input: topic_id (str!; or name), name, urls (list or comma string; members), role "
+                        "(seed | source | page..., default 'source'), relevance (float), source (str: who added them), "
+                        "seeds / queries / entities (lists). Output: {topic_key, members_added}.")
+async def cap_map_topic_touch(topic_id: str = "", name: str = "", urls: Any = None, role: str = "source",
+                              relevance: Any = None, source: str = "", seeds: Any = None, queries: Any = None,
+                              entities: Any = None, trace_id=None):
+    key = tc.topic_key(topic_id, name)
+    if not key:
+        return {"error": "topic_id or name required"}
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected", "topic_key": key}
+    role = role if role in tc.ROLES else "source"
+    rel = None if relevance in (None, "") else float(relevance)
+    members = []
+    for u in _as_list(urls):
+        k = ic.url_key(u if u.startswith("http") else "https://" + u)
+        if k:
+            members.append((key, k, role, None, rel, None, (source or "")[:60] or None))
+    try:
+        async with pool.acquire() as conn:
+            if not WRITER._ddl_done:
+                await WRITER._ddl(conn)
+            await conn.execute(rc.UPSERT_TOPIC, key, (name or "")[:200] or None, (topic_id or "")[:120] or None,
+                               _as_list(seeds)[:50], _as_list(queries)[:50], _as_list(entities)[:50])
+            if members:
+                await conn.executemany(rc.UPSERT_MEMBER, members)
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:160], "topic_key": key}
+    return {"topic_key": key, "members_added": len(members)}
+
+
+@capability("fabric.map.topic.link", http_method="POST", http_path="/fabric/map/topic/link", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="Link an artefact to a topic map: a discovery dataset id, a KB id or a worldview concept. "
+                        "Input: topic_id (str!), kind (dataset | kb | concept), ids (list or comma string). "
+                        "Output: {topic_key, kind, linked}.")
+async def cap_map_topic_link(topic_id: str = "", kind: str = "dataset", ids: Any = None, trace_id=None):
+    key = tc.topic_key(topic_id)
+    sql = rc.LINK_TOPIC.get(kind)
+    if not key or not sql:
+        return {"error": "topic_id and kind (dataset | kb | concept) required"}
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected", "topic_key": key}
+    vals = _as_list(ids)[:100]
+    try:
+        async with pool.acquire() as conn:
+            if not WRITER._ddl_done:
+                await WRITER._ddl(conn)
+            await conn.execute(rc.UPSERT_TOPIC, key, None, topic_id[:120] or None, [], [], [])
+            await conn.execute(sql, key, vals)
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:160], "topic_key": key}
+    return {"topic_key": key, "kind": kind, "linked": vals}
+
+
+@capability("fabric.map.topic", http_method="GET", http_path="/fabric/map/topic", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="A topic's map: members by kind, role and host, the linked datasets / KBs / worldview "
+                        "concepts, whether the topic is still yielding (saturation from the hosts' novel yield and "
+                        "the recent members' novelty) and the kinds it has none of (gaps). Input: topic_id (str!), "
+                        "limit (int, members read, default 500), members (bool: include the member rows). "
+                        "Output: the summary (+ members).")
+async def cap_map_topic(topic_id: str = "", limit: int = 500, members: bool = False, trace_id=None):
+    key = tc.topic_key(topic_id)
+    if not key:
+        return {"error": "topic_id required"}
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected", "topic_key": key}
+    try:
+        async with pool.acquire() as conn:
+            if not WRITER._ddl_done:
+                await WRITER._ddl(conn)
+            t = await conn.fetchrow(rc.SELECT_TOPIC, key)
+            if not t:
+                return {"topic_key": key, "error": "no such topic map (fabric.map.topic.touch creates one)"}
+            ms = [dict(r) for r in await conn.fetch(rc.SELECT_MEMBERS, key, max(1, min(int(limit or 500), 5000)))]
+            hosts = sorted({ic.host_of(m["url_key"]) for m in ms if m.get("url_key")} - {""})
+            yields = {r[0]: r[1] for r in await conn.fetch(rc.SELECT_HOST_YIELDS, hosts)} if hosts else {}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:160], "topic_key": key}
+    out = tc.summary(_plain(t) or {}, ms, yields)
+    if members:
+        out["member_rows"] = [_plain(m) for m in ms]
+    return out
