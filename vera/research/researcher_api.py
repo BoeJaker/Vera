@@ -4493,7 +4493,26 @@ async def collect_ollama(
         except Exception:
             pass
 
+    _site_tap(prompt, system, result, inst)
     return result
+
+
+def _site_tap(prompt: str, system: str, answer: str, inst: "OllamaInstance") -> None:
+    """Research's short answers to the call-site matrix (four-minds FM-2 / FM-12; RF-50's rest): research generates
+    through its own stream, not ollama_generate, so the shared path's tap never saw its decisions (directive style,
+    angle grounded, arXiv allowed, duplicate, novelty ...). The site is the research function that asked. Only when
+    the switch decide.site_capture is on; never raises, never waits."""
+    try:
+        st = sys.modules.get("site_tap") or sys.modules.get("Vera.vera.minds.site_tap")
+        if st is None or not st.MODE.get("on") or not answer or len(answer.strip()) > st.MAX_ANSWER:
+            return
+        import inspect
+        frames = inspect.stack(context=0)              # no source lines read
+        fr = frames[2] if len(frames) > 2 else None
+        caller = {"caller_module": "researcher_api", "caller_func": fr.function if fr else "collect_ollama"}
+        st.tap(caller, "research", "research", system or "", prompt or "", answer, getattr(inst, "model", "") or "")
+    except Exception:
+        pass
 
 
 async def list_models(inst: OllamaInstance) -> list[str]:
