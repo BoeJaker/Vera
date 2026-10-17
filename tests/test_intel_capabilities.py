@@ -313,9 +313,21 @@ def test_effect_inventory_reads_only_intel_attributed_provider_evidence(tmp_path
     orch.CAPABILITY_REGISTRY["integration.effect.shadow.evidence"] = {
         "func": evidence, "raw": evidence}
     result = _R(orch, "intel.effects")
-    assert seen == [("telegram", "intel", 50), ("email", "intel", 50)]
+    assert seen == [
+        ("telegram", "intel", 50), ("email", "intel", 50),
+        ("homeassistant", "intel", 50), ("n8n", "intel", 50),
+        ("repository", "intel", 50), ("printing", "intel", 50),
+    ]
     assert result["readiness"]["intel_attributable"] is True
-    assert result["readiness"]["attributed_observations"] == 3
+    assert result["readiness"]["attributed_observations"] == 7
+    by_id = {row["id"]: row for row in result["boundaries"]}
+    assert by_id["channel.phone"]["evidence_family"] == "homeassistant"
+    assert by_id["channel.print"]["evidence_family"] == "printing"
+    assert by_id["repo.acquire"]["evidence_family"] == "repository"
+    assert by_id["n8n.proposal.create"]["evidence_family"] == "n8n"
+    assert all("portable_effect_observation_missing" not in by_id[key]["gaps"]
+               for key in ("channel.phone", "channel.print", "repo.acquire",
+                           "n8n.proposal.create"))
 
 
 def test_record_reconciliation_matches_only_real_fabric_and_delivery_evidence(tmp_path):

@@ -2932,7 +2932,7 @@ async def cap_channel_list(trace_id=None):
                         "Never calls a provider, records synthetic evidence, retries or enforces.")
 async def cap_effects(trace_id=None):
     evidence = {}
-    for family in ("telegram", "email"):
+    for family in ("telegram", "email", "homeassistant", "n8n", "repository", "printing"):
         result = await _call("integration.effect.shadow.evidence", family=family,
                              source="intel", limit=50)
         evidence[family] = result if not result.get("error") else {
