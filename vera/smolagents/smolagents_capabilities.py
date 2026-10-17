@@ -83,6 +83,7 @@ _EVENT_PREFIX = "smolagents.run"
     description="smolagents bridge status: enabled flag, docker availability, "
                 "whether the vera-smolagents image exists yet. "
                 "Output: {enabled, docker_ok, image, image_present}.",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
 )
 async def smolagents_status(trace_id=None) -> Dict[str, Any]:
     docker_ok = (await sh(["docker", "version", "--format", "{{.Server.Version}}"],
