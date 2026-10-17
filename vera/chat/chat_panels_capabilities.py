@@ -476,7 +476,11 @@ async def _serve_vera_dashboard_js():
     from pathlib import Path
     p = Path(__file__).parent / "vera-dashboard.js"
     if p.exists():
-        return Response(content=p.read_text(encoding="utf-8"),
+        # the item contract (window.VeraItem) in front: a tile's head row is VeraItem.controls, as the canvas head's is
+        # (WSU-58 S6, owner O4). It loads once per page - a second copy keeps the first's registry.
+        vi = Path(__file__).parent.parent / "ui" / "vera_item.js"
+        pre = vi.read_text(encoding="utf-8") + "\n" if vi.exists() else ""
+        return Response(content=pre + p.read_text(encoding="utf-8"),
                         media_type="application/javascript")
     return Response(content="console.warn('vera-dashboard.js not found');",
                     media_type="application/javascript")

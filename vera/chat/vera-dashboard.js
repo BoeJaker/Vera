@@ -1517,9 +1517,16 @@
       var head = w.querySelector(':scope > .w-head'); if (!head || head.querySelector(':scope > .vd-row')) return;
       var sec = w.classList.contains('w-section');
       var hb = function (a, ic, t) { return '<button type="button" class="vd-hb" data-vd-act="' + a + '" title="' + esc(t) + '">' + svg(ic) + '</button>'; };
+      /* the row is the canvas head's (VeraItem.controls, WSU-58 S6, owner O4: one implementation): a tile has no lock and no
+         more menu - its own buttons stay in its head - and a section divider keeps drop only; the look is the dashboard's */
+      var HB = { pill: function () { return hb('pill', 'pill', 'Fold it to its head line - it stays folded until you open it'); },
+        max: function () { return hb('max', 'max', 'Fill the dashboard with it (Esc restores)'); },
+        drop: function () { return hb('drop', 'drop', 'Hide it from the dashboard'); } };
+      var VI = window.VeraItem;
+      var row = VI && typeof VI.controls === 'function' ? VI.controls('widget', { views: [], lock: false, more: false, pill: !sec, max: !sec })
+        : (sec ? ['drop'] : ['pill', 'max', 'drop']);   /* a page that loads this file on its own (not through its route) */
       head.insertAdjacentHTML('beforeend', '<span class="vd-row" data-w="dashboard.item.controls">'
-        + (sec ? '' : hb('pill', 'pill', 'Fold it to its head line - it stays folded until you open it') + hb('max', 'max', 'Fill the dashboard with it (Esc restores)'))
-        + hb('drop', 'drop', 'Hide it from the dashboard') + '</span>');
+        + row.map(function (id) { return HB[id] ? HB[id]() : ''; }).join('') + '</span>');
       var act0 = head.querySelector(':scope > .w-actions'); if (act0) Array.prototype.forEach.call(act0.querySelectorAll('button'), function (x) { if (isHideBtn(x)) x.classList.add('vd-dup'); });
       head.querySelector(':scope > .vd-row').addEventListener('click', function (e) {
         var b = e.target.closest && e.target.closest('[data-vd-act]'); if (!b) return; e.stopPropagation(); e.preventDefault();

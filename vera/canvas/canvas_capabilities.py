@@ -1497,6 +1497,9 @@ async def cap_canvas_run(cap: str = "", args: Any = None, id: str = "", session_
 
 
 _ELEMENT_JS = Path(__file__).parent / "canvas_element.js"
+# the item contract (window.VeraItem): served in front of the element, which registers its bodies with it and draws each
+# item's head row and menu from it (WSU-58 S6). It loads once per page - a second copy keeps the first's registry.
+_VERA_ITEM_JS = Path(__file__).parent.parent / "ui" / "vera_item.js"
 
 
 @APP.get("/ui/elements/canvas_element.js", include_in_schema=False)
@@ -1512,6 +1515,10 @@ async def _canvas_element_js():
         js = _ELEMENT_JS.read_text(encoding="utf-8")
     except FileNotFoundError:
         js = "/* canvas_element.js missing */"
+    try:
+        js = _VERA_ITEM_JS.read_text(encoding="utf-8") + "\n" + js
+    except FileNotFoundError:
+        js = "console.warn('vera_item.js missing: the canvas draws no item heads');\n" + js
     return Response(content=js, media_type="application/javascript",
                     headers={"Cache-Control": "public, max-age=60"})
 
