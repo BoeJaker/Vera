@@ -459,33 +459,65 @@ async def cap_decide_student_enable(enabled: bool = True, trace_id=None) -> Dict
     return {"ok": True, "enabled": bool(enabled)}
 
 
-async def _nightly():
-    """Every 10 min: in the window, train each question once per night when the
-    box is not busy; a busy box retries on a later tick, and so does an error
-    (no node with room, a lost job - e.g. workers restarting after a Redis
-    drop, 17 Oct) up to core.ATTEMPTS times a night."""
+async def nightly_pass() -> Dict[str, Any]:
+    """One pass of the nightly training: in the window, train each question once per night when the
+    box is not busy; a busy box retries on a later pass, and so does an error (no node with room, a
+    lost job - e.g. workers restarting after a Redis drop, 17 Oct) up to core.ATTEMPTS times a night."""
     if not core.in_window(datetime.now().hour):
-        return
+        return {"ok": True, "skipped": True, "why": "outside the %s window" % (core.WINDOW,)}
     r = getattr(_orch, "REDIS", None)
     if r is None or (await r.get(ENABLED_KEY)) in (b"0", "0"):
-        return
+        return {"ok": True, "skipped": True, "why": "student training is switched off"}
     day = datetime.now().strftime("%Y-%m-%d")
+    done, trained = [], []
     for q in core.QUESTIONS:
         key = DONE_KEY.format(q=q, day=day)
         if await r.get(key):
+            done.append(q)
             continue
         res = await cap_decide_student_train(question_id=q, dry_run=False)
         if res.get("skipped"):
-            return                                   # busy or disk: try again next tick
+            return {"ok": True, "skipped": True, "why": res.get("why") or "busy", "trained": trained}
         if res.get("error"):
             tries = int(await r.incr(TRIES_KEY.format(q=q, day=day)) or 0)
             await r.expire(TRIES_KEY.format(q=q, day=day), 86400)
             if tries < core.ATTEMPTS:
                 log.info("students: %s failed (%d of %d tonight), retrying next tick: %s",
                          q, tries, core.ATTEMPTS, res["error"])
-                return
+                return {"ok": False, "error": "%s: %s (try %d of %d)" % (q, res["error"], tries, core.ATTEMPTS),
+                        "trained": trained}
         await r.set(key, json.dumps({"state": res.get("state") or ("error" if res.get("error") else "done")}),
                     ex=86400)
+        trained.append(q)
+    return {"ok": True, "trained": trained, "already": done,
+            "summary": "trained %d, %d already done tonight" % (len(trained), len(done))}
+
+
+@capability(
+    "decide.student.nightly",
+    http_method="POST", http_path="/decide/student/nightly", http_tags=["minds", "ml"],
+    memory="off",
+    description="One pass of the nightly student training (looplab-control A5: a Loop Lab cap schedule runs "
+                "this; the built-in 10-minute timer stands down while one is enabled). Trains each question "
+                "once per night, inside its own window and guard. Output: {ok, trained, already, summary} or "
+                "{skipped, why}.",
+)
+async def cap_decide_student_nightly(trace_id=None) -> Dict[str, Any]:
+    return await nightly_pass()
+
+
+async def _nightly():
+    """The built-in timer (every 10 min). Stands down while a Loop Lab schedule runs the pass."""
+    cov = CAPABILITY_REGISTRY.get("evolve.schedule.covers") if "CAPABILITY_REGISTRY" in globals() else None
+    if cov is None:
+        cov = getattr(_orch, "CAPABILITY_REGISTRY", {}).get("evolve.schedule.covers")
+    if cov and cov.get("func"):
+        try:
+            if (await cov["func"](name="decide.student.nightly")).get("covered"):
+                return
+        except Exception:
+            pass
+    await nightly_pass()
 
 
 schedule(_nightly, interval=600, name="decide.student.nightly", skip_in_sandbox=True, singleton=True)

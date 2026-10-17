@@ -165,7 +165,8 @@ def test_normalize_rejects_what_a_person_must_fix():
     with pytest.raises(ValueError):
         sc.normalize({"kind": "suite", "target": {}})
     with pytest.raises(ValueError):
-        sc.normalize({"kind": "census", "target": {}, "start": "17:00", "end": "05:00", "timezone": "UTC"})
+        # overnight windows are allowed since looplab-control A6 (17 Oct 2026); a zero-length one is not
+        sc.normalize({"kind": "census", "target": {}, "start": "05:00", "end": "05:00", "timezone": "UTC"})
     with pytest.raises(ValueError):
         sc.normalize({"kind": "census", "target": {}, "days": [7], "timezone": "UTC"})
     with pytest.raises(ValueError):
