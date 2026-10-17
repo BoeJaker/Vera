@@ -489,3 +489,19 @@ def node_run_shard(inputs: Dict[str, Any], progress, should_stop) -> Dict[str, A
                 "processes": len(groups), "python": st.get("python", "")}
     finally:
         shutil.rmtree(run, ignore_errors=True)
+
+
+def placement(shards) -> str:
+    """Where a gate's chunks ran, one line: "host 4, Ollama 5, Ollama-C 3 (1 requeued)".
+    17 Oct 2026: after the Vera VM ran out of memory under a gate, nothing in vera.log said
+    whether its chunks ran on the VM or on the nodes."""
+    counts = {}
+    requeued = 0
+    for s in shards or ():
+        if s.get("requeued"):
+            requeued += 1
+            continue
+        r = str(s.get("runner") or "?")
+        counts[r] = counts.get(r, 0) + 1
+    out = ", ".join("%s %d" % (k, counts[k]) for k in sorted(counts, key=lambda k: (k != "host", k)))
+    return (out or "no chunks") + (" (%d requeued)" % requeued if requeued else "")

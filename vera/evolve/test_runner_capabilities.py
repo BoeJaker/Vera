@@ -487,6 +487,8 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
     await emit_event({"type": "evolve.unittest.done", "branch": label, "ok": merged["ok"],
                       "passed": merged["passed"], "failed": merged["failed"],
                       "errors": merged["errors"], "pool": True})
+    log.info("test pool [%s] %s in %.0fs: %s", label, merged["summary"], time.time() - t0,
+             core.placement(report))
     text = "\n".join(f"[{x['runner']}] {x.get('summary') or x.get('error')}" for x in report)
     res = {**merged, "code": merged["rc"], "image": ev.DEV_IMAGE, "branch": label,
            "out": text, "repo": "vera", "pool": {"shards": report,
