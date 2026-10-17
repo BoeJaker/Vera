@@ -13,23 +13,42 @@ import re
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Protocol, Sequence
 
-from vera.discovery_contract import (
-    CollectionOption,
-    CollectionReceipt,
-    DiscoveredArtifact,
-    DiscoveredContext,
-    DiscoveredDataset,
-    DiscoveryRequest,
-    DiscoveryResult,
-    SourceCandidate,
-)
-from vera.discovery_routing import (
-    DiscoveryAssignment,
-    DiscoveryExecutionPlan,
-    DiscoveryWorkerOffer,
-    GpuAdmissionReceipt,
-    plan_discovery_execution,
-)
+try:
+    from vera.discovery_contract import (
+        CollectionOption,
+        CollectionReceipt,
+        DiscoveredArtifact,
+        DiscoveredContext,
+        DiscoveredDataset,
+        DiscoveryRequest,
+        DiscoveryResult,
+        SourceCandidate,
+    )
+    from vera.discovery_routing import (
+        DiscoveryAssignment,
+        DiscoveryExecutionPlan,
+        DiscoveryWorkerOffer,
+        GpuAdmissionReceipt,
+        plan_discovery_execution,
+    )
+except ImportError:  # pragma: no cover - installed application spelling
+    from Vera.vera.discovery_contract import (
+        CollectionOption,
+        CollectionReceipt,
+        DiscoveredArtifact,
+        DiscoveredContext,
+        DiscoveredDataset,
+        DiscoveryRequest,
+        DiscoveryResult,
+        SourceCandidate,
+    )
+    from Vera.vera.discovery_routing import (
+        DiscoveryAssignment,
+        DiscoveryExecutionPlan,
+        DiscoveryWorkerOffer,
+        GpuAdmissionReceipt,
+        plan_discovery_execution,
+    )
 
 
 MAX_PARTICIPANTS = 256
