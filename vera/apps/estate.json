@@ -119,5 +119,77 @@
       "default": "l",
       "min": "m"
     }
+  },
+  {
+    "id": "estate.host",
+    "panel": "estate",
+    "title": "Host",
+    "icon": "server",
+    "summary": "One machine: its node record, its containers, its temperatures - pick a node to light its containers",
+    "view": {
+      "kind": "composite",
+      "layout": "dashboard",
+      "parts": [
+        {
+          "from": "nodes",
+          "kind": "table",
+          "title": "Nodes",
+          "columns": ["label", "addr", "docker_host_id", "docker_kind", "ssh_host_id", "user"]
+        },
+        {
+          "from": "containers",
+          "kind": "table",
+          "title": "Containers",
+          "columns": ["Names", "Image", "State", "Status"]
+        },
+        {
+          "from": "temps",
+          "kind": "table",
+          "title": "Temperatures",
+          "columns": ["label", "max_c", "virt", "temps_from", "error"]
+        }
+      ],
+      "join": [
+        {"nodes.docker_host_id": "containers.host_id"},
+        {"nodes.ssh_host_id": "temps.host_id"}
+      ]
+    },
+    "read": [
+      {
+        "as": "nodes",
+        "cap": "nodes.list",
+        "args": {},
+        "refresh": {
+          "every_s": 120
+        }
+      },
+      {
+        "as": "containers",
+        "cap": "docker.ps",
+        "args": {
+          "host_id": "{arg.host}",
+          "slim": true
+        },
+        "refresh": {
+          "every_s": 30
+        }
+      },
+      {
+        "as": "temps",
+        "cap": "obs.node_temps",
+        "args": {},
+        "refresh": {
+          "every_s": 60
+        }
+      }
+    ],
+    "related": [
+      "estate.nodes",
+      "estate.glance"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
   }
 ]
