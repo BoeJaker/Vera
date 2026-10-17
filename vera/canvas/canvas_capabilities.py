@@ -902,7 +902,7 @@ except ImportError:                                   # pragma: no cover
                 "in one write and one canvas.updated event that names the fields. The item record is the same on every "
                 "surface (the desk, a dashboard, the chat): face 'pill'|'tile'|'window'|'full'; place {fx, fy (0-1 of the "
                 "surface), w, h (px), by 'auto'|'person', locked, layer 'among'|'behind'|'front', z}, merged over the "
-                "item's place; view (list, cards, table, graph, chart, chips, fields, code, structure, both); size 'xs'|'s'|'m'|'l'|'xl'; "
+                "item's place; view (list, cards, table, graph, chart, chips, fields, code, structure, both, tree, flat, validate, drawn); size 'xs'|'s'|'m'|'l'|'xl'; "
                 "group {id, front} or {} to separate; state 'now'|'pinned'|'parked'|'hidden'. Inputs: key (str!), id or "
                 "session_id, and any of those fields. Output: {ok, key, changed, prev (to undo), item, revision}; a call "
                 "that changes nothing writes nothing.",

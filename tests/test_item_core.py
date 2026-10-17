@@ -103,3 +103,16 @@ def test_the_item_view_carries_the_contract_fields_once_set():
     _run(C.cap_canvas_item_set(session_id=SID, key="note:f", view="cards", folded=True))
     doc = _run(C.cap_canvas_add(session_id=SID, key="note:f"))
     assert doc["item"]["view"] == "cards" and doc["item"]["folded"] is True
+
+
+def test_every_view_a_body_offers_is_written_and_an_unknown_one_refused():
+    # WSU-58 S1: the JSON lens (tree / flat / validate) and an app's own drawn view were refused by canvas.item.set
+    for i, v in enumerate(("tree", "flat", "validate", "drawn")):
+        _fresh()
+        _add(f"note:v{i}")
+        r = _run(C.cap_canvas_item_set(session_id=SID, key=f"note:v{i}", view=v))
+        assert r["ok"] and r["item"]["view"] == v, (v, r)
+    _fresh()
+    _add("note:vx")
+    r = _run(C.cap_canvas_item_set(session_id=SID, key="note:vx", view="radar"))
+    assert not r["ok"] and "view must be one of" in r["error"]

@@ -23,7 +23,7 @@
   var SIZES = ['xs', 's', 'm', 'l', 'xl'];
   var LAYERS = ['among', 'behind', 'front'];
   var PLACED_BY = ['auto', 'person'];
-  var VIEWS = ['list', 'cards', 'table', 'graph', 'chart', 'chips', 'fields', 'code', 'structure', 'both'];
+  var VIEWS = ['list', 'cards', 'table', 'graph', 'chart', 'chips', 'fields', 'code', 'structure', 'both', 'tree', 'flat', 'validate', 'drawn'];   /* = item_core.VIEWS (WSU-58 S1) */
   var SETTABLE = ['face', 'place', 'view', 'size', 'locked', 'folded', 'group', 'state'];
   var PLACE_NUM = { fx: [0, 1], fy: [0, 1], w: [34, 8000], h: [24, 8000], z: [0, 999] };
 
