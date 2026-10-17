@@ -570,6 +570,28 @@
     return '<div class="vc-tablewrap vc-tbarwrap">' + bar + '<table class="vc-table">' + head + body + '</table>'
       + (rows.length > LIM ? '<div class="j-more">… ' + (rows.length - LIM) + ' more rows - the filter narrows them</div>' : '') + (q && !rows.length ? '<div class="vc-dim">no row has "' + esc(ui.q) + '"</div>' : '') + '</div>';
   }
+  /* A RECORD'S FIELD EDITED IN PLACE (DU-E-kv), only where the item says how a field is written: content.edit =
+     { cap, args (may hold {field.x} from the current fields), field_arg?, value_arg, fields? }. Per item, on the element:
+     the field being edited, its draft, a pending value and an error per field. Nothing is written to the item but by Save. */
+  const kvUi = (el, key) => { if (!el || !key) return { ed: null, draft: '', pend: {}, err: {}, kept: {} }; const m = el._kvUi || (el._kvUi = {});
+    const u = m[key] || (m[key] = {}); u.pend = u.pend || {}; u.err = u.err || {}; u.kept = u.kept || {}; if (u.ed === undefined) u.ed = null; if (u.draft == null) u.draft = ''; return u; };
+  const kvFields = (c) => (c && (c.fields || c.data)) || {};
+  const kvObj = (f) => { const o = {}; if (Array.isArray(f)) f.forEach((p) => { if (Array.isArray(p) && p.length) o[String(p[0])] = p[1]; }); else if (f && typeof f === 'object') Object.assign(o, f); return o; };
+  const kvScalar = (v) => v == null || typeof v !== 'object';
+  /* which fields may be edited: the edit's own list, else every scalar field */
+  const kvEditable = (c) => { const ed = c && c.edit; if (!ed || typeof ed !== 'object' || !ed.cap) return null; const o = kvObj(kvFields(c));
+    const names = Array.isArray(ed.fields) ? ed.fields.map(String) : Object.keys(o); return new Set(names.filter((n) => Object.prototype.hasOwnProperty.call(o, n) && kvScalar(o[n]))); };
+  /* a draft read as the field's own type: a number stays a number, true / false a boolean */
+  const kvCoerce = (s, old) => { s = String(s == null ? '' : s);
+    if (typeof old === 'number' && s.trim() !== '' && isFinite(+s)) return +s;
+    if (typeof old === 'boolean' && /^(true|false)$/i.test(s.trim())) return s.trim().toLowerCase() === 'true';
+    if (old == null && s === '') return old; return s; };
+  /* the edit's args with {field.x} filled from the current fields (a whole-string template keeps the value's type) */
+  const kvFill = (v, o) => { if (typeof v === 'string') { const m = v.match(/^\{field\.([^{}]+)\}$/); if (m) return o[m[1]];
+      return v.replace(/\{field\.([^{}]+)\}/g, (_, n) => (o[n] == null ? '' : typeof o[n] === 'object' ? JSON.stringify(o[n]) : String(o[n]))); }
+    if (Array.isArray(v)) return v.map((x) => kvFill(x, o)); if (v && typeof v === 'object') { const r = {}; Object.keys(v).forEach((k) => { r[k] = kvFill(v[k], o); }); return r; } return v; };
+  const kvArgs = (ed, o, name, value) => { const a = kvFill(ed.args && typeof ed.args === 'object' ? ed.args : {}, o);
+    if (ed.field_arg) a[ed.field_arg] = name; a[ed.value_arg || 'value'] = value; return a; };
 
   /* a records item's browser state (page, filter, sort, view, facet, what is open, what was fetched): the element's,
      per item key, never written to the canvas - paging is not an edit. A renderer called with no element (a
@@ -1393,6 +1415,25 @@
       const say = (k) => { const ws = String(k).replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').split(/\s+/).filter(Boolean)
           .map((w) => (w.length > 1 && /^[A-Z0-9]+$/.test(w) ? w : w.toLowerCase())); const s = ws.join(' ');   /* an acronym (GPU, URL) stays as it is */
         return s ? s.charAt(0).toUpperCase() + s.slice(1) : String(k); };
+      /* editable (DU-E-kv): only when the item says how a field is written; without it the rows below are drawn as before */
+      const can = kvEditable(c);
+      if (can && can.size) { const ui = kvUi(el, key);
+        return '<div class="vc-kv kv-edit" data-w="canvas.kv"><div class="vc-kv-g">'
+          + rows.slice(0, 80).map((r) => { const k = String(r && r[0]); const on = can.has(k); const pend = on && Object.prototype.hasOwnProperty.call(ui.pend, k);
+            const v = pend ? ui.pend[k].v : on && Object.prototype.hasOwnProperty.call(ui.kept, k) ? ui.kept[k] : r && r[1];
+            const s = v == null ? '—' : (typeof v === 'object' ? JSON.stringify(v) : String(v)); const err = on && ui.err[k] ? String(ui.err[k]) : '';
+            const cls = 'kv-r' + (s.length > 48 ? ' long' : '') + (on ? ' kv-e' : '') + (pend ? ' kv-pend' : '') + (err ? ' kv-bad' : '');
+            const name = '<span class="kv-k" title="' + esc(k) + '">' + esc(say(k)) + '</span>';
+            const vcls = 'kv-v' + (v === true ? ' yes' : v === false ? ' no' : '') + (typeof v === 'number' ? ' num' : '');
+            if (on && ui.ed === k) return '<div class="' + cls + ' kv-ing" data-kv-row="' + esc(k) + '">' + name + '<span class="kv-v kv-inw"><input class="kv-in" data-kv-in="' + esc(k) + '" value="' + esc(String(ui.draft == null ? '' : ui.draft)) + '" spellcheck="false" aria-label="' + esc(say(k)) + '">'
+              + '<button class="kv-b" data-act="kvsave" data-kv-f="' + esc(k) + '" title="Save (Enter)">save</button><button class="kv-b" data-act="kvcancel" data-kv-f="' + esc(k) + '" title="Cancel (Esc)">cancel</button></span>'
+              + (err ? '<div class="kv-err">' + esc(err) + '</div>' : '') + '</div>';
+            if (!on) return '<div class="' + cls + '">' + name + '<span class="' + vcls + '">' + esc(s.slice(0, 600)) + '</span></div>';
+            return '<div class="' + cls + '" data-kv-row="' + esc(k) + '">' + name + '<span class="' + vcls + '" tabindex="0" data-kv-f="' + esc(k) + '" title="Enter to edit">' + esc(s.slice(0, 600))
+              + (pend ? '<span class="kv-st">saving…</span>' : '') + '</span>'
+              + (pend ? '' : '<button class="kv-pen" data-act="kvedit" data-kv-f="' + esc(k) + '" title="Edit ' + esc(say(k)) + '" aria-label="Edit ' + esc(say(k)) + '">✎</button>')
+              + (err ? '<div class="kv-err">' + esc(err) + '</div>' : '') + '</div>'; }).join('')
+          + '</div></div>'; }
       return '<div class="vc-kv" data-w="canvas.kv"><div class="vc-kv-g">'
         + rows.slice(0, 80).map((r) => { const v = r && r[1]; const s = v == null ? '\u2014' : (typeof v === 'object' ? JSON.stringify(v) : String(v)); const k = String(r && r[0]);
           return '<div class="kv-r' + (s.length > 48 ? ' long' : '') + '"><span class="kv-k" title="' + esc(k) + '">' + esc(say(k)) + '</span><span class="kv-v' + (v === true ? ' yes' : v === false ? ' no' : '') + (typeof v === 'number' ? ' num' : '') + '">' + esc(s.slice(0, 600)) + '</span></div>'; }).join('')
@@ -2605,6 +2646,17 @@
   .vc-tl-bn span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .vc-tl-e.out{opacity:.35}
   .vc-tl-e.cur{background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
+  /* a record's field edited in place (DU-E-kv) */
+  .vc-kv .kv-r.kv-e{position:relative}.vc-kv .kv-r.kv-e > .kv-v{padding-right:18px;border-radius:3px}
+  .vc-kv .kv-r.kv-e > .kv-v[tabindex]:focus-visible{outline:1px solid var(--acc,#5a9e8f);outline-offset:1px}
+  .vc-kv .kv-pen{all:unset;position:absolute;right:2px;top:2px;width:16px;height:16px;line-height:16px;text-align:center;font:11px system-ui,sans-serif;color:var(--dim,#6b7480);cursor:pointer;border-radius:3px;opacity:0;transition:opacity .12s}
+  .vc-kv .kv-r.kv-e:is(:hover,:focus-within) .kv-pen{opacity:1}.vc-kv .kv-pen:hover,.vc-kv .kv-pen:focus-visible{color:var(--acc,#5a9e8f);outline:1px solid var(--line,#2a2f36)}
+  .vc-kv .kv-r.kv-pend > .kv-v{opacity:.75}.vc-kv .kv-st{margin-left:6px;font:italic 10px system-ui,sans-serif;color:var(--dim,#6b7480)}
+  .vc-kv .kv-inw{display:flex;align-items:center;gap:4px;min-width:0}
+  .vc-kv .kv-in{flex:1 1 auto;min-width:40px;font:inherit;padding:1px 5px;border:1px solid var(--acc,#5a9e8f);border-radius:4px;background:transparent;color:inherit}
+  .vc-kv .kv-b{all:unset;cursor:pointer;font:10px system-ui,sans-serif;padding:1px 5px;border:1px solid var(--line,#2a2f36);border-radius:4px;color:var(--dim,#6b7480)}.vc-kv .kv-b:hover{color:var(--acc,#5a9e8f)}
+  .vc-kv .kv-err{grid-column:1 / -1;font:10.5px system-ui,sans-serif;color:var(--err,#e06c75)}.vc-kv .kv-r.kv-bad{box-shadow:inset 2px 0 0 var(--err,#e06c75)}
+  @container vckv (min-width: 460px) { .vc-kv .kv-err{order:-1} .vc-kv .kv-pen{right:6px;top:6px} }
   /* a command that ran (DU-E-session) */
   .vc-rc{font:10px system-ui,sans-serif;padding:0 6px;border-radius:9px;border:1px solid currentColor;white-space:nowrap}.vc-rc.ok{color:var(--ok,#8fb87a)}.vc-rc.bad{color:var(--err,#e06c75)}
   .vc-ran-ask{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;margin:4px 0;border:1px solid var(--warn,#e5c07b);border-radius:6px;font:11px system-ui,sans-serif}.vc-ran-when{font-size:10px;margin:2px 0}
@@ -5592,6 +5644,19 @@
         else if (fwd) { const n = xs.find((x) => x > s + 1e-9); ui.s = n != null ? n : xs[xs.length - 1]; }
         else { const p = xs.filter((x) => x < s - 1e-9).pop(); ui.s = p != null ? p : xs[0]; }
         tlAgain(k, true); });
+      /* a record's field being edited (DU-E-kv): the draft kept as it is typed (no redraw - the input keeps its focus);
+         Enter saves, Esc cancels; Enter on a focused editable value opens it */
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.kvIn == null) return;
+        const it = q.closest('.it[data-key]'); const pane = q.closest('.fu-p[data-key]'); const k = pane ? pane.dataset.key : it ? it.dataset.key : ''; if (!k) return;
+        const ui = kvUi(this, k); if (ui.ed === q.dataset.kvIn) ui.draft = String(q.value || ''); });
+      body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || (q.dataset.kvIn == null && q.dataset.kvF == null) || ev.isComposing) return;
+        const row = q.closest('[data-kv-row]'); if (!row) return; let act = '';
+        if (q.dataset.kvIn != null) { if (ev.key === 'Enter') act = 'kvsave'; else if (ev.key === 'Escape') act = 'kvcancel'; }
+        else if (q.dataset.kvF != null && q.tagName !== 'BUTTON' && ev.key === 'Enter') act = 'kvedit';
+        if (!act) return; const b = row.querySelector('[data-act="' + act + '"]'); if (!b) return;
+        ev.preventDefault(); ev.stopPropagation();
+        if (act === 'kvsave') { const it = q.closest('.it[data-key]'); const pane = q.closest('.fu-p[data-key]'); const k = pane ? pane.dataset.key : it ? it.dataset.key : ''; if (k) kvUi(this, k).draft = String(q.value || ''); }
+        this._act(b, ev); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.tblQ == null) return;   /* the table bar's filter (DU-E-table) */
         const key = q.dataset.tblQ; tblUi(this, key).q = String(q.value || ''); clearTimeout(this._tblQT);
         this._tblQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
@@ -6143,6 +6208,37 @@
         return; }
       /* the timeline's brush (DU-E-timeline): clear the range */
       if (act === 'tlclear') { const u = tlUi(this, btn.dataset.tlKey || key); u.b0 = u.b1 = null; if (this._doc) this.render(this._doc); return; }
+      /* a record's field edited in place (DU-E-kv): open the input, Cancel / Esc (no write), Save - shown at once as
+         "saving…", the item's own update capability called; on success the item's fields written (canvas.update, its
+         own shape kept), on failure the old value back and the error on that row */
+      if (act === 'kvedit' || act === 'kvsave' || act === 'kvcancel') { const ui = kvUi(this, key); const name = String(btn.dataset.kvF || ui.ed || '');
+        const c = this._contentOf(key) || {}; const can = kvEditable(c); const redraw = () => { if (this._doc) this.render(this._doc); };
+        const focusIn = () => { const sel = (s) => (window.CSS && CSS.escape ? CSS.escape(s) : s);
+          const back = () => { const it2 = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key) || this.shadowRoot;
+            const inp = it2.querySelector('[data-kv-in="' + sel(name) + '"]'); if (inp && this.shadowRoot.activeElement !== inp) { inp.focus(); try { inp.setSelectionRange(inp.value.length, inp.value.length); } catch (e) { /* optional */ } } };
+          back(); requestAnimationFrame(back); setTimeout(back, 120); };
+        if (!can || !can.has(name)) return;
+        const o = kvObj(kvFields(c)); const old = Object.prototype.hasOwnProperty.call(ui.kept, name) ? ui.kept[name] : o[name];
+        if (act === 'kvedit') { if (ui.pend[name]) return; ui.ed = name; ui.draft = old == null ? '' : String(old); delete ui.err[name]; redraw(); focusIn(); return; }
+        if (act === 'kvcancel') { ui.ed = null; ui.draft = ''; redraw(); return; }
+        const nv = kvCoerce(ui.draft, old); ui.ed = null; ui.draft = '';
+        if (nv === old) { redraw(); return; }   /* nothing changed: nothing written */
+        ui.pend[name] = { v: nv }; delete ui.err[name]; redraw();
+        const ed = c.edit; const args = kvArgs(ed, o, name, nv);
+        (async () => { let r = null; try { r = await this.callResult(ed.cap, args); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+          delete ui.pend[name];
+          if (!r || r.ok === false || r.error) { ui.err[name] = String((r && (r.error || r.message || r.detail)) || 'the update failed'); redraw(); return; }
+          /* the answer's own values win where it gives them (changed / fields), for the fields the record has */
+          const c2 = this._contentOf(key) || c; const f2 = kvFields(c2); const o2 = kvObj(f2); const put = {}; put[name] = nv;
+          [r.changed, r.fields].forEach((src) => { const so = Array.isArray(src) ? (src.every((p) => Array.isArray(p)) ? kvObj(src) : {}) : (src && typeof src === 'object' ? src : {});
+            Object.keys(so).forEach((n) => { if (Object.prototype.hasOwnProperty.call(o2, n) || n === name) put[n] = so[n]; }); });
+          const nf = Array.isArray(f2) ? f2.map((p) => (Array.isArray(p) && Object.prototype.hasOwnProperty.call(put, String(p[0])) ? [p[0], put[String(p[0])]] : p)) : Object.assign({}, f2, put);
+          const fk = c2.fields == null && c2.data != null ? 'data' : 'fields'; const nc = Object.assign({}, c2); nc[fk] = nf;
+          const b = this._blockOf(key);
+          if (b && b.type === 'result') { Object.assign(ui.kept, put); redraw(); return; }   /* a result's answer is not the record: kept on the element, the result not rewritten */
+          if (b) b.content = nc;   /* drawn as saved until the refresh brings it back */
+          redraw(); await this.call('canvas.update', Object.assign(this._ref(key), { content: nc })); })();
+        return; }
       if (act === 'tagain' || act === 'tagainno') { (this._ranAsk = this._ranAsk || {})[key] = act === 'tagain'; if (this._doc) this.render(this._doc); return; }
       if (act === 'tagainok') { const c = this._contentOf(key) || {}; (this._ranAsk = this._ranAsk || {})[key] = false; if (!c.cap) return;
         (this._ranBusy = this._ranBusy || {})[key] = true; if (this._doc) this.render(this._doc);
