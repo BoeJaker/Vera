@@ -6,6 +6,6 @@ let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL '
 t('the card leads with the widget the answer is', /const rs=VeraWidget\.fromCapResult\(capName, content, \{args:capArgs\}\);/.test(CHAT) && /<vera-widget bare size=/.test(CHAT));
 t('a plain json/text/record keeps the older rule', /!\/\^\(json\|text\|record\|kv\)\$\/\.test\(r0\.form\)/.test(CHAT) && /if\(!ruleWidget\) try\{/.test(CHAT));
 t('a string answer leads with its widget too', /: \`\$\{ruleWidget\}<pre style=/.test(CHAT));
-t('the canvas maps through it after the chat-only kinds, before the table and the old generics', /cvAdapter\('capview',/.test(CHAT) && CHAT.indexOf("cvAdapter('capview',") < CHAT.indexOf("cvAdapter('table',"));
+t('the canvas maps through it after the chat-only kinds, before the table and the old generics', /cvAdapter\('present',/.test(CHAT) && CHAT.indexOf("cvAdapter('calendar',") < CHAT.indexOf("cvAdapter('present',") && CHAT.indexOf("cvAdapter('present',") < CHAT.indexOf("cvAdapter('kv',"));   // present()'s fallback in capview's + table's place (D10 step 2b)
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
