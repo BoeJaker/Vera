@@ -4365,7 +4365,13 @@
       const par = new Map(elig.map((c) => [c, c]));
       const find = (c) => { while (par.get(c) !== c) { par.set(c, par.get(par.get(c))); c = par.get(c); } return c; };
       const by = {};
-      if (slotsU) { const byK = new Map(elig.map((c) => [c.dataset.key || '', c])); elig.forEach((c) => { const f0 = slotsU[c.dataset.key || '']; if (f0 && byK.has(f0)) par.set(find(c), find(byK.get(f0))); }); }
+      if (slotsU) { const byK = new Map(elig.map((c) => [c.dataset.key || '', c])); elig.forEach((c) => { const f0 = slotsU[c.dataset.key || '']; if (f0 && byK.has(f0)) par.set(find(c), find(byK.get(f0))); });
+        /* ...and, as in the other arrangements, similar items share a card - but only of ONE aspect (owner 2026-10-17: "i dont see any automatic
+           composites happening in slot mode"; "composites of elements that have different aspects are being made"): the same kind and the same
+           aspect, joined by a turn, a subject or the topic */
+        elig.forEach((c) => { const f = famOf(c); if (!f) return; const fa = f + '/' + (this._aspectOf(c, c.dataset.key || '') || ''); const s = subjOf(titleOf(c));
+          [c.dataset.mid ? fa + '|m|' + c.dataset.mid : '', s.length >= 4 ? fa + '|s|' + s : '', inTopic(c) ? fa + '|t' : ''].filter(Boolean)
+            .forEach((b0) => { if (by[b0]) par.set(find(c), find(by[b0])); else by[b0] = c; }); }); }
       else elig.forEach((c) => { const f = famOf(c); const s = subjOf(titleOf(c));
         [c.dataset.mid ? f + '|m|' + c.dataset.mid : '', s.length >= 4 ? f + '|s|' + s : '', inTopic(c) ? f + '|t' : ''].filter(Boolean)
           .forEach((b) => { if (by[b]) par.set(find(c), find(by[b])); else by[b] = c; }); });

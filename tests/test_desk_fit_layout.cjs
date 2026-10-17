@@ -49,4 +49,7 @@ const slotOf = (L, id) => L.slots.find((s) => s.ids.includes(id));
   t('a composite is always of one aspect (many lists: list columns with tabs, never lists as tabs of a table)', mixed.length === 0 && L.slots.some((s) => s.aspect === 'portrait'), L); }
 { const L = D.fitLayout(Array.from({ length: 11 }, (_, i) => it('l' + i, 'portrait', i)).concat([it('c', 'landscape', 11), it('s', 'square', 12)]), { l: 0, t: 0, r: 1100, b: 1000 }, {});
   t('a card holds at most 8 tabs; past that a pill of its own', L.slots.every((s) => s.ids.length <= 8) && L.pills.length >= 1, L); }
+{ const L = D.fitLayout([it('g', 'square', 0), it('l1', 'portrait', 1), it('l2', 'portrait', 2), it('l3', 'portrait', 3)], { l: 0, t: 0, r: 1300, b: 1000 }, {});
+  const items = { g: 'square', l1: 'portrait', l2: 'portrait', l3: 'portrait' };
+  t('an item is only ever in a slot of its own aspect (a graph never in a tall slot)', L.slots.every((s) => s.ids.every((id) => items[id] === s.aspect)), L); }
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);
