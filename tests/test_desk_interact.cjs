@@ -35,8 +35,14 @@ t('a kept window stays one, at its size and place, through every pass; the other
 t('back to the desk: a dock control in the window\'s head, and Esc; the size that made it a window goes too', C.includes("if (desk && this._winKeepGet()[key]) ctl.push(hb('dock', 'restore',") && C.includes("if (act === 'dock') { this._winDock(key); return; }") && C.includes('this._winKeepSet(key, null); delete this._pw[key]; delete this._px[key]; this._deskPosSet(key, null);'));
 t('U6: of two that meet, the last touched is the window', C.includes('const tOf = (it) => it.sizing ? Infinity : (actAt[it.id] || 0);') && C.includes('(this._actAt = this._actAt || {})[d.key] = Date.now();'));
 t('U6: the others are placed again without the window', C.includes('D.separate(withStrip(bySize(plan.filter((it) => !wins.has(it)))), R, sepSize, { W: W, H: H });'));
-t('U6: a window keeps its size and is over the tiled cards', C.includes("s = it.win ? { w: it.w, h: it.h, face:") && C.includes(": it.win ? zOf('window', Math.max(0, (this._winOrder || []).indexOf(key))) : zOf('tile', D.stackOrder(s.nd) - ZB.tile[0])"));
-t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
+t('U6: a window keeps its size and is over the tiled cards', C.includes(": it.win ? { w: it.w, h: it.h, face:") && C.includes(": it.win ? zOf('window', Math.max(0, (this._winOrder || []).indexOf(key))) : zOf('tile', D.stackOrder(s.nd) - ZB.tile[0])"));
+/* owner 2026-10-17: "there is still some re-positioning of elements happening when no activity is happening"; "if you swap a tab
+   on a composite desk item it changes the layout" - a held desk at rest is put back exactly, none of the passes run */
+t('a held desk at rest is put back exactly: same decisions, nothing carried or sized, every card (or its group) already placed', C.includes('let replay = !!(hold && hold.rects && hold.want === wantSig && !this._rz && !this._dg && !this._rzLetGo && plan.length);')
+  && C.includes("passes: { if (replay) break passes;") && C.includes("}   /* passes */") && C.includes("s = it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 }")
+  && C.includes("(grp.membersOf.get(it.c) || []).map((m) => hold.rects[m.dataset.key || '']).find(Boolean)"));
+t('what the person decides is in the replay key (places, locks, pills, windows, groups taken out, sizes, layers)', C.includes('[pp[k] || 0, lk[k] || 0, pl[k] || 0, wk[k] || 0, sp[k] || 0, this._pw[k] || 0, this._px[k] || 0, (this._layer || {})[k] || 0]')
+  && C.includes('this._hold.want = wantSig;') && C.includes('rects: base, base, want: lp.want }') && C.includes('face: o.face, nd: o.nd, win: !!o.win };'));t('U6: a window looks like one (ground, frame, title bar, focus ring)', C.includes('.stage .it.desk-win{background:var(--bg1,#15181d)!important') && C.includes('.stage .it.desk-win.desk-focus{') && C.includes(':not(.chip-peek):not(.desk-win){background:transparent!important'));
 t('U10: windows can be switched off (desk-windows)', C.includes("this.getAttribute('desk-windows') !== 'off'") && C.includes("'desk-fit', 'desk-windows']") && H.includes("cfgCvWindows:['desk-windows','on']") && H.includes("windows:'cfgCvWindows'"));
 t('U2: a drop in a gap keeps a rectangle only when the gap made it smaller', C.includes('!d.own && (gw < d.el.offsetWidth - 2 || gh < d.el.offsetHeight - 2)'));
 /* U3 - by the hand */
@@ -94,7 +100,9 @@ t('U12: an empty list is empty (nothing loaded yet)', !W.presentationOf('docker.
 
 /* owner 2026-10-17: "the elements that are not in windowed mode can cover each other? this shouldnt be possible" */
 t('no two open cards cover each other: of two fixed cards that meet, the one touched longer ago makes way (its own size, else the largest room it fits, else a pill)', C.includes("const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q);")
-  && C.includes("for (const k of [1, 0.85, 0.7, 0.55, 0.42]) { const w = Math.round(v.w * k), h = Math.round(v.h * k); if (w < 220 || h < 120) break;") && C.includes("else { this._deskPosSet(v.id, { chip: true });"));
+  && C.includes("for (const k of [1, 0.85, 0.7, 0.55, 0.42]) { const w = Math.round(v.w * k), h = Math.round(v.h * k); if (w < 220 || h < 120) break;") && C.includes("else { toStrip(v, pills.length); pills.push(v); v.held = false; } });")
+  /* the move is the desk's, for the pass: never written as the person's place or a pill */
+  && !C.includes("this._deskPosSet(v.id,"));
 t('a held card at a pill\'s height is a pill (not a sliver with a card\'s face)', C.includes("face: it.h <= 40 ? 'chip' : (it.face0 || 'chip') })"));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

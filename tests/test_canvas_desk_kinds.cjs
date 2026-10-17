@@ -116,5 +116,16 @@ const g = [{ id: 'n', x: 300, y: 200, w: 300, h: 100, maxH: 120 }];
 D.grow(g, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});
 t('a card grows no taller than what it holds (and no wider than a page of it)', g[0].h <= 120 && g[0].w >= 300);
 
+/* owner 2026-10-17: each kind grows the way it reads - a list down, a chart across, a table to its rows and columns */
+{ const gr = (it) => { D.grow([it], null, { W: 1600, H: 1000 }, { maxW: 1584, maxH: 992 }); return it; };
+  const chart = gr({ x: 800, y: 300, w: 600, h: 340, maxH: 600, ratio: 4.5 });
+  const list = gr({ x: 300, y: 500, w: 400, h: 400, maxW: 560, ratio: 3.2 });
+  const page = gr({ x: 800, y: 500, w: 400, h: 300 });
+  t('a chart grows across the desk, no taller than 600', chart.w > 1500 && chart.h <= 600 && chart.w / chart.h > 2.2);
+  t('a list grows down, no wider than 560', list.w <= 560 && list.h > 900 && list.h / list.w > 1.6);
+  t('any other card keeps within a page aspect (2.2 : 1)', page.w / page.h <= 2.21 && page.h / page.w <= 2.21);
+  t('the kinds ask for it: reading widgets are lists; lists, charts and tables get their caps and aspect',
+    /\|reading\|headlines\|articles\|sources\)\$\/\.test\(f\)/.test(src) && src.includes("if (!user && kind === 'list') { o.maxW = Math.min(o.maxW || Infinity, Math.max(o.w, 560)); o.ratio = 3.2; }")
+    && src.includes("else if (!user && kind === 'chart') { o.maxH = Math.min(o.maxH || Infinity, 600); o.ratio = 4.5; }")); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
