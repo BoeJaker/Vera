@@ -100,6 +100,8 @@ services:
       #    PlatformIO, gcc/cmake, esptool, mpy-cross. Used by mesh.firmware.build
       #    and the build.* capabilities so Vera never needs a compiler in its image.
       VERA_BUILDER_URL: "${VERA_BUILDER_URL:-http://vera-builder:8080}"
+      # Shared token the builder requires on every route but /health (set it in .env).
+      VERA_BUILDER_TOKEN: "${VERA_BUILDER_TOKEN:-}"
 
       # ── IDE projects root (inside container)
       VERA_PROJECT_ROOT: "/data/projects"
@@ -340,9 +342,10 @@ services:
     image: vera-builder:latest
     container_name: vera-builder
     ports:
-      - "${BUILDER_PORT:-8785}:8080"
+      - "127.0.0.1:${BUILDER_PORT:-8785}:8080"   # loopback only: it runs arbitrary build commands
     environment:
       BUILDER_DEFAULT_FQBN: "${BUILDER_DEFAULT_FQBN:-esp32:esp32:esp32}"
+      BUILDER_TOKEN: "${VERA_BUILDER_TOKEN:-}"
     volumes:
       - builder-cache:/opt/arduino
       - builder-pio:/opt/platformio

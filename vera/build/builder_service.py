@@ -16,10 +16,10 @@
 # Request/response are JSON. Source is passed inline as {files:{path:content}}
 # (text) so no shared volume is needed; artifacts come back base64-encoded.
 #
-# SECURITY: /build/exec runs arbitrary commands. This service is meant to sit on
-# the internal vera-net (and optionally a localhost-published port for a native
-# orchestrator) — do NOT expose it to untrusted networks. It's a build runner,
-# equivalent to a self-hosted CI worker.
+# SECURITY: /build/exec runs arbitrary commands. Every route except /health
+# needs the shared token (X-Builder-Token; see _require_token), and Vera
+# publishes the port on 127.0.0.1 only. It's a build runner, equivalent to a
+# self-hosted CI worker: never expose it to untrusted networks.
 # ============================================================================
 
 from __future__ import annotations
@@ -35,10 +35,46 @@ import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI
+import hmac
+
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Vera Builder", version="1.0")
+
+
+# ── access: a shared token on every route except /health ─────────────────────
+# /build/exec runs arbitrary shell, apt and pip. Vera sends the token in the
+# X-Builder-Token header. The token comes from BUILDER_TOKEN_FILE (a read-only
+# mount; preferred, so it never appears in a command line) or BUILDER_TOKEN.
+# With neither set the service refuses everything except /health, unless the
+# operator opts out explicitly with BUILDER_ALLOW_NO_TOKEN=1.
+def _expected_token() -> str:
+    path = (os.environ.get("BUILDER_TOKEN_FILE") or "").strip()
+    if path:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                return fh.read().strip()
+        except OSError:
+            return ""
+    return (os.environ.get("BUILDER_TOKEN") or "").strip()
+
+
+def token_ok(header_value: str, expected: str, allow_no_token: bool = False) -> bool:
+    """Constant-time check; an unset expected token refuses unless opted out."""
+    if not expected:
+        return allow_no_token
+    return hmac.compare_digest((header_value or "").strip().encode(), expected.encode())
+
+
+@app.middleware("http")
+async def _require_token(request: Request, call_next):
+    if request.url.path == "/health":
+        return await call_next(request)
+    allow = (os.environ.get("BUILDER_ALLOW_NO_TOKEN") or "").strip() == "1"
+    if not token_ok(request.headers.get("x-builder-token", ""), _expected_token(), allow):
+        return JSONResponse({"ok": False, "error": "builder token required"}, status_code=401)
+    return await call_next(request)
 
 DEFAULT_ARDUINO_FQBN = os.environ.get("BUILDER_DEFAULT_FQBN", "esp32:esp32:esp32")
 MAX_LOG = 6000

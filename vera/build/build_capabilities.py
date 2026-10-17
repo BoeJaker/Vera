@@ -92,12 +92,54 @@ async def resolve_builder_url(force: bool = False) -> str:
     return ""
 
 
+# The builder refuses every route but /health without this token
+# (builder_service._require_token). It lives in a 0600 file in the state root,
+# created on first use, and is mounted read-only into the container by
+# build.builder.up, so it never appears in a command line or an activity record.
+# VERA_BUILDER_TOKEN overrides it (the compose stack passes the same value to both).
+_TOKEN_MOUNT = "/run/vera/builder.token"
+
+
+def builder_token_path() -> Path:
+    return state_paths.state_dir("builder") / "token"
+
+
+def builder_token() -> str:
+    env = (os.environ.get("VERA_BUILDER_TOKEN") or "").strip()
+    if env:
+        return env
+    p = builder_token_path()
+    try:
+        tok = p.read_text(encoding="utf-8").strip()
+        if tok:
+            return tok
+    except OSError:
+        pass
+    import secrets as _pysecrets
+    tok = _pysecrets.token_hex(32)
+    fd = os.open(str(p), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(tok)
+    try:
+        os.chmod(str(p), 0o600)
+    except OSError:
+        pass
+    return tok
+
+
+def _auth_headers() -> dict:
+    return {"X-Builder-Token": builder_token()}
+
+
 async def builder_post(path: str, payload: dict, timeout: float = 1200.0) -> dict:
     import httpx
     url = (await resolve_builder_url() or builder_url()) + path
     try:
         async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.post(url, json=payload)
+            r = await c.post(url, json=payload, headers=_auth_headers())
+        if r.status_code == 401:
+            return {"ok": False, "error": "builder refused the token",
+                    "hint": "the running builder predates the token: run build.builder.up rebuild=true"}
         if r.status_code != 200:
             return {"ok": False, "error": f"builder {r.status_code}", "body": r.text[:500]}
         return r.json()
@@ -113,7 +155,7 @@ async def builder_get(path: str, timeout: float = 15.0) -> dict:
     url = (await resolve_builder_url() or builder_url()) + path
     try:
         async with httpx.AsyncClient(timeout=timeout) as c:
-            r = await c.get(url)
+            r = await c.get(url, headers=_auth_headers())
         return r.json()
     except Exception as e:
         return {"ok": False, "error": f"builder unreachable at {url}: {e}",
@@ -377,12 +419,16 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
                        approval_receipt_ref=approval_receipt_ref, retry=retry)
 
             async def _run(cname: str):
+                builder_token()                 # make sure the token file exists before mounting it
                 return await _cap("docker.run", host_id="local", image=image, name=cname,
-                                  ports=f"{port}:8080", network=network,
+                                  # loopback only: the LAN must not reach a shell runner
+                                  ports=f"127.0.0.1:{port}:8080", network=network,
                                   volumes="vera-builder-cache:/opt/arduino,"
-                                          "vera-builder-pio:/opt/platformio",
+                                          "vera-builder-pio:/opt/platformio,"
+                                          f"{builder_token_path()}:{_TOKEN_MOUNT}:ro",
                                   env={"BUILDER_DEFAULT_FQBN": os.environ.get(
-                                      "BUILDER_DEFAULT_FQBN", "esp32:esp32:esp32")},
+                                      "BUILDER_DEFAULT_FQBN", "esp32:esp32:esp32"),
+                                       "BUILDER_TOKEN_FILE": _TOKEN_MOUNT},
                                   idempotency_key=idempotency_key,
                                   approval_receipt_ref=approval_receipt_ref,
                                   retry=retry)
