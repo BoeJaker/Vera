@@ -40,7 +40,7 @@ t('no body draws a head of its own, and its former head buttons are declared, no
 });
 t('what a head held is declared: a line and actions per kind', () => {
   const el = { _live: {}, _pq: {}, _pdOpen: {}, deskAlign: () => false, previewOn: () => false };
-  const want = { session: ['tdetach', 'tshare'], notebook: ['nbrun', 'nbopen'], diagram: ['dgopen', 'dgcopy', 'dgsrc'], explode: ['xpsync'], html: ['cprev'] };
+  const want = { session: ['tdetach', 'tshare'], notebook: ['nbrun', 'nbopen'], diagram: ['dgopen', 'dgcopy', 'dgsrc', 'dgedit'], explode: ['xpsync'], html: ['cprev'] };
   Object.keys(want).forEach((k) => { V.BLOCK[k](SAMPLE[k], 'm', k + ':d', el); const d = el._decl[k + ':d'];
     assert(d, k + ' declares'); assert.deepStrictEqual((d.acts || []).map((a) => a.act), want[k], k); });
   assert(/over the bridge/.test((V.BLOCK.panel(SAMPLE.panel, 'l', 'panel:d', el), el._decl['panel:d'].sub)));

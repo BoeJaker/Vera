@@ -526,6 +526,22 @@
     return out;
   }
   const tblUi = (el, key) => { if (!el || !key) return { sort: -1, dir: 1, q: '', hide: {}, cols: false }; const m = el._tblUi || (el._tblUi = {}); return m[key] || (m[key] = { sort: -1, dir: 1, q: '', hide: {}, cols: false }); };
+  /* A DIAGRAM'S SOURCE, EDITED BESIDE ITS DRAWING (DU-E-diagram): per item - open, the draft, the last source that drew,
+     the error. Nothing here is written to the item; only Save writes (canvas.update). */
+  const dgUi = (el, key) => { const m = el._dgUi || (el._dgUi = {}); return m[key] || (m[key] = { open: false, draft: '', good: '', err: '' }); };
+  /* does a draft parse? '' when it does. Each line's brackets and quotes first (the drawing element's parser is lenient and
+     reads past an unclosed one), then the estate element's own parser (vera-mermaid's _build) - no second renderer. */
+  const dgCheck = (inner, code) => {
+    const src = String(code || '').trim(); if (!src) return 'the source is empty';
+    const lines = src.split('\n'); const OPEN = { ')': '(', ']': '[', '}': '{' };
+    for (let i = 0; i < lines.length; i++) { const ln = lines[i].replace(/%%.*$/, '');
+      if ((ln.match(/"/g) || []).length % 2) return 'line ' + (i + 1) + ': a quote is not closed';
+      const st = []; for (const ch of ln.replace(/"[^"]*"/g, '')) { if (ch === '(' || ch === '[' || ch === '{') st.push(ch); else if (OPEN[ch] && st[st.length - 1] === OPEN[ch]) st.pop(); }
+      if (st.length) return 'line ' + (i + 1) + ': "' + st[st.length - 1] + '" is not closed'; }
+    if (inner && typeof inner._build === 'function') { let t = null; try { t = typeof inner._theme === 'function' ? inner._theme() : {}; } catch (e) { t = null; }
+      if (t) { try { inner._build(src, t); } catch (e) { return String((e && e.message) || e); } } }
+    return '';
+  };
   const tblNum = (v) => { const s = String(v == null ? '' : v).replace(/[,%$£€\s]/g, ''); return s !== '' && isFinite(+s) ? +s : null; };
   /* the rows the bar shows, in its order: [index into the answer's rows, row] */
   function tblRows(c, ui) {
@@ -588,6 +604,43 @@
     if (!src) { const g = [id.replace(/-/g, '_') + '_panel.html', id.replace(/-panel$/, '').replace(/-/g, '_') + '_panel.html', id.replace(/-/g, '_') + '.html', id + '.html'];
       for (const f of g.filter((x, i) => g.indexOf(x) === i)) { if (await ok('/ui/panels/file/' + f)) { src = '/ui/panels/file/' + f; break; } } }
     PANEL_SRC[id] = src; return src;
+  }
+
+  /* THE TIMELINE'S BRUSH AND SCRUBBER (DU-E-timeline). A position on the axis is the timeline's own number for a date
+     (year + (month-1)/12 + (day-1)/366); the brush is two of them, the scrubber one. Per item, on the element, never
+     written to the canvas: looking along a timeline is not an edit. */
+  const tlUi = (el, key) => { if (!el || !key) return { b0: null, b1: null, s: null }; const m = el._tlUi || (el._tlUi = {}); return m[key] || (m[key] = { b0: null, b1: null, s: null }); };
+  const TL_MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  /* a position back to words: the month (and the day, on a short span) it falls in */
+  function tlDate(x, fine) {
+    const y = Math.floor(x); const f = Math.max(0, x - y); const m = Math.min(11, Math.floor(f * 12 + 1e-9));
+    const d = Math.min(31, Math.max(1, Math.round((f - m / 12) * 366) + 1));
+    return (fine ? d + ' ' : '') + TL_MON[m] + ' ' + y;
+  }
+  /* the event nearest a position (the first of a tie) */
+  function tlNear(xs, x) { let b = -1, bd = Infinity; xs.forEach((v, i) => { const d = Math.abs(v - x); if (d < bd - 1e-12) { bd = d; b = i; } }); return b; }
+  /* where on an axis a pointer is, as a position (clamped to the axis's ends) */
+  function tlAt(ax, clientX) {
+    const r = ax.getBoundingClientRect(); const lo = +ax.dataset.tlLo || 0, sp = +ax.dataset.tlSpan || 1e-6;
+    const f = (((clientX - r.left) / (r.width || 1)) * 100 - 4) / 92; return lo + Math.min(1, Math.max(0, f)) * sp;
+  }
+  const tlPct = (ax, x) => 4 + 92 * (x - (+ax.dataset.tlLo || 0)) / (+ax.dataset.tlSpan || 1e-6);
+  /* while dragging, the drawing is changed in place (drawn again only on release): the range's band, the dots and rows
+     outside it dimmed */
+  function tlLiveBrush(ax, a, b) {
+    const lo = Math.min(a, b), hi = Math.max(a, b); let br = ax.querySelector('.vc-tl-br');
+    if (!br) { br = (ax.ownerDocument || document).createElement('div'); br.className = 'vc-tl-br'; ax.insertBefore(br, ax.children[1] || null); }
+    br.style.left = tlPct(ax, lo).toFixed(2) + '%'; br.style.width = (tlPct(ax, hi) - tlPct(ax, lo)).toFixed(2) + '%';
+    const box = ax.closest('.vc-tl');
+    ax.querySelectorAll('.vc-tl-dot[data-x]').forEach((d) => { const x = +d.dataset.x; const out = x < lo - 1e-9 || x > hi + 1e-9; d.classList.toggle('out', out);
+      const row = box && box.querySelector('.vc-tl-e[data-i="' + d.dataset.tlGo + '"]'); if (row) row.classList.toggle('out', out); });
+  }
+  /* the scrubber moved in place: the handle, and the nearest event lit on the axis and in the list */
+  function tlLiveScrub(ax, x) {
+    const h = ax.querySelector('.vc-tl-sc'); if (h) { h.style.left = tlPct(ax, x).toFixed(2) + '%'; h.classList.add('on'); }
+    const dots = [...ax.querySelectorAll('.vc-tl-dot[data-x]')]; const i = tlNear(dots.map((d) => +d.dataset.x), x); const box = ax.closest('.vc-tl');
+    dots.forEach((d, k) => d.classList.toggle('cur', k === i));
+    if (box) box.querySelectorAll('.vc-tl-e').forEach((r) => r.classList.toggle('cur', dots[i] && r.dataset.i === dots[i].dataset.tlGo));
   }
 
   const BLOCK = {
@@ -687,7 +740,7 @@
        same year is grouped under it, because a timeline of forty rows each labelled with the same four digits
        is a list wearing an axis. Each event keeps the page it came from, so the timeline is a way back into the
        sources rather than a summary that has left them behind. */
-    timeline: (c) => {
+    timeline: (c, size, key, el) => {
       const ev = (Array.isArray(c.events) ? c.events : []).filter((e) => e && e.when);
       if (!ev.length) return `<div class="vc-tl-empty">No dated events were found.</div>`;
       const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -703,8 +756,19 @@
       const pct = (x) => (4 + 92 * (x - lo) / span).toFixed(2);
       const y0 = Math.floor(lo), y1 = Math.floor(hi);
       const ticks = [y0]; if (y1 - y0 >= 4) { const step = (y1 - y0) / 4; for (let k = 1; k < 4; k++) ticks.push(Math.round(y0 + step * k)); } if (y1 !== y0) ticks.push(y1);
-      const axis = `<div class="vc-tl-ax"><div class="vc-tl-ln"></div>`
-        + ev.map((e, i) => `<button class="vc-tl-dot" style="left:${pct(xs[i])}%" data-tl-go="${i}" title="${esc(e.when + ' \u2014 ' + labelOf(e).slice(0, 90))}"></button>`).join('')
+      /* the brush (a range dragged across the axis) and the scrubber (a handle dragged, or stepped by the arrow keys, to a
+         date) - DU-E-timeline. Their state is the element's, per item key; a timeline drawn with no key has neither. */
+      const live = !!key && ev.length > 1; const ui = live ? tlUi(el, key) : { b0: null, b1: null, s: null };
+      const brushed = live && ui.b0 != null && ui.b1 != null; const ba = brushed ? Math.min(ui.b0, ui.b1) : 0, bb = brushed ? Math.max(ui.b0, ui.b1) : 0;
+      const inB = (i) => !brushed || (xs[i] >= ba - 1e-9 && xs[i] <= bb + 1e-9);
+      const nIn = brushed ? xs.filter((_, i) => inB(i)).length : ev.length;
+      const sc = live && ui.s != null ? Math.min(hi, Math.max(lo, ui.s)) : null; const cur = sc == null ? -1 : tlNear(xs, sc);
+      const fine = span < 3; const kq = esc(key || '');
+      const axis = `<div class="vc-tl-ax"${live ? ` data-tl-key="${kq}" data-tl-lo="${lo}" data-tl-span="${span}" title="Drag across the axis to pick a range; double-click to clear it"` : ''}><div class="vc-tl-ln"></div>`
+        + (brushed ? `<div class="vc-tl-br" style="left:${pct(ba)}%;width:${(+pct(bb) - +pct(ba)).toFixed(2)}%"></div>` : '')
+        + ev.map((e, i) => `<button class="vc-tl-dot${inB(i) ? '' : ' out'}${i === cur ? ' cur' : ''}" style="left:${pct(xs[i])}%" data-tl-go="${i}" data-x="${xs[i]}" title="${esc(e.when + ' \u2014 ' + labelOf(e).slice(0, 90))}"></button>`).join('')
+        + (live ? `<button class="vc-tl-sc${sc == null ? '' : ' on'}" data-tl-scrub="${kq}" style="left:${pct(sc == null ? lo : sc)}%" role="slider" aria-label="Scrub to a date"`
+          + ` aria-valuetext="${esc(sc == null ? 'not set' : tlDate(sc, fine))}" title="${esc(sc == null ? 'Drag to a date, or focus and use the arrow keys' : tlDate(sc, fine) + ' \u2014 nearest: ' + ev[cur].when)}"></button>` : '')
         /* a year starts before its first event: its tick is kept on the axis, not drawn off its left end ("324" for 2024) */
         + [...new Set(ticks)].map((y, i, a) => `<span class="vc-tl-tick${i === a.length - 1 && a.length > 1 ? ' end' : ''}" style="left:${Math.min(100, Math.max(0, +pct(y)))}%">${y}</span>`).join('')
         + `</div>`;
@@ -715,7 +779,7 @@
           if (year && +y - +year > 1) out += `<div class="vc-tl-gap">\u2026 ${+y - +year} years</div>`;
           year = y; out += `<div class="vc-tl-y">${esc(y)}</div>`;
         }
-        out += `<div class="vc-tl-e" data-i="${i}">`
+        out += `<div class="vc-tl-e${inB(i) ? '' : ' out'}${i === cur ? ' cur' : ''}" data-i="${i}">`
           + `<span class="vc-tl-w">${esc(pretty(e.when))}</span>`
           + `<span class="vc-tl-t">${esc(labelOf(e))}`
           + (e.url ? `<a class="vc-tl-a" href="${esc(e.url)}" target="_blank" rel="noopener">source \u2197</a>` : '')
@@ -724,7 +788,10 @@
       const years = y1 > y0 ? y0 + '\u2013' + y1 : String(y0);
       // the card's own header carries the title; the body says how much and over what span
       return `<div class="vc-tl"><div class="vc-tl-h"><small>${ev.length} event${ev.length === 1 ? '' : 's'} \u00b7 ${esc(years)}</small></div>`
-        + (ev.length > 1 ? axis : '') + `<div class="vc-tl-list">${out}</div></div>`;
+        + (ev.length > 1 ? axis : '')
+        + (brushed ? `<div class="vc-tl-bn"><span>${nIn} of ${ev.length} in ${esc(tlDate(ba, fine) + ' – ' + tlDate(bb, fine))}</span>`
+          + `<button class="ib" data-act="tlclear" data-tl-key="${kq}" title="Clear the range (or double-click the axis)">clear</button></div>` : '')
+        + `<div class="vc-tl-list">${out}</div></div>`;
     },
     /* A PAGE THE RESEARCH READ. The run already knows every page it fetched - the research card has listed them
        beside the report all along - but the canvas only ever got the finished prose, so the thing you could not
@@ -855,11 +922,21 @@
          style and the relevant options for along the top same as the rendered code output"): the kit's bar - Copy, Edit,
          Source, Pop out, Save, Send to - over the column's live drawing; Pop out is the canvas's own "open in the chat" */
       const VO = root.VeraOut;
-      if (key && VO && typeof VO.diagram === 'function') return `<div class="vc-codewrap vc-diagwrap" data-w="canvas.diagram">`
+      /* EDIT SOURCE (DU-E-diagram): the source in a box on the left, the drawing on the right (stacked on a narrow card); it
+         redraws as it is typed, a source that does not parse says so under the box and the last good drawing stays */
+      const ui = key && el && el._dgUi && el._dgUi[key] && el._dgUi[key].open ? el._dgUi[key] : null;
+      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui };
+      const ACTS = [{ act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }];
+      if (ui) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · editing', acts: [EDA].concat(ACTS) })
+        + `<div class="vc-dgedw" data-w="canvas.diagram.edit"><div class="vc-dged" data-dged="${esc(key)}"><div class="vc-dged-l">`
+        + `<textarea class="vc-dged-src" data-dg-src="${esc(key)}" spellcheck="false" aria-label="Mermaid source">${esc(ui.draft)}</textarea>`
+        + `<div class="vc-dged-err" role="status"${ui.err ? '' : ' hidden'}>${esc(ui.err)}</div>`
+        + `<div class="vc-dged-bar"><button type="button" class="vc-dged-save" data-act="dgsave"${ui.err ? ' disabled' : ''} title="Write this source into the item">Save</button><button type="button" data-act="dgcancel" title="Leave without writing anything (Esc)">Cancel</button><span class="vc-dim">redraws as you type</span></div></div>`
+        + `<div class="vc-dged-r vc-diag"><div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div></div></div></div>` + cap;
+      if (key && VO && typeof VO.diagram === 'function') return declare(el, key, { acts: [EDA] }) + `<div class="vc-codewrap vc-diagwrap" data-w="canvas.diagram">`
         + VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit', bar: false,
           body: `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div>` }) + `</div>` + cap;
-      if (key) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · ' + src.split('\n').length + ' lines', acts: [
-          { act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }] })
+      if (key) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · ' + src.split('\n').length + ' lines', acts: ACTS.concat([EDA]) })
         + `<div class="vc-diag" data-w="canvas.diagram"><div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div><pre class="vc-pre vc-dgsrc" hidden><code>${esc(src)}</code></pre></div>` + cap;
       return `<vera-mermaid class="vc-mm" bare title="${esc(title)}">${esc(src)}</vera-mermaid>` + cap;
     },
@@ -2503,6 +2580,31 @@
   .vc-json details{margin-left:2px}.vc-json summary{cursor:pointer;color:var(--dim,#6b7480);list-style:none}.vc-json summary::before{content:'\u25b8 ';font-size:9px}.vc-json details[open] > summary::before{content:'\u25be '}
   .vc-json .j-row{display:flex;gap:6px;padding-left:12px;min-width:0}.vc-json .j-k{color:var(--acc4,#7aa2d6);flex:0 0 auto}.vc-json .j-k::after{content:':'}
   .vc-json .j-str{color:var(--acc2,#8fb87a);word-break:break-word}.vc-json .j-num{color:var(--acc3,#c9955a)}.vc-json .j-null,.vc-json .j-more{color:var(--dim,#6b7480)}
+  /* a diagram's source edited beside its drawing (DU-E-diagram): side by side, stacked on a narrow card */
+  .vc-dgedw{container:dged / inline-size;display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+  .vc-dged{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:8px;min-height:0;flex:1 1 auto}
+  .vc-dged-l{display:flex;flex-direction:column;gap:4px;min-width:0;min-height:0}
+  .vc-dged-src{flex:1 1 auto;min-height:180px;resize:vertical;box-sizing:border-box;width:100%;font:11px/1.5 var(--mono,ui-monospace,monospace);padding:6px 8px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit;white-space:pre;overflow:auto;tab-size:2}
+  .vc-dged-src:focus{outline:none;border-color:var(--acc,#5a9e8f)}
+  .vc-dged-err{font:10.5px/1.45 var(--mono,ui-monospace,monospace);color:var(--err,#e06c75);white-space:pre-wrap;word-break:break-word}
+  .vc-dged-bar{display:flex;align-items:center;gap:6px}.vc-dged-bar .vc-dim{margin-left:auto;font-size:10px;color:var(--dim,#6b7480)}
+  .vc-dged-bar button{font:11px system-ui,sans-serif;padding:2px 10px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit;cursor:pointer}
+  .vc-dged-bar .vc-dged-save{border-color:var(--acc,#5a9e8f);color:var(--acc,#5a9e8f)}.vc-dged-bar button:disabled{opacity:.45;cursor:default}
+  .vc-dged-r{min-width:0;min-height:0}.vc-dged .vc-live{min-height:160px}
+  @container dged (max-width: 440px) { .vc-dged{grid-template-columns:minmax(0,1fr)} }
+  /* the timeline's brush and scrubber (DU-E-timeline) */
+  .vc-tl-ax[data-tl-key]{cursor:crosshair;user-select:none}
+  .vc-tl-br{position:absolute;top:2px;height:19px;border:1px solid var(--acc,#5a9e8f);border-radius:3px;background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);pointer-events:none;box-sizing:border-box}
+  .vc-tl-dot.out{opacity:.2}
+  .vc-tl-dot.cur{background:var(--acc,#5a9e8f);opacity:1;transform:scale(1.45)}
+  .vc-tl-sc{position:absolute;top:-5px;width:10px;height:8px;margin-left:-5px;padding:0;border:0;border-radius:2px 2px 5px 5px;background:var(--dim,#6b7480);cursor:ew-resize;z-index:1}
+  .vc-tl-sc::after{content:"";position:absolute;left:4px;top:8px;width:2px;height:15px;background:inherit;opacity:.6;pointer-events:none}
+  .vc-tl-sc.on{background:var(--acc,#5a9e8f)}
+  .vc-tl-sc:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:2px}
+  .vc-tl-bn{display:flex;align-items:center;gap:8px;margin:-4px 8px 4px;font-family:var(--mono,monospace);font-size:9.5px;color:var(--dim,#6b7480)}
+  .vc-tl-bn span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vc-tl-e.out{opacity:.35}
+  .vc-tl-e.cur{background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
   /* a command that ran (DU-E-session) */
   .vc-rc{font:10px system-ui,sans-serif;padding:0 6px;border-radius:9px;border:1px solid currentColor;white-space:nowrap}.vc-rc.ok{color:var(--ok,#8fb87a)}.vc-rc.bad{color:var(--err,#e06c75)}
   .vc-ran-ask{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:4px 6px;margin:4px 0;border:1px solid var(--warn,#e5c07b);border-radius:6px;font:11px system-ui,sans-serif}.vc-ran-when{font-size:10px;margin:2px 0}
@@ -4191,12 +4293,16 @@
          the way are pushed aside; nothing rises or grows. During a resize the cards start where they were when it began, so
          a neighbour pushed aside comes back when the card is made smaller again. The hold ends when what is on the desk,
          the topic, the desk's size or its arrangement settings change - the desk is dealt afresh then. */
-      const sigBase = [W, H, mode, this.getAttribute('desk-fill') || '', this.getAttribute('desk-settle') || '', T ? (T.order || []).join(',') : ''].join('#');
+      /* the topic is not in it (owner 2026-10-16: "nothing enters the desk but items move"): a topic change re-placed every card -
+         up to 8 of 9 moved that neither joined nor left it. Now only those that did move (see setTopic) */
+      const sigBase = [W, H, mode, this.getAttribute('desk-fill') || '', this.getAttribute('desk-settle') || ''].join('#');
       const sig = sigBase + '#' + sigKeys;
       /* A NEW ITEM DOES NOT RE-DEAL THE DESK (DR-01): the hold ends when an item goes, or the desk's size, mode or topic
          change; an item that arrives is placed by the placement score in the room there is, and the rest stay */
-      if (this._hold) { const now = new Set(sigKeys.split('|')); const gone = (this._hold.keys || []).some((k) => !now.has(k));
-        if ((this._hold.sb ? this._hold.sb !== sigBase : this._hold.sig !== sig) || gone) this._hold = null; else this._hold.sig = sig; }
+      if (this._hold) { const now = new Set(sigKeys.split('|'));
+        /* an item that went leaves the hold; the rest stay where they are (it used to re-deal the whole desk) */
+        (this._hold.keys || []).forEach((k) => { if (!now.has(k) && this._hold.rects) delete this._hold.rects[k]; });
+        if (this._hold.sb ? this._hold.sb !== sigBase : this._hold.sig !== sig) { if (this._hold.sb && this._hold.sb !== sigBase) this._hold = null; else this._hold.sig = sig; } else this._hold.sig = sig; }
       const hold = this._hold, seed = hold ? ((this._rz && hold.base) || hold.rects) : null;
       /* where a card the arrangement does not place goes (free mode; a newcomer under the hold): the best free slot round
          what is already there */
@@ -4297,6 +4403,8 @@
       pills.forEach(toStrip);
       const stripW = cols ? cols * (CHW + SGAP) + SGAP : 0;
       const stripBox = stripW ? { id: '__strip', fixed: true, strip: true, x: farRight ? W - stripW / 2 : stripW / 2, y: H / 2, w: stripW, h: H } : null;
+      /* where a carried card becomes a pill at once: over the strip, or the column where the first pills would go */
+      { const sw = Math.max(stripW, CHW + 2 * SGAP); this._stripZone = farRight ? { l: W - sw, r: W } : { l: 0, r: sw }; }
       const withStrip = (list) => (stripBox ? [stripBox].concat(list) : list);
       /* ...and nothing reaches into it: a card sized, placed or carried by the person is fixed where it is, so separation
          would not move it off the pills - it is moved out of the strip here, and made narrower only when the free desk is */
@@ -4330,7 +4438,7 @@
          has no room for it - then it is KEPT a window (with the item: face window) until the person sends it back to the desk
          (its head's dock control, or Esc). No other pass makes or unmakes a window. */
       const keptWin = this._winKeepGet();
-      if (this.getAttribute('desk-windows') !== 'off') plan.forEach((it) => { if (keptWin[it.id] && !it.strip) { wins.add(it); it.win = true;
+      if (this.getAttribute('desk-windows') !== 'off') plan.forEach((it) => { if (keptWin[it.id] && !it.strip && !it.sizing && it.id !== this._rzLetGo) { wins.add(it); it.win = true;
         const k = keptWin[it.id]; if (k.w > 0 && k.h > 0) { it.w = Math.min(W - 16, k.w); it.h = Math.min(H - 8, k.h); }
         if (isFinite(k.fx) && isFinite(k.fy)) { it.x = Math.max(it.w / 2, Math.min(W - it.w / 2, k.fx * W)); it.y = Math.max(it.h / 2, Math.min(H - it.h / 2, k.fy * H)); } } });
       if (wins.size) D.separate(withStrip(bySize(plan.filter((it) => !wins.has(it)))), R, sepSize, { W: W, H: H });
@@ -4478,7 +4586,12 @@
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
       /* what this pass laid out, for the hold (U4): centre and size of each card it placed */
       { const rects = {}; out.forEach((o) => { if (!o.behind && !/^layer-/.test(o.face || '')) rects[o.key] = { x: o.x + o.w / 2, y: o.y + o.h / 2, w: o.w, h: o.h, bw: o.bw || o.w, bh: o.bh || o.h, face: o.face }; });
-        this._lastPlan = { sig, sb: sigBase, keys: sigKeys.split('|'), rects }; if (this._hold) { this._hold.rects = rects; this._hold.keys = sigKeys.split('|'); } }
+        this._lastPlan = { sig, sb: sigBase, keys: sigKeys.split('|'), rects }; if (this._hold) { this._hold.rects = rects; this._hold.keys = sigKeys.split('|'); }
+        /* THE DESK RESTS HELD (owner 2026-10-16): a dealt desk is held once it has settled - 2.5 s with no new deal, so the cards
+           have measured what they hold - and from then on only what is in the way, what joins or leaves the topic and what
+           arrives moves. Tidy, the desk's size, its mode or its fill / settle settings deal it afresh. */
+        else if (!this._rz && !this._dg) { clearTimeout(this._autoHoldT); this._autoHoldT = setTimeout(() => { const lp = this._lastPlan; if (!this._hold && lp && !this._rz && !this._dg) {
+          const base = {}; Object.keys(lp.rects).forEach((k) => { base[k] = Object.assign({}, lp.rects[k]); }); this._hold = { sig: lp.sig, sb: lp.sb, keys: lp.keys, rects: base, base }; } }, 2500); } }
       /* a mode's lanes and clusters say what they are: their headings on the desk (board: to do, running, needs you, done;
          map: what each cluster shares) */
       st.querySelectorAll(':scope > .desk-lane').forEach((x) => x.remove());
@@ -4753,6 +4866,11 @@
       if (sig === this._topicSig) return false; this._topicSig = sig;
       this._topic = ks ? { keys: new Set(ks), order: ks.slice().sort((a, b) => val(b) - val(a)), mid: mid || '' } : null;
       this._topicAt = Date.now();   /* a combined card's tab picked after this wins over the topic's choice (WSU-71) */
+      /* only the cards that joined or left the topic move: those leave the hold (a card that left goes to the border, one that
+         joined to the best free room beside what it relates to); every other card keeps its place and its size */
+      if (this._hold && this._hold.rects) { const now = new Set(ks || []), was = this._topicWas || now;
+        Object.keys(this._hold.rects).forEach((k) => { if (was.has(k) !== now.has(k)) delete this._hold.rects[k]; }); }
+      this._topicWas = new Set(ks || []);
       if (this.deskAlign()) { try { this._placeNow(); } catch (e) { /* placed on the next pass */ } }
       try { this.dispatchEvent(new CustomEvent('vera:canvas:topic', { bubbles: true, detail: { mid: mid || '', keys: ks || [] } })); } catch (e) { /* no listener */ }
       return true;
@@ -5312,7 +5430,13 @@
            get the 'from the fabric' desk element to turn into a pill by dragging it away from chat"; code with its explode
            open "wont turn back into a chip if dragged to the far edge"): a kept size, or the person's width, held it big. Let
            go there, it is a pill and its kept size goes. */
-        const bare = D.sizeAt(g.R, px, py, {}, g.desk);
+        let bare = D.sizeAt(g.R, px, py, {}, g.desk);
+        /* OVER THE PILL STRIP IT IS A PILL (owner 2026-10-16: "any element dragged to the pill area is not always becoming a pill -
+           it often snaps back"): the face followed the distance to the chat with a margin against flicker, and a card carried in
+           from the desk kept its card face inside that margin - often right where the pills are. Over the strip (or where its
+           first pills would go) it is a pill at once. */
+        const Z0 = this._stripZone; const onStrip = !!(Z0 && px >= Z0.l - 10 && px <= Z0.r + 10);
+        if (onStrip && bare.face !== 'chip' && bare.face !== 'icon') bare = Object.assign({}, bare, { face: 'chip', w: 150, h: 34, t: 0 });
         if (bare.face === 'chip' || bare.face === 'icon') own = null;
         const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : ((bare.face === 'chip' || bare.face === 'icon') ? bare : D.sizeAt(g.R, px, py, so, g.desk)), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
         const ox = (d.cx0 - d.sx) / d.w0, oy = (d.cy0 - d.sy) / d.h0;
@@ -5322,7 +5446,8 @@
            forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
         const TH = { chip: 0.25, card: 0.6 }, M = 0.05, cur = d.el.dataset.deskFace || s.face;
         let face = s.face;
-        if (cur === 'chip' && face !== 'chip' && s.t < TH.chip + M) face = 'chip';
+        if (onStrip) face = 'chip';
+        else if (cur === 'chip' && face !== 'chip' && s.t < TH.chip + M) face = 'chip';
         else if (cur === 'card' && face === 'chip' && s.t > TH.chip - M) face = 'card';
         else if (cur === 'card' && face === 'max' && s.t < TH.card + M) face = 'card';
         else if (cur === 'max' && face === 'card' && s.t > TH.card - M) face = 'max';
@@ -5343,7 +5468,9 @@
         const asChip = /^(chip|icon)$/.test(d.el.dataset.deskFace || '');
         const g = this._deskGeo;
         if (g && d.cx != null) {
-          if (asChip) this._deskPosSet(d.key, { chip: true });
+          if (asChip) { if (this._winKeepGet()[d.key]) { this._winKeepSet(d.key, null); delete this._pw[d.key]; delete this._px[d.key]; } this._deskPosSet(d.key, { chip: true });
+            /* ...and the hold lets it go: a held card keeps its place, so one let go as a pill went back where it was */
+            if (this._hold && this._hold.rects) { delete this._hold.rects[d.key]; if (this._hold.base) delete this._hold.base[d.key]; } }
           else {
             /* let go in a gap: fitted into it (WSU-73) - no larger than the gap, no larger than the card was, kept inside
                it round the drop point; a gap too small to hold a usable card leaves the drop as before */
@@ -5379,6 +5506,9 @@
         else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
       doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
+        /* a window let go after a resize is decided again: made small enough to fit, it is a card on the desk again (owner
+           2026-10-16: "you cant shrink it again so that it goes back to default mode"); still no room, a window at the new size */
+        if (this._winKeepGet()[key]) this._winKeepSet(key, null);
         /* on the desk a card you sized stays where it is: grown, it was separated outward into the chip zone and came back
            a chip. Its place is pinned as a drag pins it; the others move round it. */
         const g = this._deskGeo;
@@ -5418,6 +5548,50 @@
       body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.mdQ == null || ev.key !== 'Enter') return; ev.preventDefault();
         mdStep(q.closest('.vc-mdwrap'), mdUi(this, q.dataset.mdQ), ev.shiftKey ? -1 : 1); });
       this.addEventListener('vera:canvas:placed', () => { try { this._mdAgain(); } catch (e) { /* optional */ } });
+      /* a diagram's source typed (DU-E-diagram): nothing is re-rendered (the box keeps its focus) - after a pause the draft is
+         checked; one that parses is drawn into the item's own live element, one that does not says why and the drawing stays */
+      body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null) return;
+        const key = q.dataset.dgSrc; const ui = dgUi(this, key); if (!ui.open) return; ui.draft = String(q.value || ''); const T = this._dgT || (this._dgT = {}); clearTimeout(T[key]);
+        T[key] = setTimeout(() => { if (!ui.open) return; const lv = (this._live || {})[key]; const inner = lv && lv.firstChild;
+          const err = dgCheck(inner, ui.draft); ui.err = err;
+          const box = [...body.querySelectorAll('.vc-dged[data-dged]')].find((x) => x.dataset.dged === key);
+          const eb = box && box.querySelector('.vc-dged-err'); if (eb) { eb.textContent = err; eb.hidden = !err; }
+          const sv = box && box.querySelector('[data-act="dgsave"]'); if (sv) sv.disabled = !!err;
+          if (err) return; ui.good = ui.draft.trim(); if (inner) this._mermaidInto(inner, key); }, 300); });
+      body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null || ev.key !== 'Escape') return;
+        ev.preventDefault(); ev.stopPropagation(); const box = q.closest('.vc-dged'); const b = box && box.querySelector('[data-act="dgcancel"]'); if (b) this._act(b, ev); });
+      /* THE TIMELINE'S BRUSH AND SCRUBBER (DU-E-timeline). A press on the axis that moves past 3 px is a brush: the band
+         follows the pointer and the events outside it dim, in place; on release the range is kept (el._tlUi) and the item
+         drawn again. A press that does not move is a click (a dot still goes to its event). The handle is dragged the same
+         way, or stepped from event to event by the arrow keys (Home / End: the ends); the nearest event is lit and brought
+         into view inside the card. A double-click on the axis clears the range. */
+      const tlSel = (k) => (window.CSS && CSS.escape ? CSS.escape(k) : k);
+      const tlAgain = (k, focus) => { if (this._doc) this.render(this._doc);
+        const show = () => { const ax = body.querySelector('.vc-tl-ax[data-tl-key="' + tlSel(k) + '"]'); if (!ax) return; const box = ax.closest('.vc-tl'); const row = box && box.querySelector('.vc-tl-e.cur');
+          if (row) mdShow(row); if (focus) { const h = ax.querySelector('.vc-tl-sc'); if (h && this.shadowRoot.activeElement !== h) h.focus({ preventScroll: true }); } };
+        show(); if (focus) requestAnimationFrame(show); };
+      body.addEventListener('mousedown', (ev) => { const t = ev.target; if (ev.button !== 0 || !t || !t.closest) return; const ax = t.closest('.vc-tl-ax[data-tl-key]'); if (!ax || !body.contains(ax)) return;
+        const k = ax.dataset.tlKey, ui = tlUi(this, k), doc = this.ownerDocument || document; const scrub = !!t.closest('.vc-tl-sc');
+        const x0 = ev.clientX; let moved = false, a = tlAt(ax, x0), b = a;
+        ev.preventDefault(); if (scrub) ev.stopPropagation();   /* no text selected along the way; a dot's click still lands */
+        const mv = (e) => { if (!moved && Math.abs(e.clientX - x0) < 3) return; moved = true; e.preventDefault(); b = tlAt(ax, e.clientX);
+          if (scrub) tlLiveScrub(ax, b); else tlLiveBrush(ax, a, b); };
+        const up = (e) => { doc.removeEventListener('mousemove', mv, true); doc.removeEventListener('mouseup', up, true);
+          if (scrub) { if (moved) b = tlAt(ax, e.clientX); ui.s = b; tlAgain(k, true); return; }
+          if (!moved) return; b = tlAt(ax, e.clientX); ui.b0 = Math.min(a, b); ui.b1 = Math.max(a, b); tlAgain(k, false); };
+        doc.addEventListener('mousemove', mv, true); doc.addEventListener('mouseup', up, true); });
+      body.addEventListener('dblclick', (ev) => { const t = ev.target; const ax = t && t.closest ? t.closest('.vc-tl-ax[data-tl-key]') : null; if (!ax || !body.contains(ax)) return;
+        ev.stopPropagation(); const ui = tlUi(this, ax.dataset.tlKey); if (ui.b0 == null) return; ui.b0 = ui.b1 = null; tlAgain(ax.dataset.tlKey, false); });
+      body.addEventListener('keydown', (ev) => { const h = ev.target; if (!h || !h.dataset || h.dataset.tlScrub == null || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        if (!/^(ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End)$/.test(ev.key)) return; const ax = h.closest('.vc-tl-ax'); if (!ax) return;
+        ev.preventDefault(); ev.stopPropagation(); const k = h.dataset.tlScrub, ui = tlUi(this, k);
+        const xs = [...ax.querySelectorAll('.vc-tl-dot[data-x]')].map((d) => +d.dataset.x).sort((p, q) => p - q); if (!xs.length) return;
+        const s = ui.s == null ? null : ui.s; const fwd = ev.key === 'ArrowRight' || ev.key === 'ArrowDown';
+        if (ev.key === 'Home') ui.s = xs[0]; else if (ev.key === 'End') ui.s = xs[xs.length - 1];
+        else if (s == null) ui.s = fwd ? xs[0] : xs[xs.length - 1];
+        else if (fwd) { const n = xs.find((x) => x > s + 1e-9); ui.s = n != null ? n : xs[xs.length - 1]; }
+        else { const p = xs.filter((x) => x < s - 1e-9).pop(); ui.s = p != null ? p : xs[0]; }
+        tlAgain(k, true); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.tblQ == null) return;   /* the table bar's filter (DU-E-table) */
         const key = q.dataset.tblQ; tblUi(this, key).q = String(q.value || ''); clearTimeout(this._tblQT);
         this._tblQT = setTimeout(() => { const pos = q.selectionStart; if (this._doc) this.render(this._doc);
@@ -5946,6 +6120,29 @@
       if (act === 'hdmore') return this._hdMenu(key, btn);
       /* a command that ran (DU-E-session): run again - asked first, in place; then the same capability with the same
          arguments, its answer written into this item (output, exit code, when) */
+      /* a diagram's source edited beside its drawing (DU-E-diagram): open, Save (the one write), Cancel / Esc (no write) */
+      if (act === 'dgedit' || act === 'dgsave' || act === 'dgcancel') { const ui = dgUi(this, key);
+        if (act === 'dgedit' && !ui.open) { const c = this._contentOf(key) || {}; const s = String(c.mermaid || c.code || c.source || '').trim(); Object.assign(ui, { open: true, draft: s, good: s, err: '' }); }
+        else if (act === 'dgsave') { if (ui.err) return; const c = this._contentOf(key) || {}; const s = String(ui.draft || '').trim(); const was = String(c.mermaid || c.code || c.source || '').trim();
+          if (s && s !== was) { const nc = Object.assign({}, c, { mermaid: s }); if (c.code != null) nc.code = s; if (c.source != null) nc.source = s;
+            const b = this._blockOf(key); if (b && b.type === 'diagram') b.content = Object.assign({}, b.content || {}, nc);   /* drawn as saved until the refresh brings it back */
+            this.call('canvas.update', Object.assign(this._ref(key), { content: nc })); }
+          ui.open = false; }
+        else ui.open = false;
+        if (!ui.open) Object.assign(ui, { draft: '', good: '', err: '' });
+        clearTimeout((this._dgT || {})[key]); this._html = null; if (this._doc) this.render(this._doc);
+        /* the card grows for the editor on the desk (as a code card's edit does) and lets the height go when it ends */
+        setTimeout(() => { const it2 = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!it2) return;
+          if (!ui.open) { try { this._editFit(it2, true); } catch (e) { /* optional */ } return; }
+          const ta = it2.querySelector('[data-dg-src]'); if (ta) { ta.focus(); try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) { /* optional */ } }
+          if (!this.deskAlign()) return; const bd = it2.querySelector(':scope > .it-bd'); if (!bd) return;
+          const E = this._editGrow || (this._editGrow = {}); const H = (this._deskGeo && this._deskGeo.H) || 800;
+          const need = Math.round(it2.offsetHeight - bd.clientHeight + Math.max(bd.scrollHeight, 300) + 8);
+          if (need > H * 0.7) { if (this._max !== key) { this._toggleMax(key); E[key] = 'max'; } return; }
+          if (need > it2.offsetHeight + 4) { (this._minH || (this._minH = {}))[key] = need; E[key] = E[key] || 'grow'; this._placeNow(); } }, 60);
+        return; }
+      /* the timeline's brush (DU-E-timeline): clear the range */
+      if (act === 'tlclear') { const u = tlUi(this, btn.dataset.tlKey || key); u.b0 = u.b1 = null; if (this._doc) this.render(this._doc); return; }
       if (act === 'tagain' || act === 'tagainno') { (this._ranAsk = this._ranAsk || {})[key] = act === 'tagain'; if (this._doc) this.render(this._doc); return; }
       if (act === 'tagainok') { const c = this._contentOf(key) || {}; (this._ranAsk = this._ranAsk || {})[key] = false; if (!c.cap) return;
         (this._ranBusy = this._ranBusy || {})[key] = true; if (this._doc) this.render(this._doc);
@@ -6561,7 +6758,8 @@
     /* the diagram's source into the estate's mermaid element (loaded once from the page); a changed source redraws it;
        the host's own window.mermaid draws when the element cannot be had, the source shows when nothing can */
     _mermaidInto(inner, key) {
-      const c = this._contentOf(key) || {}; const code = String(c.mermaid || c.code || c.source || '').trim();
+      const c = this._contentOf(key) || {}; const dg = this._dgUi && this._dgUi[String(key)];   /* being edited: the draft's last good source (DU-E-diagram) */
+      const code = dg && dg.open && dg.good ? dg.good : String(c.mermaid || c.code || c.source || '').trim();
       const live = !!(this._liveOv && this._liveOv[String(key)]);
       /* the same source again is nothing to do - unless it was last drawn as a stream and the stream is over (drawn whole now) */
       if (!inner || (inner._mmCode === code && (live || inner._mmWhole))) return; inner._mmCode = code; inner._mmWhole = !live;

@@ -93,7 +93,10 @@ t('a card filling the desk is above every card and pill (the held canvas\'s z 8 
 
 /* round 5 (WSU-50, 51, 53, 56) */
 t('a pill opens as a card under the pointer, whatever its kind, and goes back when the pointer leaves', src.includes("it.classList.add('chip-peek', 'pill-open'); it.dataset.deskFace = 'card';") && src.includes("if (s.open) { it.classList.add('desk-chip'); it.dataset.deskFace = s.face;"));
-t('carried to where a card is a pill, it is a pill whatever size it was given; let go there it joins the border', src.includes("const bare = D.sizeAt(g.R, px, py, {}, g.desk);") && src.includes("if (asChip) this._deskPosSet(d.key, { chip: true });"));
+t('carried to where a card is a pill, it is a pill whatever size it was given; let go there it joins the border', src.includes("let bare = D.sizeAt(g.R, px, py, {}, g.desk);") && src.includes("this._deskPosSet(d.key, { chip: true });")
+  /* owner 2026-10-16: over the pill strip it is a pill at once (no margin), and the hold lets a card let go as a pill go */
+  && src.includes("const Z0 = this._stripZone; const onStrip = !!(Z0 && px >= Z0.l - 10 && px <= Z0.r + 10);") && src.includes("if (onStrip) face = 'chip';")
+  && src.includes("if (this._hold && this._hold.rects) { delete this._hold.rects[d.key];"));
 t('let go on the desk it stays there (and is no longer a minimised pill); the upward settle leaves it', src.includes("if (this._pillGet()[d.key]) this._pillSet(d.key, false);") && src.includes('stay: !!userAt(key)'));
 t('code scrolls in its card on the desk', src.includes('.vc-codewrap > .code-card > pre{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto!important'));
 
