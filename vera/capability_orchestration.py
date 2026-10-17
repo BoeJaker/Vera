@@ -12930,7 +12930,42 @@ def _mount_all_http_routes(app: FastAPI):
 
 
 APP = FastAPI(title="Vera Orchestrator", version="3.0", lifespan=lifespan)
-APP.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# CORS: only this machine's own origins (any port) and VERA_ALLOWED_ORIGINS may
+# read responses cross-origin. It was "*", which let any website the owner
+# opened read what the API returns.
+from Vera.vera import edge_guard as _edge_guard
+_EDGE_HOSTS = _edge_guard.local_hosts(cfg.BACKEND_HOST)
+_CORS_ORIGIN_RE = r"^https?://(" + "|".join(
+    re.escape(h) if ":" not in h else r"\[" + re.escape(h) + r"\]"
+    for h in sorted(_EDGE_HOSTS)) + r")(:\d+)?$"
+APP.add_middleware(CORSMiddleware,
+                   allow_origins=_edge_guard._env_list("VERA_ALLOWED_ORIGINS"),
+                   allow_origin_regex=_CORS_ORIGIN_RE,
+                   allow_methods=["*"], allow_headers=["*"])
+
+# Edge guard: refuses cross-site requests and WebSocket handshakes (rules in
+# vera/edge_guard_core.py). Added after CORS, so it is the outermost middleware
+# and runs before CORS and routing. Default mode is observe (VERA_EDGE_GUARD).
+APP.add_middleware(_edge_guard.EdgeGuard,
+                   backend_host=cfg.BACKEND_HOST,
+                   listen_port=cfg.ORCHESTRATOR_PORT,
+                   on_event=lambda evt: emit_event(evt),
+                   redis_getter=lambda: REDIS)
+
+
+@capability("auth.edge.status", memory="off", silent=True,
+            http_method="GET", http_path="/auth/edge/status", http_tags=["auth"],
+            description="The edge guard's mode and what it saw since start: counts of requests it refused or "
+                        "would refuse by rule, the most common Origin and Host values, and the last 50 "
+                        "refusals (method, path, origin, host, peer; never headers or bodies). Read-only. "
+                        "Output: {mode, configured_mode, override, host_mode, allowed_hosts, allowed_origins, "
+                        "trusted_proxies, counts, seen_origins, seen_hosts, recent}.")
+async def cap_auth_edge_status(trace_id=None):
+    g = _edge_guard.current()
+    if g is None:
+        return {"mode": "not started", "note": "the guard is built on the first request"}
+    return g.status()
 
 @APP.get("/ui/elements/research_card.js", include_in_schema=False)
 async def _serve_research_card_js():
