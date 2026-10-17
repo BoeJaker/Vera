@@ -86,12 +86,13 @@ async def _rows() -> List[Dict[str, Any]]:
         return _INDEX["rows"]
     async with pool.acquire() as conn:
         await _ensure(conn)
-        recs = await conn.fetch("SELECT run, vec, tools FROM tool_step_index ORDER BY ts DESC LIMIT $1", MAX_ROWS)
+        recs = await conn.fetch("SELECT run, vec, tools, title FROM tool_step_index ORDER BY ts DESC LIMIT $1",
+                                MAX_ROWS)
     rows = []
     for r in recs:
         vec = json.loads(r["vec"]) if isinstance(r["vec"], str) else r["vec"]
         tools = json.loads(r["tools"]) if isinstance(r["tools"], str) else r["tools"]
-        rows.append({"run": r["run"], "vec": vec, "tools": tools})
+        rows.append({"run": r["run"], "vec": vec, "tools": tools, "title": r["title"]})
     _INDEX.update(rows=rows, loaded=time.time(), prior=TC.prior(rows),
                   version=DD.index_version([f"{r['run']}:{len(r['tools'] or [])}" for r in rows]))
     return rows
@@ -318,6 +319,44 @@ async def _night_job() -> None:
 schedule(_night_job, interval=900, name="caps_shortlist_index_night", singleton=True, skip_in_sandbox=True)
 
 
+RERANK_SAMPLE = 150          # steps re-ranked by the cross-encoder per replay (an NLP-node call each)
+RERANK_POOL = 30             # how far down the kNN list the cross-encoder looks
+
+
+def _catalogue() -> Dict[str, Dict[str, Any]]:
+    out = {}
+    for name, e in list(CAPABILITY_REGISTRY.items()):
+        if isinstance(e, dict):
+            out[name] = {"tags": list(e.get("tags") or []) + list(e.get("http_tags") or []),
+                         "description": str(e.get("description") or "")}
+    return out
+
+
+async def _rerank_sample(rows: List[Dict[str, Any]], catalogue: Dict[str, Dict[str, Any]]) -> Dict[int, List[str]]:
+    """The kNN list of a sample of held-out steps, reordered by the cross-encoder (nlp.rerank on the NLP nodes)
+    scoring each candidate's description against the step's title. {} when no node answers."""
+    rr = (CAPABILITY_REGISTRY.get("nlp.rerank") or {}).get("func")
+    if not rr:
+        return {}
+    usable = [i for i, r in enumerate(rows) if r.get("vec") and r.get("tools") and r.get("title")]
+    step = max(1, len(usable) // RERANK_SAMPLE) if usable else 1
+    out: Dict[int, List[str]] = {}
+    for i in usable[::step][:RERANK_SAMPLE]:
+        r = rows[i]
+        names = [x["name"] for x in TC.shortlist(r["vec"], rows, RERANK_POOL, exclude_run=r["run"])]
+        docs = [f"{n}: {str((catalogue.get(n) or {}).get('description') or '')[:300]}" for n in names]
+        try:
+            res = await rr(query=str(r["title"])[:500], documents=docs)
+        except Exception as e:
+            log.debug("replay rerank: %s", e)
+            continue
+        ranked = res.get("ranked") if isinstance(res, dict) else None
+        if not ranked:
+            continue
+        out[i] = [names[int(x["index"])] for x in ranked if 0 <= int(x.get("index", -1)) < len(names)]
+    return out
+
+
 async def run_replay(night: str = "") -> Dict[str, Any]:
     """The offline replay (FM-3.2) over the whole index, off the event loop (dot products, no embedding, no LLM), with
     the chat shadow's summary beside it; kept as one snapshot per night."""
@@ -326,8 +365,13 @@ async def run_replay(night: str = "") -> Dict[str, Any]:
     t0 = time.monotonic()
     loop = await asyncio.to_thread(TC.replay, rows)
     chat = (await cap_shortlist_chat_report()).get("summary")
+    # the tool-choice row of the candidate matrix: every ranker on the same held-out steps
+    catalogue = _catalogue()
+    reranked = await _rerank_sample(rows, catalogue)
+    matrix = await asyncio.to_thread(TC.replay_matrix, rows, catalogue, reranked)
     snap = {"night": night or datetime.now().date().isoformat(), "ts": datetime.now().isoformat(timespec="seconds"),
-            "index_rows": len(rows), "loop": loop, "chat": chat, "ms": round((time.monotonic() - t0) * 1000)}
+            "index_rows": len(rows), "loop": loop, "chat": chat, "matrix": matrix,
+            "ms": round((time.monotonic() - t0) * 1000)}
     r = getattr(_orch, "REDIS", None)
     if r is not None:
         await r.lpush(KEY_REPLAY, json.dumps(snap))

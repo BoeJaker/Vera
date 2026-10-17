@@ -175,20 +175,31 @@ def replay(rows: Iterable[Dict[str, Any]], ks: Sequence[int] = REPLAY_KS,
     unknown-tool rate (a used tool no other run ever used, which no shortlist built from the past can offer).
     Embeddings are already in the index, so this is dot products only. Rows: {run, vec (unit), tools}."""
     rows = [r for r in rows if r.get("vec") and r.get("tools")]
+    kmax = max(ks)
+    return _score_replay(rows, lambda i, r: [x["name"] for x in shortlist(r["vec"], rows, kmax, neighbours,
+                                                                            exclude_run=r["run"])], ks)
+
+
+def _score_replay(rows: List[Dict[str, Any]], names_for, ks: Sequence[int] = REPLAY_KS) -> Dict[str, Any]:
+    """recall@k, hit@5, MRR, median position and the unknown-tool rate of one ranker over held-out steps;
+    names_for(i, row) -> the ranked tool names for row i (None = this ranker has no answer for that row)."""
     if not rows:
         return {"n": 0}
     by_run: Dict[str, set] = {}
     for r in rows:
         by_run.setdefault(r["run"], set()).update(r["tools"])
     runs_using: Counter = Counter(t for tools in by_run.values() for t in tools)
-    kmax = max(ks)
     found: List[List[Optional[int]]] = []
     unknown = 0
-    for r in rows:
-        names = [x["name"] for x in shortlist(r["vec"], rows, kmax, neighbours, exclude_run=r["run"])]
-        pos = {n: i + 1 for i, n in enumerate(names)}
+    for i, r in enumerate(rows):
+        names = names_for(i, r)
+        if names is None:
+            continue
+        pos = {n: j + 1 for j, n in enumerate(names)}
         found.append([pos.get(t) for t in r["tools"]])
         unknown += sum(1 for t in r["tools"] if runs_using[t] <= 1)
+    if not found:
+        return {"n": 0}
     used_total = sum(len(f) for f in found)
     out: Dict[str, Any] = {"n": len(found), "tools_used": used_total}
     for k in ks:
@@ -198,6 +209,56 @@ def replay(rows: Iterable[Dict[str, Any]], ks: Sequence[int] = REPLAY_KS,
     hits = sorted(p for f in found for p in f if p)
     out["median_position"] = hits[len(hits) // 2] if hits else None
     out["unknown_rate"] = round(unknown / used_total, 3)
+    return out
+
+
+# ── the tool-choice row of the candidate matrix (owner, 17 Oct: every application x every candidate) ─────────────
+#: (name -> tags, description) of every capability, for the lexical ranker
+Catalogue = Dict[str, Dict[str, Any]]
+
+
+def lexical_ranking(title: str, catalogue: Catalogue, k: int) -> List[str]:
+    """The loop's own keyword scorer (cap_relevance_core.score: name parts, tags, description words) over the whole
+    catalogue - what tool choice looks like with no learning at all."""
+    try:
+        from Vera.vera.dag import cap_relevance_core as CR
+    except Exception:                    # worktree / app-free import
+        from vera.dag import cap_relevance_core as CR  # type: ignore
+    qt = CR.query_tokens(title or "")
+    if not qt:
+        return []
+    scored = []
+    for name, c in catalogue.items():
+        kw = c.get("_kw")
+        if kw is None:
+            kw = c["_kw"] = CR.query_tokens(str(c.get("description") or "")[:400])
+        s = CR.score(name, tags=c.get("tags") or (), keywords=kw, query=title, q_tokens=qt)
+        if s > 0:
+            scored.append((s, name))
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    return [n for _, n in scored[:max(1, int(k))]]
+
+
+def replay_matrix(rows: Iterable[Dict[str, Any]], catalogue: Optional[Catalogue] = None,
+                  reranked: Optional[Dict[int, List[str]]] = None, ks: Sequence[int] = REPLAY_KS,
+                  neighbours: int = NEIGHBOURS) -> Dict[str, Dict[str, Any]]:
+    """Every tool-choice ranker on the same held-out steps (each step's own run excluded from what it learns from):
+    the kNN shortlist, the usage prior alone (the floor), the lexical scorer (with a catalogue), and the kNN list
+    reordered by the cross-encoder (`reranked`: row index -> names, computed on the NLP nodes for a capped
+    sample - its n says how many). Rows: {run, vec, tools, title}."""
+    rows = [r for r in rows if r.get("vec") and r.get("tools")]
+    kmax = max(ks)
+    out = {"knn:steps+prior": _score_replay(rows, lambda i, r: [x["name"] for x in shortlist(
+        r["vec"], rows, kmax, neighbours, exclude_run=r["run"])], ks)}
+
+    def _prior(i, r):
+        return [t for t, _ in prior([x for x in rows if x["run"] != r["run"]]).most_common(kmax)]
+    out["prior"] = _score_replay(rows, _prior, ks)
+    if catalogue:
+        out["lexical"] = _score_replay(rows, lambda i, r: lexical_ranking(str(r.get("title") or ""), catalogue, kmax)
+                                       if r.get("title") else None, ks)
+    if reranked:
+        out["knn+rerank:msmarco-minilm"] = _score_replay(rows, lambda i, r: reranked.get(i), ks)
     return out
 
 
