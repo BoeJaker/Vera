@@ -2343,6 +2343,7 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it.resizing{transition:none!important}
   /* a redrawn card held at its last place (no animation), and a new one unseen until the desk has placed it */
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-hold{transition:none!important}
+  :host([align="desk"]:not([desk-narrow])) .stage .it.face-swap{opacity:.08;transition:opacity .14s, left .45s cubic-bezier(.2,.8,.2,1), top .45s cubic-bezier(.2,.8,.2,1), width .35s, height .35s}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-new{opacity:0;transition:none!important}  @media (prefers-reduced-motion: reduce){:host([align="desk"]:not([desk-narrow])) .stage .it{transition:none}}
   /* THE BACK LAYER (the desk's graph, owner-approved 2026-10-06): whatever the page puts in the "back" slot is drawn
      under the cards, dimmed until the pointer is on it. The desk's own ground goes so the layer shows through, and
@@ -5131,6 +5132,13 @@
         const w = Math.min(W - 16, s.w, isChip ? Infinity : (it.maxW || Infinity)), h = Math.max(isChip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h));
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
         c.classList.remove('overfold', 'capped'); c.style.maxHeight = '';
+        /* A CARD TURNING INTO A PILL, OR A PILL INTO A CARD, CROSS-FADES (owner 2026-10-17: "as the user scrolls through the chat ... needs to be
+           better and smoother transition"): its place and size glide, but its face changed at once - the content popped in at a pill's size, or a
+           card's insides were squeezed into a pill. It dims for the change and comes back while it travels. */
+        { const was = c.dataset.deskFace || '', pill = (x) => x === 'chip' || x === 'icon';
+          /* ...and a card that comes into view where another was (a combined card's new front tab, a card back from behind its tabs) fades in */
+          const cameIn = this._shownLast && !this._shownLast.has(key) && !!was;
+          if ((cameIn || (was && was !== s.face && pill(was) !== pill(s.face))) && !c.classList.contains('desk-new')) { c.classList.add('face-swap'); clearTimeout(c._fsT); c._fsT = setTimeout(() => c.classList.remove('face-swap'), 170); } }
         c.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon');
         c.classList.toggle('desk-icon', s.face === 'icon');
         c.dataset.deskFace = s.face;
@@ -5223,6 +5231,7 @@
           Object.keys(NS).forEach((k) => { if (t - NS[k].first > 4000) delete NS[k]; });
           if (left) this._revealT = setTimeout(reveal, 120); };
         clearTimeout(this._revealT); this._revealT = setTimeout(reveal, 120); }
+      this._shownLast = new Set(out.filter((o) => !o.behind).map((o) => o.key));
       this._placed = { mode: 'desk', placements: out, height: H, folded: [] };
       /* what this pass laid out, for the hold (U4): centre and size of each card it placed */
       { const rects = {}; out.forEach((o) => { if (!o.behind && !/^layer-/.test(o.face || '')) rects[o.key] = { x: o.x + o.w / 2, y: o.y + o.h / 2, w: o.w, h: o.h, bw: o.bw || o.w, bh: o.bh || o.h, face: o.face, nd: o.nd, win: !!o.win }; });
