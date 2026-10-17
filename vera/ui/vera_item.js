@@ -6,6 +6,7 @@
      normalise(block)              the item record of a stored block - the same answers as vera/canvas/item_core.py
      applySet(block, fields)       {changed, prev, problems} for a canvas.item.set call, applied in place when valid
      faceOf(block)                 pill | tile | window | full (a block with no face has the one its state implies)
+     transition(item, event)       the face state after an event (pill, unpill, open, max, restore, send_back, drag, ...)
      registerBody(kind, spec)      a body declares {draw, views, fit, minSize, actions}; the container draws the head
      body(kind)                    the declared spec, or the default one (one view, fit 'content', minSize 's')
      controls(kind, o)             the head's standard row for a kind, in the ADR's order: view, lock, pill, max, more, drop;
@@ -149,9 +150,82 @@
     return std.concat(b.actions.map(function (a) { return a.id; }).filter(function (id) { return !has(std, id); }));
   }
 
+  /* HOW AN ITEM CHANGES FACE (Decision 3; WSU-58 S2) = item_core.transition, held to the same answers by the shared cases
+     (tests/fixtures/item_face_cases.json). faceState(item) -> {face, state, locked, back, dock, pilled}; transition(item,
+     event) -> the face state after the event (pure). back: the face a full item returns to; dock: what a window gives when
+     sent back ('tile' window mode, 'pill' a pill opened as a window); pilled: the PERSON made it a pill. Owner O2: a
+     window stays until it is sent back - blur and focus change nothing. */
+  var FACE_EVENTS = ['pill', 'unpill', 'open', 'max', 'restore', 'send_back', 'drag', 'resize_end',
+                     'lock', 'unlock', 'park', 'unpark', 'pin', 'unpin', 'focus', 'blur'];
+  var LAYOUT_EVENTS = ['no_room', 'to_border', 'from_border'];
+  var EVENTS = FACE_EVENTS.concat(LAYOUT_EVENTS);
+  function faceState(item) {
+    var it = isObj(item) ? item : {};
+    var state = has(STATES, it.state) ? it.state : 'now', face = faceOf(it);
+    if (state === 'parked') face = 'pill';
+    var place = isObj(it.place) ? it.place : {};
+    var locked = !!(it.locked || place.locked);
+    var back = has(['pill', 'tile', 'window'], it.back) ? it.back : '', dock = has(['tile', 'pill'], it.dock) ? it.dock : '';
+    back = face === 'full' ? (back || 'tile') : '';
+    dock = (face === 'window' || (face === 'full' && back === 'window')) ? (dock || 'tile') : '';
+    var pilled = ('pilled' in it) ? !!it.pilled : ((face === 'pill' || (face === 'full' && back === 'pill')) && state !== 'parked');
+    return { face: face, state: state, locked: locked, back: back, dock: dock, pilled: pilled };
+  }
+  function evOf(ev) {
+    if (isObj(ev)) return { type: String(ev.type || ev.event || ''), to: String(ev.to || 'desk'), arrange: String(ev.arrange || '') };
+    return { type: String(ev || ''), to: 'desk', arrange: '' };
+  }
+  function sendBack(s) {
+    if (s.face === 'full') { s.face = s.back || 'tile'; s.back = ''; if (s.face !== 'window') s.dock = ''; }
+    else if (s.face === 'window') { s.face = s.dock || 'tile'; s.dock = ''; }
+  }
+  function put(s, o) { for (var k in o) s[k] = o[k]; }
+  function transition(item, event) {
+    var s = faceState(item), e = evOf(event), t = e.type;
+    if (s.state === 'parked' || s.state === 'hidden') {
+      if (t === 'unpark' || (t === 'pin' && s.state === 'parked')) put(s, { state: t === 'pin' ? 'pinned' : 'now', face: 'tile', back: '', dock: '', pilled: false });
+      return s;
+    }
+    if (t === 'lock') s.locked = true;
+    else if (t === 'unlock') s.locked = false;
+    else if (t === 'pin') s.state = 'pinned';
+    else if (t === 'unpin') { if (s.state === 'pinned') s.state = 'now'; }
+    else if (t === 'park') put(s, { state: 'parked', face: 'pill', back: '', dock: '', pilled: false });
+    else if (t === 'unpark') { /* already out */ }
+    else if (t === 'max') { if (s.face === 'full') sendBack(s); else { s.back = s.face; s.face = 'full'; } }
+    else if (t === 'restore' || t === 'send_back') { if (s.face === 'window' || (t === 'restore' && s.face === 'full')) sendBack(s); }
+    else if (t === 'focus' || t === 'blur') { /* O2: a window stays until it is sent back */ }
+    else if (s.locked) { /* locked: no pill / unpill / open / drag / resize, nothing from the layout */ }
+    else if (t === 'pill') {
+      if (s.face === 'full' && s.back === 'window' && s.dock === 'pill') put(s, { back: 'pill', dock: '' });
+      else if (s.face === 'full') put(s, { back: 'pill', dock: '', pilled: true });
+      else if (s.face === 'window' && s.dock === 'pill') put(s, { face: 'pill', dock: '' });
+      else put(s, { face: 'pill', dock: '', pilled: true });
+    }
+    else if (t === 'unpill') {
+      if (s.face === 'pill') put(s, { face: 'tile', pilled: false });
+      else if (s.face === 'full' && s.back === 'pill') put(s, { back: 'tile', pilled: false });
+    }
+    else if (t === 'open') {
+      if (s.face === 'pill') { if (s.pilled || e.arrange === 'slots') put(s, { face: 'tile', pilled: false }); else put(s, { face: 'window', dock: 'pill' }); }
+    }
+    else if (t === 'drag') {
+      if (s.face === 'full') sendBack(s);
+      if (e.to === 'pills') put(s, { face: 'pill', dock: '' });
+      else if (s.face === 'pill') put(s, { face: 'tile', pilled: false });
+      else if (s.face === 'window' && s.dock === 'pill') put(s, { face: 'tile', dock: '' });
+    }
+    else if (t === 'resize_end') { if (s.face === 'window' && s.dock === 'tile') put(s, { face: 'tile', dock: '' }); }
+    else if (t === 'no_room') { if (s.face === 'tile') put(s, { face: 'window', dock: 'tile' }); }
+    else if (t === 'to_border') { if (s.face === 'tile') put(s, { face: 'pill', pilled: false }); }
+    else if (t === 'from_border') { if (s.face === 'pill' && !s.pilled) s.face = 'tile'; }
+    return s;
+  }
+
   var api = { STATES: STATES, FACES: FACES, SIZES: SIZES, LAYERS: LAYERS, VIEWS: VIEWS, SETTABLE: SETTABLE, Z: Z, z: z,
               ROW: ROW, ROW_NARROW: ROW_NARROW, MENU: MENU, faceOf: faceOf, normalise: normalise, applySet: applySet,
-              registerBody: registerBody, body: body, bodies: bodies, controls: controls, menu: menu };
+              registerBody: registerBody, body: body, bodies: bodies, controls: controls, menu: menu,
+              EVENTS: EVENTS, FACE_EVENTS: FACE_EVENTS, LAYOUT_EVENTS: LAYOUT_EVENTS, faceState: faceState, transition: transition };
   root.VeraItem = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);
