@@ -4871,6 +4871,18 @@
          element is dropped on it ... shrinking shouldnt be the first method to get out of the way of a dropped element"): the nearest clear
          room for a card - at its own size first, smaller only when there is none (down to about 40 %, never under 220 x 120) */
       let stripFn = null;
+      /* NOTHING BECOMES A PILL BECAUSE THE PERSON MOVED SOMETHING (owner 2026-10-17: "elements should not become pills because the user moves an
+         element"): while a card is carried or sized, and for 2.5 s after it is let go, a card with no room is not sent to the pills - it takes
+         the least size (160 x 100) where it covers least */
+      const handNow = !!(this._dg || this._rz || Date.now() - (this._handAt || 0) < 2500);
+      /* ...and the card the hand just let go never makes way for the others: it is where the person put it */
+      const handKey = handNow ? (this._dg ? this._dg.key : this._rz ? this._rz.key : this._handKey) : null;
+      const leastOver = (v, rest) => { const w = Math.min(v.w, 160), h = Math.min(v.h, 100); let best = null;
+        for (let y = h / 2 + 4; y <= H - h / 2 - 4; y += 16) for (let x = w / 2 + 4; x <= W - w / 2 - 4; x += 16) {
+          if (R && R.r > R.l && x + w / 2 > R.l && x - w / 2 < R.r && y + h / 2 > R.t && y - h / 2 < R.b) continue;
+          const ov = rest.reduce((a, o) => a + Math.max(0, Math.min(x + w / 2, o.x + o.w / 2) - Math.max(x - w / 2, o.x - o.w / 2)) * Math.max(0, Math.min(y + h / 2, o.y + o.h / 2) - Math.max(y - h / 2, o.y - o.h / 2)), 0);
+          const d = Math.hypot(x - v.x, y - v.y); if (!best || ov < best.ov || (ov === best.ov && d < best.d)) best = { x, y, w, h, ov, d }; }
+        return best; };
       const roomFor = (v, rest, ks, tx, ty) => { const g = 8; const X = tx == null ? v.x : tx, Y = ty == null ? v.y : ty;
         const clear = (x, y, w, h) => x - w / 2 >= 4 && x + w / 2 <= W - 4 && y - h / 2 >= 4 && y + h / 2 <= H - 4
           && !(R && R.r > R.l && x + w / 2 > R.l - g && x - w / 2 < R.r + g && y + h / 2 > R.t - g && y - h / 2 < R.b + g)
@@ -4903,7 +4915,8 @@
       const iconStrip = W < 760;
       const CHW = iconStrip ? 34 : 150, CHH = 34, SGAP = 6, perCol = Math.max(1, Math.floor((H - SGAP) / (CHH + SGAP)));
       /* the person's pill wins over a size they gave it (a resized card sent to the pills stayed open: own was never a pill) */
-      const pillish = (it) => { if (it.board) return false; if (it.pilled && !it.isLock && !it.sizing) return true; if (it.fixed || it.sizing || it.own) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
+      /* a card the person put somewhere is a pill only if they pilled it or put it on the strip - never for its distance from the chat */
+      const pillish = (it) => { if (it.board) return false; if (it.pilled && !it.isLock && !it.sizing) return true; if (it.fixed || it.sizing || it.own || it.stay) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
         const f = D.sizeAt(R, it.x, it.y, it.so, desk).face; return f === 'chip' || f === 'icon'; };
       const pills = plan.filter(pillish);
       const cols = pills.length ? Math.min(Math.max(1, Math.floor((W * 0.45) / (CHW + SGAP))), Math.ceil(pills.length / perCol)) : 0;
@@ -5002,7 +5015,7 @@
           const open = plan.filter((it) => !it.strip && !it.win && !wins.has(it) && it.h > 40); const victims = new Set();
           for (let i = 0; i < open.length; i++) for (let j = i + 1; j < open.length; j++) { const p = open[i], q = open[j]; if (meet(p, q) < 400) continue;
             const exK = this._expanded && this._expanded.key;   /* the card expanded by a double click never makes way (LV-8) */
-            const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && x.id !== exK && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q); else if (can.length === 1 && [p, q].every((x) => x.fixed)) victims.add(can[0]); }
+            const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && x.id !== exK && x.id !== handKey && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q); else if (can.length === 1 && [p, q].every((x) => x.fixed)) victims.add(can[0]); }
           if (!victims.size) break;
           /* the one making way: the nearest clear room at its own size; none, the largest clear room it fits (down to about 40%,
              never under a usable 220 x 120); none at all, a pill. Never left on another card. */
@@ -5018,6 +5031,7 @@
             /* moved for this pass only, never written: saved, a move the desk made was recorded as the person's (place.by
                'person', or a pill) and the card was fixed there for good; the hold (and its replay) keeps it where it went */
             if (best) Object.assign(v, { x: best.x, y: best.y, w: best.w, h: best.h, keepSize: true });
+            else if (handNow) { const lo = leastOver(v, rest); if (lo) Object.assign(v, { x: lo.x, y: lo.y, w: lo.w, h: lo.h, keepSize: true }); }
             else { toStrip(v, pills.length); pills.push(v); v.held = false; } });
         } }
       /* NO ROOM AT ALL: two cards the desk placed (neither sized nor put there by the person) still overlap after every card
@@ -5025,7 +5039,7 @@
          pill strip; a locked card or one the person placed never does. */
       { const kept = (it) => it.strip || it.win || it.isLock || it.stay || it.sizing || it.own || (it.fixed && !it.isLock);
         const ov2 = (a, b) => Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2) > 20 && Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2) > 20;
-        for (let round = 0; round < 4 && stripBox; round++) {
+        for (let round = 0; round < 4 && stripBox && !handNow; round++) {
           const solid = plan.filter((it) => !it.strip && !it.win && it.h > 40); let victim = null;
           for (let i = 0; i < solid.length && !victim; i++) for (let j = i + 1; j < solid.length && !victim; j++) {
             if (!ov2(solid[i], solid[j])) continue;
@@ -5067,13 +5081,15 @@
          touch before the newer; never the card under the hand, a locked one or the expanded one - to the nearest room at its size, then
          smaller, then the pills */
       if (!replay) { const exK = this._expanded && this._expanded.key, act0 = this._actAt || {};
-        const firmV = (x) => (x.sizing || x.isLock || x.id === exK) ? 3 : (x.fixed || x.stay) ? 2 : x.own ? 1 : 0;
+        const firmV = (x) => (x.sizing || x.isLock || x.id === exK || x.id === handKey) ? 3 : (x.fixed || x.stay) ? 2 : x.own ? 1 : 0;
         const ov = (a, b) => Math.max(0, Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2)) * Math.max(0, Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2));
         for (let round = 0; round < 4; round++) { const open = plan.filter((it) => !it.strip && !it.win && it.h > 40); let moved = 0;
           for (let i = 0; i < open.length; i++) for (let j = i + 1; j < open.length; j++) { const p0 = open[i], q0 = open[j]; if (p0.strip || q0.strip || ov(p0, q0) < 400) continue;
             const v = firmV(p0) !== firmV(q0) ? (firmV(p0) < firmV(q0) ? p0 : q0) : ((act0[p0.id] || 0) <= (act0[q0.id] || 0) ? p0 : q0); if (firmV(v) >= 3) continue;
             const best = roomFor(v, plan.filter((o) => o !== v && !o.win && (o.strip || o.h > 40)), [1, 0.85, 0.7, 0.55, 0.42]);
-            if (best) Object.assign(v, { x: best.x, y: best.y, w: best.w, h: best.h, keepSize: true }); else if (stripFn) stripFn(v); else continue; moved++; }
+            if (best) Object.assign(v, { x: best.x, y: best.y, w: best.w, h: best.h, keepSize: true });
+            else if (handNow) { const lo = leastOver(v, plan.filter((o) => o !== v && !o.win && (o.strip || o.h > 40))); if (!lo) continue; Object.assign(v, { x: lo.x, y: lo.y, w: lo.w, h: lo.h, keepSize: true }); }
+            else if (stripFn) stripFn(v); else continue; moved++; }
           if (!moved) break; } }
       /* ONLY WHAT MUST MAKE WAY MOVES (owner 2026-10-17: "after re-sizing an element the other elements jump around to different
          positions allot"; "it should be more difficult to disturb the other elements in the UI if resizing or moving"). Measured:
@@ -5169,7 +5185,7 @@
          height, its least height, a pill's face) - two cards could end up over each other after the last check. The drawn rectangles are
          checked: of two open cards that meet, the less firm moves to the nearest room at its drawn size (the board counts as one block). */
       if (!replay) { const byK = new Map(plan.map((it) => [it.id, it])); const exK = this._expanded && this._expanded.key, act0 = this._actAt || {};
-        const firm = (o) => { const it = byK.get(o.key) || {}; return (o.key === '__board' || it.sizing || it.isLock || o.key === exK) ? 3 : (it.fixed || it.stay) ? 2 : it.own ? 1 : 0; };
+        const firm = (o) => { const it = byK.get(o.key) || {}; return (o.key === '__board' || it.sizing || it.isLock || o.key === exK || o.key === handKey) ? 3 : (it.fixed || it.stay) ? 2 : it.own ? 1 : 0; };
         const solid = () => out.filter((o) => !o.behind && !o.board && !o.win && !/^(chip|icon|layer-)/.test(o.face || '') && o.h > 40);
         const meet = (a2, b2) => Math.max(0, Math.min(a2.x + a2.w, b2.x + b2.w) - Math.max(a2.x, b2.x)) * Math.max(0, Math.min(a2.y + a2.h, b2.y + b2.h) - Math.max(a2.y, b2.y));
         for (let round = 0; round < 4; round++) { const S0 = solid(); let fixed = 0;
@@ -5181,6 +5197,7 @@
               const rest = out.filter((o) => o !== c0 && !o.behind && !o.board && !o.win && !/^layer-/.test(o.face || '')).map((o) => ({ x: o.x + o.w / 2, y: o.y + o.h / 2, w: o.w, h: o.h }));
               best = roomFor({ x: c0.x + c0.w / 2, y: c0.y + c0.h / 2, w: c0.w, h: c0.h }, rest, [1, 0.85, 0.7, 0.55, 0.42]); if (best) { v = c0; break; } }
             /* no room for either at all: the less firm goes to the pill strip (below the pills there) - never left on top of the other */
+            if (!best && handNow) continue;   /* the hand acts: no pill (the least size was tried above) */
             if (!best) { const pv = firm(v0) < 3 ? v0 : null; const pel = pv && [...st.querySelectorAll(':scope > .it[data-key]')].find((x) => x.dataset.key === pv.key); if (!pel) continue;
               const z0 = this._stripZone || { l: W - 160, r: W }; const lowest = out.filter((o) => /^(chip|icon)$/.test(o.face || '') && o.x >= z0.l - 4).reduce((m, o) => Math.max(m, o.y + o.h), 0);
               Object.assign(pv, { x: Math.round((z0.l + z0.r) / 2 - 75), y: lowest + 6, w: 150, h: 34, face: 'chip' });
@@ -6145,7 +6162,10 @@
            first pills would go) it is a pill at once. */
         const Z0 = this._stripZone; const onStrip = !!(Z0 && px >= Z0.l - 10 && px <= Z0.r + 10);
         if (onStrip && bare.face !== 'chip' && bare.face !== 'icon') bare = Object.assign({}, bare, { face: 'chip', w: 150, h: 34, t: 0 });
-        if (bare.face === 'chip' || bare.face === 'icon') own = null;
+        /* ...and nowhere else (owner 2026-10-17: "elements should not become pills because the user moves an element"): carried away from the
+           chat a card took a pill's face by its distance alone; off the strip it keeps a card's face at its own size */
+        if (!onStrip && (bare.face === 'chip' || bare.face === 'icon')) own = own || { w: Math.max(260, d.w0), h: Math.max(160, d.h0), face: 'card' };
+        else if (bare.face === 'chip' || bare.face === 'icon') own = null;
         const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : ((bare.face === 'chip' || bare.face === 'icon') ? bare : D.sizeAt(g.R, px, py, so, g.desk)), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
         const ox = (d.cx0 - d.sx) / d.w0, oy = (d.cy0 - d.sy) / d.h0;
         const cx = Math.max(10, Math.min(g.W - 10, px + ox * w)), cy = Math.max(10, Math.min(g.H - 10, py + oy * h));
@@ -6163,7 +6183,7 @@
         d.el.style.left = Math.round(cx - w / 2) + 'px'; d.el.style.top = Math.round(cy - h / 2) + 'px';
         d.el.style.setProperty('width', w + 'px', 'important'); d.el.style.setProperty('height', h + 'px', 'important');
         try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(500); });
-      doc.addEventListener('mouseup', () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null;
+      doc.addEventListener('mouseup', () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null; this._handAt = Date.now(); this._handKey = d.key;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
         /* what was just carried is the last touched: on top (the press gave it focus; the drag held it at the drag's z) */
@@ -6212,7 +6232,7 @@
           if (now - (this._rzPlacedAt || 0) >= 90) { this._rzPlacedAt = now; try { this._placeNow(); } catch (e) { /* optional */ } }
           clearTimeout(this._rzPlaceT); this._rzPlaceT = setTimeout(() => { if (this._rz === r) { this._rzPlacedAt = Date.now(); try { this._placeNow(); } catch (e) { /* optional */ } } }, 100); }
         else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
-      doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
+      doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; this._handAt = Date.now(); this._handKey = r.key; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
         /* a window let go after a resize is decided again: made small enough to fit, it is a card on the desk again (owner
            2026-10-16: "you cant shrink it again so that it goes back to default mode"); still no room, a window at the new size */
@@ -6428,7 +6448,7 @@
       /* already open by the hover (a person points before they click): a click that makes it a window still marks it one -
          it returned here before, so the "window" was the hover peek kept open, nothing more (review 2026-10-15 U7) */
       if (it._cpw && it._cpw.open) { const win = !!(this._wins && this._wins.has(it.dataset.key)); it.classList.toggle('desk-win', win);
-        if (win && this._focusKey !== it.dataset.key) { it.style.zIndex = String(it._cpw.z || 10); this._liveZ([it]); } return true; }
+        if (win && this._focusKey !== it.dataset.key) { it.style.zIndex = String(zOf('window', (this._winOrder || []).length)); this._liveZ([it]); } return true; }
       /* the title widening ran first: undone, the card opens in its place */
       if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
       if (!it.classList.contains('desk-chip')) return false;
@@ -6446,7 +6466,10 @@
       if (win) { const others = [...(st ? st.querySelectorAll('.it.desk-win') : [])].filter((x) => x !== it).map((x) => [parseFloat(x.style.left) || 0, parseFloat(x.style.top) || 0]);
         for (let n = 0; n < 8 && others.some(([x, y]) => Math.abs(x - left) < 20 && Math.abs(y - top) < 20); n++) { left = Math.max(4, Math.min(W - 4 - w, left - 28)); top = Math.max(4, Math.min(H - 4 - h, top + 28)); } }
       it.classList.toggle('desk-win', win);
-      it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = win && this._focusKey !== it.dataset.key ? String(s.z || 10) : String(zOf('pop'));
+      /* AN OPENED PILL IS A WINDOW, AND RESTS WITH THE WINDOWS (owner 2026-10-17: "sometimes an opened pill can open under the other elements"): it
+         rested at its pill's z (115), under a card just pressed (120), the windows (130-149) and a card filling the desk (150) */
+      const zWin = String(zOf('window', (this._winOrder || []).length));
+      it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = win && this._focusKey !== it.dataset.key ? zWin : String(zOf('pop'));
       try { this._liveLayout(); } catch (e) { /* optional */ }
       return true;
     }
@@ -6664,7 +6687,7 @@
       if (prev && prev !== it) { prev.classList.remove('desk-focus'); if (prev.dataset.zRest != null) { prev.style.zIndex = prev.dataset.zRest; delete prev.dataset.zRest; } }
       this._focusKey = key;
       if (it && this.deskAlign() && !it.classList.contains('desk-dragging')) {
-        if (it.dataset.zRest == null) it.dataset.zRest = (it._cpw && it._cpw.open && this._wins && this._wins.has(key)) ? String(it._cpw.z || 10) : (it.style.zIndex || '');
+        if (it.dataset.zRest == null) it.dataset.zRest = (it._cpw && it._cpw.open && this._wins && this._wins.has(key)) ? String(zOf('window', 0)) : (it.style.zIndex || '');
         /* a window comes to the front of the windows (the last focused highest); a tile above the other tiles only */
         const win = it.classList.contains('desk-win');
         if (win) { const o = this._winOrder = (this._winOrder || []).filter((k) => k !== key); o.push(key); }
@@ -6955,6 +6978,13 @@
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
       if ((act === 'cmptab' || act === 'cmpsep') && this._tabDragAt && Date.now() - this._tabDragAt < 400) return;   /* the release of a tab carried out (LV-6) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
+        /* A TAB PICKED ON A CARD OPENED FROM ITS PILL STAYS OPEN (owner 2026-10-17: "often if i change tab on a composite it turns into a pill?"):
+           a pill opened by a click or the pointer is open only on the page (its card, _pillCard / a window); the redraw for the new tab drew
+           the combined card again as the pill it is - closed. The new front tab is opened the same way after the redraw. */
+        if (act === 'cmptab') { const fr = btn.closest && btn.closest('.it[data-key]'); const opened = fr && (fr.classList.contains('pill-open') || fr.classList.contains('chip-peek') || (this._wins && this._wins.has(fr.dataset.key)));
+          if (opened) { const wasWin = this._wins && this._wins.has(fr.dataset.key); if (wasWin) this._wins.delete(fr.dataset.key);
+            requestAnimationFrame(() => requestAnimationFrame(() => { const stg = this.shadowRoot.getElementById('stage'); const n = stg && [...stg.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
+              if (n && n.classList.contains('desk-chip')) { if (wasWin) this._winOpen(n); else this._pillCard(n); } })); } }
         if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
         else { if (act === 'cmpsep') this._histPush('cmpsep', key); else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
@@ -8301,7 +8331,10 @@
     }
     _panelAdd(id, label) {
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
-      const args = { kind: 'panel', key, content: Object.assign({ panel: id, title: label || id }, this.deskAlign() && this.getAttribute('panel-layer') === 'desk' ? { layer: 'behind' } : {}), at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
+      /* A PANEL ADDED TO THE DESK IS A CARD YOU CAN USE (owner 2026-10-17: "ui panels loaded to the canvas are not interactive - nothing on them is
+         clickable or usable at all"): with panel-layer "desk" it was put BEHIND every other card - measured, only 16 of 63 points of it could be
+         reached and a click in its middle landed on a card over it. It is placed among the cards now; behind / in front stay its own controls. */
+      const args = { kind: 'panel', key, content: { panel: id, title: label || id }, at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
       this._open.add(key);
       // the item first, then the host is asked for the panel's page (its registered page, alias or route) — the
       // update it answers with needs the item to exist
