@@ -108,6 +108,7 @@ from Vera.vera.capability_orchestration import (
     register_ui,
     schedule,
 )
+from Vera.vera.run_steps import emit_step
 
 log = logging.getLogger("vera.exec")
 
@@ -2976,6 +2977,9 @@ _COMMON_PORTS = [22, 80, 443, 3389, 5985, 8006, 6443, 2375, 2376, 9090, 3000]
                 "save_to_fabric (bool=true — persist results to fabric dataset), "
                 "fabric_dataset (str='netscan_lan' — target dataset id). "
                 "Output: {cidr, alive: [{ip, hostname, mac, open_ports, alive_via}], count, elapsed_ms}.",
+    # on the desk: the hosts found, as a table with their open ports (DA-04c (d); the graph is netscan.graph's)
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "alive"},
+                               "draw": {"columns": ["ip", "hostname", "open_ports", "alive_via", "mac"]}}},
 )
 async def cap_netscan_lan(
     cidr:            str,
@@ -3032,9 +3036,33 @@ async def cap_netscan_lan(
                 await _aux_upsert_ports(host_id, ip_str, open_ports)
             return rec
 
-    tasks = [probe_host(str(ip)) for ip in net.hosts()]
+    _cap = "netscan.lan.scan"
+    host_ips = [str(ip) for ip in net.hosts()]
+    total = len(host_ips)
+    progress = {"done": 0, "found": 0}
+    await emit_step(_cap, trace_id, "starting", done=0, total=total,
+                    text=f"{subnet} - {total} addresses")
+
+    async def probe_counted(ip_str: str) -> Optional[dict]:
+        res = None
+        try:
+            res = await probe_host(ip_str)
+            return res
+        finally:
+            progress["done"] += 1
+            if isinstance(res, dict):
+                progress["found"] += 1
+            await emit_step(_cap, trace_id, "probing",
+                            done=progress["done"], total=total,
+                            text=f"{subnet} - {progress['done']}/{total} probed",
+                            found=progress["found"])
+
+    tasks = [probe_counted(ip) for ip in host_ips]
     raw = await asyncio.gather(*tasks, return_exceptions=True)
     alive = [r for r in raw if isinstance(r, dict)]
+    await emit_step(_cap, trace_id, "done", done=total, total=total,
+                    text=f"{subnet} - {len(alive)} alive of {total}",
+                    found=len(alive))
 
     if save_to_fabric and alive:
         asyncio.ensure_future(_save_scan_to_fabric(
@@ -3114,9 +3142,18 @@ async def cap_netscan_docker(
         disp_host = host or socket.gethostname()
         disp_label = label or disp_host
 
+    _cap = "netscan.docker.scan"
+    await emit_step(_cap, trace_id, "starting", total=1,
+                    text=f"{disp_host} - listing containers", host=disp_host)
     rows, err = await _docker_ps(ssh_host_id=host_id, host=host, use_sudo=use_sudo)
     if rows is None:
+        await emit_step(_cap, trace_id, "error", done=1, total=1,
+                        text=f"{disp_host} - {err}", host=disp_host, found=0)
         return {"error": err, "host": disp_host, "containers": [], "count": 0}
+    n_rows = len(rows)
+    await emit_step(_cap, trace_id, "host", done=1, total=1,
+                    text=f"{disp_host} - {n_rows} containers", host=disp_host,
+                    found=n_rows)
 
     # Upsert DockerHost node
     docker_host_id = f"docker:{disp_host}"
@@ -3160,6 +3197,10 @@ async def cap_netscan_docker(
             ports=ports, ts=now_iso(),
             hid=docker_host_id, host=disp_host,
         )
+        await emit_step(_cap, trace_id, "containers",
+                        done=len(containers), total=n_rows,
+                        text=f"{disp_host} - {name or cid[:12]}",
+                        host=disp_host, found=len(containers))
     # Cross-link to NetHost if resolvable
     try:
         ip = socket.gethostbyname(disp_host) if disp_host else ""
@@ -3173,6 +3214,9 @@ async def cap_netscan_docker(
             """,
             did=docker_host_id, nid=f"net:{ip}",
         )
+    await emit_step(_cap, trace_id, "done", done=n_rows, total=n_rows,
+                    text=f"{disp_host} - {len(containers)} containers",
+                    host=disp_host, found=len(containers))
     await emit_event({"type": "netscan.docker.done",
                       "host": disp_host, "count": len(containers)})
     return {"host": disp_host, "label": disp_label,
@@ -3248,9 +3292,16 @@ async def cap_netscan_proxmox(
             return await _pve_via_ssh(ssh_host_id, path)
         return await _pve_api_get(api_url, token, path, verify=verify_tls)
 
+    _cap = "netscan.proxmox.scan"
+    _src = f"ssh:{ssh_host_id}" if use_ssh else api_url
+    await emit_step(_cap, trace_id, "starting",
+                    text=f"{cluster_name or _src} - listing nodes")
     nodes, err = await _get("/nodes")
     if nodes is None:
+        await emit_step(_cap, trace_id, "error", done=0, total=0,
+                        text=f"{cluster_name or _src} - {err}", found=0)
         return {"error": err, "nodes": [], "guests": []}
+    n_nodes = len(nodes or [])
 
     if use_ssh:
         rec = (await _resolve_host_record(ssh_host_id)) or {}
@@ -3273,6 +3324,10 @@ async def cap_netscan_proxmox(
     for n in nodes or []:
         nname = n.get("node", "")
         nid   = f"pve_node:{nname}"
+        await emit_step(_cap, trace_id, "node",
+                        done=len(node_summ), total=n_nodes,
+                        text=f"{cluster_disp} - node {nname}",
+                        node=nname, found=len(guest_summ))
         node_summ.append({
             "name":   nname,
             "status": n.get("status"),
@@ -3311,7 +3366,8 @@ async def cap_netscan_proxmox(
         # Fetch guests (qemu + lxc)
         for kind in ("qemu", "lxc"):
             data, _ = await _get(f"/nodes/{nname}/{kind}")
-            for g in data or []:
+            n_kind = len(data or [])
+            for gi, g in enumerate(data or [], 1):
                 vmid = g.get("vmid", 0)
                 gid  = f"pve_guest:{nname}:{vmid}"
                 info = {
@@ -3335,6 +3391,15 @@ async def cap_netscan_proxmox(
                     """,
                     id=gid, props=info, ts=now_iso(), nid=nid,
                 )
+                await emit_step(_cap, trace_id, "guests",
+                                done=gi, total=n_kind,
+                                text=f"{nname} {kind} {vmid} {info['name']}",
+                                node=nname, kind=kind,
+                                found=len(guest_summ))
+    await emit_step(_cap, trace_id, "done", done=n_nodes, total=n_nodes,
+                    text=f"{cluster_disp} - {len(node_summ)} nodes, "
+                         f"{len(guest_summ)} guests",
+                    nodes=len(node_summ), found=len(guest_summ))
     await emit_event({"type": "netscan.proxmox.done",
                       "cluster": cluster_disp,
                       "nodes": len(node_summ), "guests": len(guest_summ)})
@@ -3995,6 +4060,7 @@ _NETSCAN_LABEL_SET = "|".join(_NETSCAN_LABELS)
     description="Fetch the full network asset graph (cytoscape-friendly). "
                 "Output: {nodes: [{data:{id,label,type,...}}], "
                 "edges: [{data:{id,source,target,label}}], counts}.",
+    contract={"presentation": {"kind": "graph", "form": "vgraph", "draw": {"chrome": "min"}}},   # the network map (DA-04c (d))
 )
 async def cap_netscan_graph(trace_id=None) -> Dict:
     fn = _fabric_neo()

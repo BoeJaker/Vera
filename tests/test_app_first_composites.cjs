@@ -10,12 +10,13 @@ const S = fs.readFileSync(path.join(R, 'vera', 'canvas', 'canvas_element.js'), '
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 const app = (file, id) => JSON.parse(fs.readFileSync(path.join(R, 'vera', 'apps', file), 'utf8')).find((a) => a.id === id);
 
-const FIRST = [['markets.json', 'markets.ticker', 3], ['estate.json', 'estate.glance', 4], ['looplab.json', 'looplab.sandbox', 3], ['calendar-panel.json', 'calendar.briefing', 2]];
+const FIRST = [['markets.json', 'markets.ticker', 3], ['estate.json', 'estate.glance', 4], ['looplab.json', 'looplab.sandbox', 3], ['calendar-panel.json', 'calendar.briefing', 3]];
 for (const [f, id, n] of FIRST) { const m = app(f, id);
   t(id + ': a composite of ' + n + ' parts, each part a read', !!m && m.view.kind === 'composite' && m.read.length === n && m.view.parts.every((p) => m.read.some((r) => r.as === p.from))); }
 t('Sandbox joins its sandboxes and their logs by branch', JSON.stringify(app('looplab.json', 'looplab.sandbox').view.join) === '{"sandboxes.branch":"logs.br"}');
 t('Ticker reads by the watchlist key (exchange:symbol)', app('markets.json', 'markets.ticker').read.filter((r) => r.args.symbol_key === '{arg.exchange}:{arg.symbol}').length === 2);
-t('Briefing is today and the inbox, side by side', app('calendar-panel.json', 'calendar.briefing').view.layout === 'split' && app('calendar-panel.json', 'calendar.briefing').read[0].args.start === 'today');
+t('Briefing is today and the inbox (and a Telegram chat only when given its chat_id), as a dashboard', app('calendar-panel.json', 'calendar.briefing').view.layout === 'dashboard' && app('calendar-panel.json', 'calendar.briefing').read[0].args.start === 'today'
+  && app('calendar-panel.json', 'calendar.briefing').read[2].args.chat_id === '{arg.chat_id?}');
 
 // a part that asks for a table: a table, in its own columns; with no join there is nothing to pick
 const rows = [{ id: 'u1', label: 'pve01', addr: '10.0.0.1', user: 'root', docker_kind: 'ssh', hw: { cpu: 8 } }, { id: 'u2', label: 'gpu-1', addr: '10.0.0.2', user: 'vera', docker_kind: '', hw: {} }];

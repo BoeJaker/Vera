@@ -78,9 +78,18 @@ const ctx = {
     { name: 'quiet.status', description: 'A status line. Output: {ok, text}.' },
   ],
 };
+/* the page's widget kit and present() (D10 step 2b: an undeclared answer's table / kv / widget is present()'s fallback
+   reading, so the real one is loaded - as tests/test_widget_cap_output.cjs loads it) */
+const defined = {};
+Object.assign(ctx, { window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } },
+  document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {}, style: {} }), head: { appendChild() {} }, getElementById: () => null },
+  setTimeout, clearTimeout, requestAnimationFrame: (f) => setTimeout(f, 0), localStorage: { getItem: () => null, setItem() {} } });
+ctx.window.customElements = ctx.customElements; ctx.window.document = ctx.document; ctx.window.localStorage = ctx.localStorage;
 vm.createContext(ctx);
-vm.runInContext(block + '\nthis.T=_cvCapTerm; this.B=_cvCapTable; this.W=_cvCapWidget; this.S=_cvCapSources; this.AD=_cvAdapt; this.REG=CV_ADAPTERS;', ctx);
-const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
+for (const f of [['vera', 'ui', 'iso.js'], ['vera', 'widgets', 'widget_element.js'], ['vera', 'widgets', 'present.js']]) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', ...f), 'utf8'), ctx);
+vm.runInContext(block + '\nthis.T=_cvCapTerm; this.W=_cvCapWidget; this.S=_cvCapSources; this.AD=_cvAdapt; this.REG=CV_ADAPTERS;', ctx);
+const { T, W, S: SRC, AD, REG } = ctx;
+const TBL = (c, cap) => { const m = AD(cap, c, {}); return m && !Array.isArray(m) && m.kind === 'table' ? m : null; };   // what the whole reading makes a table
 
 // ── a command and its output is a terminal ─────────────────────────────────────────────────────────────────────
 {
@@ -166,7 +175,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   t('five pages are still five source cards', SRC({ results: Array.from({ length: 5 }, (_, i) => ({ url: 'https://x.io/' + i, title: 't' + i })) }).length === 5);
   /* the chain of ifs this used to pin is a registry now - the claim is the same one, that a page with an address
      is a source before it is a row, and it is made by the ORDER of the table rather than by the order of ||s */
-  t('sources are tried BEFORE the table', REG.map((a) => a.name).indexOf('sources') < REG.map((a) => a.name).indexOf('table'));
+  t('sources are tried BEFORE the table', REG.map((a) => a.name).indexOf('sources') < REG.map((a) => a.name).indexOf('present'));   // present(): the table's reading (D10 step 2b)
   t('and the harvest asks the registry rather than a chain', /made = _cvAdapt\(cname, cres, cap && cap\.args\)/.test(src));
   t('and a recogniser may answer with several items', /if\(Array\.isArray\(made\)\)\{ made\.forEach/.test(src));
 }
@@ -182,10 +191,10 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
      reads gather into one records item for the turn - each landed as its own card before, dozens of them, and the
      report itself never reached the canvas */
   t('keyed by url so a page announced twice is one row', /const id=url\.split\('#'\)\[0\]/.test(src) && /let rec=g\.seen\[id\];/.test(src));
-  t('one records item per turn, keyed by it', /key:'research-sources:'\+\(mid\|\|'session'\)/.test(src) && /kind:'records', key:g\.key/.test(src));
+  t('one records item per turn, keyed by it', /key:'research-sources:'\+\(mid\|\|'session'\)/.test(src) && /g\.L=g\.L\|\|_cvLive\(\{ key:g\.key, kind:'records'/.test(src));   // on the one live-item core (DA-04c)
   t('and it lands WITHOUT the page body or picture', /rec=\{ id, url, domain:domain\.replace\(\/\^www\\\.\/,''\), title:String\(d\.title\|\|''\)\|\|domain\|\|url, snippet:'', meta:\{\} \}/.test(src));
   t('batched, so a page is not a write', /clearTimeout\(g\.t\); g\.t=setTimeout\(\(\)=>\{ _cvFlushSources\(mid\); \}, 700\);/.test(src));
-  t('updated in place as the run reads on', /else await _capCall\('canvas\.update',\{ session_id:SID, key:g\.key, content \}\)/.test(src));
+  t('updated in place as the run reads on', /g\.content=content; return _cvLiveSave\(g\.L, false\);/.test(src) && /else await _capCall\('canvas\.update',\{ session_id:SID, key:L\.key, content \}\)/.test(src));   // the core's update
   t('the pages the report cited come first, and say so', /\(b\.cited\?1:0\)-\(a\.cited\?1:0\)/.test(src) && /rec\.meta\.cited='cited in the report'/.test(src));
   t('a page that would not load says so', /if\(d\.failed\) rec\.meta\.status='did not load';/.test(src));
   t('and the finished report lands as a document, its citations as its Sources', /async function _cvLandReport\(text, mid, jobId, cits\)/.test(src) && /kind:'markdown', key:'research-report:'/.test(src) && /try\{ _cvLandReport\(fullText, _cvRelMid\|\|'', jobId, cits\); \}catch\(_\)\{\}/.test(src));}
@@ -228,7 +237,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   /* the order IS the behaviour, so it is pinned - a rule that moves above another changes what results become.
      calendar sits above table because the diary drawn as rows of id/title/start/end is the data and not the
      answer; prose sits last because almost every result carries some string. */
-  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,evidence,sources,html,image,code,diff,calendar,capview,table,widget,chat,prose,kv,json,text',   /* capview: the shared mapping (VeraWidget.fromCapResult), after the chat-only kinds */
+  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,evidence,sources,html,image,code,calendar,present,widget,chat,prose,kv,json,text',   /* present: present()'s fallback in capview's, table's (D10 step 2b) and diff's (2c) place, after the chat-only kinds */
     REG.map((a) => a.name).join(','));
 
   // and it routes, by shape alone, with no capability named anywhere
@@ -248,6 +257,14 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   t('a file a cap read is a code item', kind('fs.read', { path: '/w/app.py', content: 'print(1)\n' }) === 'code');
   t('code a cap wrote is a code item', kind('code.author', { code: 'def f():\n  return 1', lang: 'python' }) === 'code');
   t('a diff is code in the diff language', (AD('git.diff', { diff: '--- a\n+++ b\n+x' }, {}) || {}).content.lang === 'diff');
+  { const p = AD('x.patch', { patch: '--- a\n+++ b\n-y', path: 'vera/a.py' }, {}) || {};
+    t('a patch too, with the file it is of', p.kind === 'code' && p.content.lang === 'diff' && p.content.filename === 'vera/a.py' && /-y/.test(p.content.code), JSON.stringify(p));
+    const sb = AD('evolve.sandbox.diff', { ok: true, branch: 'feat/x', files: [{ path: 'a.py', status: 'M', adds: 3, dels: 1 }, { path: 'b.py', status: 'A', adds: 9, dels: 0 }], diff: '--- a/a.py\n+++ b/a.py\n+x' }, {}) || {};
+    t('a diff with its file list is still the diff, not a table of files', sb.kind === 'code' && sb.content.lang === 'diff', JSON.stringify(sb.kind));
+    t('an empty diff is no diff item', (AD('x.diff', { diff: '   ' }, {}) || {}).kind !== 'code'); }
+  /* an object keyed by id (ollama.instances): present() reads it as rows, and the chat takes that table (keyed-rows) */
+  { const k = AD('ollama.instances', { 'gpu-250': { url: 'http://a:11434', status: 'online', has_gpu: true }, 'cpu-246': { url: 'http://b:11434', status: 'online', has_gpu: false }, 'cpu-247': { url: 'http://c:11434', status: 'down', has_gpu: false } }, {}) || {};
+    t('an object keyed by id is a table, its key the first column', k.kind === 'table' && k.content.columns[0] === 'id' && k.content.rows.length === 3 && k.content.rows[0][0] === 'gpu-250', JSON.stringify(k.content && k.content.columns)); }
   t('an answer to a question is an exchange', kind('agent.consult', { question: 'why?', answer: 'because' }) === 'chat');
   t('a failure is said once, as a failure', kind('x.y', { ok: false, error: 'no route to host' }) === 'note');
   t('a failing COMMAND is still a terminal with its stderr', kind('exec.bash.run', { ok: false, command: 'ls /x', stderr: 'nope', rc: 2 }) === 'session');

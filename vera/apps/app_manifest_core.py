@@ -29,7 +29,7 @@ EFFECTS = ("remove", "create", "update")   # what an action does to its rows (DA
 SIZES = ("s", "m", "l", "xl")
 LAYOUTS = ("dashboard", "tabs", "split", "stack")   # how a composite's parts are laid out (DA-07a)
 SETTING_TYPES = ("multi", "select", "toggle", "number", "text")
-TEMPLATE = re.compile(r"\{([a-zA-Z_][\w.]*)\}")
+TEMPLATE = re.compile(r"\{([a-zA-Z_][\w.]*)(\?)?\}")   # {arg.x} is required, {arg.x?} optional (left out when not given)
 
 
 def _p(out: list, file: str, app: str, level: str, code: str, message: str) -> None:
@@ -40,17 +40,27 @@ def _is_obj(v: Any) -> bool:
     return isinstance(v, dict)
 
 
-def needs_args(m: dict) -> list:
-    """the arguments the person must give before the app can read: {arg.x} templates in its read args"""
+def _arg_templates(m: dict, optional: bool) -> list:
     reads = m.get("read") if isinstance(m.get("read"), list) else [m.get("read")]
     out = []
     for r in reads:
         if _is_obj(r) and _is_obj(r.get("args")):
             for v in r["args"].values():
-                for name in TEMPLATE.findall(str(v)):
-                    if name.startswith("arg.") and name[4:] not in out:
+                for name, opt in TEMPLATE.findall(str(v)):
+                    if name.startswith("arg.") and bool(opt) == optional and name[4:] not in out:
                         out.append(name[4:])
     return out
+
+
+def needs_args(m: dict) -> list:
+    """the arguments the person must give before the app can read: {arg.x} templates in its read args"""
+    return _arg_templates(m, False)
+
+
+def optional_args(m: dict) -> list:
+    """the arguments the app may be given: {arg.x?} templates. Not given, a single read leaves that argument out of the
+    call and a composite leaves out the part that names it"""
+    return [a for a in _arg_templates(m, True) if a not in needs_args(m)]
 
 
 _SKIP_ARGS = {"trace_id", "session_id", "id"}   # carried by the call, never asked of the person ("id" comes from the row)
@@ -345,5 +355,9 @@ def lint(directory: str = APPS_DIR, caps: Optional[Iterable[str]] = None, panels
 def summary(m: dict) -> dict:
     """what ui.apps.list shows of an app"""
     view = m.get("view") if _is_obj(m.get("view")) else {}
-    return {"id": m.get("id"), "panel": m.get("panel"), "title": m.get("title"), "summary": m.get("summary", ""),
-            "icon": m.get("icon", ""), "kind": view.get("kind"), "needs_args": needs_args(m)}
+    out = {"id": m.get("id"), "panel": m.get("panel"), "title": m.get("title"), "summary": m.get("summary", ""),
+           "icon": m.get("icon", ""), "kind": view.get("kind"), "needs_args": needs_args(m)}
+    opt = optional_args(m)
+    if opt:
+        out["optional_args"] = opt
+    return out

@@ -569,12 +569,19 @@ async def cap_docker_ps(host_id: str = "", all: bool = True, slim: bool = False,
     status, body, _ = await _engine_request(rec, "GET", f"/containers/json?all={'true' if all else 'false'}")
     if status != 200:
         return {"error": _engine_error(status, body), "containers": []}
-    rows = await _parse_engine_json(body, [])
-    if not isinstance(rows, list):
-        rows = []
-    if slim:
-        rows = [_docker_ps_slim(r) for r in rows if isinstance(r, dict)]
+    rows = _docker_ps_rows(await _parse_engine_json(body, []), rec["id"], slim)
     return {"host_id": rec["id"], "containers": rows, "count": len(rows)}
+
+
+def _docker_ps_rows(rows, host_id: str, slim: bool = False) -> List[Dict]:
+    """The Engine's container list as docker.ps answers it: each row (slim or full) carries the host it runs on, so a
+    row read on its own - an app part joined to nodes.list's docker_host_id, a merged list - still says which machine."""
+    if not isinstance(rows, list):
+        return []
+    rows = [r for r in rows if isinstance(r, dict)]
+    if slim:
+        rows = [_docker_ps_slim(r) for r in rows]
+    return [dict(r, host_id=host_id) for r in rows]
 
 
 def _docker_ps_slim(r: Dict) -> Dict:

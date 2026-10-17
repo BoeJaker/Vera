@@ -37,7 +37,9 @@
   const zOf = (band, n) => { const b = ZB[band]; if (b === undefined) return ZB.tile[0];
     return Array.isArray(b) ? Math.min(b[1], b[0] + Math.max(0, Math.round(n || 0))) : b; };
   /* A BODY DRAWS NO HEAD (DEEP-29 11A.4 Decision 4). It declares, as it is drawn, what its head used to hold - a line about
-     it (sub, html) and its actions ({act, label, title, on} run through the item's one dispatcher, {href, download} a link)
+     it (sub, html) and its actions ({act, label, title, on} run through the item's one dispatcher, {href, download} a link;
+     lead: true puts one first in the head, ahead of the kit's, so a narrow card still shows it; replaces: '<kit act>' leaves
+     that kit action out - head and menu - where the body's own stands for it)
      and any dropdowns of its own (menus, html) - and the item's container draws them: the line beside the title, the rest
      in the item's menu. A body drawn by the shared kit (code, a diagram, a file) is asked for its actions instead
      (VeraOut.barActions). Returns '' so a renderer can declare in an expression. */
@@ -128,6 +130,17 @@
      in the manifest's layout - dashboard (a grid), tabs (one part at a time), split (two side by side), stack (one under
      another). A part draws as its read arrives: a skeleton while it reads, its error inside it only, else its answer
      through the same reading as any result (resultView), the part's kind used when that reading has only the raw tree. */
+  /* THE RUN STRIP (DA-04c): a running call's latest step - stage, its words, n of m as a bar, what it found so far, how
+     long it has run. Fed by the call's `<cap>.step` events ({stage, done, total, found, text}) through the chat. */
+  function runStrip(r) {
+    r = r || {}; const done = +r.done, total = +r.total; const has = isFinite(done) && isFinite(total) && total > 0;
+    const secs = r.started ? Math.max(0, Math.round((Date.now() - +r.started) / 1000)) : null;
+    const pct = has ? Math.max(0, Math.min(100, Math.round(done / total * 100))) : null;
+    return '<div class="vc-run" data-stage="' + esc(r.stage || '') + '"><div class="vc-run-l"><i class="dot wait"></i><b>' + esc(r.stage || 'starting') + '</b>'
+      + (r.text ? '<span class="vc-run-tx">' + esc(String(r.text).slice(0, 200)) + '</span>' : '')
+      + '<span class="vc-run-n">' + (has ? esc(done + ' of ' + total) : '') + (r.found != null ? (has ? ' · ' : '') + esc(r.found + ' found') : '') + (secs != null ? ' · ' + secs + ' s' : '') + '</span></div>'
+      + (has ? '<div class="vc-run-bar"><i style="width:' + pct + '%"></i></div>' : '') + '</div>';
+  }
   const APP_LAYOUTS = ['dashboard', 'tabs', 'split', 'stack'];
   /* THE JOIN (DA-07b, §6.1): view.join pairs a field of one part with a field of another - {"hosts.name": "containers.host"},
      or a list of such objects / [a, b] pairs. A part named in a join draws its rows as rows you pick; a pick lights the rows
@@ -176,7 +189,8 @@
       else {
         let v = resultView({ cap: p.cap, args: p.args, result: p.result, ok: true }); const k = s.kind;
         if ((!v || v.kind === 'json') && k && BLOCK[k] && k !== 'app' && p.result && typeof p.result === 'object') v = { kind: k, content: p.result };
-        try { const fn = v && BLOCK[v.kind]; body = fn ? fn(v.content || {}, lay === 'dashboard' ? 'm' : size, key + ':part:' + p.as, el) : '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
+        try { const fn = v && BLOCK[v.kind]; if (el && v) (el._nested || (el._nested = {}))[key + ':part:' + p.as] = v.content || {};   /* what a live widget in it is fed */
+          body = fn ? fn(v.content || {}, lay === 'dashboard' ? 'm' : size, key + ':part:' + p.as, el) : '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
         catch (e) { body = '<div class="vc-json">' + jsonTree(p.result, 0) + '</div>'; }
         if (lights.length) { const txt = appJv(appLeaves(p.result));   /* the answer's own words - a part may be drawn later by a live widget */
           focus = lights.some((l) => l.v.length >= 2 && txt.indexOf(l.v) >= 0); }
@@ -187,7 +201,7 @@
     return strip + '<div class="vc-app-parts" data-layout="' + lay + '">' + (tab ? parts.filter((x) => x.p.as === tab) : parts).map(one).join('') + '</div>';
   }
   /* a capability that only reads, by its name - what an app or a widget may call on its own (the chat's rule, _widgetReadable) */
-  const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|quotes|sentiment\.map|news\.feed)$|^cal\.events\.list$|^ollama\.instances$|^syslog\.errors$|^evolve\.sandbox\.(logs|diff)$)/.test(String(cap || ''));   /* the last four: the reads of the first composites (DA-07c), by name */
+  const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|quotes|sentiment\.map|news\.feed)$|^cal\.events\.list$|^ollama\.instances$|^syslog\.errors$|^evolve\.sandbox\.(logs|diff)$|^netscan\.graph$)/.test(String(cap || ''));   /* the last five: the reads of the first composites (DA-07c) and the network map (DA-04c (d)), by name */
   const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
   if (root.__veraCanvasElement) return;
   root.__veraCanvasElement = true;
@@ -594,6 +608,18 @@
   /* A DIAGRAM'S SOURCE, EDITED BESIDE ITS DRAWING (DU-E-diagram): per item - open, the draft, the last source that drew,
      the error. Nothing here is written to the item; only Save writes (canvas.update). */
   const dgUi = (el, key) => { const m = el._dgUi || (el._dgUi = {}); return m[key] || (m[key] = { open: false, draft: '', good: '', err: '' }); };
+  /* the source box keeps its focus and caret: a redraw replaces it, so the new one is focused - now, on the next frame and
+     once more (the desk's own pass can draw the card again) - with the caret where it was (ui.ss / ui.se). Only while it
+     had the focus (ui.had): a redraw drops the focus to nothing; anything that HAS it keeps it, unless force (just opened) */
+  const dgFocus = (el, key, force) => {
+    const go = () => { const ui = (el._dgUi || {})[key]; if (!ui || !ui.open || !el.shadowRoot || (!force && !ui.had)) return;
+      const ta = [...el.shadowRoot.querySelectorAll('[data-dg-src]')].find((x) => x.dataset.dgSrc === key); if (!ta) return;
+      const a = el.shadowRoot.activeElement; if (a === ta) return;
+      const doc = el.ownerDocument || document, da = doc.activeElement;
+      if (!force && (a || (da && da !== el && da !== doc.body))) return;
+      const n = ta.value.length, s = ui.ss == null ? n : Math.min(ui.ss, n), e = ui.se == null ? s : Math.min(Math.max(ui.se, s), n);
+      ta.focus({ preventScroll: true }); ui.had = true; try { ta.setSelectionRange(s, e); } catch (_) { /* optional */ } };
+    go(); requestAnimationFrame(go); setTimeout(go, 120); };
   /* does a draft parse? '' when it does. Each line's brackets and quotes first (the drawing element's parser is lenient and
      reads past an unclosed one), then the estate element's own parser (vera-mermaid's _build) - no second renderer. */
   const dgCheck = (inner, code) => {
@@ -720,6 +746,8 @@
      and the event just written (lit). None of it is written anywhere: the only writes are cal.event.upsert. */
   const calUi = (el, key) => { const z = () => ({ drag: null, add: null, pend: {}, err: {}, lit: null }); if (!el || !key) return z();
     const m = el._calUi || (el._calUi = {}); const u = m[key] || (m[key] = z()); u.pend = u.pend || {}; u.err = u.err || {}; return u; };
+  /* how long a day press's write is held, so a double-click (the add form) can drop it: about the system's interval */
+  const CAL_DBL_MS = 300;
   /* day arithmetic on the DATE PART only, in UTC: a local Date across a clock change is 23 or 25 hours long, and a
      move counted in milliseconds lands an hour off or on the wrong day */
   const calYmd = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null; };
@@ -1260,7 +1288,8 @@
       /* EDIT SOURCE (DU-E-diagram): the source in a box on the left, the drawing on the right (stacked on a narrow card); it
          redraws as it is typed, a source that does not parse says so under the box and the last good drawing stays */
       const ui = key && el && el._dgUi && el._dgUi[key] && el._dgUi[key].open ? el._dgUi[key] : null;
-      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui };
+      /* lead: first in the head, ahead of the kit's actions - a narrow card (under 640 px keeps four) still shows it */
+      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui, lead: true, replaces: 'edit' };   /* the code kit's own Edit would be a second edit button */
       const ACTS = [{ act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }];
       if (ui) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · editing', acts: [EDA].concat(ACTS) })
         + `<div class="vc-dgedw" data-w="canvas.diagram.edit"><div class="vc-dged" data-dged="${esc(key)}"><div class="vc-dged-l">`
@@ -1615,6 +1644,12 @@
       const a = c.args && typeof c.args === 'object' ? c.args : {};
       const args = Object.keys(a).slice(0, 4).map((k) => k + '=' + String(typeof a[k] === 'object' ? JSON.stringify(a[k]) : a[k]).slice(0, 40)).join(' \u00b7 ');
       const ms = typeof c.ms === 'number' ? (c.ms >= 1000 ? (c.ms / 1000).toFixed(1) + ' s' : c.ms + ' ms') : '';
+      /* A CALL STILL RUNNING (DA-04c - the run element): what it is doing, how far, how long - the answer arrives in this same
+         item when it ends (the chat writes it here; nothing else lands for the call) */
+      if (c.running && ok) {
+        declare(el, key, { sub: '<i class="dot wait"></i>' + esc(cap) + (args ? ' · ' + esc(args) : '') + ' · running', acts: [] });
+        return '<div class="vc-res vc-res-run" data-as="running" data-w="canvas.result">' + runStrip(c.run || {}) + '<div class="vc-app-psk"><i></i><i></i><i></i></div></div>';
+      }
       const v = ok ? resultView(c) : null;
       /* no head of its own (DEEP-29 11A.4): its line - the dot, the capability, its arguments, how long it took - is declared
          for the item's head; Run again is the container's (the head's own buttons) */
@@ -1656,7 +1691,8 @@
       /* the manifest's own view when the generic mapping has nothing better than the raw tree (a calendar's events) */
       let v = resultView(rc); const mk = m && m.view && m.view.kind; if ((!v || v.kind === 'json') && mk && BLOCK[mk] && mk !== 'app' && st.result && typeof st.result === 'object') v = { kind: mk, content: st.result };
       let inner = '';
-      try { const fn = v && BLOCK[v.kind]; inner = fn ? fn(v.content || {}, size, key + ':app', el) : '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; } catch (e) { inner = '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; }
+      try { const fn = v && BLOCK[v.kind]; if (el && v) (el._nested || (el._nested = {}))[key + ':app'] = v.content || {};   /* what a live widget in it is fed */
+        inner = fn ? fn(v.content || {}, size, key + ':app', el) : '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; } catch (e) { inner = '<div class="vc-json">' + jsonTree(st.result, 0) + '</div>'; }
       return `<div class="vc-app" data-app="${esc(id)}" data-as="${esc(v ? v.kind : 'json')}" data-w="canvas.app">${st.ui ? appBarHtml(st) : ''}${inner}</div>`;
     },
 
@@ -2229,6 +2265,14 @@
   .vc-app-tabs{display:flex;flex-wrap:wrap;gap:4px}
   .vc-app-tabs .hx.bad{color:var(--err,#e06c75)}
   @container (max-width: 520px){ .vc-app-parts[data-layout="split"]{grid-template-columns:1fr} }
+  /* a call still running (DA-04c): its step, a bar when it says how far */
+  .vc-run{display:flex;flex-direction:column;gap:5px;padding:6px 2px 8px;font-size:11.5px}
+  .vc-run-l{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;min-width:0}
+  .vc-run-l > b{font-weight:600}
+  .vc-run-tx{color:var(--dim,#6b7480);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 120px}
+  .vc-run-n{margin-left:auto;color:var(--dim,#6b7480);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .vc-run-bar{height:4px;border-radius:2px;background:color-mix(in srgb,var(--fg,#dce1e8) 9%,transparent);overflow:hidden}
+  .vc-run-bar > i{display:block;height:100%;background:var(--acc,#5a9e8f);transition:width .25s ease}
   /* the join (DA-07b): the row picked, the rows it lights, the rest dimmed; a part it focuses is outlined */
   .vc-app-pb{position:relative}
   .vc-app-jt{outline:none}
@@ -4136,7 +4180,7 @@
        before the record carried it is not lost; it goes up with the next change). */
     _itemHydrate(doc) {
       const pend = this._itemPend || new Set(); let lk = 0, ps = 0, pl = 0, vw = 0, fd = 0;
-      const locks = this._lockGet(), pos = this._deskPosGet(), pills = this._pillGet(), views = viewStore(this), folds = this._folds();
+      const locks = this._lockGet(), pos = this._deskPosGet(), pills = this._pillReal(), views = viewStore(this), folds = this._folds();
       ((doc && doc.blocks) || []).forEach((b) => { const key = b && b.key ? String(b.key) : ''; if (!key || pend.has(key)) return;
         if (b.face === 'pill' || b.face === 'tile') { const on = b.face === 'pill' && b.state !== 'parked'; if (!!pills[key] !== on) { if (on) pills[key] = 1; else delete pills[key]; pl++; } }
         const P = b.place && typeof b.place === 'object' ? b.place : null;
@@ -4216,7 +4260,8 @@
       const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; let o = '';
         (d.acts || []).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : x.aid ? '[data-app-action="' + x.aid + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { if (x.aid) { o += `<button class="ib" data-act="appact" data-app-action="${esc(x.aid)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label)}</button>`; return; } o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
         const card = this._kitCard(host, lead); const VO = root.VeraOut; const kit = card && VO && typeof VO.barActions === 'function' ? VO.barActions(card) : { acts: [], menus: [] };
-        kit.acts.filter((x) => !SKIP_VO.has(x.vo) && (kk !== key || !inHead('[data-vo-act="' + x.vo + '"]'))).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
+        const repl = new Set((d.acts || []).map((x) => x.replaces).filter(Boolean));   /* a declared action standing for a kit one (replaces) */
+        kit.acts.filter((x) => !SKIP_VO.has(x.vo) && !repl.has(x.vo) && (kk !== key || !inHead('[data-vo-act="' + x.vo + '"]'))).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
         return o + (d.menus || []).concat(kit.menus).map((m) => `<div class="hd-dd">${m}</div>`).join(''); };
       const mine = own(key, c, true); if (mine) h += '<hr>' + mine;
       c.querySelectorAll('.fu-p[data-key]').forEach((f) => { const o = own(f.dataset.key, f, false); const t = f.querySelector('.fu-t > b');
@@ -4430,8 +4475,34 @@
     }
     /* A CARD MINIMISED TO A PILL (owner, 2026-10-11: "id like a way to minimise them to a pill from the top bar controls"):
        kept per canvas; the desk places it on its border as a pill whatever the topic; a click on the pill opens it again */
-    _pillGet() { if (this._pillA) return this._pillA; try { this._pillA = JSON.parse(localStorage.getItem('vera:canvas:deskpill:' + this.canvasId) || '{}') || {}; } catch (e) { this._pillA = {}; } return this._pillA; }
-    _pillSet(key, on) { const m = this._pillGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:deskpill:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } this._itemSet(key, { face: on ? 'pill' : 'tile' }); }
+    _pillReal() { if (this._pillA) return this._pillA; try { this._pillA = JSON.parse(localStorage.getItem('vera:canvas:deskpill:' + this.canvasId) || '{}') || {}; } catch (e) { this._pillA = {}; } return this._pillA; }
+    /* ...and, for this topic only, the pre-turn items it has moved past (LV-9 / WSU-87, _preOutGet): never written - not to this
+       browser, not to the item record - so the person's own pills and places are untouched and come back with the topic */
+    _pillGet() { const m = this._pillReal(), po = this._preOutGet(); if (!po.length) return m; const v = Object.assign({}, m); po.forEach((k) => { v[k] = 1; }); return v; }
+    _pillSet(key, on) { const m = this._pillReal();
+      /* opening a pill the topic made (not the person's): it is kept in until the topic moves, and nothing is written */
+      if (!on && !m[key] && this._preOutGet().indexOf(key) >= 0) { (this._preKeep || (this._preKeep = new Set())).add(key); this._preOutC = null; return; }
+      if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:deskpill:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } this._itemSet(key, { face: on ? 'pill' : 'tile' }); }
+    /* AN ITEM THE CHAT PUT ROUND THE REPLY (VeraDesk.preTurn): an enrichment (enrich:..., anchor from 'enrich') or what was
+       placed before the answer (turn.prepare: pre:..., from 'prepare') */
+    _isPreTurn(key) { const D = root.VeraDesk; const b = this._blockOf ? this._blockOf(key) : null; const a = b && b.anchor && typeof b.anchor === 'object' ? b.anchor : null;
+      const from = a ? String(a.from || '') : ''; return D && D.preTurn ? D.preTurn(key, from) : /^(enrich|pre):/.test(String(key || '')) || from === 'enrich' || from === 'prepare'; }
+    /* THE PRE-TURN ITEMS THE TOPIC HAS MOVED PAST (LV-9 / WSU-87; the rule is VeraDesk.preTurnOut): on a desk that follows the
+       topic, a pre-turn item that is neither in the topic nor made for the turn in focus leaves focus - to the strip, like a
+       pill - even when it carries a place by hand: that place is where it sits when it is in focus (kept for then), it does
+       not hold it in. Pinned and locked items stay; one the person opens again stays until the topic moves. */
+    _preOutGet() {
+      const T = this._topic; if (!T || !T.keys || !T.keys.size || this.getAttribute('bring-in') === 'off') return [];
+      const sig = (this._topicSig || '') + '#' + String(this._rev == null ? '' : this._rev) + '#' + ((this._doc && this._doc.blocks) || []).length;
+      if (this._preOutC && this._preOutC.sig === sig) return this._preOutC.keys;
+      const locks = this._lockGet(), keep = this._preKeep || new Set(), D = root.VeraDesk;
+      const items = ((this._doc && this._doc.blocks) || []).filter((b) => b && b.key != null && (b.state || 'now') !== 'hidden').map((b) => {
+        const a = b.anchor && typeof b.anchor === 'object' ? b.anchor : null; const mids = [];
+        (b.anchors || []).concat(a ? [a] : []).forEach((x) => { if (x && typeof x === 'object') [x.turn, x.mid, x.from].forEach((v) => { if (v) mids.push(String(v)); }); });
+        const key = String(b.key); return { key, from: a ? String(a.from || '') : '', anchors: mids, pinned: b.state === 'pinned', locked: !!locks[key], kept: keep.has(key) }; });
+      const keys = D && D.preTurnOut ? D.preTurnOut(items, [...T.keys], T.mid) : [];
+      this._preOutC = { sig, keys }; return keys;
+    }
     _cmpGet() { if (this._cmpA) return this._cmpA; try { this._cmpA = JSON.parse(localStorage.getItem('vera:canvas:deskfront:' + this.canvasId) || '{}') || {}; } catch (e) { this._cmpA = {}; } return this._cmpA; }
     _cmpSet(m) { this._cmpA = m; const ks = Object.keys(m); if (ks.length > 400) ks.sort((a, b) => m[a] - m[b]).slice(0, ks.length - 400).forEach((k) => delete m[k]);
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
@@ -5258,7 +5329,13 @@
       if (ks && !ks.length && this._topic) return false;
       const sig = (mid || '') + '|' + (ks ? ks.join(',') : '-');
       if (sig === this._topicSig) return false; this._topicSig = sig;
-      this._topic = ks ? { keys: new Set(ks), order: ks.slice().sort((a, b) => val(b) - val(a)), mid: mid || '' } : null;
+      /* PRE-TURN ITEMS RANK LAST AND LEAVE FIRST (LV-9 / WSU-87; VeraDesk.topicOrder, preTurnOut): in the topic every reply
+         item comes before every item the chat put round the reply (enrich:, pre:), so a topic with more than the room beside
+         the chat drops those first; one the topic has moved past goes to the strip even if it was placed by hand (_pillGet) */
+      const D = root.VeraDesk, isPre = (k) => this._isPreTurn(k);
+      const order = ks ? (D && D.topicOrder ? D.topicOrder(ks, val, isPre) : ks.slice().sort((a, b) => val(b) - val(a))) : null;
+      this._topic = ks ? { keys: new Set(ks), order, mid: mid || '' } : null;
+      this._preKeep = null; this._preOutC = null;   /* a pre-turn item the person opened again holds only until the topic moves */
       this._topicAt = Date.now();   /* a combined card's tab picked after this wins over the topic's choice (WSU-71) */
       /* only the cards that joined or left the topic move: those leave the hold (a card that left goes to the border, one that
          joined to the best free room beside what it relates to); every other card keeps its place and its size */
@@ -5458,9 +5535,14 @@
             if (typeof document !== 'undefined' && document.createElement && VO && typeof VO.barActions === 'function' && /class="code-card/.test(inner)) {
               try { const tp = document.createElement('template'); tp.innerHTML = inner; const kc = tp.content.querySelector('.code-card[data-cb]'); if (kc) kit = VO.barActions(kc); } catch (e) { kit = null; } }
             const RANK = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'];
-            if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane').sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
+            /* a declared action marked lead goes first, ahead of the kit's: it is the one a narrow card keeps (data-pri) */
+            const dact = (a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"` + (a.aid ? ` data-app-action="${esc(a.aid)}"` : ''), a.label, a.title, a.on); };
+            /* a declared action that replaces a kit action (replaces: 'edit' - the diagram's Edit source for the code kit's Edit) leaves it out */
+            const repl = new Set((d.acts || []).map((a) => a.replaces).filter(Boolean));
+            (d.acts || []).filter((a) => a.lead).forEach(dact);
+            if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane' && !repl.has(a.vo)).sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
               .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
-            (d.acts || []).forEach((a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"` + (a.aid ? ` data-app-action="${esc(a.aid)}"` : ''), a.label, a.title, a.on); });
+            (d.acts || []).filter((a) => !a.lead).forEach(dact);
             if (b.type !== 'panel' && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];
               hx('data-act="layer-behind"', 'Behind', 'Behind the other items, still filling the free desk - again to put it back among them', L1 === 'behind'); hx('data-act="layer-front"', 'Front', 'Over the other items, filling the free desk - again to put it back among them', L1 === 'front'); }
             if (b.type === 'panel') { if (desk) { const L0 = (this._layer || {})[key] || ''; hx('data-act="layer-behind"', 'Behind', 'Fill the free desk, under the other items', L0 === 'behind'); hx('data-act="layer-front"', 'Front', 'Fill the free desk, over the other items', L0 === 'front'); }
@@ -5684,7 +5766,7 @@
         if (t.closest('textarea')) return;
         /* a card minimised to a pill (its ⋯ / pill control) opens again where the arrangement puts it, on a click */
         const wc = t.closest('.stage .it[data-key]');
-        if (wc && this.deskAlign() && body.contains(wc) && !this._pillGet()[wc.dataset.key] && !(this._wins && this._wins.has(wc.dataset.key))
+        if (wc && this.deskAlign() && body.contains(wc) && !this._pillReal()[wc.dataset.key] && !(this._wins && this._wins.has(wc.dataset.key))
             && (wc.classList.contains('desk-chip') || wc.classList.contains('pill-open')) && !t.closest('[data-act]:not(.it-hd):not(.t)')) {
           const was = wc.classList.contains('desk-chip'); this._winOpen(wc); if (was) { ev.stopPropagation(); return; } }   /* WSU-55 */
         const pc = t.closest('.stage .it.desk-chip[data-key]');
@@ -5724,7 +5806,7 @@
         const cm = t.closest('[data-cal-mv]');
         if (cm && body.contains(cm)) { ev.stopPropagation(); this._calAct(cm.dataset.calKey, cm.dataset.calMv); return; }
         const cd = t.closest('[data-cal-day]');
-        if (cd && body.contains(cd)) { ev.stopPropagation(); this._calAct(cd.dataset.calKey, cd.dataset.calDay); return; }
+        if (cd && body.contains(cd)) { ev.stopPropagation(); this._calDayPress(cd.dataset.calKey, cd.dataset.calDay); return; }
         // a line of a code item: the card that covers it lights in every explode item bound to this one
         const ln = t.closest('.vc-codewrap[data-code] .vc-line');
         if (ln && body.contains(ln)) { const w = ln.closest('.vc-codewrap');
@@ -5969,7 +6051,7 @@
           if (d) this._calMove(k, id, d.dataset.calDay); };
         doc.addEventListener('mousemove', mv, true); doc.addEventListener('mouseup', up, true); });
       body.addEventListener('dblclick', (ev) => { const t = ev.target; const d = t && t.closest ? t.closest('[data-cal-day][data-cal-key]') : null; if (!d || !body.contains(d) || !d.dataset.calKey) return;
-        ev.preventDefault(); ev.stopPropagation(); this._calAddOpen(d.dataset.calKey, d.dataset.calDay); });
+        ev.preventDefault(); ev.stopPropagation(); this._calDayDrop(d.dataset.calKey); this._calAddOpen(d.dataset.calKey, d.dataset.calDay); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.calIn == null) return; const ui = calUi(this, q.dataset.calKey); if (!ui.add) return;
         const f = q.dataset.calIn === 'time' ? 'time' : 'title'; ui.add[f] = String(q.value || ''); ui.add.f = f; });   /* the draft, kept across a redraw; nothing drawn */
       body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.calIn == null || (ev.key !== 'Enter' && ev.key !== 'Escape')) return;
@@ -5991,6 +6073,15 @@
           const eb = box && box.querySelector('.vc-dged-err'); if (eb) { eb.textContent = err; eb.hidden = !err; }
           const sv = box && box.querySelector('[data-act="dgsave"]'); if (sv) sv.disabled = !!err;
           if (err) return; ui.good = ui.draft.trim(); if (inner) this._mermaidInto(inner, key); }, 300); });
+      /* where its caret is and whether it holds the focus, for dgFocus after a redraw: a box that is gone (redrawn) did not
+         give the focus away; one still there that lost it did (another field, a button, the chat) */
+      const dgCaret = (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null) return; const ui = dgUi(this, q.dataset.dgSrc);
+        try { ui.ss = q.selectionStart; ui.se = q.selectionEnd; } catch (_) { /* optional */ } };
+      ['input', 'keyup', 'pointerup', 'select'].forEach((t) => body.addEventListener(t, dgCaret));
+      body.addEventListener('focusin', (ev) => { const q = ev.target; if (q && q.dataset && q.dataset.dgSrc != null) dgUi(this, q.dataset.dgSrc).had = true; });
+      body.addEventListener('focusout', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null) return; const key = q.dataset.dgSrc; dgCaret(ev);
+        setTimeout(() => { if (q.isConnected && this.shadowRoot.activeElement !== q) dgUi(this, key).had = false; }, 0); });
+      this.addEventListener('vera:canvas:placed', () => { const m = this._dgUi || {}; Object.keys(m).forEach((k) => { if (m[k] && m[k].open && m[k].had) dgFocus(this, k, false); }); });
       body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.dgSrc == null || ev.key !== 'Escape') return;
         ev.preventDefault(); ev.stopPropagation(); const box = q.closest('.vc-dged'); const b = box && box.querySelector('[data-act="dgcancel"]'); if (b) this._act(b, ev); });
       /* THE TIMELINE'S BRUSH AND SCRUBBER (DU-E-timeline). A press on the axis that moves past 3 px is a brush: the band
@@ -6150,14 +6241,18 @@
         if (!m) { st.error = 'no app ' + id + ' in the catalogue'; return this._appDraw(key); }
         st.manifest = m; const rd = m.read || {};
         { const b = this._blockOf(key); if (b && b.content && !b.content.title && m.title) b.content.title = m.title; }   /* named by its manifest, not its id */ const a = c.args && typeof c.args === 'object' ? c.args : {}; const miss = [];
-        const fill = (v) => typeof v === 'string' ? v.replace(/\{arg\.([\w.-]+)\}/g, (x, k) => { if (a[k] == null || a[k] === '') { miss.push(k); return ''; } return String(a[k]); }) : v;
+        /* {arg.x} must be given; {arg.x?} may be: not given, its argument is left out of a single read and its part out of a composite */
+        let skip = false; const optMiss = [];
+        const fill = (v) => typeof v === 'string' ? v.replace(/\{arg\.([\w.-]+)(\?)?\}/g, (x, k, o) => { if (a[k] == null || a[k] === '') { if (o) { skip = true; optMiss.push(k); } else miss.push(k); return ''; } return String(a[k]); }) : v;
+        const fillArgs = (src) => { const out = {}; let left = false; Object.keys(src || {}).forEach((k) => { skip = false; const v = fill(src[k]); if (skip) left = true; else out[k] = v; }); return { args: out, left }; };
         if (Array.isArray(m.read)) {   /* a composite (DA-07a): its parts, each with its own read, side by side */
-          st.parts = m.read.filter((r) => r && r.cap).map((r) => { const args = {}; Object.keys(r.args || {}).forEach((k) => { args[k] = fill(r.args[k]); }); return { as: String(r.as || r.cap), cap: String(r.cap), args }; });
+          st.parts = m.read.filter((r) => r && r.cap).map((r) => { const f = fillArgs(r.args); return f.left ? null : { as: String(r.as || r.cap), cap: String(r.cap), args: f.args }; }).filter(Boolean);
+          if (!st.parts.length && optMiss.length && !miss.length) { st.waiting = m.title + ' needs ' + [...new Set(optMiss)].join(', '); return this._appDraw(key); }
           if (!st.parts.length) { st.error = 'the app ' + id + ' has no read'; return this._appDraw(key); }
           if (miss.length) { st.waiting = m.title + ' needs ' + [...new Set(miss)].join(', '); return this._appDraw(key); }
           const evs = m.read.map((r) => +((r && r.refresh) || {}).every_s).filter((n) => n > 0);
           st.every = evs.length ? Math.max(10, Math.min(...evs)) : 0; return this._appRead(key); }
-        st.cap = String(rd.cap || ''); st.args = {}; Object.keys(rd.args || {}).forEach((k) => { st.args[k] = fill(rd.args[k]); });
+        st.cap = String(rd.cap || ''); st.args = fillArgs(rd.args).args;   /* an optional argument not given is left out, not sent as '' */
         if (!st.cap) { st.error = 'the app ' + id + ' has no read'; return this._appDraw(key); }
         if (miss.length) { st.waiting = m.title + ' needs ' + miss.join(', '); st.result = undefined; return this._appDraw(key); }
         st.every = Math.max(10, +((rd.refresh || {}).every_s) || 0) || 0;
@@ -6247,8 +6342,11 @@
       if (eff === 'create') ui.before = new Set((st.rows || []).map((x) => appRowKey(st, x)));
       if (eff === 'remove' && rk) (ui.gone || (ui.gone = {}))[rk] = true;
       ui.undo = null; st.acting = true; ui.form = null; ui.confirm = null; ui.msg = { ok: true, text: a.label + '…' }; this._appDraw(key);
-      let res = null; try { res = await this.callResult(a.cap, appActArgs(a, row, appArgs, vals)); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
-      st.acting = false; ui.msg = { ok: !(res && (res.ok === false || res.error)), text: appActText(a, res) };
+      /* a long action says how it goes in the bar - its latest step (DA-04c (e)) */
+      const tr = await this._traceSteps((m) => { if (!st.acting) return; const s = [m.stage, m.total ? (m.done || 0) + ' of ' + m.total : '', m.found != null ? m.found + ' found' : ''].filter(Boolean).join(' · ');
+        ui.msg = { ok: true, text: a.label + '… ' + s }; this._appDraw(key); });
+      let res = null; try { res = await this.callResult(a.cap, appActArgs(a, row, appArgs, vals), { trace: tr.tid }); } catch (e) { res = { ok: false, error: String((e && e.message) || e) }; }
+      tr.close(); st.acting = false; ui.msg = { ok: !(res && (res.ok === false || res.error)), text: appActText(a, res) };
       if (!ui.msg.ok) { if (rk && ui.gone) delete ui.gone[rk]; ui.before = null; return this._appDraw(key); }
       if (res && res.changed && typeof res.changed === 'object' && row) { Object.assign(row, res.changed); (ui.hl || (ui.hl = {}))[rk] = Date.now(); }
       if (eff === 'remove' && row && a.undo) ui.undo = { a, row: Object.assign({}, row), until: Date.now() + 10000 };
@@ -6645,12 +6743,14 @@
             this.call('canvas.update', Object.assign(this._ref(key), { content: nc })); }
           ui.open = false; }
         else ui.open = false;
-        if (!ui.open) Object.assign(ui, { draft: '', good: '', err: '' });
+        if (!ui.open) Object.assign(ui, { draft: '', good: '', err: '', had: false, ss: null, se: null });
+        else if (act === 'dgedit') Object.assign(ui, { had: true, ss: null, se: null });   /* just opened: the caret at the end */
         clearTimeout((this._dgT || {})[key]); this._html = null; if (this._doc) this.render(this._doc);
+        if (ui.open) dgFocus(this, key, act === 'dgedit');
         /* the card grows for the editor on the desk (as a code card's edit does) and lets the height go when it ends */
         setTimeout(() => { const it2 = [...this.shadowRoot.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key); if (!it2) return;
           if (!ui.open) { try { this._editFit(it2, true); } catch (e) { /* optional */ } return; }
-          const ta = it2.querySelector('[data-dg-src]'); if (ta) { ta.focus(); try { ta.setSelectionRange(ta.value.length, ta.value.length); } catch (e) { /* optional */ } }
+          dgFocus(this, key, false);
           if (!this.deskAlign()) return; const bd = it2.querySelector(':scope > .it-bd'); if (!bd) return;
           const E = this._editGrow || (this._editGrow = {}); const H = (this._deskGeo && this._deskGeo.H) || 800;
           const need = Math.round(it2.offsetHeight - bd.clientHeight + Math.max(bd.scrollHeight, 300) + 8);
@@ -6797,7 +6897,11 @@
          again; its width and height stay (kept in the entry, so a reload keeps them too) */
       if (act === 'desk-auto') { const u = this._deskPosGet()[key]; this._deskPosSet(key, u && u.w > 0 && u.h > 0 ? { w: u.w, h: u.h, face: u.face, free: true } : null); this._holdEnd(); return this._placeNow(); }
       if (act === 'layer-behind' || act === 'layer-front') return this.setLayer(key, this._layer[key] === act.slice(6) ? '' : act.slice(6));
-      if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026'; return this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }); }
+      if (act === 'rerun') { const b = this._blockOf(key); const c = (b && b.content) || {}; if (!c.cap) return; btn.textContent = 'running\u2026';
+        /* its steps on this item while it runs, as a chat call's run item (DA-04c (e)); the answer replaces them */
+        const run = { state: 'running', started: Date.now() };
+        return this._traceSteps((m) => { ['stage', 'done', 'total', 'found', 'text'].forEach((k) => { if (m[k] != null && m[k] !== '') run[k] = m[k]; }); this.liveUpdate(key, { running: true, run: Object.assign({}, run) }); })
+          .then((tr) => this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }, { trace: tr.tid }).finally(() => { tr.close(); if (run.stage) { this.liveUpdate(key, { running: false }); this.liveDone(key); } })); }
       // the banner's shelves (parked · hidden): the button opens its own popover. 'park' on an ITEM parks that item;
       // these are the shelves those items went to, so they carry their own act rather than sharing one.
       if (act === 'hid' || act === 'parkpop' || act === 'rmvpop') { const pop = btn.parentElement && btn.parentElement.querySelector('.hidpop'); if (pop) pop.hidden = !pop.hidden; return; }
@@ -6945,6 +7049,8 @@
           // `bare`: the widget draws its figure and nothing else. Its own frame inside a canvas item was a box in a
           // box — and it lives in a second shadow root, so no rule of ours could reach it (owner, 2026-09-24).
           else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); inner.setAttribute('item-drawer', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = '';
+            /* the estate graph in a widget (vgraph) styles itself in the page's head; here it is in this shadow tree */
+            if (rc && /vgraph/.test(String((rc.record || rc).form || ''))) this._adoptGraphCss();
             // a chip-faced widget is as wide as its face: the card takes that width and the rest of the row is free
             inner.addEventListener('widget:rendered', () => this._widgetFit(key, inner)); }
           else if (kind === 'mchart') { inner = document.createElement('vera-mkt-chart'); h.textContent = '';   /* the Markets chart (WSU-75) */
@@ -7340,9 +7446,17 @@
       });
     }
     /* the bridge, asked for its answer (panel.query · panel.dispatch · ui.panels.open): the same /mcp/call, the reply back */
-    async callResult(name, args) {
+    /* A DESK CALL'S STEPS (DA-04c (e)): a call made from the desk carries a trace of its own; the `<cap>.step` events on it
+       (the page's live channel, VeraLive) go to onStep. close() lets go a moment after the answer (a step may trail it). */
+    async _traceSteps(onStep) {
+      const tid = 't-desk-' + Date.now().toString(36) + '-' + (this._tn = (this._tn || 0) + 1); let sub = null; const L = root.VeraLive;
+      try { if (L && typeof L.subscribe === 'function') { sub = L.subscribe({ trace: [tid] }, (m) => { const t = String((m && (m.event || m.type)) || ''); if (/\.step$/.test(t)) { try { onStep(m); } catch (e) { /* a step it cannot show */ } } });
+        if (typeof L.ready === 'function') await L.ready(400); } } catch (e) { sub = null; }
+      return { tid, close: () => { if (sub) setTimeout(() => { try { sub.close(); } catch (e) { /* gone */ } }, 1500); } };
+    }
+    async callResult(name, args, opts) {
       const base = (window._veraBase || '').replace(/\/$/, '');
-      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) }); const j = await r.json(); return unwrap(j); }
+      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name, arguments: args || {} }, opts && opts.trace ? { trace_id: opts.trace } : {})) }); const j = await r.json(); return unwrap(j); }
       catch (e) { return { ok: false, error: String(e && e.message || e) }; }
     }
     /* the bridge asked from an item: the readout on the item, the reply to the host */
@@ -7612,6 +7726,35 @@
       const next = Object.assign({}, c, { selected: c.selected === day ? '' : day });
       return this.call('canvas.update', { key, content: next });
     }
+    /* A DAY PRESSED: DRAWN AT ONCE, WRITTEN A BEAT LATER. A double-click on a day opens the add form, but the browser
+       first fires its two clicks - and each wrote the selection (select, then unselect: two needless canvas.update and a
+       flicker). Now the press is drawn at once (the item's content here, as _calReread does) and its write is held for
+       about a double-click's interval; a double-click in that time drops the held write and puts the selection back as it
+       was before the first press (_calDayDrop). Presses inside one hold that end where they began write nothing. */
+    _calDayPress(key, day) {
+      const b = this._blockOf(key); const c = (b && b.content) || null; if (!c) return;
+      day = String(day || '');
+      const P = this._calDayP || (this._calDayP = {});
+      const p = P[key] || (P[key] = { was: String(c.selected || ''), sel: '', t: 0 });
+      clearTimeout(p.t);
+      p.sel = c.selected === day ? '' : day;
+      b.content = Object.assign({}, c, { selected: p.sel });
+      if (this._doc) this.render(this._doc);
+      p.t = setTimeout(() => {
+        if (P[key] !== p) return; delete P[key];
+        if (p.sel === p.was) return;   // pressed and pressed back: nothing changed
+        const b2 = this._blockOf(key); const c2 = (b2 && b2.content) || null; if (!c2) return;
+        // built on the item as it is now (a refresh may have come in) with the day pressed
+        const next = Object.assign({}, c2, { selected: p.sel }); b2.content = next;
+        this.call('canvas.update', { key, content: next });
+      }, CAL_DBL_MS);
+    }
+    /* a double-click: the held write is dropped and the selection is put back (the add form's own draw shows it) */
+    _calDayDrop(key) {
+      const P = this._calDayP || {}; const p = P[key]; if (!p) return;
+      clearTimeout(p.t); delete P[key];
+      const b = this._blockOf(key); if (b && b.content && String(b.content.selected || '') !== p.was) b.content = Object.assign({}, b.content, { selected: p.was });
+    }
     /* DU-E-calendar. The month read again after a write, through _calAct's own read: the answer is drawn at once (the
        item's content here, so the moved / added event is in place before the canvas's refresh) and written into the item */
     _calReread(key, sel, after) {
@@ -7701,7 +7844,9 @@
       return this.call('canvas.update', { key, content: next });
     }
     _sid() { return String((this._doc && this._doc.session) || this.getAttribute('session-id') || ''); }
-    _contentOf(key) { const b = this._blockOf(key); if (!b) return null; if (b.type === 'result') { const v = resultView(b.content || {}); return Object.assign({}, (v && v.content) || {}); } return Object.assign({}, b.content || {}); }   // a result's live slot is the element it is drawn as
+    /* a body drawn inside another item (an app's answer, a composite's part) has no item of its own: its content is the one
+       the app drew under that sub-key - so a live widget there is fed the answer, not its sample face (DA-04c (d)) */
+    _contentOf(key) { const b = this._blockOf(key); if (!b) { const n = this._nested && this._nested[key]; return n ? Object.assign({}, n) : null; } if (b.type === 'result') { const v = resultView(b.content || {}); return Object.assign({}, (v && v.content) || {}); } return Object.assign({}, b.content || {}); }   // a result's live slot is the element it is drawn as
     _readout(key, obj) { this._pq = this._pq || {}; let text = ''; try { text = typeof obj === 'string' ? obj : JSON.stringify(obj, null, 1); } catch (e) { text = String(obj); } this._pq[key] = { text: String(text).slice(0, 4000) }; if (this._doc) this.render(this._doc); }
     /* the add bar's seed: the kind's own content as an item, yours, beside the turn in view */
     _addSeed(k) {
@@ -8012,18 +8157,18 @@
     _switch(id) { id = String(id || ''); if (!id) return; this._open = new Set(); this._px = {}; this._pw = {}; this._editKey = null; this.setAttribute('canvas-id', id); this._railMark(); try { this.dispatchEvent(new CustomEvent('vera:canvas:switch', { bubbles: true, detail: { id } })); } catch (e) {} }
     /* Every per-item action is the capability the chat and the model use — one implementation — through the
        same /mcp/call the chat uses; the element only asks for a repaint afterwards. */
-    async call(name, args) {
+    async call(name, args, opts) {
       const base = (window._veraBase || '').replace(/\/$/, '');
       try {
         await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, arguments: Object.assign({ id: this.canvasId }, args || {}) }) });
+          body: JSON.stringify(Object.assign({ name, arguments: Object.assign({ id: this.canvasId }, args || {}) }, opts && opts.trace ? { trace_id: opts.trace } : {})) });
       } catch (e) { /* the poll shows whatever state the backend has */ }
       this._rev = null;
       this.refresh();
     }
   }
 
-  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, version: 6 };
+  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

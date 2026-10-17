@@ -34,12 +34,15 @@ function adapt(W) {
 }
 const Q = { quotes: [{ symbol: 'BTC', last: 61000, pct: 1.2 }, { symbol: 'ETH', last: 2400, pct: -0.4 }] };
 
-// 1. no declaration: what the adapters made before, byte for byte
+// 1. no declaration: present()'s own fallback reads the generic shapes (D10 step 2b, owner 2026-10-17) - rows are a table
+//    and a flat record its fields, built by present(); everything the other adapters make is made as before
 const before = adapt(widgets(false)), Wp = widgets(true), after = adapt(Wp);
-const SAMPLES = [['demo.rows', Q], ['exec.bash.run', { command: 'uptime', stdout: 'up 3 days', rc: 0 }], ['demo.prose', { report: '# Report\n\n' + 'word '.repeat(80) }],
-  ['demo.kv', { host: 'ct126', cores: 16 }], ['code.read', { code: 'print(1)', path: 'a.py' }], ['demo.none', '']];
+const SAMPLES = [['exec.bash.run', { command: 'uptime', stdout: 'up 3 days', rc: 0 }], ['demo.prose', { report: '# Report\n\n' + 'word '.repeat(80) }],
+  ['code.read', { code: 'print(1)', path: 'a.py' }], ['demo.none', '']];
 const same = SAMPLES.filter(([c, r]) => JSON.stringify(before(c, r, {})) !== JSON.stringify(after(c, r, {})));
-t('an undeclared answer lands exactly as before', !same.length, same.map((x) => x[0]).join(','));
+t('an undeclared terminal / document / code / empty answer lands exactly as before', !same.length, same.map((x) => x[0]).join(','));
+{ const r = after('demo.rows', Q, {}); t('undeclared rows: a table, through present()', !!r && r.kind === 'table' && r.content.columns.join(',') === 'symbol,last,pct' && r.content.rows.length === 2, JSON.stringify(r));
+  const k = after('demo.kv', { host: 'ct126', cores: 16 }, {}); t('an undeclared flat record: its fields, through present()', !!k && k.kind === 'kv' && k.content.fields.host === 'ct126' && k.content.fields.cores === 16, JSON.stringify(k)); }
 
 // 2. declared: present() decides, and the item is its element's
 const declare = (cap, p) => Wp.presentations([{ name: cap, presentation: Object.assign({ status: 'declared' }, p) }]);

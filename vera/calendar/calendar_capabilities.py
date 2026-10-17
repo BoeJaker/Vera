@@ -260,6 +260,40 @@ async def _store_event(ev: Dict[str, Any]) -> Dict[str, Any]:
     return ev
 
 
+async def _get_event(eid: str) -> Optional[Dict[str, Any]]:
+    """The stored event with this id, or None (unknown id / no Redis)."""
+    r = _redis()
+    if not r or not eid:
+        return None
+    raw = await r.hget(KEY_EVENTS, eid)
+    if not raw:
+        return None
+    try:
+        ev = json.loads(raw)
+    except Exception:
+        return None
+    return ev if isinstance(ev, dict) else None
+
+
+def _merge_event_update(existing: Dict[str, Any], sent: Dict[str, Any],
+                        color: str = "", tags: Optional[List[str]] = None
+                        ) -> Dict[str, Any]:
+    """Apply an upsert onto a stored event. The cap's declared fields in
+    ``sent`` overwrite as before; ``source``, ``id`` and every other stored
+    field are kept. Empty ``color`` keeps the stored colour (it used to mean
+    "the default colour"), and ``tags=None`` (not sent) keeps the stored tags."""
+    ev = dict(existing)
+    ev.update(sent)
+    if color:
+        ev["color"] = color
+    elif not ev.get("color"):
+        ev["color"] = SOURCE_COLORS.get(ev.get("source", "local"),
+                                        SOURCE_COLORS["local"])
+    if tags is not None:
+        ev["tags"] = tags
+    return ev
+
+
 async def _delete_event(eid: str) -> bool:
     r = _redis()
     if not r:
@@ -490,14 +524,25 @@ async def cap_event_upsert(
         return {"error": "title is required"}
     if not start:
         return {"error": "start is required"}
-    ev = {
-        "id": id or str(uuid.uuid4()),
+    sent = {
         "title": title, "start": start, "end": end,
         "all_day": bool(all_day), "location": location,
-        "description": description, "source": "local",
-        "color": color or SOURCE_COLORS["local"],
-        "tags": tags or [],
+        "description": description,
     }
+    existing = await _get_event(id) if id else None
+    if existing is not None:
+        # Edit of a stored event: keep its source and every field this call
+        # does not carry (uid, calendar, attendees, recurrence, created, ...).
+        # Synced sources are pull-only - there is no write-back - so the edit
+        # stays local to the diary under the event's own source label.
+        ev = _merge_event_update(existing, sent, color=color, tags=tags)
+    else:
+        ev = dict(sent)
+        ev.update({
+            "id": id or str(uuid.uuid4()), "source": "local",
+            "color": color or SOURCE_COLORS["local"],
+            "tags": tags or [],
+        })
     ev = await _store_event(ev)
     await emit_event({"type": "cal.event", "stage": "upsert",
                       "message": f"saved event {title!r}", "id": ev["id"]})

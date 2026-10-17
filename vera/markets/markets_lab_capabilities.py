@@ -2672,6 +2672,8 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         description="List strategy signal alerts (newest first). Input: limit (int=50), "
                     "unseen_only (bool=False). Output: {alerts:[{id,strategy_id,name,"
                     "dataset_id,direction,price,message,seen,created_at}], unseen}.",
+        contract={"presentation": {"kind": "log", "map": {
+            "events": "alerts", "t": "created_at", "text": "message", "kind": "direction"}}},
     )
     async def cap_alerts_list(limit: int = 50, unseen_only: bool = False, trace_id=None) -> dict:
         await _ensure_tables()

@@ -2138,6 +2138,8 @@
       15 numbers    {name: number, ...}                                           → numbers (≤ 6) · ranked
       16 prose      report · markdown · summary · a long text                     → markdown
       17 record     a flat object of up to 24 plain fields                        → kv
+     17b keyed      {<id>: {record}, ...} - 2+ records of one kind keyed by id    → table (the key the first column:
+                    (or one such object under one key beside plain fields)          id, or key when the records have an id)
       18 json       anything else with structure                                  → json
       19 string     a short text                                                  → string
      The python catalogue mirrors it (widget_cap_output.py, widget.from_result) so an agent can ask for the same answer. */
@@ -2156,6 +2158,15 @@
   const firstKey = (r, ks) => ks.find((k) => r[k] != null && r[k] !== '');
   const numKeys = (r) => Object.keys(r).filter((k) => typeof r[k] === 'number' && !/^(id|pid|port|vmid|index|idx|i|n_?id)$/i.test(k) && !TIMEK.includes(k));
   const isDiffText = (s) => typeof s === 'string' && /^(diff --git |--- |\+\+\+ |@@ )/m.test(s) && /^[+-]/m.test(s);
+  /* an object keyed by id whose values are records of one kind → its rows, the key as the first column (id, or key when the
+     records carry an id): at least 2 keys, every value a plain object, each holding ≥ 60% of the fields any of them has.
+     An envelope - exactly one such object under one key, every other value plain - is read through that key. */
+  const keyedOf = (o) => { if (!isObj(o)) return null; const ks = Object.keys(o); if (ks.length < 2 || !ks.every((k) => isObj(o[k]))) return null;
+    const all = new Set(); ks.forEach((k) => Object.keys(o[k]).forEach((f) => all.add(f))); if (!all.size || !ks.every((k) => Object.keys(o[k]).length >= 0.6 * all.size)) return null;
+    const col = !all.has('id') ? 'id' : !all.has('key') ? 'key' : null; if (!col) return null;
+    return { col, rows: ks.map((k) => Object.assign({ [col]: k }, o[k])) }; };
+  const keyedRows = (c) => { const direct = keyedOf(c); if (direct) return Object.assign({ path: '$' }, direct); if (!isObj(c)) return null;
+    const deep = Object.keys(c).filter((k) => !isScalar(c[k])); if (deep.length !== 1) return null; const inner = keyedOf(c[deep[0]]); return inner ? Object.assign({ path: deep[0] }, inner) : null; };
   const isMediaUrl = (s) => typeof s === 'string' && /^(data:image\/|data:video\/|https?:.*\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|mp3|wav|ogg)(\?|$))/i.test(s);
   function fromCapResult(capName, result, opts) {
     opts = opts || {}; let c = result;
@@ -2210,6 +2221,10 @@
       const pk = ['report', 'markdown', 'md', 'summary', 'text', 'answer', 'content'].find((k) => typeof c[k] === 'string' && c[k].trim()); if (pk && (c[pk].length >= 200 || /^#|\n[-*] |\n\n/.test(c[pk]))) { mk('markdown', c[pk], 'prose: ' + pk); if (ks.length > 1) mk('kv', c, 'the rest of the answer', { map: { keys: ks.filter((k) => k !== pk && isScalar(c[k])).slice(0, 12) }, title: title + ' · fields' }); return done(); }
       // 17 record
       if (ks.length >= 1 && ks.length <= 24 && ks.every((k) => isScalar(c[k]))) { mk('kv', c, 'a record: plain fields'); return done(); }
+      // 17b keyed: records of one kind keyed by their id (ollama.instances {gpu-250: {url, status, ...}, ...}), or one such
+      // object under one key beside plain fields ({ok, instances: {...}}) - read as rows, the key the first column. Last
+      // before json, so nothing an earlier rule reads changes.
+      if (!rw) { const kr = keyedRows(c); if (kr) { mk('table', kr.rows, 'records keyed by their ' + kr.col, { map: { rows: kr.path } }); return done(); } }
       // 18 json
       mk('json', c, 'structure: a tree to open'); if (rw && rw.length) mk('table', c, 'its rows', { map: { rows: rk }, title: title + ' · ' + rk }); return done(); }
     if (Array.isArray(c) && c.length) { mk('json', c, 'a list of mixed things'); return done(); }
@@ -2343,8 +2358,10 @@
      has registered). The graph lives in the element's light DOM (a slot), so the page's graph styles reach it, and it
      is kept across refreshes (a new answer is loaded into it only when its nodes or edges changed). Without the element
      (VeraWidget.draw alone) the slot shows the flat node graph as its fallback. */
-  const toVeraGraph = (d) => { const src = d && typeof d === 'object' ? d : {}; const N = Array.isArray(src) ? src : (src.nodes || src.vertices || []);
-    const E = src.edges || src.links || src.rels || src.relationships || [];
+  /* a cytoscape-shaped element ({data:{id, label, ...}} / {data:{source, target}} - netscan.graph's answer) is read as its data */
+  const cyUnwrap = (x) => (x && typeof x === 'object' && x.data && typeof x.data === 'object' && !Array.isArray(x.data) && (x.data.id != null || x.data.source != null) ? Object.assign({}, x.data) : x);
+  const toVeraGraph = (d) => { const src = d && typeof d === 'object' ? d : {}; const N = (Array.isArray(src) ? src : (src.nodes || src.vertices || [])).map(cyUnwrap);
+    const E = (src.edges || src.links || src.rels || src.relationships || []).map(cyUnwrap);
     // a node's words: a Neo4j-shaped node (labels[]) keeps its TYPE in label and its words in name/text; a topology node's
     // label is its words and kind its type
     const nodes = (Array.isArray(N) ? N : []).filter((n) => n && typeof n === 'object').map((n) => { const id = String(n.id ?? n.name ?? n.key ?? ''); const typed = Array.isArray(n.labels);

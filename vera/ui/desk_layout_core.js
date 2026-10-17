@@ -625,9 +625,36 @@
     return best;
   }
 
+  /* PRE-TURN ITEMS LEAVE FOCUS FIRST (LV-9 / WSU-87, owner 2026-10-17: "some elements are added before the llm returns anything
+     - they seem to be a bit more sticky ... they should probably move out of focus the fastest"). A pre-turn item is one the
+     chat put on the canvas AROUND the reply, not one the reply made: what turn.prepare placed before the answer (anchor from
+     'prepare', keys enrich:... or pre:panel:...) and what the enrichment pass brings after it (from 'enrich', keys enrich:...).
+       preTurn(key, from)              is it one
+       topicOrder(keys, score, isPre)  the topic's keys best first - every reply item before every pre-turn item, so a topic
+                                       with more items than the room beside the chat drops the pre-turn ones first
+       preTurnOut(items, keys, mid)    the pre-turn items the topic has moved past: [key]. items: [{key, from, anchors:[mid],
+                                       pinned, locked, kept}]. In the topic, or made for the turn in focus (one of its anchors
+                                       is mid), it stays; pinned, locked (the person said "do not move") or kept (opened again
+                                       by the person under this topic) it stays; any other goes - its place by hand
+                                       (place.by 'person') included: that place is where it sits WHEN it is in focus, and is
+                                       kept for then, but it does not hold the item in focus. */
+  function preTurn(key, from) { key = String(key || ''); from = String(from || '');
+    return key.indexOf('enrich:') === 0 || key.indexOf('pre:') === 0 || from === 'enrich' || from === 'prepare'; }
+  function topicOrder(keys, score, isPre) {
+    var sc = typeof score === 'function' ? score : function () { return 0; }, pre = typeof isPre === 'function' ? isPre : function (k) { return preTurn(k); };
+    return (keys || []).map(function (k, i) { k = String(k); return { k: k, i: i, p: pre(k) ? 1 : 0, s: +sc(k) || 0 }; })
+      .sort(function (a, b) { return (a.p - b.p) || (b.s - a.s) || (a.i - b.i); }).map(function (x) { return x.k; });
+  }
+  function preTurnOut(items, keys, mid) {
+    var inT = {}; (keys || []).forEach(function (k) { inT[String(k)] = 1; }); mid = String(mid || '');
+    return (items || []).filter(function (x) { if (!x || !x.key || !preTurn(x.key, x.from)) return false;
+      if (inT[String(x.key)] || x.pinned || x.locked || x.kept) return false;
+      return !(mid && (x.anchors || []).map(String).indexOf(mid) >= 0); }).map(function (x) { return String(x.key); });
+  }
+
   var api = { DESK: DESK, grow: grow, MODES: MODES, modeOf: modeOf, freeRegion: freeRegion, layoutMode: layoutMode, bestSlot: bestSlot, settle: settle, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
               arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom,
-              latticeOf: latticeOf };
+              latticeOf: latticeOf, preTurn: preTurn, topicOrder: topicOrder, preTurnOut: preTurnOut };
   root.VeraDesk = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -387,7 +387,9 @@ async def evolve_estate_writers(limit: int = 400, trace_id=None):
             description="Verbose activity/change log — every promote, rollback, "
                         "code-queue, branch op, pipeline decision, sandbox op and "
                         "config change, newest first. Query: limit (int=100), "
-                        "action (str filter).")
+                        "action (str filter).",
+            contract={"presentation": {"kind": "log", "map": {
+                "events": "audit", "t": "ts", "text": "summary", "kind": "action"}}})
 async def evolve_audit_list(limit: int = 100, action: str = "", trace_id=None):
     r = _redis()
     out: List[Dict[str, Any]] = []
@@ -6911,7 +6913,8 @@ async def _autonomous_state() -> Dict[str, Any]:
             description="Closed-loop autonomous-mode state. While ENGAGED, every promote/merge to "
                         "the real mainline (main/master) is UNCONDITIONALLY refused (no sentinel, "
                         "no force) — the hard prod lockout for autonomous operation. Output: "
-                        "{ok, engaged, mode, reason, since, by}.")
+                        "{ok, engaged, mode, reason, since, by}.",
+            contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}})
 async def autonomous_status(trace_id=None):
     from Vera.vera.evolve.autonomous_lock_core import is_engaged
     st = await _autonomous_state()

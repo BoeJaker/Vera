@@ -9,7 +9,7 @@ let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL '
 t('the chat page loads /ui/live.js after the widget surface', C.indexOf('<script src="/ui/live.js"></script>') > C.indexOf('<script src="/ui/widgets/widget_element.js"></script>') && C.indexOf('<script src="/ui/widgets/widget_element.js"></script>') > 0);
 t('a call carries the page\'s own trace id', C.includes("const _tid='t-'+String(SID||'page')+'-'+Date.now().toString(36)+'-'+(++_capTraceN);") && C.includes("body:JSON.stringify({name:capName,arguments:coercedArgs,session_id:SID||'',trace_id:_tid})});"));
 t('a lookup subscribes to that trace and waits for the socket before the call goes out', C.includes("_lookSub=VeraLive.subscribe({ trace:[_tid] }, (m)=>{ if((m.event||m.type)==='info.seek.step') _cvLookStep(_look, m); }); await VeraLive.ready(1500);"));
-t('its subscription closes after the answer (a stage may trail it)', C.includes("if(_lookSub) setTimeout(()=>{ try{ _lookSub.close(); }catch(_){} }, 1500);"));
+t('its subscription closes after the answer (a stage may trail it)', C.includes("if(_lookSub&&_runEnd!=='pending') setTimeout(()=>{ try{ _lookSub.close(); }catch(_){} }, 1500);"));   // a job's run keeps it till its last step (DA-04c)
 t('with VeraLive the question-matching socket is not opened', C.includes("_cvLookDraw(h, true); if(!window.VeraLive) _cvLookListen(); return h;"));
 t('the question-matching path leaves a traced lookup alone', C.includes("x.state==='running'&&!x.tid&&x.q&&"));
 t('one step function for both paths', (C.match(/_cvLookStep\(/g) || []).length >= 3 && C.includes('function _cvLookStep(h, m){'));

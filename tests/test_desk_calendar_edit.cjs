@@ -102,5 +102,37 @@ t('the press on an event stops there (never a card drag)', /const h = t\.closest
 t('the release is not a day press', C.includes('this._dgEnd = Date.now();   /* the click this release makes is not a day press */'));
 t('Enter saves, Esc cancels', C.includes("if (ev.key === 'Escape') this._calAddClose(k); else this._calAddSave(k);"));
 t('the actions', C.includes("if (act === 'caladd' || act === 'calsave' || act === 'calcancel')"));
-console.log(fails ? fails + ' FAILED' : 'all passed');
-process.exit(fails ? 1 : 0);
+
+// ── a day press: drawn at once, its write held a beat; a double-click drops it (no select/unselect writes) ─────────
+t('a day press goes through the held write', C.includes('this._calDayPress(cd.dataset.calKey, cd.dataset.calDay); return; }') && !C.includes('this._calAct(cd.dataset.calKey, cd.dataset.calDay)'));
+t('a double-click drops the held write before the form opens', C.includes('this._calDayDrop(d.dataset.calKey); this._calAddOpen(d.dataset.calKey, d.dataset.calDay); });'));
+t('held about a double-click interval', /const CAL_DBL_MS = (2[5-9]\d|300);/.test(C));
+(async () => {
+  const a = C.indexOf('    _calDayPress(key, day) {'), z = C.indexOf('    /* DU-E-calendar. The month read again');
+  t('the press helpers are found', a > 0 && z > a);
+  const Cls = new Function('CAL_DBL_MS', 'return class { ' + C.slice(a, z) + ' }')(40);
+  const mk = (sel) => { const o = new Cls(); o.block = { key: KEY, content: { month: '2026-09', selected: sel, events: [] } }; o.writes = []; o.draws = 0;
+    o._doc = {}; o._blockOf = () => o.block; o.render = () => { o.draws++; }; o.call = (cap, args) => { o.writes.push([cap, args]); }; return o; };
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  { const o = mk(''); o._calDayPress(KEY, '2026-09-16');
+    t('a single press: the day is drawn selected at once', o.block.content.selected === '2026-09-16' && o.draws === 1);
+    t('and nothing is written yet', o.writes.length === 0);
+    await wait(80);
+    t('a beat later: exactly one canvas.update, with the day', o.writes.length === 1 && o.writes[0][0] === 'canvas.update' && o.writes[0][1].key === KEY && o.writes[0][1].content.selected === '2026-09-16', JSON.stringify(o.writes)); }
+  { const o = mk('2026-09-03'); o._calDayPress(KEY, '2026-09-16'); o._calDayPress(KEY, '2026-09-16'); o._calDayDrop(KEY);
+    t('a double-click: the selection is as it was before', o.block.content.selected === '2026-09-03');
+    await wait(80);
+    t('and nothing is written', o.writes.length === 0, JSON.stringify(o.writes)); }
+  { const o = mk(''); o._calDayPress(KEY, '2026-09-16'); o._calDayPress(KEY, '2026-09-16');
+    await wait(80);
+    t('pressed and pressed back inside one hold: nothing written', o.writes.length === 0 && o.block.content.selected === ''); }
+  { const o = mk(''); o._calDayPress(KEY, '2026-09-16'); o._calDayPress(KEY, '2026-09-17');
+    await wait(80);
+    t('two days pressed quickly: one write, the last day', o.writes.length === 1 && o.writes[0][1].content.selected === '2026-09-17'); }
+  { const o = mk(''); o._calDayPress(KEY, '2026-09-16'); o.block = { key: KEY, content: { month: '2026-09', selected: '', events: [{ id: 'n' }] } };
+    await wait(80);
+    t('a refresh in the hold: the write is the new content with the day', o.writes.length === 1 && o.writes[0][1].content.selected === '2026-09-16' && o.writes[0][1].content.events.length === 1); }
+  { const o = mk(''); o._calDayDrop(KEY); t('a drop with nothing held: no change, no write', o.writes.length === 0 && o.block.content.selected === ''); }
+  console.log(fails ? fails + ' FAILED' : 'all passed');
+  process.exit(fails ? 1 : 0);
+})();

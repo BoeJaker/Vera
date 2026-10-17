@@ -207,6 +207,7 @@ async def _states() -> List[Dict[str, Any]]:
     http_tags=["homeassistant"], memory="off",
     description="Check the Home Assistant connection. "
                 "Output: {ok, message, base_url, entities}.",
+    contract={"presentation": {"kind": "status", "form": "status"}},
 )
 async def cap_health(trace_id=None):
     cfg = await _load_config()

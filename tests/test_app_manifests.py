@@ -96,6 +96,29 @@ def test_needs_args_from_arg_templates():
     assert A.needs_args(GOOD) == []
 
 
+def test_optional_arg_templates_are_not_needed():
+    # {arg.x?}: optional - not listed by needs_args, listed by optional_args, accepted by the validator
+    single = {"id": "x.y", "panel": "markets", "title": "T", "view": {"kind": "table"},
+              "read": {"cap": "tg.history", "args": {"chat_id": "{arg.chat_id?}", "q": "{arg.q}", "limit": 20}}}
+    assert A.needs_args(single) == ["q"] and A.optional_args(single) == ["chat_id"]
+    assert not A.check_manifest(single, "t.json", caps={"tg.history"})
+    comp = {"id": "x.z", "panel": "markets", "title": "T", "view": {"kind": "composite", "layout": "dashboard"},
+            "read": [{"as": "a", "cap": "cal.events.list", "args": {}}, {"as": "b", "cap": "tg.history", "args": {"chat_id": "{arg.chat_id?}"}}]}
+    assert A.needs_args(comp) == [] and A.optional_args(comp) == ["chat_id"]
+    assert not A.check_manifest(comp, "t.json", caps={"cal.events.list", "tg.history"})
+    both = dict(single, read={"cap": "tg.history", "args": {"a": "{arg.chat_id?}", "b": "{arg.chat_id}"}})
+    assert A.needs_args(both) == ["chat_id"] and A.optional_args(both) == []   # required somewhere wins
+    s = A.summary(comp)
+    assert s["needs_args"] == [] and s["optional_args"] == ["chat_id"] and "optional_args" not in A.summary(GOOD)
+
+
+def test_the_briefing_reads_telegram_only_when_given_a_chat():
+    apps, _ = A.load()
+    b = next(m for m in apps if m["id"] == "calendar.briefing")
+    assert A.needs_args(b) == [] and A.optional_args(b) == ["chat_id"]
+    assert [r["as"] for r in b["read"]] == ["today", "inbox", "telegram"] and b["view"]["layout"] == "dashboard"
+
+
 def test_files_ids_and_panels(tmp_path):
     (tmp_path / "markets.json").write_text(json.dumps([GOOD, dict(GOOD, title="Again")]), encoding="utf-8")
     (tmp_path / "calendar-panel.json").write_text(json.dumps([dict(GOOD, id="calendar.x")]), encoding="utf-8")

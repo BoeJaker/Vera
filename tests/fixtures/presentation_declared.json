@@ -1,4 +1,10 @@
 {
+ "autonomous.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
  "backup.status": {
   "draw": {
    "columns": [
@@ -123,6 +129,15 @@
    "t": "hour"
   }
  },
+ "evolve.audit.list": {
+  "kind": "log",
+  "map": {
+   "events": "audit",
+   "kind": "action",
+   "t": "ts",
+   "text": "summary"
+  }
+ },
  "evolve.pipeline.diff": {
   "form": "diff",
   "kind": "diff"
@@ -168,6 +183,16 @@
   "form": "vgraph",
   "kind": "graph"
  },
+ "ha.health": {
+  "form": "status",
+  "kind": "status"
+ },
+ "ide.git.diff": {
+  "kind": "diff",
+  "map": {
+   "diff": "diff"
+  }
+ },
  "loop.ci.board": {
   "form": "ci-board",
   "kind": "status"
@@ -183,6 +208,15 @@
  "loop.ci.race": {
   "form": "race-green",
   "kind": "status"
+ },
+ "markets.alerts.list": {
+  "kind": "log",
+  "map": {
+   "events": "alerts",
+   "kind": "direction",
+   "t": "created_at",
+   "text": "message"
+  }
  },
  "markets.chart": {
   "form": "candles",
@@ -206,6 +240,35 @@
  "mesh.topology": {
   "form": "vgraph",
   "kind": "graph"
+ },
+ "n8n.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "netscan.graph": {
+  "draw": {
+   "chrome": "min"
+  },
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "netscan.lan.scan": {
+  "draw": {
+   "columns": [
+    "ip",
+    "hostname",
+    "open_ports",
+    "alive_via",
+    "mac"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "alive"
+  }
  },
  "obs.cluster": {
   "kind": "table",
@@ -278,6 +341,18 @@
    "values": "events"
   }
  },
+ "pydanticai.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "smolagents.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
  "syslog.errors": {
   "form": "log",
   "kind": "log",
@@ -286,6 +361,15 @@
    "kind": "cap_group",
    "t": "ts",
    "text": "message"
+  }
+ },
+ "syslog.status": {
+  "kind": "log",
+  "map": {
+   "events": "recent_errors",
+   "kind": "cap",
+   "t": "ts",
+   "text": "msg"
   }
  },
  "sysmon.history": {

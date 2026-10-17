@@ -7434,7 +7434,11 @@ IMPORTANT:
         const bl=((cv._doc&&cv._doc.blocks)||[]).filter(b=>b&&b.key!=null&&b.state!=='hidden');
         const own=b=>(Array.isArray(b.anchors)?b.anchors:[]).some(a=>a&&(a.mid===mid||a.turn===mid));
         const named=b=>{ const t=String((b.content&&(b.content.title||b.content.caption))||b.key||'').toLowerCase(); return names.some(w=>t.indexOf(w)>=0); };
-        const keys=bl.filter(b=>own(b)||named(b)).map(b=>String(b.key));
+        /* LV-9 / WSU-87: an item the chat put round a reply (enrich:, pre:) comes into the first topic only as the turn's own -
+           never by a name in its title (an earlier turn's could ride in on a word) - and ranks after the reply's own
+           (VeraDesk.topicOrder in setTopic: with no scores here, the pre-turn items had led, landing first in the document) */
+        const pre=b=>{ const k=String(b.key), f=String((b.anchor&&b.anchor.from)||''); return k.indexOf('enrich:')===0||k.indexOf('pre:')===0||f==='enrich'||f==='prepare'; };
+        const keys=bl.filter(b=>own(b)||(named(b)&&!pre(b))).map(b=>String(b.key));
         if(keys.length) cv.setTopic(keys, {}, mid); }catch(_){} }
     _cvTopicWant=mid; clearTimeout(_cvTopicT);
     _cvTopicT=setTimeout(async()=>{ _cvTopicT=null; if(_cvTopicWant!==mid) return;
@@ -7496,6 +7500,28 @@ IMPORTANT:
      put their evidence item on the desk the moment they start - the question, "looking up", a progress line - and it
      fills as the lookup goes (info.seek.step events: the stage, what it has checked, the pages it has in hand); the
      answer replaces it in place under the same key. It is not also an activity line. */
+  /* ONE LIVE ITEM (DA-04c, owner 2026-10-17: "one unified implementation, one element ... make sure we are not doubling up
+     elements for the same cap output"). The one core of every item that is a call while it runs - a lookup, a research
+     run, its pages, any call that reports its steps: added once, drawn live between writes (liveUpdate - never written),
+     kept on the server a few seconds apart and once at the end, its writes one at a time and in order.
+       L = _cvLive({ key, kind, size, mid, from, content:(keepLive)=>{...}, onAdded? }) */
+  function _cvLive(o){ return Object.assign({ added:false, chain:Promise.resolve(), t:0, drawn:0 }, o); }
+  function _cvLiveCanvas(){ return document.querySelector('#canvasColumnBody vera-canvas'); }
+  function _cvLiveShow(L){ if(!L||!L.added) return; L.drawn=Date.now(); try{ const cv=_cvLiveCanvas(); if(cv&&typeof cv.liveUpdate==='function') cv.liveUpdate(L.key, L.content(true)); }catch(_){} }
+  function _cvLiveSave(L, final){
+    if(!L||!SID) return Promise.resolve(); clearTimeout(L.t);
+    L.chain=L.chain.then(async()=>{ const content=L.content(false);
+      try{
+        if(!L.added){ const r=await _capCall('canvas.add',{ session_id:SID, kind:L.kind, key:L.key, content, at:'now', size:L.size||'l', anchor:L.mid?Object.assign({ turn:L.mid, mid:L.mid }, L.from?{ from:L.from }:{}):undefined });
+          L.added=!!(r&&r.ok); if(L.added&&r.existing) await _capCall('canvas.update',{ session_id:SID, key:L.key, content });   /* it ran before: this run takes the item */
+          if(L.added){ if(L.onAdded){ try{ L.onAdded(); }catch(_){} } const cv=_cvLiveCanvas(); if(cv){ cv._rev=null; cv.refresh(); } } }
+        else await _capCall('canvas.update',{ session_id:SID, key:L.key, content });
+        if(final&&L.added){ const cv=_cvLiveCanvas(); if(cv){ if(typeof cv.liveDone==='function') cv.liveDone(L.key); cv._rev=null; cv.refresh(); } }
+      }catch(_){} });
+    return L.chain;
+  }
+  function _cvLiveSoon(L, ms){ if(!L) return; clearTimeout(L.t); L.t=setTimeout(()=>_cvLiveSave(L, false), ms); }
+  function _cvLiveRemove(L){ if(!L) return; clearTimeout(L.t); L.chain=L.chain.then(async()=>{ try{ if(L.added){ await _capCall('canvas.remove',{ session_id:SID, key:L.key }); L.added=false; } }catch(_){} }); }
   const _CV_LOOK_RE=/^(info\.seek|web\.research|research\.quick_search|intel\.lookup)$/;
   const _cvLook={}; let _cvLookEs=null, _cvLookN=0;
   function _cvLookQ(args){ const a=args||{}; return String(a.question||a.query||a.q||a.topic||'').replace(/\s+/g,' ').trim(); }
@@ -7503,14 +7529,9 @@ IMPORTANT:
     return { title:'Looked up'+(subj?' · '+subj.slice(0,80):''), kind:'evidence', query:subj||undefined, running:h.state==='running', failed:h.state==='error'||undefined,
       items:h.items.slice(0,12), total:h.items.length,
       evidence:{ need:h.need||'', subject:subj||'', question:h.q, since:'', answerable:true, checked:h.checked.slice(-8), gaps:h.gaps||[], stage:h.stage||'', started:h.t0, ms:h.ms||0, cap:h.cap } }; }
-  function _cvLookDraw(h, save){
-    const content=_cvLookContent(h);
-    try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&h.added&&typeof cv.liveUpdate==='function') cv.liveUpdate(h.key, content); }catch(_){}
-    if(!save) return; clearTimeout(h.t);
-    h.t=setTimeout(()=>{ h.p=(h.p||Promise.resolve()).then(async()=>{ try{
-      if(!h.added){ const r=await _capCall('canvas.add',{ session_id:SID, kind:'records', key:h.key, content:_cvLookContent(h), at:'now', size:'l', anchor:{ turn:h.mid, mid:h.mid, from:'lookup' } }); h.added=!!(r&&r.ok);
-        const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ cv._rev=null; cv.refresh(); } }
-      else await _capCall('canvas.update',{ session_id:SID, key:h.key, content:_cvLookContent(h) }); }catch(_){} }); }, h.added?1200:60);
+  function _cvLookDraw(h, save){   /* on the one live-item core (DA-04c) */
+    const L=h.L||(h.L=_cvLive({ key:h.key, kind:'records', size:'l', mid:h.mid, from:'lookup', content:()=>h.final||_cvLookContent(h) }));
+    _cvLiveShow(L); if(save) _cvLiveSoon(L, L.added?1200:60);
   }
   function _cvLookListen(){
     if(_cvLookEs||!Object.keys(_cvLook).length) return;
@@ -7542,11 +7563,9 @@ IMPORTANT:
     let made=null; try{ made=ok?_cvAdapt(h.cap, content, args):null; }catch(_){ made=null; } if(Array.isArray(made)) made=made[0];
     if(made&&made.content&&made.kind!=='records'){ /* an answer of another kind: the working item goes, the reply's harvest lands it */
       try{ if(h.el) delete h.el.__cvLookKey; }catch(_){}
-      h.p=(h.p||Promise.resolve()).then(async()=>{ try{ clearTimeout(h.t); if(h.added) await _capCall('canvas.remove',{ session_id:SID, key:h.key }); }catch(_){} });
+      _cvLiveRemove(h.L);
     } else if(made&&made.content){ /* the answer, in place of the working item: the same key (a records item, as it was) */
-      const c=Object.assign({}, made.content, { running:false });
-      h.p=(h.p||Promise.resolve()).then(async()=>{ try{ clearTimeout(h.t); await _capCall('canvas.update',{ session_id:SID, key:h.key, content:c });
-        const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv){ if(cv.liveDone) cv.liveDone(h.key); cv._rev=null; cv.refresh(); } }catch(_){} });
+      h.final=Object.assign({}, made.content, { running:false }); if(h.L) _cvLiveSave(h.L, true);
     } else { h.gaps=[ok?'the answer had nothing to show':'the lookup failed: '+String((content&&(content.error||content.detail))||content||'').slice(0,200)]; h.stage=ok?'done':'failed'; _cvLookDraw(h, true); }
     delete _cvLook[h.key]; if(!Object.keys(_cvLook).length&&_cvLookEs){ try{ _cvLookEs.close(); }catch(_){} _cvLookEs=null; }
   }
@@ -7575,7 +7594,54 @@ IMPORTANT:
     return { mid, call };
   }
   function _cvActEnd(h, ok, content){
-    if(!h) return; h.call.status=ok?'ok':'error'; h.call.ms=Date.now()-h.call.started; h.call.peek=_cvActPeek(content); _cvActWrite(h.mid);
+    if(!h||h.dropped) return; h.call.status=ok?'ok':'error'; h.call.ms=Date.now()-h.call.started; h.call.peek=_cvActPeek(content); _cvActWrite(h.mid);
+  }
+  /* a call that has its own run item leaves the activity line (one place for a call - DA-04c) */
+  function _cvActDrop(h){ if(!h||h.dropped) return; h.dropped=true; const a=_cvAct[h.mid]; if(!a) return; const i=a.calls.indexOf(h.call); if(i>=0) a.calls.splice(i,1); _cvActWrite(h.mid); }
+
+  /* A CALL THAT REPORTS ITS STEPS IS ITS OWN ITEM (DA-04c - the run element). Any capability that sends `<cap>.step` events
+     on the call's trace (emit_step on the server: {stage, done, total, found, text}) gets, at its first step, one `result`
+     item keyed by the call (run:<trace>): what it is doing, how far, how long - and when it ends the answer is drawn in that
+     same item (the result element reads it as any answer). The reply's harvest skips the call and it leaves the activity
+     line, so its output is on the desk once. A call that never reports a step keeps its activity line, as before. */
+  const _cvRuns={};
+  function _cvRunStep(el, cap, args, tid, act, m){
+    if(!SID||!_cvEnrichOn()||!tid||!m) return;
+    let g=_cvRuns[tid];
+    if(!g){ if(g===null) return; const mid=_cvActMid(el); if(!mid) return;
+      g=_cvRuns[tid]={ tid, cap:String(cap), args:Object.assign({}, args||{}), t0:Date.now(), run:{ state:'running', started:Date.now() } };
+      g.L=_cvLive({ key:'run:'+tid, kind:'result', size:'m', mid, from:'run', content:()=>_cvRunItem(g) });
+      try{ el.__cvRunKey=g.L.key; }catch(_){} _cvActDrop(act); _cvLiveSave(g.L, false); }
+    if(g.done&&!g.pending) return;
+    ['stage','done','total','found','text'].forEach((k)=>{ if(m[k]!=null&&m[k]!=='') g.run[k]=m[k]; });
+    /* a job the call started (DA-04c (c) - a model pull): its steps go on after the call's answer, until a final stage */
+    if(g.pending){ clearTimeout(g.idle); g.idle=setTimeout(()=>_cvRunFinish(g, false, 'no news from it for 30 minutes'), 30*60*1000);
+      if(_CV_RUN_FINAL.test(String(m.stage||''))){ const keep={}; Object.keys(m).forEach((k)=>{ if(!/^(type|event|trace_id|ts|cap)$/.test(k)) keep[k]=m[k]; });
+        return _cvRunFinish(g, String(m.stage)==='done', m.result!=null?m.result:Object.assign({}, g.receipt&&typeof g.receipt==='object'?g.receipt:{}, keep)); } }
+    _cvLiveShow(g.L); _cvLiveSoon(g.L, 2500);
+  }
+  const _CV_RUN_FINAL=/^(done|error|failed|cancelled|canceled)$/;
+  /* an answer that only says a job has started (its id; the work goes on): the run item waits for the job's last step */
+  function _cvRunIsJob(c){ return !!(c&&typeof c==='object'&&!Array.isArray(c)&&(c.pull_id||c.job_id||c.job)); }
+  function _cvRunFinish(g, ok, content){
+    if(!g||(g.done&&!g.pending)) return true; clearTimeout(g.idle); g.pending=false;
+    g.done=true; g.ok=ok; g.ms=Date.now()-g.t0; g.run.state=ok?'done':'error';
+    if(ok) g.result=content; else g.error=String((content&&typeof content==='object'&&(content.error||content.detail||content.text))||content||'the capability failed').slice(0,400);
+    _cvLiveSave(g.L, true); if(g.onEnd){ try{ g.onEnd(); }catch(_){} } setTimeout(()=>{ delete _cvRuns[g.tid]; }, 3000); return true;
+  }
+  function _cvRunItem(g){
+    const c={ cap:g.cap, args:g.args, run:Object.assign({}, g.run) };
+    if(!g.done||g.pending) c.running=true; else { c.running=false; c.ok=g.ok; c.ms=g.ms; if(g.ok) c.result=g.result; else c.error=g.error; }   /* said, not left out: a live draw merges over the stored item */
+    return c;
+  }
+  /* the call ended: its answer into its run item (true); 'pending' when the answer is a job receipt and the job's steps
+     go on (the item waits for its last step - onEnd lets the caller stop listening then); false when it reported no step */
+  function _cvRunEndCall(tid, ok, content, onEnd){
+    const g=_cvRuns[tid]; if(!g){ _cvRuns[tid]=null; setTimeout(()=>{ delete _cvRuns[tid]; }, 3000); return false; }   /* a step trailing the answer makes no item */
+    g.tid=tid;
+    if(ok&&_cvRunIsJob(content)&&!_CV_RUN_FINAL.test(String(g.run.stage||''))){ g.pending=true; g.done=true; g.receipt=content; g.onEnd=onEnd;
+      clearTimeout(g.idle); g.idle=setTimeout(()=>_cvRunFinish(g, false, 'no news from it for 30 minutes'), 30*60*1000); return 'pending'; }
+    return _cvRunFinish(g, ok, content);
   }
   function _cvEnrichToggle(btn){ const on=!_cvEnrichOn(); try{ localStorage.setItem('vera:canvas:enrich', on?'1':'0'); }catch(_){} _cvEnrichPaint(btn); }
   function _cvEnrichPaint(btn){ const b=btn||document.getElementById('cvEnrichBtn'); if(!b) return; const on=_cvEnrichOn(); b.classList.toggle('on',on); b.style.opacity=on?'':'.55'; b.setAttribute('aria-pressed',on?'true':'false'); }
@@ -7624,7 +7690,7 @@ IMPORTANT:
     if(!SID||!d||!d.url) return;
     if(d.job&&_CV_RR[d.job]) return;   // a run with its own item (_cvRunStart): its pages are in it
     const url=String(d.url); const id=url.split('#')[0]; const mid=_cvRelMid||'';
-    const g=_CV_RS[mid]||(_CV_RS[mid]={ key:'research-sources:'+(mid||'session'), items:[], seen:{}, landed:false, t:0 });
+    const g=_CV_RS[mid]||(_CV_RS[mid]={ key:'research-sources:'+(mid||'session'), items:[], seen:{}, t:0 });
     let domain=String(d.domain||''); if(!domain){ try{ domain=new URL(url).host; }catch(_){ domain=''; } }
     let rec=g.seen[id];
     if(!rec){ rec={ id, url, domain:domain.replace(/^www\./,''), title:String(d.title||'')||domain||url, snippet:'', meta:{} }; g.seen[id]=rec; g.items.push(rec); }
@@ -7641,10 +7707,8 @@ IMPORTANT:
     const cited=items.filter(r=>r.cited).length; const q=_cvTurnSubject(mid);
     const content={ title:'Research sources'+(q?' · '+q:''), kind:'research', query:q, items, total:items.length,
                     why:items.length+' page'+(items.length===1?'':'s')+' read'+(cited?' · '+cited+' cited':'') };
-    try{
-      if(!g.landed){ const r=await _capCall('canvas.add',{ session_id:SID, kind:'records', key:g.key, at:'now', size:'l', content, anchor:mid?{ mid, turn:mid }:undefined }); if(r&&r.ok) g.landed=true; }
-      else await _capCall('canvas.update',{ session_id:SID, key:g.key, content });
-    }catch(_){}
+    g.L=g.L||_cvLive({ key:g.key, kind:'records', size:'l', mid, content:()=>g.content });   /* the one live-item core (DA-04c) */
+    g.content=content; return _cvLiveSave(g.L, false);
   }
   /* THE REPORT, ON THE CANVAS. A finished run's report was drawn in the chat and nowhere else: the canvas got its
      sources and, if it had dates in it, a timeline - never the document the run was for. It lands as a document item
@@ -7674,7 +7738,13 @@ IMPORTANT:
   function _cvRunStart(jobId, rc){
     if(!SID||!jobId||!rc||typeof rc.snapshot!=='function') return;
     const mid=_cvRelMid||'';
-    _CV_RR[jobId]={ key:'research-run:'+jobId, rc, mid, q:_cvTurnSubject(mid), landed:false, ended:false, err:'', drawn:0, t:0, chain:Promise.resolve() };
+    const r=_CV_RR[jobId]={ key:'research-run:'+jobId, rc, mid, q:_cvTurnSubject(mid), ended:false, err:'' };
+    /* on the one live-item core (DA-04c); with the canvas open the run is the canvas's item - see onAdded */
+    r.L=_cvLive({ key:r.key, kind:'research', size:'l', mid, content:(keep)=>_cvRunContent(jobId, r, keep), onAdded:()=>{
+      /* ONE PLACE (owner, 2026-10-11: "the research cap family doesnt leave a placeholder chip in chat if the desk / canvas
+         is open - it should, or its being displayed 2 times"): with the canvas open the run is the canvas's item; the
+         chat's research card goes and a chip says where it is (the chat keeps both when the canvas is closed) */
+      const host=(r.rc.closest&&r.rc.closest('.cap-inline'))||r.rc.parentElement||r.rc; _cvOnCanvas({ _el:host, n:'research'+(r.q?' · '+r.q.slice(0,40):'') }, r.key); } });
     _cvRunFeed(jobId);
   }
   function _cvRunContent(jobId, r, keepLive){
@@ -7703,27 +7773,10 @@ IMPORTANT:
     const r=_CV_RR[jobId]; if(!r||r.ended) return; opt=opt||{};
     if(opt.error) r.err=String(opt.error);
     const final=!!(opt.final||opt.error);
-    const now=Date.now();
-    if(r.landed&&(final||now-r.drawn>250)){ r.drawn=now;
-      try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&typeof cv.liveUpdate==='function') cv.liveUpdate(r.key, _cvRunContent(jobId, r, true)); }catch(_){} }
-    clearTimeout(r.t);
-    if(final){ r.ended=true; _cvRunSave(jobId, true); return; }
-    r.t=setTimeout(()=>_cvRunSave(jobId, false), r.landed?2500:300);
-  }
-  function _cvRunSave(jobId, final){
-    const r=_CV_RR[jobId]; if(!r||!SID) return;
-    r.chain=r.chain.then(async()=>{
-      const content=_cvRunContent(jobId, r, false);
-      try{
-        if(!r.landed){ const x=await _capCall('canvas.add',{ session_id:SID, kind:'research', key:r.key, at:'now', size:'l', content, anchor:r.mid?{ mid:r.mid, turn:r.mid }:undefined }); if(x&&x.ok) r.landed=true;
-          /* ONE PLACE (owner, 2026-10-11: "the research cap family doesnt leave a placeholder chip in chat if the desk / canvas
-             is open - it should, or its being displayed 2 times"): with the canvas open the run is the canvas's item; the
-             chat's research card goes and a chip says where it is (the chat keeps both when the canvas is closed) */
-          if(r.landed){ try{ const host=(r.rc.closest&&r.rc.closest('.cap-inline'))||r.rc.parentElement||r.rc; _cvOnCanvas({ _el:host, n:'research'+(r.q?' · '+r.q.slice(0,40):'') }, r.key); }catch(_){} } }
-        else await _capCall('canvas.update',{ session_id:SID, key:r.key, content });
-      }catch(_){}
-      if(final){ try{ const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(cv&&typeof cv.liveDone==='function') cv.liveDone(r.key); }catch(_){} }
-    });
+    const L=r.L;
+    if(L.added&&(final||Date.now()-L.drawn>250)) _cvLiveShow(L);
+    if(final){ r.ended=true; _cvLiveSave(L, true); return; }
+    _cvLiveSoon(L, L.added?2500:300);
   }
 
   /* A PANEL ON THE CANVAS. The canvas already draws one - live in its frame, with query and dispatch over the
@@ -7940,9 +7993,11 @@ IMPORTANT:
      is drawn (presentation, carried by /mcp/tools - VeraWidget.presentations is fed from ALL_CAPS) goes through
      VeraWidget.present, the one reading the canvas and the server share, and becomes the item its element names. A
      capability with no declaration gets undefined here and the adapters below, unchanged. */
-  function _cvPresented(capName, result, args){
+  function _cvPresented(capName, result, args, opts){
     const W=(typeof window!=='undefined'&&window.VeraWidget)||null; if(!W||typeof W.present!=='function'||typeof W.presentationOf!=='function') return undefined;
-    const cap=String(capName||''); if(!cap||!W.presentationOf(cap)) return undefined;
+    /* opts.fallback: an UNDECLARED answer read through present()'s own fallback (the shape rules) - the generic adapters'
+       one reading (D10 step 2b, owner 2026-10-17) */
+    const cap=String(capName||''); if(!cap||(!W.presentationOf(cap)&&!(opts&&opts.fallback))) return undefined;
     let pr=null; try{ pr=W.present(cap, result, { args:args||{} }); }catch(_){ return undefined; }
     if(!pr) return undefined;
     // nothing drawable, a receipt (it updates what it acted on - DA-08) or a job (its live item follows): no item
@@ -7952,6 +8007,9 @@ IMPORTANT:
     const widget=(r)=>({ kind:'widget', n:String(r.title||title).slice(0,52), k:'widget', col:'var(--dv5, #a78bfa)', d:'widget · '+r.form,
       content:Object.assign({}, r, { widget:r.form, form:r.form, title:r.title||title, record:r }) });
     const rowsOf=(v)=>Array.isArray(v)?v:(v&&typeof v==='object'?(Array.isArray(v.rows)?v.rows:[]):[]);
+    /* the list in an answer: the answer itself, or its list under a usual name - a declaration that names a form hands over
+       the whole answer ({events:[...]}), and a calendar of six events became nothing (D10 measurement, 2026-10-17) */
+    const listOf=(v, keys)=>Array.isArray(v)?v:(v&&typeof v==='object'?(keys.map((k)=>v[k]).find(Array.isArray)||[]):[]);
     /* A FORM IT NAMES IS THE FORM IT GETS (review 2026-10-15 U11): a table or record whose declaration names its own widget
        form (docker.ps containers, sysmon.status numbers, obs.node_temps temps, evolve.sandbox.list sandboxes, ...) was drawn
        as a plain table or field list - what the hint table drew before was that form. The desk's own calendar and code
@@ -7959,18 +8017,26 @@ IMPORTANT:
     { const P=W.presentationOf(cap)||{}; if((pr.element==='table'||pr.element==='kv')&&P.form&&P.form!=='table'&&P.form!=='kv') return widget(Object.assign({}, r0, { form:String(P.form) })); }
     switch(pr.element){
       case 'table': { const rows=rowsOf(drawn(r0)).filter(x=>x&&typeof x==='object'); if(!rows.length) return null;
-        const columns=Object.keys(rows[0]).filter(k=>rows[0][k]==null||typeof rows[0][k]!=='object').slice(0,8);   /* as _cvCapTable */
-        const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':String(v).slice(0,120); }));
+        /* a list of plain values (a host's open ports) is a column too, shown joined; the declaration's draw.columns choose and
+           order them (DA-04c (d) - a scan's hosts) */
+        const flat=(v)=>v==null||typeof v!=='object'||(Array.isArray(v)&&v.every(s=>s==null||typeof s!=='object'));
+        const want=((W.presentationOf(cap)||{}).draw||{}).columns;
+        /* the columns: a field some of the first 50 rows hold, plain in all of them - not only the first row's (its empty first
+           value dropped a column that the other rows filled; D10 measurement) */
+        const head=rows.slice(0,50), keys=[]; head.forEach(x=>Object.keys(x).forEach(k=>{ if(keys.indexOf(k)<0) keys.push(k); }));
+        const columns=(Array.isArray(want)&&want.length?want.map(String).filter(k=>rows.some(x=>x[k]!=null)):keys.filter(k=>head.some(x=>x[k]!=null)&&head.every(x=>flat(x[k])))).slice(0,8);
+        const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':Array.isArray(v)?v.join(', ').slice(0,120):typeof v==='object'?JSON.stringify(v).slice(0,120):String(v).slice(0,120); }));
         return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'var(--dv1, #38bdf8)', d:'table · '+body.length+' rows',
                  content:{ columns, rows:body, caption:title } }; }
-      case 'records': { const items=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',
+      case 'records': { const items=listOf(r0.data, ['items','results','records','rows','pages','sources','data']).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',
           domain:x.domain||(String(x.url||'').match(/^https?:\/\/([^/]+)/)||[])[1]||'', title:String(x.title||x.url||''), snippet:String(x.snippet||'').slice(0,1200),
           text:typeof x.text==='string'&&x.text.length>=200?x.text.slice(0,20000):undefined, when:x.when||undefined, score:typeof x.score==='number'?x.score:undefined }));
         if(!items.length) return null;
         return { kind:'records', n:items.length+' '+(pr.kind==='reading'?'pages':'records'), k:'records', col:'var(--dv2, #7aa2d6)', d:'records · '+items.length,
                  content:{ title, kind:pr.kind==='reading'?'web':'records', items, total:items.length } }; }
       case 'markdown': { const md=String(r0.data||''); return { kind:'markdown', n:(md.replace(/^#+\s*/,'').split('\n').find(x=>x.trim())||title).slice(0,52), k:'prose', col:'var(--acc2)', d:'written', content:{ md:md.slice(0,20000) } }; }
-      case 'code': { const d=r0.data||{}; if(pr.kind==='diff'){ const t=String(d.diff||''); return { kind:'code', n:'diff · '+t.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'diff', content:{ code:t.slice(0,120000), lang:'diff', filename:'' } }; }
+      case 'code': { const d=r0.data||{}; if(pr.kind==='diff'){ const t=String(d.diff||d.patch||''); if(!t.trim()) return null;   /* a patch too, and the file it is of (the diff adapter's reading, D10 step 2c) */
+          return { kind:'code', n:'diff · '+t.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'diff', content:{ code:t.slice(0,120000), lang:'diff', filename:String(d.path||d.file||'') } }; }
         const code=String(d.code||''), p=String(d.path||''), lang=String(d.lang||'');
         return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' · '+code.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'code', content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; }
       case 'session': { const ls=(r0.data&&r0.data.lines)||[]; const cmd=ls.length&&/^\$ /.test(ls[0])?ls[0].slice(2):''; const out=(cmd?ls.slice(1):ls).join('\n');
@@ -7978,7 +8044,7 @@ IMPORTANT:
       case 'image': { const d=r0.data||{}; const url=d.image_b64?('data:image/png;base64,'+d.image_b64):String(d.url||''); if(!url) return null;
         return { kind:'image', n:String(d.caption||title), k:'image', col:'var(--dv4, #e879f9)', d:'image', content:{ url, alt:String(d.caption||title), caption:String(d.caption||'') } }; }
       case 'kv': { const f=r0.data; if(!f||typeof f!=='object') return null; return { kind:'kv', n:title, k:'kv', col:'var(--dim2, #94a3b8)', d:'record · '+Object.keys(f).length+' fields', content:{ title, fields:f } }; }
-      case 'calendar': { const evs=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&x.start).map(x=>Object.assign({}, x, { title:String(x.title||'') })); if(!evs.length) return null;
+      case 'calendar': { const evs=listOf(r0.data, ['events','items','data']).filter(x=>x&&x.start).map(x=>Object.assign({}, x, { title:String(x.title||'') })); if(!evs.length) return null;
         return { kind:'calendar', n:'Calendar', k:'calendar', col:'var(--dv7, #9fe1e7)', d:'calendar · '+evs.length+' event'+(evs.length===1?'':'s'), key:'calendar:month',
                  content:{ title:title||'Calendar', month:_cvCalMonth(evs), selected:'', events:evs } }; }
       case 'composite': return pr.records.map(widget);
@@ -8078,17 +8144,6 @@ IMPORTANT:
     return src.map(x=>({ kind:'source', n:x.title||x.domain||x.url, k:'source', col:'#7aa2d6',
       d:'source \u00b7 '+(x.domain||'web'), key:'source:'+x.url.replace(/^https?:\/\//,'').slice(0,120), content:x }));
   };
-  const _cvCapTable=(c,name)=>{
-    // rows of the same shape are a TABLE - sortable, readable, and the thing the user asked to explore
-    const rows=_cvRowsOf(c);
-    if(!Array.isArray(rows)||!rows.length) return null;
-    const first=rows[0]; if(!first||typeof first!=='object'||Array.isArray(first)) return null;
-    const columns=Object.keys(first).filter(k=>typeof first[k]!=='object').slice(0,8);
-    if(columns.length<2) return null;
-    const body=rows.slice(0,80).map(r=>columns.map(k=>{ const v=r&&r[k]; return v==null?'':String(v).slice(0,120); }));
-    return { kind:'table', n:(name||'result')+' \u00b7 '+body.length+' rows', k:'table', col:'#38bdf8',
-      d:'table \u00b7 '+body.length+' rows', content:{ columns, rows:body, caption:String(name||'') } };
-  };
   const _cvCapWidget=(c,name,args)=>{
     // a shape the widget rule already recognises IS a chart - the same rule the transcript draws by
     if(typeof _widgetFormByShape!=='function'||typeof _widgetRecord!=='function') return null;
@@ -8183,11 +8238,10 @@ IMPORTANT:
       const lang=String(c.lang||c.language||_cvExtLang(p)||'');
       return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' \u00b7 '+code.split('\n').length+' lines', k:'code', col:'#fb923c', d:'code',
                content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; });
-  // a DIFF is code in the diff language: its additions and removals coloured, not a paragraph of + and -
-  cvAdapter('diff',
-    (c)=>!!(c&&typeof c==='object'&&!Array.isArray(c)&&((typeof c.diff==='string'&&c.diff.trim())||(typeof c.patch==='string'&&c.patch.trim()))),
-    (c)=>{ const d=String(c.diff||c.patch); return { kind:'code', n:'diff \u00b7 '+d.split('\n').length+' lines', k:'code', col:'#fb923c', d:'diff',
-      content:{ code:d.slice(0,120000), lang:'diff', filename:String(c.path||c.file||'') } }; });
+  /* a DIFF is code in the diff language: its additions and removals coloured, not a paragraph of + and - (D10 step 2c: the
+     diff adapter went - present()'s fallback reads a diff / patch as one, and the 'present' step below takes it, here,
+     before the generic rules). THE CALENDAR STAYS an adapter: present()'s fallback reads a diary as a table, and "dated
+     things with titles are a month" is a rule it does not have. */
   /* A LIST OF DATED THINGS WITH TITLES IS A MONTH. The table rule below would draw the diary as a grid of
      truncated cells - id, title, start, end, all_day, location, source, colour - which is the data and not the
      answer to "what have I got on". Before the table, after the terminal. */
@@ -8205,12 +8259,23 @@ IMPORTANT:
   // rows of the same shape: a table with real columns
   /* ── the answer as the widget that fits it (the shared mapping, VeraWidget.fromCapResult): progress, a status, a series,
      a list, a metric ... A table it hands to the chat's own table rule below (real columns); json/text to the generics ── */
-  cvAdapter('capview',
-    (c,ctx)=>!!(window.VeraWidget&&typeof VeraWidget.fromCapResult==='function'),
-    (c,ctx)=>{ const rs=VeraWidget.fromCapResult(ctx.cap, c, {args:ctx.args}); const r=rs&&rs[0]; if(!r||!r.form||/^(json|text|table|record|kv)$/.test(r.form)) return null;
-      const title=r.title||ctx.cap||r.form; return { kind:'widget', n:String(title).slice(0,52), k:'widget', col:'#a78bfa', d:'widget \u00b7 '+r.form,
-        content:Object.assign({}, r, {widget:r.form, form:r.form, title, record:r}) }; });
-  cvAdapter('table', (c,ctx)=>!!_cvCapTable(c,ctx.cap), (c,ctx)=>_cvCapTable(c,ctx.cap));
+  /* ONE READING FOR UNDECLARED ANSWERS TOO (D10 step 2b, owner 2026-10-17: "yes proceed"). The capview and table adapters
+     were a second reading of what present() already reads: its fallback (the shape rules, VeraWidget.fromCapResult) - the
+     measurement found them the same on real answers (table 33/35, the two others its empty-first-value column; capview
+     6/6). Here, in their place: present()'s fallback, taken when it reads the answer as a table or as a widget form that
+     fits; a reading as json / text / kv / record goes on to the rules below (chat, prose, kv, json), as it did. */
+  const _cvFallbackOf=(cap,c,args)=>{ const W=window.VeraWidget; if(!W||typeof W.present!=='function') return null;
+    let pr=null; try{ pr=W.present(String(cap||''), c, { args:args||{} }); }catch(_){ return null; }
+    return pr&&pr.records&&pr.records.length?pr:null; };
+  cvAdapter('present',
+    (c,ctx)=>{ const pr=_cvFallbackOf(ctx.cap, c, ctx.args); if(!pr) return false; const f=String(pr.records[0].form||'');
+      /* what the two claimed: a table of two or more columns (one column is a list), or a widget form; a reading as a
+         document, a note, records, kv or json is left to the rules below */
+      /* the rows: the answer's own list, or the ones present() read out of it (an object keyed by id, ollama.instances) */
+      if(pr.element==='table'){ const pd=pr.records[0].data; const rows=_cvRowsOf(c)||(Array.isArray(pd)?pd:null); const r0=Array.isArray(rows)&&rows[0]; return !!(r0&&typeof r0==='object'&&Object.keys(r0).filter(k=>r0[k]==null||typeof r0[k]!=='object'||Array.isArray(r0[k])).length>=2); }
+      if(pr.element==='code'&&pr.kind==='diff') return true;   /* a diff / patch (the diff adapter's, D10 step 2c) */
+      return pr.element==='widget'&&!!f&&!/^(json|text|table|record|kv)$/.test(f); },
+    (c,ctx)=>{ const it=_cvPresented(ctx.cap, c, ctx.args, { fallback:true }); return Array.isArray(it)?(it[0]||null):(it||null); });
 
   // a shape the chat's own widget rule recognises IS that chart
   cvAdapter('widget', (c,ctx)=>!!_cvCapWidget(c,ctx.cap,ctx.args), (c,ctx)=>_cvCapWidget(c,ctx.cap,ctx.args));
@@ -8244,8 +8309,8 @@ IMPORTANT:
   cvAdapter('kv',
     (c)=>{ if(!c||typeof c!=='object'||Array.isArray(c)) return false; const ks=Object.keys(c);
       return ks.length>=2&&ks.length<=24&&ks.every(k=>c[k]==null||typeof c[k]!=='object'); },
-    (c,ctx)=>({ kind:'kv', n:(ctx&&ctx.cap)||'record', k:'kv', col:'#94a3b8', d:'record \u00b7 '+Object.keys(c).length+' fields',
-                content:{ title:String((ctx&&ctx.cap)||''), fields:c } }));
+    (c,ctx)=>{ const it=_cvPresented((ctx&&ctx.cap)||'record', c, (ctx&&ctx.args)||{}, { fallback:true });   /* built by present() (D10 step 2b) */
+      return it&&!Array.isArray(it)&&it.kind==='kv'?it:null; });
   // anything else with structure: a tree you can open, not braces in a fence
   cvAdapter('json',
     (c)=>!!(c&&typeof c==='object'&&(Array.isArray(c)?c.length:Object.keys(c).length)),
@@ -8286,6 +8351,7 @@ IMPORTANT:
       let made = null;
       /* a lookup has its item already (_cvLookStart): its answer went into it in place, so the harvest does not make another */
       if(el.__cvLookKey) return;
+      if(el.__cvRunKey) return;   // a call that reported its steps has its run item, with its answer in it (DA-04c)
       // an event written is not an item in itself - it is a reason to show the month it landed in
       try{ if(/^cal\.(event|todo)\.upsert$/.test(cname)&&cres&&cres.event) _cvLandCalendar(cres.event, _cvRelMid||''); }catch(_){}
       if(cap&&!cap.err&&_cvActionReceipt(cname, cres)) return;   // an action's receipt is its activity line, not an item (DA-08b)
@@ -11559,6 +11625,8 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const _tid='t-'+String(SID||'page')+'-'+Date.now().toString(36)+'-'+(++_capTraceN);
     let _lookSub=null;
     if(_look&&window.VeraLive){ try{ _look.tid=_tid; _lookSub=VeraLive.subscribe({ trace:[_tid] }, (m)=>{ if((m.event||m.type)==='info.seek.step') _cvLookStep(_look, m); }); await VeraLive.ready(1500); }catch(_){ _lookSub=null; } }
+    /* any other call: its own steps make it a run item (DA-04c) - only when it sends one */
+    else if(window.VeraLive&&_cvActOn(capName)){ try{ _lookSub=VeraLive.subscribe({ trace:[_tid] }, (m)=>{ const t=String(m.event||m.type||''); if(/\.step$/.test(t)) _cvRunStep(el, capName, coercedArgs, _tid, _act, m); }); await VeraLive.ready(400); }catch(_){ _lookSub=null; } }
     try{
       // session_id rides along so the backend can route the call into this
       // session's sandbox container (and scope its events) — the /mcp/call
@@ -11568,10 +11636,13 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
       httpStatus=r.status;
       res=await r.json();
     }catch(e){res=null;}
+    let _runEnd=false;
     try{ const c=res&&res.type==='tool_result'?res.content:null; const bad=!res||res.type!=='tool_result'||(c&&typeof c==='object'&&(c.ok===false||(c.error!=null&&c.error!==''&&c.error!==false)));
+      /* a run item gets its answer (DA-04c); a job it started keeps it - and this trace's listener - until its last step */
+      if(!_look){ const sub=_lookSub; _runEnd=_cvRunEndCall(_tid, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer', ()=>{ try{ if(sub) sub.close(); }catch(_){} }); }
       _cvActEnd(_act, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer');
       _cvLookEnd(_look, !bad, c!=null?c:(res&&(res.detail||res.error))||'no answer', coercedArgs); }catch(_){}
-    if(_lookSub) setTimeout(()=>{ try{ _lookSub.close(); }catch(_){} }, 1500);   // a stage may trail the answer
+    if(_lookSub&&_runEnd!=='pending') setTimeout(()=>{ try{ _lookSub.close(); }catch(_){} }, 1500);   // a stage may trail the answer
 
     // Build a persistent cap header showing what was run (never vanishes)
     const argsSummary=Object.entries(coercedArgs).filter(([k])=>k!=='trace_id').map(([k,v])=>`${k}=${JSON.stringify(v).slice(0,20)}`).slice(0,3).join(' ');
