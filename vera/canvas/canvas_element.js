@@ -710,6 +710,8 @@
      and the event just written (lit). None of it is written anywhere: the only writes are cal.event.upsert. */
   const calUi = (el, key) => { const z = () => ({ drag: null, add: null, pend: {}, err: {}, lit: null }); if (!el || !key) return z();
     const m = el._calUi || (el._calUi = {}); const u = m[key] || (m[key] = z()); u.pend = u.pend || {}; u.err = u.err || {}; return u; };
+  /* how long a day press's write is held, so a double-click (the add form) can drop it: about the system's interval */
+  const CAL_DBL_MS = 300;
   /* day arithmetic on the DATE PART only, in UTC: a local Date across a clock change is 23 or 25 hours long, and a
      move counted in milliseconds lands an hour off or on the wrong day */
   const calYmd = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s || '')); return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : null; };
@@ -5708,7 +5710,7 @@
         const cm = t.closest('[data-cal-mv]');
         if (cm && body.contains(cm)) { ev.stopPropagation(); this._calAct(cm.dataset.calKey, cm.dataset.calMv); return; }
         const cd = t.closest('[data-cal-day]');
-        if (cd && body.contains(cd)) { ev.stopPropagation(); this._calAct(cd.dataset.calKey, cd.dataset.calDay); return; }
+        if (cd && body.contains(cd)) { ev.stopPropagation(); this._calDayPress(cd.dataset.calKey, cd.dataset.calDay); return; }
         // a line of a code item: the card that covers it lights in every explode item bound to this one
         const ln = t.closest('.vc-codewrap[data-code] .vc-line');
         if (ln && body.contains(ln)) { const w = ln.closest('.vc-codewrap');
@@ -5953,7 +5955,7 @@
           if (d) this._calMove(k, id, d.dataset.calDay); };
         doc.addEventListener('mousemove', mv, true); doc.addEventListener('mouseup', up, true); });
       body.addEventListener('dblclick', (ev) => { const t = ev.target; const d = t && t.closest ? t.closest('[data-cal-day][data-cal-key]') : null; if (!d || !body.contains(d) || !d.dataset.calKey) return;
-        ev.preventDefault(); ev.stopPropagation(); this._calAddOpen(d.dataset.calKey, d.dataset.calDay); });
+        ev.preventDefault(); ev.stopPropagation(); this._calDayDrop(d.dataset.calKey); this._calAddOpen(d.dataset.calKey, d.dataset.calDay); });
       body.addEventListener('input', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.calIn == null) return; const ui = calUi(this, q.dataset.calKey); if (!ui.add) return;
         const f = q.dataset.calIn === 'time' ? 'time' : 'title'; ui.add[f] = String(q.value || ''); ui.add.f = f; });   /* the draft, kept across a redraw; nothing drawn */
       body.addEventListener('keydown', (ev) => { const q = ev.target; if (!q || !q.dataset || q.dataset.calIn == null || (ev.key !== 'Enter' && ev.key !== 'Escape')) return;
@@ -7583,6 +7585,35 @@
       const day = String(act || '');
       const next = Object.assign({}, c, { selected: c.selected === day ? '' : day });
       return this.call('canvas.update', { key, content: next });
+    }
+    /* A DAY PRESSED: DRAWN AT ONCE, WRITTEN A BEAT LATER. A double-click on a day opens the add form, but the browser
+       first fires its two clicks - and each wrote the selection (select, then unselect: two needless canvas.update and a
+       flicker). Now the press is drawn at once (the item's content here, as _calReread does) and its write is held for
+       about a double-click's interval; a double-click in that time drops the held write and puts the selection back as it
+       was before the first press (_calDayDrop). Presses inside one hold that end where they began write nothing. */
+    _calDayPress(key, day) {
+      const b = this._blockOf(key); const c = (b && b.content) || null; if (!c) return;
+      day = String(day || '');
+      const P = this._calDayP || (this._calDayP = {});
+      const p = P[key] || (P[key] = { was: String(c.selected || ''), sel: '', t: 0 });
+      clearTimeout(p.t);
+      p.sel = c.selected === day ? '' : day;
+      b.content = Object.assign({}, c, { selected: p.sel });
+      if (this._doc) this.render(this._doc);
+      p.t = setTimeout(() => {
+        if (P[key] !== p) return; delete P[key];
+        if (p.sel === p.was) return;   // pressed and pressed back: nothing changed
+        const b2 = this._blockOf(key); const c2 = (b2 && b2.content) || null; if (!c2) return;
+        // built on the item as it is now (a refresh may have come in) with the day pressed
+        const next = Object.assign({}, c2, { selected: p.sel }); b2.content = next;
+        this.call('canvas.update', { key, content: next });
+      }, CAL_DBL_MS);
+    }
+    /* a double-click: the held write is dropped and the selection is put back (the add form's own draw shows it) */
+    _calDayDrop(key) {
+      const P = this._calDayP || {}; const p = P[key]; if (!p) return;
+      clearTimeout(p.t); delete P[key];
+      const b = this._blockOf(key); if (b && b.content && String(b.content.selected || '') !== p.was) b.content = Object.assign({}, b.content, { selected: p.was });
     }
     /* DU-E-calendar. The month read again after a write, through _calAct's own read: the answer is drawn at once (the
        item's content here, so the moved / added event is in place before the canvas's refresh) and written into the item */
