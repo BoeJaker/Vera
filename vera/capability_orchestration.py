@@ -4669,6 +4669,29 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         _inflight_release(inst, _req_slot_id)
 
 
+# Every short answer to the call-site matrix (four-minds FM-2 / FM-12, switch decide.site_capture, off by default): a
+# generation that answers with a label is a decision whoever made it. Wrapped here, right after the definition, so
+# every later `from ... import ollama_generate` gets this name; the tap is a sys.modules lookup and a non-awaited task,
+# and only when the switch is on and the answer is short.
+import functools as _site_ft
+_ollama_generate_core = ollama_generate
+
+
+@_site_ft.wraps(_ollama_generate_core)
+async def ollama_generate(*args, **kwargs) -> str:
+    out = await _ollama_generate_core(*args, **kwargs)
+    try:
+        st = sys.modules.get("site_tap") or sys.modules.get("Vera.vera.minds.site_tap")
+        if st is not None and st.MODE.get("on") and isinstance(out, str) and 0 < len(out.strip()) <= st.MAX_ANSWER:
+            prompt = args[0] if args else kwargs.get("prompt", "")
+            system = args[1] if len(args) > 1 else kwargs.get("system", "")
+            st.tap(_ollama_caller_info(), str(kwargs.get("request_stage") or ""), str(kwargs.get("job_type") or ""),
+                   str(system or ""), str(prompt or ""), out, str(kwargs.get("model") or ""))
+    except Exception:                    # the tap must never touch the answer
+        pass
+    return out
+
+
 def _ollama_log_append(entry: dict):
     """Append content-free operational metadata to the in-process ring buffer."""
     _OLLAMA_REQUEST_LOG.append(_sanitize_ollama_log_entry(entry))
@@ -12460,6 +12483,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "minds/judge.py"),
         os.path.join(_here, "minds/cascade.py"),
         os.path.join(_here, "minds/claims.py"),
+        os.path.join(_here, "minds/site_tap.py"),
         os.path.join(_here, "minds/tool_shortlist.py"),
         os.path.join(_here, "minds/label_capabilities.py"),
         os.path.join(_here, "minds/export.py"),
