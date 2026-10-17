@@ -105,7 +105,7 @@ const EVENTS = [
   t('a list of dated titled things is a month, not a table',
     /cvAdapter\('calendar',/.test(chat) && /e\[0\]\.start!=null&&e\[0\]\.title!=null/.test(chat));
   t('tried before the table, or the diary is drawn as a grid of cells',
-    chat.indexOf("cvAdapter('calendar'") < chat.indexOf("cvAdapter('table'"));
+    chat.indexOf("cvAdapter('calendar'") < chat.indexOf("cvAdapter('present'"));   // the table is present()'s reading now (D10 step 2b)
   /* cal.event.upsert answers with the one event it wrote, which on its own is a receipt - the useful thing is
      the month it landed in, re-read from the diary so it shows everything else that month holds too */
   t('a written event lands the month it went into', /_cvLandCalendar\(cres\.event, _cvRelMid\|\|''\)/.test(chat));

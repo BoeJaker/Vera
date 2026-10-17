@@ -78,9 +78,18 @@ const ctx = {
     { name: 'quiet.status', description: 'A status line. Output: {ok, text}.' },
   ],
 };
+/* the page's widget kit and present() (D10 step 2b: an undeclared answer's table / kv / widget is present()'s fallback
+   reading, so the real one is loaded - as tests/test_widget_cap_output.cjs loads it) */
+const defined = {};
+Object.assign(ctx, { window: {}, console, HTMLElement: class {}, CustomEvent: class {}, customElements: { get: (n) => defined[n], define: (n, c) => { defined[n] = c; } },
+  document: { querySelectorAll: () => [], createElement: () => ({ setAttribute() {}, appendChild() {}, style: {} }), head: { appendChild() {} }, getElementById: () => null },
+  setTimeout, clearTimeout, requestAnimationFrame: (f) => setTimeout(f, 0), localStorage: { getItem: () => null, setItem() {} } });
+ctx.window.customElements = ctx.customElements; ctx.window.document = ctx.document; ctx.window.localStorage = ctx.localStorage;
 vm.createContext(ctx);
-vm.runInContext(block + '\nthis.T=_cvCapTerm; this.B=_cvCapTable; this.W=_cvCapWidget; this.S=_cvCapSources; this.AD=_cvAdapt; this.REG=CV_ADAPTERS;', ctx);
-const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
+for (const f of [['vera', 'ui', 'iso.js'], ['vera', 'widgets', 'widget_element.js'], ['vera', 'widgets', 'present.js']]) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', ...f), 'utf8'), ctx);
+vm.runInContext(block + '\nthis.T=_cvCapTerm; this.W=_cvCapWidget; this.S=_cvCapSources; this.AD=_cvAdapt; this.REG=CV_ADAPTERS;', ctx);
+const { T, W, S: SRC, AD, REG } = ctx;
+const TBL = (c, cap) => { const m = AD(cap, c, {}); return m && !Array.isArray(m) && m.kind === 'table' ? m : null; };   // what the whole reading makes a table
 
 // ── a command and its output is a terminal ─────────────────────────────────────────────────────────────────────
 {
@@ -166,7 +175,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   t('five pages are still five source cards', SRC({ results: Array.from({ length: 5 }, (_, i) => ({ url: 'https://x.io/' + i, title: 't' + i })) }).length === 5);
   /* the chain of ifs this used to pin is a registry now - the claim is the same one, that a page with an address
      is a source before it is a row, and it is made by the ORDER of the table rather than by the order of ||s */
-  t('sources are tried BEFORE the table', REG.map((a) => a.name).indexOf('sources') < REG.map((a) => a.name).indexOf('table'));
+  t('sources are tried BEFORE the table', REG.map((a) => a.name).indexOf('sources') < REG.map((a) => a.name).indexOf('present'));   // present(): the table's reading (D10 step 2b)
   t('and the harvest asks the registry rather than a chain', /made = _cvAdapt\(cname, cres, cap && cap\.args\)/.test(src));
   t('and a recogniser may answer with several items', /if\(Array\.isArray\(made\)\)\{ made\.forEach/.test(src));
 }
@@ -228,7 +237,7 @@ const { T, B: TBL, W, S: SRC, AD, REG } = ctx;
   /* the order IS the behaviour, so it is pinned - a rule that moves above another changes what results become.
      calendar sits above table because the diary drawn as rows of id/title/start/end is the data and not the
      answer; prose sits last because almost every result carries some string. */
-  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,evidence,sources,html,image,code,diff,calendar,capview,table,widget,chat,prose,kv,json,text',   /* capview: the shared mapping (VeraWidget.fromCapResult), after the chat-only kinds */
+  t('the order is the one that matters', REG.map((a) => a.name).join(',') === 'terminal,error,evidence,sources,html,image,code,diff,calendar,present,widget,chat,prose,kv,json,text',   /* present: present()'s fallback in capview's and table's place (D10 step 2b), after the chat-only kinds */
     REG.map((a) => a.name).join(','));
 
   // and it routes, by shape alone, with no capability named anywhere

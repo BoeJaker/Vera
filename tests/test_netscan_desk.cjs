@@ -22,7 +22,7 @@ let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 
   t('...plain nodes and links as before', P.nodes.length === 2 && P.edges.length === 1 && P.edges[0].from === 'a'); }
 
 // the chat's table: a list of plain values is a column; draw.columns choose and order them
-{ const a = H.indexOf('  function _cvPresented(capName, result, args){'), b = H.indexOf('  // the one entry point', a);
+{ const a = H.indexOf('  function _cvPresented(capName, result, args, opts){'), b = H.indexOf('  // the one entry point', a);
   const decl = { 'netscan.lan.scan': { kind: 'table', form: 'table', map: { rows: 'alive' }, draw: { columns: ['ip', 'hostname', 'open_ports', 'alive_via', 'mac'] } }, 'x.list': { kind: 'table', form: 'table' } };
   const W = { presentationOf: (c) => decl[c] || null, present: (cap, res) => ({ element: 'table', title: cap, records: [{ form: 'table', data: cap === 'netscan.lan.scan' ? { rows: res.alive } : res }] }), dataFor: (d) => d, mapped: (r, f, d) => d };
   const ctx = { window: { VeraWidget: W }, _cvCalMonth: () => '', Object, String, Array, JSON }; vm.createContext(ctx);

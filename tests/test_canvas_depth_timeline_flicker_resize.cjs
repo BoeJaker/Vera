@@ -60,7 +60,7 @@ const cv = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.
 }
 // ── research: one list you open, with the text it read ───────────────────────────────────────────────────────────
 {
-  const i0 = CHAT.indexOf('  const _cvRowsOf=(c)=>{'), i1 = CHAT.indexOf('  const _cvCapTable=(c,name)=>{');
+  const i0 = CHAT.indexOf('  const _cvRowsOf=(c)=>{'), i1 = CHAT.indexOf('  const _cvCapWidget=(c,name,args)=>{');   // (_cvCapTable went in D10 step 2b)
   const ctx = {}; vm.createContext(ctx); vm.runInContext(CHAT.slice(i0, i1).replace(/const /g, 'var ') + '\nthis.S=_cvCapSources;', ctx);
   const long = 'Pinecone is a managed vector database. '.repeat(12);
   const res = { query: 'vector databases', sources: [
