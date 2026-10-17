@@ -136,6 +136,9 @@ def check_manifest(m: Any, file: str = "", caps: Optional[Iterable[str]] = None,
                         _p(out, file, app, "error", "view.parts.from", "view.parts[%d].from names a read (its `as`)" % i)
                     elif isinstance(read, list) and frm not in seen_as:
                         _p(out, file, app, "error", "view.parts.unknown", "view.parts[%d].from %r is no read's `as`" % (i, frm))
+                    cols = part.get("columns") if _is_obj(part) else None
+                    if cols is not None and (not isinstance(cols, list) or not cols or not all(isinstance(c, str) and c for c in cols)):
+                        _p(out, file, app, "error", "view.parts.columns", "view.parts[%d].columns is a list of field names" % i)
                     pk = part.get("kind") if _is_obj(part) else None
                     if pk is not None and (pk not in PRESENTATION_KINDS or pk in ("receipt", "job", "composite")):
                         _p(out, file, app, "error", "view.parts.kind", "view.parts[%d].kind %r is not a kind a part draws" % (i, pk))
