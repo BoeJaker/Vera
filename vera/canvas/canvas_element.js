@@ -4163,7 +4163,11 @@
       if (ca.ctx) h += row('ctx', ca.ctx.on ? '✓ In context' : 'Put in context', ca.ctx.on ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ca.ctx.on);
       if (b.type === 'result' && b.content && b.content.cap && !inHead('[data-act="rerun"]')) h += row('rerun', 'Run again', 'Run ' + b.content.cap + ' again with the same arguments');
       if (peek) h += row('remove', 'Take it off the desk', 'Take it off the desk');
-      if (b.type === 'panel' && !inHead('[data-act="prefresh"]')) h += '<hr>' + (desk ? row('layer-behind', 'Behind the items', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'In front', 'Fill the free desk, over the other items', L === 'front') : '')
+      /* FULL SIZE, IN FRONT OR BEHIND - ANY ITEM (owner 2026-10-17: "like the ui panels on the desk id like to be able to send full
+         screen to the front and back"): a chart, a table, a list fills the free desk over the other items or under them, as a
+         panel does; pressed again it goes back among them */
+      if (desk && !inHead('[data-act="layer-behind"]')) h += '<hr>' + row('layer-behind', 'Full size, behind', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'Full size, in front', 'Fill the free desk, over the other items', L === 'front' || this._max === key);
+      if (b.type === 'panel' && !inHead('[data-act="prefresh"]')) h += '<hr>'
         + row('pquery', 'Query', 'panel.query - what the panel holds') + row('pdispatch', 'Dispatch…', 'panel.dispatch - drive it') + row('prefresh', 'Refresh', 'Reload the panel') + row('pstand', 'Open standalone ↗', 'Open it in a tab of its own');
       /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
       { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
@@ -4217,9 +4221,13 @@
     setLayer(key, mode) {
       key = String(key || ''); if (!key) return;
       if (mode === 'behind' || mode === 'front') this._layer[key] = mode; else delete this._layer[key];
+      /* a card made to fill the desk (its maximise) sent behind or in front: that layer is its place now, not the maximise */
+      if (this._max === key) { this._max = ''; try { localStorage.removeItem('vera:canvas:max:' + this.canvasId); } catch (e) { /* this page only */ } delete this.dataset.maxed; this._html = null; if (this._doc) { this.render(this._doc); } }
       const picks = layersLoad(); picks[key] = (mode === 'behind' || mode === 'front') ? mode : 'among'; layersSave(picks);
       const card = this.shadowRoot && [...this.shadowRoot.querySelectorAll('.stage .it')].find((c) => c.dataset.key === key);
       if (card) card.querySelectorAll('[data-act^="layer-"]').forEach((bt) => bt.classList.toggle('on', bt.dataset.act === 'layer-' + this._layer[key]));
+      /* any other item's head gains (or loses) its Behind / Front with the layer: drawn again (a panel's are always there) */
+      const bk = this._blockOf(key); if (bk && bk.type !== 'panel' && this._doc) { this._html = null; this.render(this._doc); return; }
       try { this._placeNow(); } catch (e) { /* placed on the next paint */ }
     }
     /* SIMILAR ITEMS ON ONE TOPIC, ONE CARD (owner, 2026-10-10: "id like similar elements on similar topics to be able to
@@ -5376,6 +5384,8 @@
             if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane').sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
               .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
             (d.acts || []).forEach((a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"` + (a.aid ? ` data-app-action="${esc(a.aid)}"` : ''), a.label, a.title, a.on); });
+            if (b.type !== 'panel' && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];
+              hx('data-act="layer-behind"', 'Behind', 'Behind the other items, still filling the free desk - again to put it back among them', L1 === 'behind'); hx('data-act="layer-front"', 'Front', 'Over the other items, filling the free desk - again to put it back among them', L1 === 'front'); }
             if (b.type === 'panel') { if (desk) { const L0 = (this._layer || {})[key] || ''; hx('data-act="layer-behind"', 'Behind', 'Fill the free desk, under the other items', L0 === 'behind'); hx('data-act="layer-front"', 'Front', 'Fill the free desk, over the other items', L0 === 'front'); }
               hx('data-act="prefresh"', 'Refresh', 'Reload the panel'); hx('data-act="pquery"', 'Query', 'panel.query - what the panel holds'); hx('data-act="pdispatch"', 'Dispatch', 'panel.dispatch - drive it'); hx('data-act="pstand"', 'Standalone ↗', 'Open it in a tab of its own'); }
             if (b.type === 'result' && c.cap) hx('data-act="rerun"', 'Run again', 'Run ' + c.cap + ' again with the same arguments');
