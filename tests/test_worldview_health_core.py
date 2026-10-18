@@ -71,3 +71,40 @@ def test_research_source_checks_health_first():
     dumped = ast.dump(fn)
     assert "worldview.health" in dumped
     assert "VERA_RESEARCH_WORLDVIEW_UNGATED" in dumped
+
+
+
+# -- FM-W.1 (18 Oct): the distribution, not only the mean -----------------------------------------------------
+def test_the_18_oct_shape_is_degraded_although_the_mean_passes():
+    from vera.worldview.worldview_health_core import spread
+    pops = [779, 300, 200, 150, 120, 100, 90, 80, 70, 60, 50, 40, 35, 30, 25, 22] + [1] * 78   # 2229 records
+    m = _model(num_concepts=96, records_assigned=sum(pops), transitions_observed=3000,
+               train_steps={"gnn": 20, "codebook": 32, "dynamics": 1065}, codebook={"perplexity": 40.0})
+    good = {"beats_baseline": True}
+    assert verdict(m, held_out=good, now=NOW)["status"] == OK                      # the mean alone: ok
+    v = verdict(m, held_out=good, now=NOW, populations=pops)
+    assert v["status"] == DEGRADED
+    assert any("median concept holds" in r for r in v["reasons"])
+    assert v["metrics"]["concepts_below_min"] == 80 and v["metrics"]["median_population"] == 1  # 2 unused count as 0
+    assert spread([5, 30, 30]) == {"median_population": 30, "concepts_below_min": 1, "share_below_min": 0.333,
+                                   "largest_population": 30, "largest_share": 0.462}
+
+
+def test_one_concept_swallowing_the_records_is_degraded():
+    pops = [30] * 9 + [400]
+    m = _model(num_concepts=10, records_assigned=sum(pops), transitions_observed=3000,
+               train_steps={"gnn": 20, "codebook": 32, "dynamics": 1065}, codebook={"perplexity": 5.0})
+    v = verdict(m, held_out={"beats_baseline": True}, now=NOW, populations=pops)
+    assert any("one concept holds" in r for r in v["reasons"])
+
+
+def test_a_well_spread_model_stays_ok():
+    pops = [40] * 64
+    m = _model(num_concepts=64, records_assigned=sum(pops))
+    assert verdict(m, held_out={"beats_baseline": True}, now=NOW, populations=pops)["status"] == OK
+
+
+def test_health_passes_the_populations():
+    src = open(os.path.join(ROOT, "vera", "worldview", "worldview_jepa.py"), encoding="utf-8").read()
+    body = src[src.index("async def cap_worldview_health("):]
+    assert "populations=pops" in body[:900] and "Counter(MODEL.record_concepts.values())" in body[:900]
