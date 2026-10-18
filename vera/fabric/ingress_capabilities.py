@@ -604,7 +604,8 @@ async def cap_map_search(query: str = "", topic_id: str = "", limit: int = 10, v
         return await _call("discovery.recall_index.search", query=q, limit=lim * 3) \
             if _has("discovery.recall_index.search") else {}
     text_task = asyncio.ensure_future(_text())
-    vec_pages = await _vector_pages(q, lim * 3) if vector else []
+    vdiag: Dict[str, Any] = {}
+    vec_pages = await _vector_pages(q, lim * 3, vdiag) if vector else []
     idx = await text_task
     index_ms = int((time.monotonic() - t0) * 1000)
     text_pages = list((idx or {}).get("pages") or [])
@@ -641,7 +642,7 @@ async def cap_map_search(query: str = "", topic_id: str = "", limit: int = 10, v
     for r in results:
         r["legs"] = legs.get(r["url"]) or []
     return {"ok": bool((idx or {}).get("ok", bool(pages))), "query": q, "results": results, "index_ms": index_ms,
-            "legs": {"text": len(text_pages), "vector": len(vec_pages), "reranked": reranked},
+            "legs": {"text": len(text_pages), "vector": len(vec_pages), "reranked": reranked, "vector_diag": vdiag},
             "ms": int((time.monotonic() - t0) * 1000)}
 
 
@@ -658,26 +659,36 @@ def _records_by_id(ids: List[str]) -> List[Any]:
     return conn.execute(f"SELECT id, dataset_id, text, data FROM fabric_records WHERE id IN ({marks})", ids).fetchall()
 
 
-async def _vector_pages(q: str, n: int) -> List[Dict[str, Any]]:
+async def _vector_pages(q: str, n: int, diag: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """The vector leg: the query embedded the way records are, the fabric's Chroma collection searched with NO where
     filter (a filter scans the whole collection), the hits that are web pages, in similarity order. [] on any
     failure or after VECTOR_TIMEOUT_S - the text leg still answers."""
+    d = diag if diag is not None else {}
     df = _data_fabric()
     store = getattr(df, "FABRIC_CHROMA", None) if df else None
     if store is None or not hasattr(df, "_embed"):
+        d["error"] = "no fabric vector store in this process"
         return []
+    t0 = time.monotonic()
     try:
         async def _go():
             emb = await df._embed(q)
+            d["embed_ms"] = int((time.monotonic() - t0) * 1000)
             if not emb:
+                d["error"] = "no embedding"
                 return []
+            d["dim"] = len(emb)
             hits = await asyncio.get_running_loop().run_in_executor(None, lambda: store.search(emb, top_k=n))
+            d["hits"] = len(hits or [])
+            d["search_ms"] = int((time.monotonic() - t0) * 1000) - d["embed_ms"]
             score = {rid: s for rid, s in hits or []}
             rows = await asyncio.to_thread(_records_by_id, list(score))
+            d["records"] = len(rows)
             pages = [sc.record_page(r[0], r[1], r[2], r[3], score.get(r[0], 0.0)) for r in rows]
             return sorted([p for p in pages if p], key=lambda p: p["rank"], reverse=True)
         return await asyncio.wait_for(_go(), VECTOR_TIMEOUT_S)
     except Exception as e:  # noqa: BLE001
+        d["error"] = (type(e).__name__ + ": " + str(e))[:160]
         log.debug("map search vector leg: %s", e)
         return []
 
