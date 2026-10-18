@@ -167,40 +167,60 @@ def _epoch(iso: str) -> float:
             return 0.0
 
 
-def _resolve_range(start: str, end: str) -> tuple:
+def _tz(name: str):
+    """The diary's time zone (config `tz`); UTC when unset or unknown."""
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name or "UTC")
+    except Exception:
+        return _dt.timezone.utc
+
+
+def _local_midnight(tz_name: str) -> _dt.datetime:
+    """Today's midnight in the diary's zone, as an aware datetime."""
+    now = _dt.datetime.now(_tz(tz_name))
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _resolve_range(start: str, end: str, tz: str = "UTC") -> tuple:
     """Resolve start/end into epoch seconds.
 
     Accepts ISO dates/datetimes or relative keywords:
       today | tomorrow | yesterday | week | month | all | "" (no bound)
+    The keywords' day bounds are midnights in `tz` (the diary's zone): they were UTC, so "today" ran 01:00-01:00
+    in a British summer (S23 / D24-4 C-3).
     """
-    now = _now()
+    zone = _tz(tz)
+    now = _dt.datetime.now(zone)
     start = (start or "").strip().lower()
     end = (end or "").strip().lower()
 
+    def day(d: _dt.date) -> _dt.datetime:          # a local midnight, DST-correct
+        return _dt.datetime(d.year, d.month, d.day, tzinfo=zone)
+
     def kw(word, which):
-        d0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        d0 = now.date()
+        one = _dt.timedelta(days=1)
         if word == "today":
-            return d0, d0 + _dt.timedelta(days=1)
+            return day(d0), day(d0 + one)
         if word == "tomorrow":
-            return d0 + _dt.timedelta(days=1), d0 + _dt.timedelta(days=2)
+            return day(d0 + one), day(d0 + 2 * one)
         if word == "yesterday":
-            return d0 - _dt.timedelta(days=1), d0
+            return day(d0 - one), day(d0)
         if word == "week":
             mon = d0 - _dt.timedelta(days=d0.weekday())
-            return mon, mon + _dt.timedelta(days=7)
+            return day(mon), day(mon + 7 * one)
         if word == "month":
             first = d0.replace(day=1)
             nxt = (first + _dt.timedelta(days=32)).replace(day=1)
-            return first, nxt
+            return day(first), day(nxt)
         return None
 
     # Keyword on the start field can define the whole window.
     rng = kw(start, "start")
     if rng:
         s_dt, e_dt = rng
-        s = s_dt.replace(tzinfo=_dt.timezone.utc).timestamp()
-        e = e_dt.replace(tzinfo=_dt.timezone.utc).timestamp()
-        return s, e
+        return s_dt.timestamp(), e_dt.timestamp()
 
     if start in ("", "all"):
         s = 0.0
@@ -419,7 +439,7 @@ async def _hash_delete(key: str, rid: str) -> bool:
 async def cap_events_list(start: str = "week", end: str = "",
                           source: str = "", include_dreams: bool = False,
                           include_loop_lab: bool = False, trace_id=None):
-    s, e = _resolve_range(start, end)
+    s, e = _resolve_range(start, end, (await _get_config()).get("tz", "UTC"))
     events = await _events_in_range(s, e, source)
 
     # Virtual overlay: the Loop Lab schedules (evolve.schedule.events) - the
@@ -1073,30 +1093,83 @@ async def _resolve_source_creds(src: Dict) -> Dict[str, str]:
     return out
 
 
+# The window a sync mirrors: the same 30 days back / 120 ahead the Google pull always used. Recurring series are
+# expanded inside it, and only events inside it are swept when upstream no longer has them (C-1, C-2).
+SYNC_DAYS_BACK, SYNC_DAYS_AHEAD = 30, 120
+
+
+def _sync_window() -> tuple:
+    now = _dt.datetime.now(_dt.timezone.utc)
+    return now - _dt.timedelta(days=SYNC_DAYS_BACK), now + _dt.timedelta(days=SYNC_DAYS_AHEAD)
+
+
+async def _upsert_feed(src: Dict, parsed: List[Dict], ws, we, seen: set) -> Dict[str, int]:
+    added = updated = 0
+    for vev in ical.occurrences(parsed, ws, we):
+        res = await _upsert_synced_event(src["id"], src.get("color", "#888"), vev)
+        seen.add(f"{src['id']}:{vev.get('uid')}")
+        added += res == "added"
+        updated += res == "updated"
+    return {"added": added, "updated": updated}
+
+
+async def _sweep(src_id: str, seen: set, ws, we, calendars: Optional[set] = None,
+                 superseded: Optional[set] = None) -> int:
+    """Remove this source's stored events that the upstream no longer has (C-2): only inside the sync window
+    (events outside it were never pulled this time), only from the calendars that synced completely, plus the
+    one-row copies of recurring series the old sync stored (`superseded`)."""
+    s_ep, e_ep = ws.timestamp(), we.timestamp()
+    gone = 0
+    for ev in await _hash_list(KEY_EVENTS):
+        if ev.get("source") != src_id or ev.get("id") in seen:
+            continue
+        if calendars is not None and ev.get("calendar") and ev["calendar"] not in calendars:
+            continue
+        if ev.get("id") in (superseded or ()) or s_ep <= _epoch(ev.get("start", "")) <= e_ep:
+            await _delete_event(ev["id"])
+            gone += 1
+    return gone
+
+
+async def _finish_feed(src: Dict, parsed: List[Dict], ws, we, seen: set, counts: Dict) -> Dict[str, int]:
+    """Sweep after a feed sync - unless the feed came back empty, which looks the same as a broken one."""
+    if not parsed:
+        log.warning("cal sync %s: the feed has no events - nothing removed", src.get("id"))
+        counts["removed"] = 0
+    else:
+        stale = {f"{src['id']}:{u}" for u in ical.series_uids(parsed)} - seen
+        counts["removed"] = await _sweep(src["id"], seen, ws, we, superseded=stale)
+    counts["errors"] = 0
+    return counts
+
+
 async def _sync_ics(src: Dict) -> Dict[str, int]:
     creds = await _resolve_source_creds(src)
     url = creds["ics_url"] or creds["url"]
     if not url:
         return {"added": 0, "updated": 0, "errors": 1, "error": "no url"}
-    added = updated = 0
+    ws, we = _sync_window()
+    seen: set = set()
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
         resp = await c.get(url)
         resp.raise_for_status()
-        for vev in ical.parse(resp.text):
-            res = await _upsert_synced_event(src["id"], src.get("color", "#888"), vev)
-            added += res == "added"
-            updated += res == "updated"
-    return {"added": added, "updated": updated, "errors": 0}
+        parsed = ical.parse(resp.text)
+    counts = await _upsert_feed(src, parsed, ws, we, seen)
+    return await _finish_feed(src, parsed, ws, we, seen, counts)
 
 
-_CALDAV_REPORT_BODY = (
-    '<?xml version="1.0" encoding="utf-8" ?>'
-    '<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">'
-    '<D:prop><D:getetag/><C:calendar-data/></D:prop>'
-    '<C:filter><C:comp-filter name="VCALENDAR">'
-    '<C:comp-filter name="VEVENT"/></C:comp-filter></C:filter>'
-    '</C:calendar-query>'
-)
+def _caldav_report_body(ws, we) -> str:
+    """calendar-query for VEVENTs overlapping the sync window (a time-range: the server expands nothing, but
+    returns only the events - recurring masters included - that touch it)."""
+    f = "%Y%m%dT%H%M%SZ"
+    return ('<?xml version="1.0" encoding="utf-8" ?>'
+            '<C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">'
+            '<D:prop><D:getetag/><C:calendar-data/></D:prop>'
+            '<C:filter><C:comp-filter name="VCALENDAR">'
+            '<C:comp-filter name="VEVENT">'
+            f'<C:time-range start="{ws.strftime(f)}" end="{we.strftime(f)}"/>'
+            '</C:comp-filter></C:comp-filter></C:filter>'
+            '</C:calendar-query>')
 
 
 def _xml_unescape(s: str) -> str:
@@ -1112,25 +1185,24 @@ async def _sync_caldav(src: Dict) -> Dict[str, int]:
     pw = creds["password"]
     if not url:
         return {"added": 0, "updated": 0, "errors": 1, "error": "no url"}
-    added = updated = 0
+    ws, we = _sync_window()
+    seen: set = set()
     auth = (user, pw) if user else None
     async with httpx.AsyncClient(timeout=45, follow_redirects=True, auth=auth) as c:
         resp = await c.request(
             "REPORT", url,
             headers={"Depth": "1", "Content-Type": "application/xml; charset=utf-8"},
-            content=_CALDAV_REPORT_BODY.encode("utf-8"),
+            content=_caldav_report_body(ws, we).encode("utf-8"),
         )
         resp.raise_for_status()
         # Extract each <calendar-data> payload (namespace-agnostic).
         blocks = re.findall(r"<[^>]*calendar-data[^>]*>(.*?)</[^>]*calendar-data>",
                             resp.text, re.DOTALL | re.IGNORECASE)
-        for block in blocks:
-            ics_text = _xml_unescape(block.strip())
-            for vev in ical.parse(ics_text):
-                res = await _upsert_synced_event(src["id"], src.get("color", "#888"), vev)
-                added += res == "added"
-                updated += res == "updated"
-    return {"added": added, "updated": updated, "errors": 0}
+    parsed: List[Dict] = []
+    for block in blocks:
+        parsed += ical.parse(_xml_unescape(block.strip()))
+    counts = await _upsert_feed(src, parsed, ws, we, seen)
+    return await _finish_feed(src, parsed, ws, we, seen, counts)
 
 
 async def _google_access_token(src: Dict) -> str:
@@ -1188,29 +1260,41 @@ async def _sync_google(src: Dict) -> Dict[str, int]:
     if not token:
         return {"added": 0, "updated": 0, "errors": 1, "error": "no access token"}
     cals = _google_calendars(src)
-    now = _now()
+    ws, we = _sync_window()
     params = {
-        "timeMin": (now - _dt.timedelta(days=30)).isoformat() + "Z",
-        "timeMax": (now + _dt.timedelta(days=120)).isoformat() + "Z",
+        "timeMin": ws.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "timeMax": we.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "singleEvents": "true", "orderBy": "startTime", "maxResults": "250",
     }
-    added = updated = errors = 0
+    added = updated = errors = removed = 0
     async with httpx.AsyncClient(timeout=45) as c:
         for cal in cals:
             cal_id = cal.get("id") or "primary"
             cal_color = cal.get("color") or src.get("color", SOURCE_COLORS["google"])
             cal_label = cal.get("summary") or cal_id
+            items: List[Dict] = []
+            complete = False
             try:
-                resp = await c.get(
-                    f"{GOOGLE_API}/calendars/{quote(cal_id, safe='')}/events"
-                    f"?{urlencode(params)}",
-                    headers={"Authorization": f"Bearer {token}"})
-                resp.raise_for_status()
+                page = ""
+                for _ in range(20):                    # 250 a page: a busy calendar has more than one
+                    q = dict(params, **({"pageToken": page} if page else {}))
+                    resp = await c.get(
+                        f"{GOOGLE_API}/calendars/{quote(cal_id, safe='')}/events"
+                        f"?{urlencode(q)}",
+                        headers={"Authorization": f"Bearer {token}"})
+                    resp.raise_for_status()
+                    data = resp.json()
+                    items += data.get("items", [])
+                    page = data.get("nextPageToken") or ""
+                    if not page:
+                        complete = True
+                        break
             except Exception as ex:
                 log.warning("google calendar %s sync failed: %s", cal_id, ex)
                 errors += 1
                 continue
-            for it in resp.json().get("items", []):
+            seen: set = set()
+            for it in items:
                 s = it.get("start", {})
                 e = it.get("end", {})
                 all_day = "date" in s
@@ -1226,8 +1310,14 @@ async def _sync_google(src: Dict) -> Dict[str, int]:
                 res = await _upsert_synced_event(
                     src["id"], cal_color, vev,
                     extra={"calendar": cal_id, "calendar_label": cal_label})
+                seen.add(f"{src['id']}:{vev['uid']}")
                 added += res == "added"
                 updated += res == "updated"
+            # Deleted upstream (C-2): only from a calendar read to its last page; rows from before the per-calendar
+            # tag belong to the one calendar a legacy source had.
+            if complete:
+                removed += await _sweep(src["id"], seen, ws, we,
+                                        calendars={cal_id} if len(cals) > 1 else None)
 
     # Prune events from calendars that are no longer selected.
     keep = {(cal.get("id") or "primary") for cal in cals}
@@ -1236,7 +1326,7 @@ async def _sync_google(src: Dict) -> Dict[str, int]:
                 and ev["calendar"] not in keep):
             await _delete_event(ev["id"])
 
-    return {"added": added, "updated": updated, "errors": errors}
+    return {"added": added, "updated": updated, "errors": errors, "removed": removed}
 
 
 async def _sync_one(src: Dict) -> Dict[str, Any]:
@@ -1253,13 +1343,22 @@ async def _sync_one(src: Dict) -> Dict[str, Any]:
     except Exception as e:
         log.warning("cal sync %s failed: %s", src.get("id"), e)
         res = {"added": 0, "updated": 0, "errors": 1, "error": str(e)}
+    res.setdefault("removed", 0)
     res["source"] = src.get("id")
     res["label"] = src.get("label")
     res["ts"] = now_iso()
-    # Stamp last_sync on the source record.
-    src["last_sync"] = res["ts"]
-    src["last_result"] = {k: res[k] for k in ("added", "updated", "errors")}
-    await _save_source(src)
+    # Stamp last_sync on the source as it is NOW (C-4): writing back the copy read before a sync of up to 45 s
+    # undid an edit made meanwhile, and recreated a source deleted meanwhile (with its events).
+    fresh = await _get_source(src.get("id", ""))
+    if fresh is None:
+        for ev in await _hash_list(KEY_EVENTS):
+            if ev.get("source") == src.get("id"):
+                await _delete_event(ev["id"])
+        res["deleted_meanwhile"] = True
+        return res
+    fresh["last_sync"] = res["ts"]
+    fresh["last_result"] = {k: res[k] for k in ("added", "updated", "errors", "removed")}
+    await _save_source(fresh)
     return res
 
 
@@ -1298,7 +1397,7 @@ async def cap_sync_run(source: str = "", trace_id=None):
 
 @capability(
     "cal.sync.status", http_method="GET", http_path="/cal/sync/status",
-    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "results"}, "draw": {"columns": ["label", "added", "updated", "errors", "error", "ts"]}, "empty": "No sync has run yet"}},
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "results"}, "draw": {"columns": ["label", "added", "updated", "removed", "errors", "error", "ts"]}, "empty": "No sync has run yet"}},
     http_tags=["calendar"], memory="off", silent=True,
     description="Last sync run status. Output: {ts, results:[...]}.",
 )
@@ -1533,7 +1632,7 @@ async def _persist_records_to_fabric(records: List[Dict], cfg: Dict) -> Dict:
 )
 async def cap_fabric_persist(start: str = "all", end: str = "all", trace_id=None):
     cfg = await _get_config()
-    s, e = _resolve_range(start, end)
+    s, e = _resolve_range(start, end, cfg.get("tz", "UTC"))
     events = await _events_in_range(s, e)
     recs = [_event_to_fabric(ev) for ev in events]
     if not recs:
@@ -1623,12 +1722,13 @@ def _slim_event(ev: Dict) -> Dict:
 )
 async def cap_assistant_briefing(days_ahead: int = 7, trace_id=None):
     cfg = await _get_config()
-    now = _now()
-    day0 = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    tz_name = cfg.get("tz", "UTC")
+    now = _dt.datetime.now(_tz(tz_name))
+    day0 = _local_midnight(tz_name)               # the diary's day, not UTC's (C-3)
     days_ahead = max(1, min(31, int(days_ahead or 7)))
 
     def _ts(d: _dt.datetime) -> float:
-        return d.replace(tzinfo=_dt.timezone.utc).timestamp()
+        return d.timestamp()
 
     today    = await _events_in_range(_ts(day0), _ts(day0 + _dt.timedelta(days=1)))
     tomorrow = await _events_in_range(_ts(day0 + _dt.timedelta(days=1)),
@@ -1650,8 +1750,8 @@ async def cap_assistant_briefing(days_ahead: int = 7, trace_id=None):
                  if n.get("remind_at") and 0 < _epoch(n["remind_at"]) <= horizon]
 
     return {
-        "now": now.isoformat() + "Z",
-        "today_human": now.strftime("%A %d %B %Y %H:%M UTC"),
+        "now": now.isoformat(),
+        "today_human": now.strftime("%A %d %B %Y %H:%M ") + (now.tzname() or "UTC"),
         "tz": cfg.get("tz", "UTC"),
         "today":    [_slim_event(e) for e in today],
         "tomorrow": [_slim_event(e) for e in tomorrow],
