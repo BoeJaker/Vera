@@ -6413,198 +6413,239 @@ async def worker_loop(worker_id: str):
             _stream = (_stream_raw.decode() if isinstance(_stream_raw, (bytes, bytearray))
                        else str(_stream_raw))
             for msg_id, data in messages:
-                task_id  = data[b"id"].decode()
-                cap_name = data[b"capability"].decode()
-                payload  = json.loads(data[b"payload"])
-                trace_id = data[b"trace_id"].decode()
-                bg_label = (data.get(b"bg") or b"").decode() if isinstance(data.get(b"bg"), bytes) else str(data.get(b"bg") or "")
-                # the asking process's own result stream (older dispatchers
-                # send none: their result goes to the shared stream as before)
-                reply_to = (data.get(b"reply_to") or b"").decode() if isinstance(data.get(b"reply_to"), bytes) else str(data.get(b"reply_to") or "")
-                cap      = CAPABILITY_REGISTRY.get(cap_name)
+                try:
+                    task_id  = data[b"id"].decode()
+                    cap_name = data[b"capability"].decode()
+                    payload  = json.loads(data[b"payload"])
+                    trace_id = data[b"trace_id"].decode()
+                    bg_label = (data.get(b"bg") or b"").decode() if isinstance(data.get(b"bg"), bytes) else str(data.get(b"bg") or "")
+                    # the asking process's own result stream (older dispatchers
+                    # send none: their result goes to the shared stream as before)
+                    reply_to = (data.get(b"reply_to") or b"").decode() if isinstance(data.get(b"reply_to"), bytes) else str(data.get(b"reply_to") or "")
+                    cap      = CAPABILITY_REGISTRY.get(cap_name)
 
-                # Queued-cancel guard: if this task was stopped before a worker
-                # picked it up, ack + discard it instead of running.
-                if await _is_task_cancelled(task_id):
-                    await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
-                    await REDIS.xdel(_stream, msg_id)
-                    await _post_result(reply_to, {
-                        "id": task_id, "error": "cancelled", "trace_id": trace_id,
-                    })
-                    await emit_event({"type": "worker.cancelled",
-                                      "worker": worker_id, "task": task_id})
-                    continue
-
-                # A task this worker may not run (host-bound, or a class this
-                # node was not given - e.g. queued on the legacy stream by a
-                # process running older code) goes where it belongs: the host
-                # stream, or its class stream, which the host always reads -
-                # so it cannot bounce between node workers. If that is the very
-                # stream it came from, the roles changed under us: re-read them
-                # first, which stops this worker reading that stream.
-                _may, _why = _placement.may_run_here(cap_name, is_worker=_IS_WORKER,
-                                                     classes=_classes)
-                if not _may:
-                    _target = _placement.handoff_stream(cap_name)
-                    if _target == _stream and _IS_WORKER:
-                        _classes = await _worker_classes()
-                        _streams, _advertised = await _apply_classes(_classes)
-                        _classes_checked = time.monotonic()
-                    await REDIS.xadd(_target, {
-                        "id": task_id, "capability": cap_name,
-                        "payload": json.dumps(payload), "trace_id": trace_id,
-                        "ts": now_iso(), **({"bg": bg_label} if bg_label else {}),
-                        **({"reply_to": reply_to} if reply_to else {}),
-                    }, maxlen=5000, approximate=True)
-                    await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
-                    await REDIS.xdel(_stream, msg_id)
-                    log.info("Worker %s: %s not run here (%s) - handed to %s",
-                             worker_id, cap_name, _why, _target)
-                    continue
-
-                # a compute job runs beside the others (MW-7): the worker stays
-                # free to read the next one; anything else runs one at a time
-                _detach = cap is not None and _compute_core.run_detached(
-                    cap_name, _IS_WORKER, _compute_slots)
-                if not _detach:
-                    WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"
-                    WORKER_REGISTRY[worker_id]["current_task"] = cap_name
-                    WORKER_REGISTRY[worker_id]["task_started"] = now_iso()
-                await emit_event({
-                    "type": "worker.start", "worker": worker_id,
-                    "capability": cap_name, "task": task_id,
-                })
-
-                if not cap:
-                    # Check Redis for workers on OTHER hosts that have this cap
-                    other_has_cap = False
-                    try:
-                        rkeys = await REDIS.keys("vera:workers:*")
-                        for rk in rkeys:
-                            raw_w = await REDIS.hgetall(rk)
-                            if not raw_w: continue
-                            wid_b = raw_w.get(b"id", b"")
-                            other_wid = wid_b.decode() if isinstance(wid_b, bytes) else str(wid_b)
-                            if other_wid == worker_id: continue
-                            caps_b = raw_w.get(b"capabilities", b"[]")
-                            caps_str = caps_b.decode() if isinstance(caps_b, bytes) else str(caps_b)
-                            try:
-                                other_caps = json.loads(caps_str)
-                            except Exception:
-                                try:
-                                    import ast as _ast
-                                    other_caps = _ast.literal_eval(caps_str)
-                                except Exception:
-                                    other_caps = []
-                            if cap_name in other_caps:
-                                other_has_cap = True
-                                break
-                    except Exception as e:
-                        log.debug("other_has_cap Redis check: %s", e)
-                    if other_has_cap:
-                        log.debug("Worker %s: skipping %s — another worker has it", worker_id, cap_name)
-                        await asyncio.sleep(0.1)
+                    # Queued-cancel guard: if this task was stopped before a worker
+                    # picked it up, ack + discard it instead of running.
+                    if await _is_task_cancelled(task_id):
                         await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                         await REDIS.xdel(_stream, msg_id)
-                        # Re-add so another consumer picks it up
-                        await REDIS.xadd(_stream, {
-                            "id": task_id, "capability": cap_name,
-                            "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
-                            **({"bg": bg_label} if bg_label else {}),
-                        **({"reply_to": reply_to} if reply_to else {}),
-                        }, maxlen=5000, approximate=True)
-                    else:
-                        log.warning("Worker %s: no handler for %s on any worker", worker_id, cap_name)
                         await _post_result(reply_to, {
-                            "id": task_id, "error": f"no_worker_for:{cap_name}", "trace_id": trace_id,
+                            "id": task_id, "error": "cancelled", "trace_id": trace_id,
                         })
+                        await emit_event({"type": "worker.cancelled",
+                                          "worker": worker_id, "task": task_id})
+                        continue
+
+                    # A task this worker may not run (host-bound, or a class this
+                    # node was not given - e.g. queued on the legacy stream by a
+                    # process running older code) goes where it belongs: the host
+                    # stream, or its class stream, which the host always reads -
+                    # so it cannot bounce between node workers. If that is the very
+                    # stream it came from, the roles changed under us: re-read them
+                    # first, which stops this worker reading that stream.
+                    _may, _why = _placement.may_run_here(cap_name, is_worker=_IS_WORKER,
+                                                         classes=_classes)
+                    if not _may:
+                        _target = _placement.handoff_stream(cap_name)
+                        if _target == _stream and _IS_WORKER:
+                            _classes = await _worker_classes()
+                            _streams, _advertised = await _apply_classes(_classes)
+                            _classes_checked = time.monotonic()
+                        await REDIS.xadd(_target, {
+                            "id": task_id, "capability": cap_name,
+                            "payload": json.dumps(payload), "trace_id": trace_id,
+                            "ts": now_iso(), **({"bg": bg_label} if bg_label else {}),
+                            **({"reply_to": reply_to} if reply_to else {}),
+                        }, maxlen=5000, approximate=True)
                         await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                         await REDIS.xdel(_stream, msg_id)
-                else:
-                    async def _execute(cap=cap, payload=payload, trace_id=trace_id, task_id=task_id,
-                                       reply_to=reply_to, _stream=_stream, msg_id=msg_id,
-                                       cap_name=cap_name, bg_label=bg_label):
-                        # Run the cap as a separate task so cluster.job.stop can
-                        # cancel it cooperatively (cancel() interrupts at next await).
-                        # A record carrying `bg` runs inside BACKGROUND_LLM: every
-                        # Ollama call the cap makes is then background work — demoted
-                        # off the GPU while a person is active — exactly as the dream
-                        # scheduler's calls are. The set() lands in the new task's own
-                        # context, so nothing leaks into the worker loop.
-                        async def _run_cap(_bg=bg_label):
-                            if _bg:
-                                BACKGROUND_LLM.set(_bg)
-                            return await cap["raw"](**payload, trace_id=trace_id)
-                        inner = asyncio.ensure_future(_run_cap())
-                        RUNNING_TASKS[task_id] = inner
+                        log.info("Worker %s: %s not run here (%s) - handed to %s",
+                                 worker_id, cap_name, _why, _target)
+                        continue
 
-                        # The registration's TTL is refreshed once per loop turn,
-                        # and a turn blocks here for the whole task - so a task
-                        # longer than 120 s made a busy worker look dead, and orphan
-                        # recovery (which skips live consumers) could run it twice.
-                        async def _heartbeat(_wid=worker_id):
-                            while True:
-                                await asyncio.sleep(30)
-                                try:
-                                    await REDIS.expire(f"vera:workers:{_wid}", 120)
-                                except Exception:
-                                    pass
-                        _hb = asyncio.create_task(_heartbeat())
-                        _act = {"t0": time.time(), "result": None, "error": ""}
+                    # a compute job runs beside the others (MW-7): the worker stays
+                    # free to read the next one; anything else runs one at a time
+                    _detach = cap is not None and _compute_core.run_detached(
+                        cap_name, _IS_WORKER, _compute_slots)
+                    if not _detach:
+                        WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"
+                        WORKER_REGISTRY[worker_id]["current_task"] = cap_name
+                        WORKER_REGISTRY[worker_id]["task_started"] = now_iso()
+                    await emit_event({
+                        "type": "worker.start", "worker": worker_id,
+                        "capability": cap_name, "task": task_id,
+                    })
+
+                    if not cap:
+                        # Check Redis for workers on OTHER hosts that have this cap
+                        other_has_cap = False
                         try:
-                            result = await inner
-                            _act["result"] = result
-                            await _post_result(reply_to, {
-                                "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
-                            }, maxlen=5000)
-                            WORKER_REGISTRY[worker_id]["tasks_done"] += 1
-                            await emit_event({"type": "worker.done", "worker": worker_id, "task": task_id})
-                        except asyncio.CancelledError:
-                            # Intentional cancel of the inner task — not the worker loop.
-                            _act["error"] = "cancelled"
-                            await _post_result(reply_to, {
-                                "id": task_id, "error": "cancelled", "trace_id": trace_id,
-                            })
-                            await emit_event({
-                                "type": "worker.cancelled", "worker": worker_id, "task": task_id,
-                            })
+                            rkeys = await REDIS.keys("vera:workers:*")
+                            for rk in rkeys:
+                                raw_w = await REDIS.hgetall(rk)
+                                if not raw_w: continue
+                                wid_b = raw_w.get(b"id", b"")
+                                other_wid = wid_b.decode() if isinstance(wid_b, bytes) else str(wid_b)
+                                if other_wid == worker_id: continue
+                                caps_b = raw_w.get(b"capabilities", b"[]")
+                                caps_str = caps_b.decode() if isinstance(caps_b, bytes) else str(caps_b)
+                                try:
+                                    other_caps = json.loads(caps_str)
+                                except Exception:
+                                    try:
+                                        import ast as _ast
+                                        other_caps = _ast.literal_eval(caps_str)
+                                    except Exception:
+                                        other_caps = []
+                                if cap_name in other_caps:
+                                    other_has_cap = True
+                                    break
                         except Exception as e:
-                            _act["error"] = str(e)[:300]
-                            await _post_result(reply_to, {
-                                "id": task_id, "error": str(e), "trace_id": trace_id,
-                            })
-                            WORKER_REGISTRY[worker_id]["tasks_failed"] += 1
-                            await emit_event({
-                                "type": "worker.error", "worker": worker_id,
-                                "task": task_id, "error": str(e),
-                            })
-                        finally:
-                            _hb.cancel()
-                            RUNNING_TASKS.pop(task_id, None)
+                            log.debug("other_has_cap Redis check: %s", e)
+                        if other_has_cap:
+                            log.debug("Worker %s: skipping %s — another worker has it", worker_id, cap_name)
+                            await asyncio.sleep(0.1)
                             await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                             await REDIS.xdel(_stream, msg_id)
-                            asyncio.ensure_future(_worker_activity(
-                                worker_id, cap_name, cap, payload, trace_id, bg_label, _act))
+                            # Re-add so another consumer picks it up
+                            await REDIS.xadd(_stream, {
+                                "id": task_id, "capability": cap_name,
+                                "payload": json.dumps(payload), "trace_id": trace_id, "ts": now_iso(),
+                                **({"bg": bg_label} if bg_label else {}),
+                            **({"reply_to": reply_to} if reply_to else {}),
+                            }, maxlen=5000, approximate=True)
+                        else:
+                            log.warning("Worker %s: no handler for %s on any worker", worker_id, cap_name)
+                            await _post_result(reply_to, {
+                                "id": task_id, "error": f"no_worker_for:{cap_name}", "trace_id": trace_id,
+                            })
+                            await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                            await REDIS.xdel(_stream, msg_id)
+                    else:
+                        async def _execute(cap=cap, payload=payload, trace_id=trace_id, task_id=task_id,
+                                           reply_to=reply_to, _stream=_stream, msg_id=msg_id,
+                                           cap_name=cap_name, bg_label=bg_label):
+                            # Run the cap as a separate task so cluster.job.stop can
+                            # cancel it cooperatively (cancel() interrupts at next await).
+                            # A record carrying `bg` runs inside BACKGROUND_LLM: every
+                            # Ollama call the cap makes is then background work — demoted
+                            # off the GPU while a person is active — exactly as the dream
+                            # scheduler's calls are. The set() lands in the new task's own
+                            # context, so nothing leaks into the worker loop.
+                            async def _run_cap(_bg=bg_label):
+                                if _bg:
+                                    BACKGROUND_LLM.set(_bg)
+                                return await cap["raw"](**payload, trace_id=trace_id)
+                            inner = asyncio.ensure_future(_run_cap())
+                            RUNNING_TASKS[task_id] = inner
 
-                    if _detach:
-                        WORKER_REGISTRY[worker_id]["compute_running"] = \
-                            WORKER_REGISTRY[worker_id].get("compute_running", 0) + 1
-
-                        async def _detached(_ex=_execute, _wid=worker_id):
+                            # The registration's TTL is refreshed once per loop turn,
+                            # and a turn blocks here for the whole task - so a task
+                            # longer than 120 s made a busy worker look dead, and orphan
+                            # recovery (which skips live consumers) could run it twice.
+                            async def _heartbeat(_wid=worker_id):
+                                while True:
+                                    await asyncio.sleep(30)
+                                    try:
+                                        await REDIS.expire(f"vera:workers:{_wid}", 120)
+                                    except Exception:
+                                        pass
+                            _hb = asyncio.create_task(_heartbeat())
+                            _act = {"t0": time.time(), "result": None, "error": ""}
                             try:
-                                await _ex()
-                            except Exception as _e:
-                                log.warning("compute job (detached) failed: %s", _e)
+                                result = await inner
+                                _act["result"] = result
+                                await _post_result(reply_to, {
+                                    "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
+                                }, maxlen=5000)
+                                WORKER_REGISTRY[worker_id]["tasks_done"] += 1
+                                await emit_event({"type": "worker.done", "worker": worker_id, "task": task_id})
+                            except asyncio.CancelledError:
+                                # Intentional cancel of the inner task — not the worker loop.
+                                _act["error"] = "cancelled"
+                                await _post_result(reply_to, {
+                                    "id": task_id, "error": "cancelled", "trace_id": trace_id,
+                                })
+                                await emit_event({
+                                    "type": "worker.cancelled", "worker": worker_id, "task": task_id,
+                                })
+                            except Exception as e:
+                                _act["error"] = str(e)[:300]
+                                await _post_result(reply_to, {
+                                    "id": task_id, "error": str(e), "trace_id": trace_id,
+                                })
+                                WORKER_REGISTRY[worker_id]["tasks_failed"] += 1
+                                await emit_event({
+                                    "type": "worker.error", "worker": worker_id,
+                                    "task": task_id, "error": str(e),
+                                })
                             finally:
-                                WORKER_REGISTRY[_wid]["compute_running"] = max(
-                                    0, WORKER_REGISTRY[_wid].get("compute_running", 1) - 1)
-                        asyncio.ensure_future(_detached())
-                        continue
-                    await _execute()
+                                _hb.cancel()
+                                RUNNING_TASKS.pop(task_id, None)
+                                await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                                await REDIS.xdel(_stream, msg_id)
+                                asyncio.ensure_future(_worker_activity(
+                                    worker_id, cap_name, cap, payload, trace_id, bg_label, _act))
 
-                WORKER_REGISTRY[worker_id]["status"] = "idle"
-                WORKER_REGISTRY[worker_id]["current_task"] = ""
-                WORKER_REGISTRY[worker_id]["task_started"] = ""
+                        if _detach:
+                            WORKER_REGISTRY[worker_id]["compute_running"] = \
+                                WORKER_REGISTRY[worker_id].get("compute_running", 0) + 1
+
+                            async def _detached(_ex=_execute, _wid=worker_id):
+                                try:
+                                    await _ex()
+                                except Exception as _e:
+                                    log.warning("compute job (detached) failed: %s", _e)
+                                finally:
+                                    WORKER_REGISTRY[_wid]["compute_running"] = max(
+                                        0, WORKER_REGISTRY[_wid].get("compute_running", 1) - 1)
+                            asyncio.ensure_future(_detached())
+                            continue
+                        await _execute()
+
+                    WORKER_REGISTRY[worker_id]["status"] = "idle"
+                    WORKER_REGISTRY[worker_id]["current_task"] = ""
+                    WORKER_REGISTRY[worker_id]["task_started"] = ""
+                except asyncio.CancelledError:
+                    raise
+                except Exception as _poison:
+                    # One bad message (no id, a payload that is not JSON, a failed hand-off write) used to
+                    # raise out of the loop and stop this worker until the next restart (S27 / D01-3).
+                    # Move it aside, answer its caller if it can be named, and carry on.
+                    await _dead_letter_task(_stream, msg_id, data, _poison, worker_id)
+
+TASK_DEAD_STREAM = "vera:tasks:dead"
+
+
+async def _dead_letter_task(stream, msg_id, data, err: BaseException, worker_id: str) -> None:
+    """A task message the worker could not handle: keep a copy on TASK_DEAD_STREAM, ack it so it is not redelivered,
+    tell its caller (when the message names one), and leave the worker idle. Never raises."""
+    fields: Dict[str, str] = {}
+    try:
+        for k, v in (data or {}).items():
+            ks = k.decode("utf-8", "replace") if isinstance(k, (bytes, bytearray)) else str(k)
+            vs = v.decode("utf-8", "replace") if isinstance(v, (bytes, bytearray)) else str(v)
+            fields[ks] = vs[:20000]
+        mid = msg_id.decode() if isinstance(msg_id, (bytes, bytearray)) else str(msg_id)
+        log.warning("worker %s: task message %s on %s could not be handled (%s: %s) - moved to %s",
+                    worker_id, mid, stream, type(err).__name__, str(err)[:200], TASK_DEAD_STREAM)
+        await REDIS.xadd(TASK_DEAD_STREAM, {"stream": str(stream), "msg_id": mid, "worker": worker_id,
+                                            "error": f"{type(err).__name__}: {str(err)[:300]}",
+                                            "fields": json.dumps(fields)[:60000], "ts": now_iso()},
+                         maxlen=5000, approximate=True)
+        await REDIS.xack(stream, GROUP_WORKERS, msg_id)
+        await REDIS.xdel(stream, msg_id)
+        if fields.get("id"):
+            await _post_result(fields.get("reply_to", ""), {
+                "id": fields["id"], "error": f"task could not be run: {type(err).__name__}",
+                "trace_id": fields.get("trace_id", "")})
+    except Exception as e2:
+        log.warning("worker %s: dead-lettering a task failed too: %s", worker_id, e2)
+    finally:
+        w = WORKER_REGISTRY.get(worker_id) or {}
+        w["tasks_failed"] = int(w.get("tasks_failed", 0) or 0) + 1
+        w.update(status="idle", current_task="", task_started="")
+
 
 async def _post_result(reply_to: str, fields: dict, **_kw) -> None:
     """A task's result, to the process that asked (its reply stream), else the
@@ -8296,6 +8337,19 @@ except Exception:                                    # pragma: no cover
     from . import scheduler_due_core as _scheduler_due_core
 
 
+#: Errors the scheduler loop caught, per job name: {count, last, ts} (obs.scheduler shows them).
+SCHEDULER_ERRORS: Dict[str, Dict[str, Any]] = {}
+
+
+def _note_scheduler_error(name: str, err: BaseException) -> None:
+    rec = SCHEDULER_ERRORS.setdefault(str(name), {"count": 0, "last": "", "ts": 0.0})
+    rec["count"] += 1
+    rec["last"] = f"{type(err).__name__}: {str(err)[:200]}"
+    if time.time() - rec["ts"] > 300:            # at most one warning per job per 5 minutes
+        log.warning("scheduler: job %s raised (%s) - the loop carries on", name, rec["last"])
+    rec["ts"] = time.time()
+
+
 async def scheduler_loop():
     _sandbox = is_dev_sandbox()
     from Vera.vera import scheduler_leadership as _lead
@@ -8304,52 +8358,60 @@ async def scheduler_loop():
         # A worker never takes the lease: it would then run the singleton sweeps
         # against an estate it does not host.
         if not _sandbox and not _IS_WORKER:
-            await _refresh_scheduler_leadership()
+            try:
+                await _refresh_scheduler_leadership()
+            except Exception as _le:
+                _note_scheduler_error("(leadership)", _le)
         for task in SCHEDULED_TASKS:
-            # A worker runs no periodic job and only the startup hooks that load
-            # state its caps need - not the pollers (telegram, email), promoters,
-            # proxies or sweeps a second copy of the host would duplicate.
-            if not _placement.scheduler_may_run(task["name"], task["int"],
-                                                is_worker=_IS_WORKER):
-                if task["name"] not in _SANDBOX_SKIP_LOGGED:
-                    _SANDBOX_SKIP_LOGGED.add(task["name"])
-                    log.info("worker: skipping scheduled job '%s'", task["name"])
-                continue
-            if not _lead.may_run(task, is_leader=bool(_LEADER_STATE["is_leader"])):
-                continue
-            # Only the estate's OWNER may sweep it. The primary test is
-            # possession, not a flag: a foundry worker on another machine ran
-            # the hourly sweep for a day against this estate, and because
-            # .loop-lab-worktrees/ does not exist over there EVERY descriptor
-            # probed ABSENT and looked reapable. A flag only stops instances
-            # that carry it; the offender predated any flag we could add.
-            if _estate_role is not None and _estate_role.is_estate_job(task["name"]):
-                _d = _estate_role.decide(
-                    task["name"], estate_present=_ESTATE_PRESENT,
-                    is_worker=_IS_WORKER, is_dev_sandbox=bool(_sandbox))
-                if not _d["run"]:
+            try:
+                # A worker runs no periodic job and only the startup hooks that load
+                # state its caps need - not the pollers (telegram, email), promoters,
+                # proxies or sweeps a second copy of the host would duplicate.
+                if not _placement.scheduler_may_run(task["name"], task["int"],
+                                                    is_worker=_IS_WORKER):
                     if task["name"] not in _SANDBOX_SKIP_LOGGED:
                         _SANDBOX_SKIP_LOGGED.add(task["name"])
-                        log.warning("estate guard: %s", _d["reason"])
+                        log.info("worker: skipping scheduled job '%s'", task["name"])
                     continue
-            # Leech boot: never fire heavy ambient jobs inside a dev sandbox.
-            if _sandbox and (task.get("skip_in_sandbox")
-                             or task["name"] in _SANDBOX_SKIP_JOBS):
-                if task["name"] not in _SANDBOX_SKIP_LOGGED:
-                    _SANDBOX_SKIP_LOGGED.add(task["name"])
-                    log.info("leech boot: skipping ambient job '%s' in dev sandbox",
-                             task["name"])
-                continue
-            last=task["last"]
-            # interval <= 0 = start ONCE (the job runs its own loop). It used to mean
-            # "every tick": vllm's endless _health_loop got a new copy every second -
-            # ~2,950 live 50 min after a restart (4 Oct 2026). scheduler_due_core.
-            if _scheduler_due_core.due(last, task["int"], now):
-                task["last"]=now; task["runs"]+=1
-                asyncio.create_task(task["fn"]())
-                # NOTE: do NOT emit scheduler.run events — they flood the WS/obsIngest
-                # causing O(n) unshift() churn on _obsEvents every second. Log only.
-                log.debug("scheduler: %s run #%d", task["name"], task["runs"])
+                if not _lead.may_run(task, is_leader=bool(_LEADER_STATE["is_leader"])):
+                    continue
+                # Only the estate's OWNER may sweep it. The primary test is
+                # possession, not a flag: a foundry worker on another machine ran
+                # the hourly sweep for a day against this estate, and because
+                # .loop-lab-worktrees/ does not exist over there EVERY descriptor
+                # probed ABSENT and looked reapable. A flag only stops instances
+                # that carry it; the offender predated any flag we could add.
+                if _estate_role is not None and _estate_role.is_estate_job(task["name"]):
+                    _d = _estate_role.decide(
+                        task["name"], estate_present=_ESTATE_PRESENT,
+                        is_worker=_IS_WORKER, is_dev_sandbox=bool(_sandbox))
+                    if not _d["run"]:
+                        if task["name"] not in _SANDBOX_SKIP_LOGGED:
+                            _SANDBOX_SKIP_LOGGED.add(task["name"])
+                            log.warning("estate guard: %s", _d["reason"])
+                        continue
+                # Leech boot: never fire heavy ambient jobs inside a dev sandbox.
+                if _sandbox and (task.get("skip_in_sandbox")
+                                 or task["name"] in _SANDBOX_SKIP_JOBS):
+                    if task["name"] not in _SANDBOX_SKIP_LOGGED:
+                        _SANDBOX_SKIP_LOGGED.add(task["name"])
+                        log.info("leech boot: skipping ambient job '%s' in dev sandbox",
+                                 task["name"])
+                    continue
+                last=task["last"]
+                # interval <= 0 = start ONCE (the job runs its own loop). It used to mean
+                # "every tick": vllm's endless _health_loop got a new copy every second -
+                # ~2,950 live 50 min after a restart (4 Oct 2026). scheduler_due_core.
+                if _scheduler_due_core.due(last, task["int"], now):
+                    task["last"]=now; task["runs"]+=1
+                    asyncio.create_task(task["fn"]())
+                    # NOTE: do NOT emit scheduler.run events — they flood the WS/obsIngest
+                    # causing O(n) unshift() churn on _obsEvents every second. Log only.
+                    log.debug("scheduler: %s run #%d", task["name"], task["runs"])
+            except Exception as _se:
+                # S27 / D01-3: one job's bad entry (a missing key, a placement or due check that raises) used
+                # to stop the scheduler loop, and with it every scheduled job, until the next restart.
+                _note_scheduler_error(task.get("name", "?") if isinstance(task, dict) else "?", _se)
         await asyncio.sleep(1)
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -10048,9 +10110,12 @@ async def obs_pending(trace_id=None):
             http_method="GET", http_path="/scheduler", http_tags=["obs"],
             description="Scheduled background jobs — name, interval, run count, last run.")
 async def obs_scheduler(trace_id=None):
-    return [{"name":t["name"],"interval":t["int"],"runs":t["runs"],
-             "last":t["last"].isoformat() if t["last"] else None}
-            for t in SCHEDULED_TASKS]
+    # read leniently: one malformed entry must not take this view down too (S27)
+    return [{"name":t.get("name"),"interval":t.get("int"),"runs":t.get("runs", 0),
+             "last":t["last"].isoformat() if t.get("last") else None,
+             "errors": (SCHEDULER_ERRORS.get(t.get("name")) or {}).get("count", 0),
+             "last_error": (SCHEDULER_ERRORS.get(t.get("name")) or {}).get("last", "")}
+            for t in SCHEDULED_TASKS if isinstance(t, dict)]
 
 @capability("obs.events", memory="off", silent=True,
             http_method="GET", http_path="/events", http_tags=["obs"],
