@@ -97,7 +97,9 @@ CAP_ALLOW_PREFIXES = ("decide.", "obs.", "evolve.suite.", "chat.corpus.", "world
                       # trigger's cycle (A5: the nightly QA suite), the student nightly pass, and the
                       # allow-listed scripts (probes, TTS round-trip) through evolve.script.run
                       "ml.train", "ml.sweep", "retrieval.eval", "retrieval.known_items.run",
-                      "dream.cycle.run", "evolve.script.run")
+                      "dream.cycle.run", "evolve.script.run",
+                      # owner 18 Oct 2026: background work runs in scheduled windows, not in a quiet hour
+                      "evolve.background.window")
 
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
@@ -165,10 +167,11 @@ def follow_state(cap: str, st: Any) -> Tuple[bool, str, str]:
     return False, "", ""
 
 
-# ── A2: quiet hours ───────────────────────────────────────────────────────────
-#: NIGHT-BOOKINGS (owner, 17 Oct 2026): 04:00-05:00 is the background queue's quiet hour, every night.
-#: No schedule STARTS in a quiet window unless it says quiet_ok (what is already running carries on).
-DEFAULT_QUIET = [{"start": "04:00", "end": "05:00"}]
+# ── A2: quiet windows (OFF by default) ───────────────────────────────────────
+#: Owner, 18 Oct 2026: "there is no such thing as a quiet hour - the system needs time where nothing is
+#: processing to do processing - this stuff should just be scheduled". Background work gets SCHEDULED
+#: windows (evolve.background.window) instead; a quiet window only exists if someone sets one in config.
+DEFAULT_QUIET: List[Dict[str, Any]] = []
 
 
 def in_quiet(now: datetime, quiet: Optional[List[Dict[str, Any]]], tz_name: str = DEFAULT_TZ) -> str:
