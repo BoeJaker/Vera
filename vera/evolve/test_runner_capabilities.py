@@ -284,7 +284,14 @@ async def _busy_avoid(cfg: Dict[str, Any]) -> List[str]:
         why = await _ev()._box_busy_reason()
     except Exception:
         why = ""
-    return list(avoid) if why else []
+    if not why:
+        return []
+    # P0-4: only the nodes the running work is using (by its route stats), when the config maps node -> instance
+    bmap = cfg.get("busy_map") or {}
+    if not bmap:
+        return list(avoid)
+    stats = list((getattr(_orch, "_ROUTE_STATS", None) or {}).values())
+    return core.live_avoid(avoid, bmap, stats, time.time())
 
 
 async def _host_shard(wt: str, files: List[str], markers: str, timeout: int,

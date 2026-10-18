@@ -55,12 +55,30 @@ async def _push_local_metrics():
     # is the measurement window. The first priming call returns 0.0 (no baseline).
     try:
         psutil.cpu_percent(interval=None)
+        psutil.cpu_percent(interval=None, percpu=True)
     except Exception:
         pass
+    # P0-1/P0-2 (looplab-control §9.0, 18 Oct 2026): admission reads the node's own pinned cores, averaged over a
+    # minute (one sample per tick swung a node 12 -> 0 free cores), and says it measured them ("pinned") so the
+    # dispatcher can stop double-counting a job's reservation once the reading shows the job.
+    try:
+        from Vera.vera.workers import node_metrics_core as _nmc
+    except ImportError:                                # pragma: no cover
+        from vera.workers import node_metrics_core as _nmc  # type: ignore
+    _win = _nmc.Window()
+    try:
+        _aff = sorted(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        _aff = []
 
     while True:
         try:
             cpu  = psutil.cpu_percent(interval=None)
+            try:
+                own, own_n, scope = _nmc.own_cpu(psutil.cpu_percent(interval=None, percpu=True), _aff)
+            except Exception:
+                own, own_n, scope = cpu, (psutil.cpu_count() or 1), "host"
+            own_avg = _win.add(own)
             ram  = psutil.virtual_memory()
             disk = psutil.disk_usage("/")
             try:
@@ -72,7 +90,10 @@ async def _push_local_metrics():
                 # what node scheduling admits a job against (node_compute_core):
                 # available memory counts page cache as free; used does not
                 "mem_avail_gb": round(ram.available / 1e9, 2),
-                "ncpu":         psutil.cpu_count() or 1,
+                "ncpu":         own_n if scope == "pinned" else (psutil.cpu_count() or 1),
+                "cpu_own_pct":  own,
+                "cpu_pct_avg":  own_avg,
+                "cpu_scope":    scope,
                 "load1":        round(load1, 2),
                 "ram_used_gb":  round(ram.used  / 1e9, 2),
                 "ram_total_gb": round(ram.total / 1e9, 2),
@@ -101,6 +122,9 @@ async def _push_local_metrics():
                             "cpu_pct":       str(metrics["cpu_pct"]),
                             "mem_avail_gb":  str(metrics["mem_avail_gb"]),
                             "ncpu":          str(metrics["ncpu"]),
+                            "cpu_own_pct":   str(metrics["cpu_own_pct"]),
+                            "cpu_pct_avg":   str(metrics["cpu_pct_avg"]),
+                            "cpu_scope":     str(metrics["cpu_scope"]),
                             "load1":         str(metrics["load1"]),
                             "metrics_at":    str(round(time.time(), 1)),
                             "ram_used_gb":   str(metrics["ram_used_gb"]),
