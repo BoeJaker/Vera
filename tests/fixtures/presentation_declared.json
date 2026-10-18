@@ -5729,9 +5729,9 @@
   "kind": "composite",
   "parts": [
    {
-    "kind": "kv",
+    "kind": "status",
     "map": {
-     "fields": "door"
+     "verdict": "door.up"
     },
     "title": "Door"
    },

@@ -512,7 +512,7 @@ async def cap_peer_add(name: str = "", trace_id=None) -> Dict:
 
 @capability(
     "vfs.peer.list",
-    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "door"}, "title": "Door"}, {"kind": "table", "map": {"rows": "peers"}, "title": "File devices", "empty": "No file devices"}]}},
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "status", "map": {"verdict": "door.up"}, "title": "Door"}, {"kind": "table", "map": {"rows": "peers"}, "title": "File devices", "empty": "No file devices"}]}},
     http_method="POST", http_path="/vfs/peer/list", http_tags=["vfs"],
     memory="off", silent=True,
     description="Devices with file access over netctl's WireGuard door, with their tunnel "
