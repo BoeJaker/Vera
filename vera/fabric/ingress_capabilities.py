@@ -140,7 +140,8 @@ def record_fetch_result(fp: Dict[str, Any], *, caller: str = "", purpose: str = 
         elapsed_ms=int(fp.get("elapsed_ms") or 0), caller=caller or fp.get("caller") or "web_client",
         purpose=purpose or fp.get("purpose") or "page", error=fp.get("error") or fp.get("block_reason") or "",
         etag=fp.get("etag") or "", last_modified=fp.get("last_modified") or "", title=fp.get("title") or "",
-        from_cache=bool(fp.get("from_cache")), requested=_requested_for(m), internal_hosts=INTERNAL_HOSTS)
+        from_cache=bool(fp.get("from_cache")), requested=_requested_for(m), internal_hosts=INTERNAL_HOSTS,
+        ts=float(fp["fetched_at"]) if fp.get("fetched_at") else None)
     if item is None:
         return False
     return WRITER.enqueue(item)
@@ -943,16 +944,18 @@ async def _fetch_batch(us: List[str], max_chars: int) -> Dict[str, Any]:
                 out.append(cc.failed_row(u, "refused: not an external http(s) URL"))
                 continue
             await _host_slot(ic.host_of(u))
-            t0 = time.monotonic()
+            t0, at = time.monotonic(), time.time()
             try:
                 resp = await c.get(u)
                 out.append(cc.fetch_row(u, final_url=str(resp.url), status=resp.status_code,
                                         content_type=resp.headers.get("content-type", ""), body=resp.text,
                                         elapsed_ms=int((time.monotonic() - t0) * 1000),
                                         etag=resp.headers.get("etag", ""),
-                                        last_modified=resp.headers.get("last-modified", ""), max_chars=max_chars))
+                                        last_modified=resp.headers.get("last-modified", ""), max_chars=max_chars,
+                                        fetched_at=at))
             except Exception as e:  # noqa: BLE001
-                out.append(cc.fetch_row(u, elapsed_ms=int((time.monotonic() - t0) * 1000), error=str(e)[:200]))
+                out.append(cc.fetch_row(u, elapsed_ms=int((time.monotonic() - t0) * 1000), error=str(e)[:200],
+                                        fetched_at=at))
     return {"ok": True, "results": out, "ran_on": cc.where(socket.gethostname(), bool(getattr(_orch, "_IS_WORKER", False)))}
 
 

@@ -177,7 +177,7 @@ UPSERT_URL = """INSERT INTO web_urls (url_key, host, last_status, content_type, 
     last_caller = EXCLUDED.last_caller, last_purpose = EXCLUDED.last_purpose, policy = EXCLUDED.policy,
     final_key = COALESCE(EXCLUDED.final_key, web_urls.final_key), title = COALESCE(EXCLUDED.title, web_urls.title)"""
 INSERT_FETCH = """INSERT INTO web_fetches (url_key, host, status, ms, bytes, from_cache, caller, purpose, policy, error,
-    content_hash) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"""
+    content_hash, ts) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, to_timestamp($12::double precision))"""
 UPSERT_LINK = """INSERT INTO web_links (src_key, dst_key, text, rel) VALUES ($1, $2, $3, $4)
     ON CONFLICT (src_key, dst_key) DO UPDATE SET last_seen = NOW(), text = COALESCE(EXCLUDED.text, web_links.text)"""
 UPSERT_CONTENT = """INSERT INTO web_content (content_hash, first_key, size, reader, simhash, b0, b1, b2, b3)
@@ -275,7 +275,7 @@ def rows_for(item: Dict[str, Any]) -> Dict[str, Any]:
                 item.get("title") or None),
         "fetch": (key, host, status or None, int(item.get("elapsed_ms") or 0), int(item.get("bytes") or 0),
                   bool(item.get("from_cache")), item.get("caller") or None, item.get("purpose") or None,
-                  item.get("policy"), item.get("error") or None, content_hash),
+                  item.get("policy"), item.get("error") or None, content_hash, float(item.get("ts") or time.time())),
         "content": content_row,
         "links": links,
         "key": key, "content_hash": content_hash,

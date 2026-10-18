@@ -54,7 +54,7 @@ def is_textual(content_type: str) -> bool:
 
 def fetch_row(url: str, *, final_url: str = "", status: int = 0, content_type: str = "", body: str = "",
               elapsed_ms: int = 0, error: str = "", etag: str = "", last_modified: str = "",
-              max_chars: int = MAX_BODY_CHARS) -> Dict[str, Any]:
+              max_chars: int = MAX_BODY_CHARS, fetched_at: float = 0.0) -> Dict[str, Any]:
     """One fetch as it travels back to the host - the shape web_client.fetch_page results have, so the host's
     receipt hook takes it unchanged. A body that is not text, or that decodes to binary, travels as ''."""
     ct = str(content_type or "")
@@ -66,7 +66,8 @@ def fetch_row(url: str, *, final_url: str = "", status: int = 0, content_type: s
     html = "html" in ct.lower()
     return {"url": url, "final_url": final_url or url, "status": int(status or 0), "content_type": ct,
             "html": text if html else "", "text": "" if html else text, "elapsed_ms": int(elapsed_ms or 0),
-            "error": err, "etag": etag or "", "last_modified": last_modified or "", "bytes": len(text)}
+            "error": err, "etag": etag or "", "last_modified": last_modified or "", "bytes": len(text),
+            "fetched_at": float(fetched_at or 0.0)}
 
 
 def summary(batches: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:

@@ -142,7 +142,7 @@ def test_retention_curves():
 
 def test_fetch_receipts_carry_their_content_hash():
     from vera.fabric import ingress_receipts_core as rc
-    assert "content_hash) VALUES" in rc.INSERT_FETCH and "$11" in rc.INSERT_FETCH
+    assert "content_hash, ts) VALUES" in rc.INSERT_FETCH and "$11" in rc.INSERT_FETCH
     assert any("web_fetches ADD COLUMN IF NOT EXISTS content_hash" in s for s in rc.DDL)
     caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
     assert '@capability("fabric.map.retention"' in caps and 'm["retention"]' in caps
