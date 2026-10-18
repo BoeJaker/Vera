@@ -1468,6 +1468,7 @@ async def cap_web_acquire(
     fetch_content:    bool = True,
     same_domain:      bool = True,
     tags:             str  = "",
+    resume_visited:   Any  = None,
     trace_id=None,
 ) -> Dict:
     if not url or not url.strip():
@@ -1525,7 +1526,8 @@ async def cap_web_acquire(
 
     # BFS crawl with content fetching
     queue: list = [(url, 0, 0)]  # (url, depth, dry_streak)
-    visited: Set[str] = set()
+    # a continued acquisition starts with what the last run saw, so it goes on instead of over (B11)
+    visited: Set[str] = {str(u) for u in (resume_visited or []) if u}
     pages_fetched = 0
     pages_skipped = 0
     all_entities: Dict[str, Dict] = {}  # normalised_name -> entity
@@ -1843,7 +1845,8 @@ async def cap_web_acquire(
     source_registered = False
     try:
         from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
-        add_fn = (CAPABILITY_REGISTRY.get("fabric.sources.add") or {}).get("fn")
+        _cap = CAPABILITY_REGISTRY.get("fabric.sources.add") or {}
+        add_fn = _cap.get("raw") or _cap.get("func")       # entries hold func/raw, never "fn" (B10)
         if add_fn:
             await add_fn(
                 url=url, source_type="docs",
@@ -1983,24 +1986,12 @@ async def cap_web_continue(
         return {"error": "Acquisition not found. Provide acquisition_id, source_id, or dataset_id."}
 
     acq = dict(row)
-    config = json.loads(acq.get("config", "{}"))
-    state = json.loads(acq.get("state", "{}"))
-
-    # Re-run with same config but starting from visited set
-    return await cap_web_acquire(
-        url=acq["source_url"],
-        dataset_id=acq["dataset_id"],
-        max_pages=additional_pages,
-        max_depth=config.get("max_depth", 4),
-        negative_words=config.get("negative_words", ""),
-        negative_urls=config.get("negative_urls", ""),
-        topic=config.get("topic", ""),
-        topic_dropoff=config.get("topic_dropoff", 3),
-        extract_entities=True,
-        fetch_content=True,
-        same_domain=config.get("same_domain", True),
-        tags=config.get("tags", ""),
-    )
+    # Re-run with the same config AND the saved visited set (B11: it used to start over)
+    try:
+        from Vera.vera.fabric.discovery_store_core import continue_kwargs as _continue_kwargs
+    except ImportError:  # pragma: no cover
+        from vera.fabric.discovery_store_core import continue_kwargs as _continue_kwargs
+    return await cap_web_acquire(**_continue_kwargs(acq, additional_pages))
 
 
 # ═══════════════════════════════════════════════════════════════════════════

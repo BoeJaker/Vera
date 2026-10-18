@@ -186,6 +186,32 @@ def _ingress_receipt(url: str, resp, ms: int, caller: str, purpose: str = "crawl
         log.debug("ingress receipt %s: %s", url, e)
 
 
+try:                                   # the row and query shapes, proved against the real schema in tests (D07-1)
+    from Vera.vera.fabric import discovery_store_core as _dsc
+except ImportError:                    # pragma: no cover
+    from vera.fabric import discovery_store_core as _dsc
+
+#: crawl_id -> the crawl's consolidator stop event, so a crawl that dies in its main loop (B2 was a ValueError on
+#: a malformed queue entry) still stops its in-tandem consolidator instead of leaving it scanning every 20 s.
+_CRAWL_STOPS: Dict[str, "asyncio.Event"] = {}
+
+
+def _write_fabric_page(ds_id: str, crawl_id: str, url: str, title: str, full_text: str,
+                       tags, headings, word_count) -> bool:
+    """Mirror a page into fabric_pages, the index recall, discover.query/compile and the KB read. One writer for
+    crawls (which never wrote it: B1), discover_ingest_page and scrape_page; a shorter text never overwrites a
+    longer one (B18)."""
+    try:
+        _ensure_tables()
+        conn = _sqlite_conn()
+        sql, params = _dsc.fabric_page_row(ds_id, crawl_id, url, title, full_text, tags, headings, word_count)
+        conn.execute(sql, params)
+        conn.commit()
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.debug("fabric_pages %s: %s", url, e)
+        return False
+
 def _get_graph(name: str = "fabric"):
     try:
         graphs = _df().GRAPHS
@@ -2106,7 +2132,12 @@ async def _run_crawl(crawl_id: str, ds_id: str, seed_url: str, config: Dict,
         except Exception:
             pass
     async with lock:
-        return await _run_crawl_impl(crawl_id, ds_id, seed_url, config, queue, visited)
+        try:
+            return await _run_crawl_impl(crawl_id, ds_id, seed_url, config, queue, visited)
+        finally:
+            ev = _CRAWL_STOPS.pop(crawl_id, None)
+            if ev is not None:
+                ev.set()               # whatever happened inside, the consolidator and refiner stop
 
 
 async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict,
@@ -2208,6 +2239,9 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
         _pq_seq += 1
         return _pq_seq
 
+    # Every entry in the crawl's shape before the heap sees it: a surface expand passed (url, depth, dry, parent)
+    # and the main loop unpacked six (B2); mixed shapes also made heapq compare a str with a float.
+    queue[:] = _dsc.normalise_queue(queue, _next_seq)
     heapq.heapify(queue)   # safe on empty list and on already-heap lists
 
     async def _emit(stage, **kw):
@@ -2344,6 +2378,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     #    duplicates (e.g. multi-type "Pikachu") WHILE the crawl runs, so the
     #    graph stays clean as data arrives rather than only at the end. ─────────
     _consol_stop = asyncio.Event()
+    _CRAWL_STOPS[crawl_id] = _consol_stop
     _consolidator = None
 
     async def _periodic_consolidate():
@@ -2695,6 +2730,10 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
             except Exception as e:
                 log.warning("ingest page %s: %s", page_url, e)
                 return
+            # the page index too (recall, discover.query/compile, the KB): crawls never wrote it (B1)
+            await asyncio.to_thread(_write_fabric_page, ds_id, crawl_id, page_url, title, full_text,
+                                    extra_tags + ["web", "discovery"] + llm_tags,
+                                    structure.get("headings", []), structure.get("word_count", 0))
 
             await _emit("page_added", url=page_url, title=(title or "")[:80],
                         record_id=rid, depth=depth, dataset_id=ds_id,
@@ -3402,19 +3441,7 @@ async def discover_ingest_page(
         _ingress_note(_chash, rid, url)         # the map learns which record holds this content
 
     # Mirror into fabric_pages so discover_recall / gather_discovery can find it
-    try:
-        conn = _sqlite_conn()
-        page_id = "page:" + hashlib.sha1(url.encode()).hexdigest()[:16]
-        conn.execute(
-            "INSERT OR REPLACE INTO fabric_pages "
-            "(id, dataset_id, crawl_id, url, title, full_text, tags, headings, "
-            " word_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
-            (page_id, ds_id, crawl_id, url, title, full_text,
-             ",".join(extra_tags[:20]), json.dumps(headings[:40]), word_count)
-        )
-        conn.commit()
-    except Exception as e:
-        log.debug("discover_ingest_page fabric_pages %s: %s", url, e)
+    await asyncio.to_thread(_write_fabric_page, ds_id, crawl_id, url, title, full_text, extra_tags, headings, word_count)
 
     try:
         _record_edge(crawl_id, ds_id, (parent_url or ds_id), url,
@@ -4969,6 +4996,13 @@ async def cap_discover_delete_scan(crawl_id: str, delete_dataset: bool = False,
     except Exception as e:
         return {"error": str(e)}
     ds_id = (row["dataset_id"] if row else "") or ""
+    # the graph nodes this scan wrote, by id - read before the rows go (B5)
+    try:
+        _surface_ids = [r[0] for r in conn.execute(_dsc.SCAN_SURFACE_IDS_SQL, (crawl_id,)).fetchall()]
+        _subtable_ids = [r[0] for r in conn.execute(_dsc.SCAN_SUBTABLE_IDS_SQL, (crawl_id,)).fetchall()]
+    except Exception as e:
+        log.debug("delete_scan ids: %s", e)
+        _surface_ids, _subtable_ids = [], []
     deleted = {}
     for table, col in (("fabric_surfaces", "crawl_id"),
                        ("fabric_subtables", "crawl_id"),
@@ -4986,10 +5020,7 @@ async def cap_discover_delete_scan(crawl_id: str, delete_dataset: bool = False,
     # map doesn't keep showing a deleted scan (surfaces / subtable child nodes).
     graph = _get_graph()
     if graph and getattr(graph, "available", False):
-        for cy, p in (
-            ("MATCH (s:Surface {crawl_id:$cid}) DETACH DELETE s", {"cid": crawl_id}),
-            ("MATCH (s:Subtable {crawl_id:$cid}) DETACH DELETE s", {"cid": crawl_id}),
-        ):
+        for cy, p in _dsc.purge_cypher(_surface_ids, _subtable_ids):
             try:
                 await graph.query(cy, p)
             except Exception as e:
@@ -5596,16 +5627,8 @@ async def _llm_steer_crawl(topic: str, ds_id: str, n_angles: int = 6,
     """
     searched = searched or set()
     try:
-        rows = _sqlite_conn().execute(
-            "SELECT title, description FROM fabric_records "
-            "WHERE dataset_id=? AND title IS NOT NULL "
-            "ORDER BY ROWID DESC LIMIT 25",
-            (ds_id,),
-        ).fetchall()
-        summaries = [
-            f"{r['title']}: {(r['description'] or '')[:120]}".strip()
-            for r in rows if r["title"]
-        ]
+        rows = _sqlite_conn().execute(_dsc.RECENT_RECORDS_SQL, (ds_id, 25)).fetchall()   # text + data JSON (B3)
+        summaries = _dsc.record_summaries(rows)
     except Exception:
         summaries = []
     try:
@@ -6279,21 +6302,11 @@ async def cap_discover_topic(
     # If overwriting, wipe the existing dataset so the graph starts clean
     if overwrite and ds_id:
         try:
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_records WHERE dataset_id=?", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_discovery_edges WHERE parent_dataset=?", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_surfaces WHERE parent_dataset=?", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_entity_mentions WHERE dataset_id=?", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_entities WHERE id IN "
-                "(SELECT entity_id FROM fabric_entity_mentions WHERE dataset_id=?)", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_discovery_frontier WHERE dataset_id=?", (ds_id,))
-            _sqlite_conn().commit()
-            log.info("topic overwrite: cleared dataset %s", ds_id)
+            # one connection, one commit: each statement used to open its own and the commit went to a
+            # seventh, so nothing was ever deleted (DATA-01)
+            _ensure_tables()
+            cleared = await asyncio.to_thread(_dsc.overwrite_dataset, _sqlite_conn(), ds_id)
+            log.info("topic overwrite: cleared dataset %s: %s", ds_id, cleared)
         except Exception as e:
             log.warning("overwrite clear %s: %s", ds_id, e)
 
@@ -7978,25 +7991,8 @@ async def cap_discover_scrape_page(
     if not ds_id:
         ds_id = _dataset_for_url(url) or ""
     if ds_id:
-        try:
-            _ensure_tables()
-            conn = _sqlite_conn()
-            import hashlib as _hashlib
-            page_id = "page:" + _hashlib.sha1(url.encode()).hexdigest()[:16]
-            tags_str = ",".join(tags[:20]) if tags else ""
-            headings_json = json.dumps(headings[:40])
-            conn.execute(
-                "INSERT OR REPLACE INTO fabric_pages "
-                "(id, dataset_id, crawl_id, url, title, full_text, tags, headings, "
-                " word_count, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
-                (page_id, ds_id, "", url, title, full_text, tags_str,
-                 headings_json, word_count)
-            )
-            conn.commit()
-            stored = True
-        except Exception as e:
-            log.debug("scrape_page store: %s", e)
+        stored = await asyncio.to_thread(_write_fabric_page, ds_id, "", url, title, full_text, tags or [],
+                                         headings, word_count)
 
     return {
         "ok": True,
@@ -8837,11 +8833,8 @@ async def cap_discover_compile(
 
     if not topic:
         try:
-            r = conn.execute(
-                "SELECT label FROM fabric_crawl_history WHERE dataset_id=? LIMIT 1",
-                (ds_id,)
-            ).fetchone()
-            topic = (r["label"] if r else "") or ds_id.replace("_", " ")
+            r = conn.execute(_dsc.TOPIC_FROM_FRONTIER_SQL, (ds_id,)).fetchone()     # (B4: no crawl_history table)
+            topic = _dsc.topic_from_frontier(r["config"] if r else "", ds_id)
         except Exception:
             topic = ds_id.replace("_", " ")
 
@@ -8943,17 +8936,13 @@ async def cap_discover_compile(
 
     stored_id = ""
     try:
-        import uuid as _uuid
-        stored_id = str(_uuid.uuid4())
-        conn.execute(
-            "INSERT OR REPLACE INTO fabric_records "
-            "(id, dataset_id, url, kind, title, data, created_at) "
-            "VALUES (?,?,?,?,?,?,datetime('now'))",
-            (stored_id, ds_id, "compiled:" + ds_id, "document", doc_title, document)
-        )
+        sql, params = _dsc.compiled_record_row(ds_id, doc_title, document, pages_used=len(pages))   # real columns (B4)
+        conn.execute(sql, params)
         conn.commit()
+        stored_id = params[0]
     except Exception as e:
-        log.debug("compile store: %s", e)
+        log.warning("compile store %s: %s", ds_id, e)
+        stored_id = ""                                     # never claim a store that did not happen
 
     await _emit("done", message="Document compiled",
                 title=doc_title, pages_used=len(pages), sections=len(doc_sections))
@@ -9014,8 +9003,7 @@ async def cap_discover_entity_extract(
         "fabric.entity_graph.extract",
         dataset_id=ds_id,
         use_llm=use_llm,
-        limit=max_records,
-        batch_size=worker_batch,
+        limit=max_records,                                 # extract takes no batch_size: it raised every call (B17)
         persist=True,
         trace_id=trace_id,
     ) or {}
