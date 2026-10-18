@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 import math
+import re
 from threading import RLock
 from typing import Any, Mapping
 
@@ -167,10 +168,27 @@ def project_research_shadow(observation: Any) -> dict[str, Any]:
     if counts["portable_context_count"] + counts["excluded_count"] \
             != counts["native_result_count"]:
         raise ValueError("research shadow coverage is inconsistent")
+    if counts["full_text_count"] > counts["native_result_count"] \
+            or counts["screenshot_count"] > counts["native_result_count"]:
+        raise ValueError("research shadow enrichment counts are inconsistent")
+    if not isinstance(value["portable_item_ids"], (list, tuple)) \
+            or not isinstance(value["portable_revision_digests"], (list, tuple)):
+        raise ValueError("research shadow identities must be sequences")
     item_ids = tuple(value["portable_item_ids"])
     revisions = tuple(value["portable_revision_digests"])
     if len(item_ids) != counts["portable_context_count"] or len(revisions) != len(item_ids):
         raise ValueError("research shadow identities are inconsistent")
+    if not re.fullmatch(r"rdso_[0-9a-f]{64}", str(value["observation_id"])) \
+            or not re.fullmatch(r"[0-9a-f]{64}", str(value["query_digest"])):
+        raise ValueError("research shadow digests are invalid")
+    if any(not re.fullmatch(r"research_web_[0-9a-f]{32}", str(item))
+           for item in item_ids) or any(
+               not re.fullmatch(r"sha256:[0-9a-f]{64}", str(revision))
+               for revision in revisions):
+        raise ValueError("research shadow portable identities are invalid")
+    if value["producer"] != "research.gather_web_search" \
+            or value["execution_authority"] != "research.native":
+        raise ValueError("research shadow authority is invalid")
     flags = ("worker_evidence_available", "route_evidence_available",
              "consumer_routing_changed", "duplicate_provider_calls",
              "payloads_included")

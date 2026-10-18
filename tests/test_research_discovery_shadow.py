@@ -103,6 +103,14 @@ def test_invalid_input_is_bounded():
         adapt_research_citations([{}] * 1001)
 
 
+def test_operator_projection_rejects_payload_disguised_as_identity():
+    _, observation = observe_research_citations("query", _citations()[:1])
+    forged = observation.to_dict()
+    forged["portable_item_ids"] = ["raw secret payload"]
+    with pytest.raises(ValueError, match="portable identities"):
+        DiscoveryOperatorLedger().record_research_shadow(forged)
+
+
 @pytest.mark.critical
 def test_shadow_contract_keeps_native_authority_and_no_duplicate_calls():
     _, observation = observe_research_citations("query", _citations())
