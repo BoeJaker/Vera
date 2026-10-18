@@ -2512,6 +2512,51 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                 except Exception as e:
                     log.debug("data ingest %s: %s", page_url, e)
                 return
+            if "text/html" not in ct and "text/plain" not in ct and _ingress_read_files_on():
+                # WI-4b: read the file (PDF, Office, EPUB, archive, catalogue...) instead of dropping it
+                try:
+                    _fdoc = await asyncio.to_thread(_read_file_doc, resp.content, ct, page_url)
+                except Exception as e:
+                    _fdoc = {}
+                    log.debug("read file %s: %s", page_url, e)
+                if _fdoc:
+                    _frid = "f_" + hashlib.sha256(f"{ds_id}:{page_url}".encode()).hexdigest()[:22]
+                    _ftags = extra_tags + ["web", "discovery", "file", str(_fdoc.get("reader") or "")]
+                    _frec = _ipc.crawl_record(
+                        _fdoc, _frid, page_url, _ftags, hostname=urlparse(page_url).netloc, depth=depth,
+                        kind=_fdoc.get("kind") or "file", reader=_fdoc.get("reader") or "",
+                        tables=(_fdoc.get("tables") or [])[:20], children=(_fdoc.get("children") or [])[:200],
+                        datasets=(_fdoc.get("datasets") or [])[:200], needs_ocr=bool(_fdoc.get("needs_ocr")),
+                        sample_only=bool(_fdoc.get("sample_only")), bytes=int(_fdoc.get("bytes") or 0),
+                        content_type=ct[:120])
+                    if not _frec.get("title"):
+                        _frec["title"] = page_url.rsplit("/", 1)[-1][:200]
+                    try:
+                        await ingest_fn(ds_id, [_frec], source="fabric_discovery", tags=_ftags)
+                        pages_fetched += 1
+                    except Exception as e:
+                        log.warning("ingest file %s: %s", page_url, e)
+                        return
+                    if _fdoc.get("text"):
+                        await asyncio.to_thread(_write_fabric_page, ds_id, crawl_id, page_url, _frec["title"],
+                                                _fdoc.get("text") or "", _ftags, [], _fdoc.get("word_count", 0))
+                    _record_edge(crawl_id, ds_id, (parent_url or ds_id), page_url,
+                                 ("LINKS_TO" if parent_url else "HAS_PAGE"), "File")
+                    _kids = _file_child_urls(_fdoc, page_url)
+                    _qn = {_normalize_url(q[2]) for q in queue}
+                    _added = 0
+                    for _ku in _kids:
+                        _kn = _normalize_url(_ku)
+                        if _kn and _kn not in visited and _kn not in _qn:
+                            heapq.heappush(queue, (-0.6, _next_seq(), _kn, depth + 1, 0, page_url))
+                            _qn.add(_kn)
+                            _added += 1
+                    await _emit("file_read", url=page_url, reader=_fdoc.get("reader"), kind=_fdoc.get("kind"),
+                                chars=len(_fdoc.get("text") or ""), children=len(_fdoc.get("children") or []),
+                                followed=_added, needs_ocr=bool(_fdoc.get("needs_ocr")),
+                                message=f"read {_fdoc.get('reader')} file {page_url[:70]} "
+                                        f"({len(_fdoc.get('text') or '')} chars, +{_added} links)")
+                    return
             if "text/html" not in ct and "text/plain" not in ct:
                 # Non-HTML, non-data file (e.g. .pdf, .json with bad content-type,
                 # .epub, etc.).  Try the parent directory — it may be an index page
@@ -3239,6 +3284,9 @@ try:
     from Vera.vera.fabric import ingress_parse_core as _pc
 except ImportError:                    # pragma: no cover
     from vera.fabric import ingress_parse_core as _pc
+#: the same module under a name no function shadows (_run_crawl_impl._process has a local dict called _pc, which
+#: made `_pc.crawl_record` an UnboundLocalError inside the crawl - WI-4b's file branch failed silently on prod)
+_ipc = _pc
 
 
 def _ingress_mod():
@@ -3252,6 +3300,38 @@ def _ingress_dedupe_on() -> bool:
         return bool(m and m.dedupe_on())
     except Exception:  # noqa: BLE001
         return False
+
+
+def _ingress_read_files_on() -> bool:
+    m = _ingress_mod()
+    try:
+        return bool(m and m.read_files_on())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _read_file_doc(content: bytes, ct: str, url: str) -> Dict:
+    """A fetched file as a ParsedDoc through the ingress readers (WI-6), byte-capped per reader. Synchronous: call
+    it in a thread."""
+    try:
+        from Vera.vera.fabric import ingress_readers_core as _ir
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_readers_core as _ir
+    reader = _pc.ic.reader_for(ct, url, (content or b"")[:4096])
+    cap = _pc.ic.max_bytes_for(reader)
+    if not cap or len(content or b"") > cap:
+        d = _pc.parse_text("", url, reader=reader)
+        d.update(kind=_pc.ic.kind_of(reader), bytes=len(content or b""), sample_only=True)
+        return d
+    return _ir.read(reader, content or b"", url)
+
+
+def _file_child_urls(doc: Dict, url: str) -> List[str]:
+    try:
+        from Vera.vera.fabric import ingress_readers_core as _ir
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_readers_core as _ir
+    return _ir.child_urls(doc, url)
 
 
 def _ingress_defer_on() -> bool:

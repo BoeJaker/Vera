@@ -401,3 +401,31 @@ def build_pack(need: str, question: str, subject: str, items: Sequence[Dict[str,
     if extra:
         out.update(extra)
     return out
+
+
+def known_items(pages: Sequence[Dict[str, Any]], items: Sequence[Dict[str, Any]], *, chars: int = 900,
+                limit: int = 3) -> List[Dict[str, Any]]:
+    """Pages the fabric already holds (the recall index) as evidence items: kind 'known', their stored text as the
+    excerpt (nothing to fetch), one per site, none that the live results already carry."""
+    have = {canon_url(it.get("url") or "") for it in items or ()}
+    sites = set()
+    out: List[Dict[str, Any]] = []
+    for p in pages or ():
+        url = str(p.get("url") or "")
+        cu = canon_url(url)
+        if not url or cu in have:
+            continue
+        site = site_of(url)
+        if site in sites:
+            continue
+        text = " ".join(str(p.get("full_text") or p.get("text") or "").split())
+        if len(text.split()) < 30:
+            continue
+        sites.add(site)
+        have.add(cu)
+        out.append({"title": str(p.get("title") or url)[:200], "url": url, "snippet": text[:300], "text": text[:chars],
+                    "kind": "known", "published": str(p.get("published") or ""),
+                    "seen": str(p.get("synced_at") or p.get("created_at") or "")})
+        if len(out) >= limit:
+            break
+    return out

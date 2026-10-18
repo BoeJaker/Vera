@@ -148,10 +148,18 @@ class ReceiptWriter:
                         await conn.executemany(rc.INSERT_QUERY, qrows)
                     if notes:
                         await conn.executemany(rc.NOTE_RECORD, notes)
-                    if novelty_rows:
-                        await conn.executemany(rc.UPDATE_URL_NOVELTY, novelty_rows)
-                    if yield_rows:
-                        await conn.executemany(rc.UPDATE_HOST_YIELD, yield_rows)
+                # novelty after the receipts, in its own transaction: a novelty failure must never cost a receipt
+                if novelty_rows or yield_rows:
+                    try:
+                        async with conn.transaction():
+                            if novelty_rows:
+                                await conn.executemany(rc.UPDATE_URL_NOVELTY, novelty_rows)
+                            if yield_rows:
+                                await conn.executemany(rc.UPDATE_HOST_YIELD, yield_rows)
+                    except Exception as ne:  # noqa: BLE001
+                        self.stats["novelty_errors"] = int(self.stats.get("novelty_errors") or 0) + 1
+                        self.stats["last_error"] = f"novelty: {str(ne)[:180]}"
+                        log.warning("ingress novelty update: %s", ne)
         except Exception as e:  # noqa: BLE001
             self.stats["errors"] += 1
             self.stats["last_error"] = str(e)[:200]

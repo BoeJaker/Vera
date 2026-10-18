@@ -106,3 +106,59 @@ def test_media_binary_and_bad_inputs_never_raise():
         d = rd.read(reader, b"\x00\x01garbage", BASE + "/x")
         assert d["reader"] in (reader, "xml", "html") and isinstance(d.get("text"), str), reader
     assert rd.read("csv", b"", BASE + "/e.csv")["tables"][0]["rows"] == 0
+
+
+def test_child_urls_follow_catalogues_sitemaps_feeds_and_api_pages():
+    c = _read("/api/3/action/package_search")
+    urls = rd.child_urls(c, BASE + "/api/3/action/package_search")
+    assert BASE + "/files/data.csv.gz" in urls and BASE + "/files/handbook.epub" in urls and len(urls) == 5
+    s = _read("/sitemap.xml")
+    assert rd.child_urls(s, BASE + "/sitemap.xml") == [BASE + "/sitemap-1.xml.gz", BASE + "/sitemap-2.xml.gz"]
+    f = _read("/feed.rss")
+    assert rd.child_urls(f, BASE + "/feed.rss") == [BASE + "/a", BASE + "/c"]
+    a = _read("/api/items")
+    assert rd.child_urls(a, BASE + "/api/items") == [BASE + "/api/items?cursor=p2"]
+    z = _read("/files/bundle.zip")
+    assert rd.child_urls(z, BASE + "/files/bundle.zip") == []          # archive members are read, not fetched
+
+
+def test_the_crawl_reads_files_only_behind_its_switch_and_before_the_old_fallback():
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    new = src.index('if "text/html" not in ct and "text/plain" not in ct and _ingress_read_files_on():')
+    old = src.index('            if "text/html" not in ct and "text/plain" not in ct:\n                # Non-HTML, non-data file')
+    assert new < old
+    block = src[new:old]
+    for name in ("_read_file_doc", "_file_child_urls", "crawl_record", "_write_fabric_page", "file_read", "_qn"):
+        assert name in block, name
+    assert "queued_norm" not in block
+    tree = ast.parse(src)
+    fns = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert {"_read_file_doc", "_file_child_urls", "_ingress_read_files_on"} <= fns
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["discovery.read_files"].default == "off"
+
+
+def test_no_crawl_function_uses_a_module_alias_it_also_assigns_locally():
+    """18 Oct: _process assigns a local `_pc` (path counters), so `_pc.crawl_record` inside it was an
+    UnboundLocalError that the crawl worker swallowed - files were never read on prod. Any module alias a function
+    reads as `alias.attr` must not also be assigned in that function."""
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    aliases = {a.asname for n in tree.body if isinstance(n, ast.Try) for b in n.body if isinstance(b, ast.ImportFrom)
+               for a in b.names if a.asname}
+    aliases |= {a.asname for n in tree.body if isinstance(n, ast.ImportFrom) for a in n.names if a.asname}
+    bad = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        own = [n for n in ast.walk(fn) if not (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not fn)]
+        assigned = {t.id for n in ast.walk(fn) if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign))
+                    for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name)}
+        used_as_module = {n.value.id for n in ast.walk(fn) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)}
+        for a in aliases & assigned & used_as_module:
+            bad.append((fn.name, a))
+    assert ("_process", "_pc") not in bad or "_ipc.crawl_record(" in src
+    block = src[src.index("and _ingress_read_files_on():"):src.index("# Non-HTML, non-data file")]
+    assert "_ipc.crawl_record(" in block and "_pc.crawl_record(" not in block.replace("_ipc.crawl_record(", "")

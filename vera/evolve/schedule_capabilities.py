@@ -46,6 +46,10 @@ try:
     from Vera.vera.evolve import schedule_core as core
 except ImportError:                                        # pragma: no cover
     from vera.evolve import schedule_core as core          # type: ignore
+try:
+    from Vera.vera.evolve import releases_view_core as _rvc
+except ImportError:                                        # pragma: no cover
+    from vera.evolve import releases_view_core as _rvc     # type: ignore
 
 try:
     from Vera.vera.census import control as _ctl
@@ -315,7 +319,24 @@ async def box_state() -> Dict[str, Any]:
     st["loops_running"] = await _loops_running()
     st["census_owner_run"] = owner
     st["declared_busy"] = await _declared_busy()
+    # a release waiting to restart prod holds this key (release_core.DRAIN_KEY): protected entries do not start
+    try:
+        r = _redis()
+        st["release_draining"] = bool(r is not None and await r.get("vera:evolve:release:drain"))
+    except Exception:
+        st["release_draining"] = False
     return st
+
+
+async def protected_running() -> List[Dict[str, Any]]:
+    """Open runs of protected entries (release_capabilities.census_summary -> release_core.may_release)."""
+    try:
+        runs = await _runs(limit=MAX_RUNS)
+        scheds = {s.get("id"): s for s in await _load_all()}
+        return core.protected_runs(runs, scheds, _now())
+    except Exception as e:
+        log.debug("protected runs: %s", e)
+        return []
 
 
 # ── launchers ────────────────────────────────────────────────────────────────
@@ -465,6 +486,8 @@ def _in_background(run_id: str, rec: Dict[str, Any], coro, *, exclusive: bool = 
         await _update_run(run_id, finished_at=fin, result=word, detail=detail)
         cur = await _get(rec["id"]) or rec
         cur["last_finished_at"], cur["last_result"] = fin, word
+        if word not in ("interrupted",):
+            cur["recoveries"] = 0                  # it got through: the next restart may recover it again
         await _save(cur)
         await _board_note(cur, f"{word}" + (f" · {detail}" if detail else ""))
         await emit_event({"type": "evolve.schedule.finished", "schedule_id": rec["id"], "result": word,
@@ -722,6 +745,7 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
         await _append_run(run)
         rec["last_started_at"] = core.iso(now)
         rec["last_result"] = word
+        rec["recover_due"] = ""                    # a recovery, if this was one, is under way
         rec["runs"] = int(rec.get("runs") or 0) + 1
         rec["updated"] = core.iso(now)
         await _save(rec)
@@ -752,6 +776,9 @@ async def _reconcile_runs() -> Dict[str, Any]:
             rec = await _get(run.get("schedule_id", ""))
             if rec and (rec.get("last_finished_at") or "") < (run.get("started_at") or ""):
                 rec["last_finished_at"], rec["last_result"] = fin, "interrupted"
+                # recover (owner, 18 Oct): an entry that recovers runs again once the box allows
+                if core.recover_after_interrupt(rec, fin):
+                    out.setdefault("recovering", []).append(rec.get("id"))
                 await _save(rec)
             out["closed"].append(run["id"])
         if out["closed"]:
@@ -918,7 +945,8 @@ async def cap_schedule_tick(trace_id=None) -> Dict[str, Any]:
                         "Output: {events[], count, layers{layer: n}}.")
 async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windows",
                               granularity: str = "runs", include_calendar: bool = False,
-                              include_agents: bool = True, trace_id=None) -> Dict[str, Any]:
+                              include_agents: bool = True, include_releases: bool = True,
+                              trace_id=None) -> Dict[str, Any]:
     now = _now()
     s = core.parse_iso(start) or (now - __import__("datetime").timedelta(days=3))
     e = core.parse_iso(end) or (now + __import__("datetime").timedelta(days=10))
@@ -933,6 +961,12 @@ async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windo
         ev += core.results_events(suites, s, e, granularity=(granularity or "runs").strip().lower())
     if include_agents in (True, 1, "1", "true", "yes"):
         ev += await _agent_events(s, e)                    # B1: the agents layer
+    if include_releases in (True, 1, "1", "true", "yes"):
+        try:
+            _rv = await releases_data(days=max(1, min(31, int((e - s).total_seconds() // 86400) + 2)))
+            ev += _rvc.events([c for col in _rv["columns"].values() for c in col], _rv["releases"], s, e)
+        except Exception as _re:
+            log.debug("schedule events: releases layer skipped: %s", _re)
     if include_calendar in (True, 1, "1", "true", "yes"):
         # Vera's calendar (the one the Comms panel shows), without its own Loop Lab overlay - that is this list
         cal = await _call("cal.events.list", start=core.iso(s), end=core.iso(e))
@@ -1292,3 +1326,56 @@ async def cap_schedule_stop_run(run_id: str = "", trace_id=None) -> Dict[str, An
     task.cancel()
     await emit_event({"type": "evolve.schedule.stopped", "schedule_id": sid, "run_id": run_id})
     return {"ok": True, "run_id": run_id, "schedule_id": sid}
+
+
+
+# ── Releases in Loop Lab (owner, 18 Oct 2026: "better vis over the gating and releases") ──────────
+def _git(*args, timeout: int = 20) -> List[str]:
+    try:
+        p = subprocess.run(["git", "-C", str(_REPO), *args], capture_output=True, text=True, timeout=timeout)
+        return p.stdout.splitlines() if p.returncode == 0 else []
+    except Exception:
+        return []
+
+
+async def releases_data(days: int = 7, limit: int = 60) -> Dict[str, Any]:
+    days = max(1, min(int(days or 7), 60))
+    lst = await _call("evolve.pipeline.list", limit=max(10, min(int(limit or 60), 200)))
+    rows = (lst or {}).get("pipelines") or []
+    cutoff = core.iso(_now() - __import__("datetime").timedelta(days=days))
+    rows = [r for r in rows if str(r.get("created_at") or "") >= cutoff or r.get("live")][:limit]
+    fulls = await asyncio.gather(*[_call("evolve.pipeline.get", id=r["id"]) for r in rows], return_exceptions=True)
+    pipes = []
+    for r, f in zip(rows, fulls):
+        p = (f.get("pipeline") if isinstance(f, dict) else None) or r
+        pipes.append(dict(r, **p))
+    main_shas = await asyncio.to_thread(_git, "log", "main", "--since=%d.days" % (days + 2), "--format=%h", "--abbrev=10")
+    cols = _rvc.board(pipes, main_shas)
+    st = await _call("evolve.release.status") or {}
+    hist = sorted(st.get("history") or [], key=lambda h: str(h.get("requested_at") or ""))
+    rels, prev = [], ""
+    for h in hist:
+        cur = str((h.get("merge") or {}).get("commit") or "")
+        carried = []
+        if cur and prev:
+            carried = _rvc.carried_from_log(await asyncio.to_thread(
+                _git, "log", "--first-parent", "--format=%h %s", "%s..%s" % (prev, cur)))
+        rels.append(_rvc.release_row(h, carried))
+        prev = cur or prev
+    rels.reverse()
+    ahead = await asyncio.to_thread(_git, "rev-list", "--count", "main..bleeding-edge")
+    return {"columns": cols, "releases": rels, "pending": st.get("pending"), "census": st.get("census"),
+            "node_sync": st.get("node_sync"), "edge_ahead": int(ahead[0]) if ahead and ahead[0].isdigit() else None,
+            "counts": {k: len(v) for k, v in cols.items()}}
+
+
+@capability("evolve.releases.view", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/releases/view", http_tags=["evolve", "release"],
+            description="Gating, promotions and releases in one read (Loop Lab Releases section): every pipeline of the "
+                        "last `days` in a column - adopted, gating, edge (on bleeding-edge), released (its merge is on "
+                        "main), failed - with its stages, test result and merge commit; the release in flight; every "
+                        "release with what it waited for and the merges it carried; how far bleeding-edge is ahead of "
+                        "main. Input: days (int=7), limit (int=60). Output: {columns, releases, pending, census, "
+                        "node_sync, edge_ahead, counts}.")
+async def cap_releases_view(days: int = 7, limit: int = 60, trace_id=None) -> Dict[str, Any]:
+    return await releases_data(days=days, limit=limit)

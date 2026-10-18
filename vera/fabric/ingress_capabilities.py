@@ -99,6 +99,7 @@ async def _refresh() -> None:
         _SW["dedupe"] = "on" if str(modes.get("ingress.dedupe") or "off") == "on" else "off"
         _SW["defer"] = "on" if str(modes.get("discovery.defer_enrichment") or "off") == "on" else "off"
         _SW["novelty"] = "on" if str(modes.get("ingress.novelty") or "off") == "on" else "off"
+        _SW["read_files"] = "on" if str(modes.get("discovery.read_files") or "off") == "on" else "off"
     except Exception as ex:  # noqa: BLE001
         log.debug("ingress switch read: %s", ex)
 
@@ -159,6 +160,11 @@ def dedupe_on() -> bool:
 def defer_on() -> bool:
     mode()
     return _SW["defer"] == "on"
+
+
+def read_files_on() -> bool:
+    mode()
+    return _SW.get("read_files") == "on"
 
 
 async def lookup_record(content_hash: str) -> Optional[Dict[str, Any]]:

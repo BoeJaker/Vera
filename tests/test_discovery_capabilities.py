@@ -101,3 +101,19 @@ def test_blank_query_returns_before_any_native_call():
     _module, orch = load_module()
     result = run(orch.CAPABILITY_REGISTRY["discovery.route.run"]["raw"](query=" "))
     assert result == {"ok": False, "error": "query_required"}
+
+
+def test_frozen_benchmark_is_registered_and_never_claims_production_readiness():
+    _module, orch = load_module()
+    entry = orch.CAPABILITY_REGISTRY["discovery.benchmark.evaluate"]
+    result = run(entry["raw"]())
+    assert result["ok"] is True
+    assert result["production_ready"] is False
+    assert result["authority_changed"] is False
+    assert result["providers_invoked"] is False
+    assert result["operator_projection"]["passed"] is True
+    assert result["operator_projection"]["evidence_scope"] == "frozen_fixture_conformance"
+    assert result["operator_projection"]["production_ready"] is False
+    assert result["operator_projection"]["authority_changed"] is False
+    assert result["operator_projection"]["providers_invoked"] is False
+    assert "never calls" in entry["meta"]["description"]

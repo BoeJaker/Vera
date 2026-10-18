@@ -422,3 +422,27 @@ def read(reader: str, data: bytes, url: str) -> Dict[str, Any]:
         d = _doc(reader, url, "", "", error=f"{reader}: {str(e)[:120]}")
     d.setdefault("bytes", len(data or b""))
     return d
+
+
+def child_urls(doc: Dict[str, Any], base_url: str, limit: int = 200) -> List[str]:
+    """The URLs a read file points at, for a crawl to follow: a catalogue's distributions, a sitemap's or feed's
+    entries. Archive members are not URLs (they are read from the archive itself)."""
+    from urllib.parse import urljoin
+    out: List[str] = []
+
+    def add(u: Any) -> None:
+        u = str(u or "").strip()
+        if not u:
+            return
+        a = urljoin(base_url, u)
+        if a.startswith(("http://", "https://")) and a not in out:
+            out.append(a)
+    for ds in doc.get("datasets") or []:
+        for d in ds.get("distributions") or []:
+            add(d.get("url"))
+    if doc.get("reader") in ("sitemap", "rss", "atom"):
+        for c in doc.get("children") or []:
+            add(c.get("url"))
+    if doc.get("next"):
+        add(doc["next"])
+    return out[:limit]

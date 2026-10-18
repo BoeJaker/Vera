@@ -116,3 +116,14 @@ def test_the_collectors_and_research_gatherers_use_the_ingress_client():
     bare = [k for k, f in fns.items() if "httpx.AsyncClient" in ast.dump(f)]
     assert bare == [], bare
     assert all("_ingress_client" in ast.dump(f) for f in fns.values())
+
+
+def test_intel_and_the_dream_feed_sensor_use_the_ingress_client():
+    src = (ROOT / "vera" / "intel" / "intel_capabilities.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_http_json")
+    assert "_ingress_client" in ast.dump(fn) and "httpx.AsyncClient" not in ast.dump(fn)
+    src = (ROOT / "vera" / "dream" / "dream_capabilities.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "dream_sensor_web_feed")
+    assert "_dream_ingress_client" in ast.dump(fn) and "httpx.AsyncClient" not in ast.dump(fn)

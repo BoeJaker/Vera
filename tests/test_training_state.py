@@ -59,7 +59,7 @@ def test_the_run_ledger_keeps_each_decisions_inputs():
 
 def test_every_loop_decision_site_passes_its_inputs():
     src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
-    for call in ('_dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal})',
+    for call in ('_dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal},',
                  '_dl.intent(intent, _intent_info, model=str(model or ""), inputs={"goal": goal})'):
         assert call in src, call
     for head in ('_dl.verify(step.get("id"), v["met"], len(_vr), model=str(model or ""),\n',
