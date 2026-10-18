@@ -79,3 +79,26 @@ def test_a_crawl_worker_reserves_for_itself_while_a_batch_runs():
     import json as _j
     e = _j.loads(ncc.extra_entry("ingress.fetch.batch", cc.batch_timeout_s(3), 1000.0))
     assert e == {"cpu": 0.25, "mem_gb": 0.25, "until": 1105.0, "cap": "ingress.fetch.batch"}
+
+
+
+def test_the_batch_cap_takes_the_timeout_an_offloaded_call_carries():
+    # 18 Oct probe: every batch sent to cpu-246 failed with "unexpected keyword argument '_timeout'"
+    import ast
+    src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_ingress_fetch_batch")
+    assert "_timeout" in [a.arg for a in fn.args.args]
+
+
+
+def test_receipts_carry_the_fetch_time_so_the_host_rate_can_be_checked():
+    # 18 Oct probe: web_fetches.ts was the writer's insert time, so a batch's receipts shared one timestamp
+    from vera.fabric import ingress_receipts_core as rc
+    assert "to_timestamp($12" in rc.INSERT_FETCH
+    item = rc.enqueue_item("https://a.example/x", status=200, content_type="text/html", html="<p>x</p>",
+                           requested="meta", ts=1000.5)
+    rows = rc.rows_for(item)
+    assert rows["fetch"][11] == 1000.5
+    assert cc.fetch_row("https://a.example/", status=200, content_type="text/html", body="x", fetched_at=7.0)["fetched_at"] == 7.0
+    src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert 'ts=float(fp["fetched_at"]) if fp.get("fetched_at") else None' in src and "fetched_at=at" in src

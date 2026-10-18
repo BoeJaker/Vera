@@ -140,7 +140,8 @@ def record_fetch_result(fp: Dict[str, Any], *, caller: str = "", purpose: str = 
         elapsed_ms=int(fp.get("elapsed_ms") or 0), caller=caller or fp.get("caller") or "web_client",
         purpose=purpose or fp.get("purpose") or "page", error=fp.get("error") or fp.get("block_reason") or "",
         etag=fp.get("etag") or "", last_modified=fp.get("last_modified") or "", title=fp.get("title") or "",
-        from_cache=bool(fp.get("from_cache")), requested=_requested_for(m), internal_hosts=INTERNAL_HOSTS)
+        from_cache=bool(fp.get("from_cache")), requested=_requested_for(m), internal_hosts=INTERNAL_HOSTS,
+        ts=float(fp["fetched_at"]) if fp.get("fetched_at") else None)
     if item is None:
         return False
     return WRITER.enqueue(item)
@@ -803,7 +804,8 @@ async def _seed_concepts(disc, budget_s: float, cap: int, search_limit: int, ppr
                 p = max(1, min(ppr, 5))
                 cr = await disc.discover_crawl_urls(urls, dataset_id=CONCEPT_DATASET, topic=seed["label"], max_depth=1,
                                                     breadth=p, max_pages=len(urls) * (p + 1), same_domain=False,
-                                                    reconcile=False, tags="web,discovery,worldview_seed")
+                                                    reconcile=False,
+                                                    tags="web,discovery,worldview_seed," + sc.seed_tag(seed["idx"]))
                 pages = int((cr or {}).get("pages_fetched") or 0)
             except Exception as e:  # noqa: BLE001
                 log.warning("concept seed crawl [%s]: %s", seed["label"][:60], e)
@@ -829,7 +831,7 @@ async def _seed_concepts(disc, budget_s: float, cap: int, search_limit: int, ppr
                         "(worldview.concepts), the change, how often it was seeded and how many pages that fetched. "
                         "Input: days (int, default 30). Output: {concepts:[{idx, label, population_at_first_seed, "
                         "population_now, change, seedings, pages}], next:[the seeds tonight would pick]}.")
-async def cap_map_concept_seeds(days: int = 30, trace_id=None):
+async def cap_map_concept_seeds(days: int = 30, on_target: bool = False, sample: int = 30, trace_id=None):
     pool = _pool()
     if pool is None:
         return {"error": "the web map's store is not connected"}
@@ -845,8 +847,36 @@ async def cap_map_concept_seeds(days: int = 30, trace_id=None):
     wc = await _call("worldview.concepts") if _has("worldview.concepts") else {}
     cs = wc.get("concepts") or []
     current = {int(c.get("idx")): int(c.get("population") or 0) for c in cs}
-    return {"concepts": sc.seed_effect(rows, current),
-            "next": [{k: s[k] for k in ("idx", "label", "population")} for s in sc.concept_seeds(cs, last)]}
+    effect = sc.seed_effect(rows, current)
+    out: Dict[str, Any] = {"concepts": effect,
+                           "next": [{k: s[k] for k in ("idx", "label", "population")} for s in sc.concept_seeds(cs, last)]}
+    if on_target and _has("worldview.encode"):
+        pairs = []
+        for c in effect:
+            rids = await asyncio.to_thread(_seeded_record_ids, c["idx"], max(1, min(int(sample or 30), 200)))
+            got = []
+            for rid in rids:
+                try:
+                    e = await asyncio.wait_for(_call("worldview.encode", record_id=rid), 20)
+                except Exception:  # noqa: BLE001
+                    continue
+                if isinstance(e, dict) and e.get("concept") is not None:
+                    got.append(int(e["concept"]))
+            pairs.append((c["idx"], got))
+            c["on_target"] = sc.on_target_share([(c["idx"], got)])
+        out["on_target"] = sc.on_target_share(pairs)
+    return out
+
+
+def _seeded_record_ids(idx: int, limit: int) -> List[str]:
+    """The fabric record ids a concept's seedings fetched (tagged worldview_seed:<idx> by the gap fill)."""
+    df = _data_fabric()
+    if df is None:
+        return []
+    rows = df._sqlite_conn().execute(
+        "SELECT id FROM fabric_records WHERE dataset_id = ? AND tags LIKE ? ORDER BY rowid DESC LIMIT ?",
+        (CONCEPT_DATASET, "%" + sc.seed_tag(idx) + "%", int(limit))).fetchall()
+    return [r[0] for r in rows]
 
 
 # ── the node crawl class (WI-12a, PLAN §13.2) ─────────────────────────────────
@@ -889,7 +919,10 @@ async def _host_slot(host: str) -> None:
                         "are refused. Input: urls (list of str!, at most 10), max_chars (int, default 400000). Output: "
                         "{ok, results:[{url, final_url, status, content_type, html, text, elapsed_ms, error, etag, "
                         "last_modified, bytes}], ran_on}.")
-async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY_CHARS, trace_id=None):
+async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY_CHARS, _timeout: Any = None,
+                                  trace_id=None):
+    # _timeout: the host's wait for this call - on an offloaded call the orchestrator sends it along in the payload
+    # (it pops it only after dispatch), and a worker then called this with an argument it did not take (18 Oct)
     us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])][:cc.MAX_BATCH]
     res_key, res_field = await _reserve_self(len(us))
     try:
@@ -940,16 +973,18 @@ async def _fetch_batch(us: List[str], max_chars: int) -> Dict[str, Any]:
                 out.append(cc.failed_row(u, "refused: not an external http(s) URL"))
                 continue
             await _host_slot(ic.host_of(u))
-            t0 = time.monotonic()
+            t0, at = time.monotonic(), time.time()
             try:
                 resp = await c.get(u)
                 out.append(cc.fetch_row(u, final_url=str(resp.url), status=resp.status_code,
                                         content_type=resp.headers.get("content-type", ""), body=resp.text,
                                         elapsed_ms=int((time.monotonic() - t0) * 1000),
                                         etag=resp.headers.get("etag", ""),
-                                        last_modified=resp.headers.get("last-modified", ""), max_chars=max_chars))
+                                        last_modified=resp.headers.get("last-modified", ""), max_chars=max_chars,
+                                        fetched_at=at))
             except Exception as e:  # noqa: BLE001
-                out.append(cc.fetch_row(u, elapsed_ms=int((time.monotonic() - t0) * 1000), error=str(e)[:200]))
+                out.append(cc.fetch_row(u, elapsed_ms=int((time.monotonic() - t0) * 1000), error=str(e)[:200],
+                                        fetched_at=at))
     return {"ok": True, "results": out, "ran_on": cc.where(socket.gethostname(), bool(getattr(_orch, "_IS_WORKER", False)))}
 
 

@@ -3665,6 +3665,10 @@ async def discover_ingest_page(
     _canonical = ""
     if _chash and _ingress_dedupe_on():
         _dec = _pc.dedupe_decision(_chash, await _ingress_lookup(_chash), ds_id, rid)
+        if _dec["action"] == "skip" and await asyncio.to_thread(_record_row, ds_id, rid) is None:
+            # the map remembers this content under a record that is gone (deleted, e.g. the 18 Oct brotli repair):
+            # skipping would leave the page out of the fabric for good - ingest it again
+            _dec = {"action": "ingest", "canonical": ""}
         if _dec["action"] == "skip":
             return {"ok": True, "record_id": rid, "dataset_id": ds_id, "url": url, "title": title,
                     "chars": len(full_text), "entities": 0, "full_fetch": bool(full_fetch), "deduped": "same"}
