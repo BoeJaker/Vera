@@ -2548,7 +2548,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                         tables=(_fdoc.get("tables") or [])[:20], children=(_fdoc.get("children") or [])[:200],
                         datasets=(_fdoc.get("datasets") or [])[:200], needs_ocr=bool(_fdoc.get("needs_ocr")),
                         sample_only=bool(_fdoc.get("sample_only")), bytes=int(_fdoc.get("bytes") or 0),
-                        content_type=ct[:120])
+                        content_type=ct[:120], t3=_fdoc.get("t3"), places=(_fdoc.get("places") or [])[:500])
                     if not _frec.get("title"):
                         _frec["title"] = page_url.rsplit("/", 1)[-1][:200]
                     try:
