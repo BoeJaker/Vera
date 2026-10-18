@@ -59,7 +59,9 @@ t('...and no desk item (the tool card stays in the chat)', adapt('markets.chart'
 const DS = { hosts: { local: { containers: [{ id: 'a', name: 'vera', cpu_pct: 41.5, mem_mb: 900, history: [] }], updated_at: 'x', error: '' }, b: { containers: [{ id: 'b', name: 'redis', cpu_pct: 3, mem_mb: 40 }] } },
   top: [{ host: 'local', id: 'a', name: 'vera', cpu_pct: 41.5, mem_mb: 900 }, { host: 'b', id: 'b', name: 'redis', cpu_pct: 3, mem_mb: 40 }] };
 const di = adapt('docker.stats.top', DS, {});
-t('docker.stats.top: the busiest containers ranked by CPU', di && di.kind === 'widget' && di.content.form === 'ranked' && /vera/.test(W.draw('ranked', di.content.data, 'm', { record: di.content, sample: false })), JSON.stringify(di).slice(0, 200));
+/* since Wave 1 (19 Oct) the answer opens as the dashboard's own Busiest containers element (<vera-docker-top>); the ranked list
+   stays one of its views, and still draws the answer */
+t('docker.stats.top: the busiest containers - the dashboard element (its rows still draw as the ranked form)', di && di.kind === 'widget' && di.content.form === 'element' && di.content.record && di.content.record.draw && di.content.record.draw.tag === 'vera-docker-top' && /vera/.test(W.draw('ranked', di.content.data, 'm', { record: Object.assign({}, di.content, { form: 'ranked' }), sample: false })), JSON.stringify(di).slice(0, 200));
 t('docker.stats.top with no container sampled (:8998 has no docker socket): no item', adapt('docker.stats.top', { hosts: { local: { containers: [], error: 'HTTP 503: no local docker socket' } }, top: [] }, {}) === null);
 const SB = { sandbox: {}, probe: { reachable: false }, up: false, paused: false, routing_drift: { ok: true, checked: false }, idle_pause_s: 1800, dev_port: 8998, prod_port: 8999, dev_redis_db: 3,
   verdict: 'none', checks: [{ name: 'sandbox registered', status: 'none' }, { name: 'dev port 8998 reachable', status: 'down' }, { name: 'routing matches prod', status: 'not checked' }] };
