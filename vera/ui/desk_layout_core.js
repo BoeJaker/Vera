@@ -546,7 +546,7 @@
     if (mode === 'free') { out.free = true; return out; }
     /* SLOTS (LV-2/3, DESK-ARRANGEMENT 7): fitLayout over the free desk - each item's `aspect` and its place in the order as its rank;
        the front of each slot is a cell, the rest of a slot (its composite tabs, grouped by the canvas before this) and the pills chips */
-    if (mode === 'slots') { var L = fitLayout(live.map(function (it, i) { return { id: it.id, aspect: it.aspect || 'square', rank: it.rank != null ? it.rank : i }; }), F, { near: F.farRight ? 'left' : 'right', current: o.current || {}, noComposite: o.noComposite });
+    if (mode === 'slots') { var L = fitLayout(live.map(function (it, i) { return { id: it.id, aspect: it.aspect || 'square', rank: it.rank != null ? it.rank : i, want: it.want }; }), F, { near: F.farRight ? 'left' : 'right', current: o.current || {}, noComposite: o.noComposite });
       L.slots.forEach(function (s) { var id = s.ids[0]; out.cells[id] = cellAt(s.l, s.t, s.w, s.h); used[id] = true; s.ids.slice(1).forEach(function (m) { out.chips.push(m); used[m] = true; }); });
       L.pills.forEach(function (id) { out.chips.push(id); used[id] = true; }); out.fit = L; return rest(); }
 
@@ -702,7 +702,11 @@
         var perT = nT ? Math.max(1, Math.floor((rw + G) / (tw + G))) : 0, rowsT = nT ? Math.min(2, Math.ceil(nT / perT)) : 0;
         /* a band is wide: no taller than its width / 1.6 (and 600) */
         var maxBand = Math.min(ASPECT_SIZE.landscape.maxH, Math.floor(rw / 1.6));
-        var hT = rowsT ? rowsT * ASPECT_SIZE.tile.h + (rowsT - 1) * G : 0, hS = perS ? ASPECT_SIZE.square.h : 0, hL = nL ? Math.min(ASPECT_SIZE.landscape.h, maxBand) * nL + (nL - 1) * G : 0;
+        /* A ROW AS TALL AS WHAT IT HOLDS (LV-3; owner: "tables would be ... suitable to be any size that fits the number of rows and columns"): a
+           square row is as tall as its tallest item wants (its measured content, `want`), within the square's least and usual height - a
+           five-row table was given 560 px; the room left goes to the bands */
+        var wantS = by.square.slice(0, perS || 0).map(function (it) { return +it.want || 0; }), wS = wantS.some(function (x) { return x > 0; }) ? Math.max.apply(null, wantS) + 8 : 0;   /* fitted to the items that say; the others scroll in it */
+        var hT = rowsT ? rowsT * ASPECT_SIZE.tile.h + (rowsT - 1) * G : 0, hS = perS ? (wS ? Math.max(ASPECT_SIZE.square.minH, Math.min(ASPECT_SIZE.square.h, wS)) : ASPECT_SIZE.square.h) : 0, hL = nL ? Math.min(ASPECT_SIZE.landscape.h, maxBand) * nL + (nL - 1) * G : 0;
         /* too tall for the desk: the rows shrink together, and a row shrunk past use drops out (tiles first, then squares, then a
            second band) - its items go to the next aspect's slots, or join them */
         var gaps = function () { return Math.max(0, (hT ? 1 : 0) + (hS ? 1 : 0) + (hL ? 1 : 0) - 1) * G; };
@@ -713,7 +717,7 @@
           hT = Math.floor(hT * k); hS = Math.floor(hS * k); hL = Math.floor(hL * k); break; }
         var spare = reg.h - (hT + hS + hL + gaps());
         if (hL) { var gl = Math.max(0, Math.min(spare, maxBand * nL + (nL - 1) * G - hL)); hL += gl; spare -= gl; }
-        if (hS) { var gs = Math.max(0, Math.min(spare, ASPECT_SIZE.square.maxH - hS)); hS += gs; spare -= gs; }
+        if (hS && !wS) { var gs = Math.max(0, Math.min(spare, ASPECT_SIZE.square.maxH - hS)); hS += gs; spare -= gs; }   /* a row fitted to what it holds does not grow */
         var rows = []; if (hT) rows.push(['tile', hT]); if (hS) rows.push(['square', hS]); if (hL) rows[lpos === 'top' ? 'unshift' : 'push'](['landscape', hL]);
         var y = reg.t;
         rows.forEach(function (row) { var a = row[0], h = row[1];

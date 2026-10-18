@@ -52,4 +52,8 @@ const slotOf = (L, id) => L.slots.find((s) => s.ids.includes(id));
 { const L = D.fitLayout([it('g', 'square', 0), it('l1', 'portrait', 1), it('l2', 'portrait', 2), it('l3', 'portrait', 3)], { l: 0, t: 0, r: 1300, b: 1000 }, {});
   const items = { g: 'square', l1: 'portrait', l2: 'portrait', l3: 'portrait' };
   t('an item is only ever in a slot of its own aspect (a graph never in a tall slot)', L.slots.every((s) => s.ids.every((id) => items[id] === s.aspect)), L); }
+{ const base = [it('chart', 'landscape', 0), it('t1', 'square', 1), it('t2', 'square', 2)];
+  const L0 = D.fitLayout(base, REG, {}); const L1 = D.fitLayout(base.map((x) => x.aspect === 'square' ? Object.assign({}, x, { want: 180 }) : x), REG, {});
+  const s0 = slotOf(L0, 't1'), s1 = slotOf(L1, 't1'), b0 = slotOf(L0, 'chart'), b1 = slotOf(L1, 'chart');
+  t('a square row is as tall as what it holds (want), and the band takes the room left', s1.h < s0.h && s1.h >= 188 && s1.h <= 240 && b1.h >= b0.h && noOverlap(L1) && inside(L1, REG), { s0: s0.h, s1: s1.h, b0: b0.h, b1: b1.h }); }
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);

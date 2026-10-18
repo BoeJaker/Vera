@@ -19,4 +19,5 @@ t('every form the widget system draws has an aspect by form or shape', (() => { 
   const miss = pairs.filter(([f, sh]) => !A({ form: f, shape: sh })); if (miss.length) console.log('  no aspect:', miss.map((x) => x.join(':')).join(' ')); return pairs.length > 100 && !miss.length; })());
 t('placement asks for a size by aspect and marks the card (data-aspect); a tile stays small', S.includes("const asp = this._aspectOf(c, key); c.dataset.aspect = asp || '';")
   && S.includes("else if (kind === 'tile') ksz = { w: Math.round(Math.min(FW, 280)), h: 180 }; }") && S.includes("else if (!user && kind === 'tile') { o.maxW = Math.min(o.maxW || Infinity, 380); o.maxH = Math.min(o.maxH || Infinity, 260); o.ratio = 2; }"));
+t('a card says how tall it wants to be for what it holds (measured content, a table rows, a widget drawn content) and the slots hear it', S.includes('_wantH(c, key) {') && S.includes('want: this._wantH(x.c, kx)'));
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);

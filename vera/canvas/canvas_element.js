@@ -4714,7 +4714,7 @@
       const info = ranked.map((x) => { const age = x.c.dataset.mid ? mids.indexOf(x.c.dataset.mid) : null;
         /* the slots arrangement follows its pre-pass: what it sent to the pills stays a pill, a card opened from a pill ranks first */
         const kx = x.c.dataset.key || '', slotOut = !!(this._slotPills && this._slotPills.has(kx)), wantR = this._slotWant && this._slotWant[kx] ? -1 : null;
-        return { id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '', age, t: age == null ? 0 : 1000 - age, border: outside.has(kx) || slotOut, rank: wantR, rel: relOf(x.c), status: statusOf(x.c), aspect: this._aspectOf(x.c, x.c.dataset.key || '') }; });
+        return { id: x.c.dataset.key || String(x.i), kind: x.c.dataset.type || '', age, t: age == null ? 0 : 1000 - age, border: outside.has(kx) || slotOut, rank: wantR, want: this._wantH(x.c, kx), rel: relOf(x.c), status: statusOf(x.c), aspect: this._aspectOf(x.c, x.c.dataset.key || '') }; });
       const relByKey = {}; info.forEach((x) => { relByKey[x.id] = x.rel; });
       const pos = D.arrange('orbit', R, info, desk);
       const ML = mode !== 'auto' && D.layoutMode ? D.layoutMode(mode, R, info, desk, { strip: W < 760 ? 46 : 170, current: this._lastPlan ? this._lastPlan.rects : {}, noComposite: this._sepGet() }) : null;
@@ -6684,6 +6684,17 @@
        at least take the full width available (given any vertically favoured elements open). tables would be on a rung below
        this and suitable to be any size that fits the number of rows and columns"; lists and cards "should be longer"):
        chart · table · list, or '' for the rest */
+    /* how tall a card wants to be for what it holds (LV-3): its measured content (the fit's _natH), else a table's rows (26 px a row, the head and
+       caption 70); 0 when not known */
+    _wantH(c, key) { const n = (this._natH || {})[key]; if (n > 0) return n; const cc = this._contentOf(key) || {}; const rec = cc.record && typeof cc.record === 'object' ? cc.record : cc;
+      const rows = Array.isArray(rec.data) ? rec.data.length : Array.isArray(cc.rows) ? cc.rows.length : Array.isArray(cc.items) && c && c.dataset.type === 'table' ? cc.items.length : 0;
+      if (rows) return Math.min(900, rows * 26 + 70);
+      /* a widget: how far down what it draws reaches (its content's lowest edge, not its box, which stretches to the card) plus the card's head */
+      const lv = this._live && this._live[key], wi = lv && lv.firstChild, rt = wi && wi.shadowRoot && wi.shadowRoot.querySelector('.vw-body, .vw-root');
+      if (rt && rt.getClientRects().length) { const top = rt.getBoundingClientRect().top; let low = top; rt.querySelectorAll('*').forEach((e) => { if (e.childElementCount && !/^(TR|LI|svg|canvas)$/i.test(e.tagName)) return; const q = e.getBoundingClientRect(); if (q.height && q.width) low = Math.max(low, q.bottom); });
+        const Z = c && c.offsetWidth ? (c.getBoundingClientRect().width / c.offsetWidth) || 1 : 1; const bd = c && c.querySelector(':scope > .it-bd'); const head = c && bd ? c.offsetHeight - bd.clientHeight : 44;
+        if (low > top) return Math.min(900, Math.round((low - top) / Z + head + 18)); }
+      return 0; }
     _aspectOf(c, key) {
       if (!c) return ''; const b = this._blockOf(key) || {}; const cc = this._contentOf(key) || {}; const rec = cc.record && typeof cc.record === 'object' ? cc.record : cc;
       const own = String(b.aspect || cc.aspect || rec.aspect || (rec.draw && rec.draw.aspect) || '');
