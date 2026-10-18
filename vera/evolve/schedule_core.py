@@ -328,6 +328,14 @@ def normalize(rec: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[st
     r["cooldown_minutes"] = max(0, int(r.get("cooldown_minutes") or 2))
     r["notes"] = str(r.get("notes") or "")
     r["quiet_ok"] = bool(r.get("quiet_ok", False))           # A2: may start in a quiet hour
+    # Recover and protect (owner, 18 Oct 2026: tests "can recover if vera restarts and can be properly gated and
+    # protected like the censuses are"). Both off unless the entry sets them.
+    r["recover"] = bool(r.get("recover", False))             # re-run a run a restart killed
+    r["max_recoveries"] = max(0, int(r.get("max_recoveries") if r.get("max_recoveries") is not None else 2))
+    r["recoveries"] = max(0, int(r.get("recoveries") or 0))
+    r["recover_due"] = str(r.get("recover_due") or "")
+    r["protect"] = bool(r.get("protect", False))             # a running run holds a restarting release
+    r["protect_minutes"] = max(1, int(r.get("protect_minutes") or 120))
     # The board item this work is for: a board-kind schedule's own item, or any schedule linked to one (a census run
     # for an item that asked for one, a loop working an item's goal). The scheduler notes each start on the item.
     r["board_id"] = str(r.get("board_id") or (r["target"].get("id") if kind == "board" else "") or "").strip()
@@ -579,7 +587,15 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
         return False, "disabled"
     kind = rec.get("kind")
     last_started = parse_iso(rec.get("last_started_at") or "")
-    if rec.get("once_at"):
+    # a protected entry does not start while a release is waiting to restart prod (it would be killed)
+    if rec.get("protect") and state.get("release_draining"):
+        return False, "a release is waiting - protected runs hold until it is out"
+    # a run a restart killed, on an entry that recovers: due again whatever its window says - the box rules
+    # below still apply, so a recovery never jumps a census, a loop or an exclusive run
+    recovering = bool(rec.get("recover_due"))
+    if recovering:
+        pass
+    elif rec.get("once_at"):
         at = parse_iso(rec["once_at"])
         if at is None or now < at:
             return False, "not yet"
@@ -656,7 +672,38 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
         return False, "an agent loop is running"                      # RF-09: caps wait for loops
     elif rec.get("exclusive", True) and int(state.get("exclusive_running") or 0) > 0:
         return False, "another exclusive scheduled run is going"      # A3: one exclusive run at a time
-    return True, "due"
+    return True, ("recover" if recovering else "due")
+
+
+def recover_after_interrupt(rec: Dict[str, Any], when: str) -> bool:
+    """A restart killed a run of `rec`: stamp it to run again if it recovers and has recoveries left (counted,
+    so a run that itself kills prod cannot loop). Mutates rec; True when a recovery was stamped."""
+    if not rec.get("recover"):
+        return False
+    if int(rec.get("recoveries") or 0) >= int(rec.get("max_recoveries") if rec.get("max_recoveries") is not None else 2):
+        return False
+    rec["recover_due"] = str(when or "now")
+    rec["recoveries"] = int(rec.get("recoveries") or 0) + 1
+    return True
+
+
+def protected_runs(runs: Iterable[Dict[str, Any]], schedules: Dict[str, Dict[str, Any]],
+                   now: datetime) -> List[Dict[str, Any]]:
+    """Open runs of protected entries a restart would kill: not census (a census has its own yield), not
+    finished, started within the entry's protect_minutes (so a lost run cannot hold a release for ever)."""
+    out = []
+    for r in runs or []:
+        if not isinstance(r, dict) or r.get("finished_at") or r.get("kind") == "census":
+            continue
+        rec = schedules.get(str(r.get("schedule_id") or "")) or {}
+        if not rec.get("protect"):
+            continue
+        st = parse_iso(r.get("started_at") or "")
+        if st is None or now - st > timedelta(minutes=int(rec.get("protect_minutes") or 120)):
+            continue
+        out.append({"run_id": r.get("id"), "schedule_id": rec.get("id"), "title": rec.get("title") or "",
+                    "started_at": r.get("started_at")})
+    return out
 
 
 def interrupted_runs(runs: List[Dict[str, Any]], process_started: datetime) -> List[Dict[str, Any]]:
