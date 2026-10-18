@@ -30,8 +30,8 @@ def test_a_read_that_answered_with_nothing_says_no_data():
     read has its own face now. A real zero is untouched: zero is a reading, not an absence."""
     src = _read("vera", "widgets", "widget_element.js")
     assert "const NODATA = (src, size) =>" in src
-    assert "readEmpty && form !== 'panel' && form !== 'composite'" in src
-    assert "? NODATA(rec.source, size)" in src
+    assert "(readEmpty || (blank && noSample)) && form !== 'panel' && form !== 'composite'" in src   # and nothing read on a no-sample host (DO-0.3)
+    assert ": NODATA(rec.source, size))" in src and "unreadFace(state, rec.source, size, this._err)" in src
     # the state it is for is the one the element already separated out
     assert "const readEmpty = wasRead && !have && !this._err" in src
     # and it has a look of its own
