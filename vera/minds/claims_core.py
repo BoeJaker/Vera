@@ -143,14 +143,17 @@ def best_passage(claim: str, ps: Sequence[Dict[str, Any]]) -> Tuple[Optional[Dic
 
 def top_passages(claim: str, ps: Sequence[Dict[str, Any]], k: int = EVIDENCE_K) -> List[Tuple[Dict[str, Any], float]]:
     """The k passages sharing most of the claim's content words, best first, never two overlapping windows of one
-    source text."""
+    source text - one page read twice (same URL) counts as one text, and a window identical to a chosen one is
+    skipped."""
     cw = words(claim)
     if not cw or not ps:
         return []
     ranked = sorted(((p, len(cw & words(p["text"])) / len(cw)) for p in ps), key=lambda x: -x[1])
     out: List[Tuple[Dict[str, Any], float]] = []
     for p, s in ranked:
-        if any(q.get("src") == p.get("src") and abs(int(q.get("at") or 0) - int(p.get("at") or 0)) < WINDOW
+        if any(q["text"] == p["text"]
+               or ((q.get("src") == p.get("src") or (p.get("url") and q.get("url") == p.get("url")))
+                   and abs(int(q.get("at") or 0) - int(p.get("at") or 0)) < WINDOW)
                for q, _ in out):
             continue
         out.append((p, round(max(0.0, s), 3)))
