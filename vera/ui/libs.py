@@ -10,6 +10,8 @@ from the same copy.
   /ui/iso-lattice.js -> vera/ui/iso_lattice.js  window.VeraLattice  the iso lattice: planes x areas,
                                                        pipes, widgets, the view (Live ops, graph modes)
   /ui/menus.js  -> vera/ui/menus.js  window.MENUS     every context menu
+  /ui/vera-timeline.js -> vera/ui/vera_timeline.js  window.VeraTimeline + <vera-timeline>: THE timeline
+                                                       (lanes are records; looplab-control §9 K1)
   /ui/routes.js -> vera/ui/routes.js window.VeraRoutes the run routers: the exploded
                                                        scene's cards and iso runs, the
                                                        structured graph's channels
@@ -54,6 +56,11 @@ async def _serve_iso_js():
 @APP.get("/ui/iso-lattice.js", include_in_schema=False)
 async def _serve_iso_lattice_js():
     return _script("iso_lattice.js")
+
+
+@APP.get("/ui/vera-timeline.js", include_in_schema=False)
+async def _serve_vera_timeline_js():
+    return _script("vera_timeline.js")
 
 
 @APP.get("/ui/menus.js", include_in_schema=False)
