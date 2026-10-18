@@ -282,6 +282,7 @@ def _socket_from_url(url: str) -> str:
 
 @capability(
     "docker.hosts.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "hosts"}, "draw": {"columns": ["id", "label", "kind", "default", "socket", "url"]}}},
     http_method="GET", http_path="/workers/docker/hosts", http_tags=["docker"],
     memory="off", silent=True,
     description="List registered Docker hosts (local / tcp / ssh). "
@@ -753,6 +754,7 @@ async def cap_docker_stats_top(trace_id=None) -> Dict:
 
 @capability(
     "docker.drift",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "drifted"}, "title": "Drifted"}, {"kind": "table", "map": {"rows": "unknown"}, "title": "Unknown"}, {"kind": "table", "map": {"rows": "skipped"}, "title": "Skipped"}]}},
     http_method="GET", http_path="/workers/docker/drift", http_tags=["docker"],
     memory="off",
     description="Which RUNNING containers are no longer on the image their tag now points "
@@ -786,6 +788,7 @@ async def cap_docker_drift(host_id: str = "", trace_id=None) -> Dict:
 
 @capability(
     "docker.images",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "images"}, "draw": {"columns": ["RepoTags", "Size", "Created", "Containers", "Id"]}}},
     http_method="POST", http_path="/workers/docker/images", http_tags=["docker"],
     memory="off",
     description="List images on a host (Engine /images/json). "
@@ -1547,6 +1550,7 @@ def _stack_catalog() -> Dict[str, Dict]:
 
 @capability(
     "docker.stack.catalog",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "services"}, "draw": {"columns": ["label", "id", "container_name", "image", "ports", "note"]}}},
     http_method="GET", http_path="/workers/docker/stack/catalog", http_tags=["docker"],
     memory="off", silent=True,
     description="Catalog of Vera's backing services (mirrors docker-compose.yml): "
@@ -1565,6 +1569,7 @@ async def cap_docker_stack_catalog(trace_id=None) -> Dict:
 
 @capability(
     "docker.stack.status",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "services"}, "draw": {"columns": ["label", "running", "exists", "status", "container_name", "image", "ports"]}}},
     http_method="GET", http_path="/workers/docker/stack/status", http_tags=["docker"],
     memory="off", silent=True,
     description="State of each Vera stack service on a Docker host (by container "

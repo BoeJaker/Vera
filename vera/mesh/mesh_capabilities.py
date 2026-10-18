@@ -1320,6 +1320,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "mesh.nodes", http_method="GET", http_path="/mesh/nodes",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["name", "node_id", "status", "role", "board", "fw_version", "ip", "rssi", "last_seen"]}, "empty": "No mesh nodes registered"}},
         http_tags=["mesh"], memory="off", silent=True,
         description="List all mesh nodes with computed status, modules, transports and "
                     "latest telemetry. Output: {nodes:[...], count, transports}.",
@@ -1360,6 +1361,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "mesh.graph", http_method="GET", http_path="/mesh/graph",
+        contract={"presentation": {"kind": "graph", "map": {"nodes": "nodes", "edges": "edges", "node_id": "id", "label": "label", "type": "kind", "edge_from": "from", "edge_to": "to"}}},
         http_tags=["mesh"], memory="off", silent=True,
         description="Mesh topology as a node graph. Edges follow reported parent_id "
                     "uplinks (root→relay→leaf) else a star to the Vera hub. "
@@ -1494,6 +1496,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "mesh.jobs", http_method="GET", http_path="/mesh/jobs",
+        contract={"presentation": {"kind": "log", "map": {"events": "jobs", "t": "created_at", "text": "type", "kind": "status"}, "empty": "No mesh jobs"}},
         http_tags=["mesh"], memory="off", silent=True,
         description="Job queue / history. Input: node_id (str optional), limit (int=60). "
                     "Output: {jobs:[...]}.",
@@ -1721,6 +1724,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "mesh.firmware.catalog", http_method="GET", http_path="/mesh/firmware/catalog",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "artifacts"}, "draw": {"columns": ["label", "id", "kind", "chip", "offset", "source", "note"]}}},
         http_tags=["mesh"], memory="off", silent=True,
         description="List flashable firmware/tools (runtimes, sketches, uploaded .bins) for the "
                     "panel flasher, plus host tool availability. Output: {artifacts:[...], tools}.",
@@ -2417,6 +2421,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "mesh.activity", http_method="GET", http_path="/mesh/activity",
+        contract={"presentation": {"kind": "log", "map": {"events": "events", "t": "ts", "text": "label", "kind": "kind"}, "empty": "No recent mesh traffic"}},
         http_tags=["mesh"], memory="off", silent=True,
         description="Recent mesh traffic for animating the topology map — jobs delivered and "
                     "telemetry received, newest first, each with the node it involves so the map "

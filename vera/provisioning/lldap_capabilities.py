@@ -206,6 +206,7 @@ async def cap_lldap_config_save(url: str = "", user: str = "admin",
 
 @capability(
     "identity.lldap.status",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/identity/lldap/status", http_tags=["identity"],
     memory="off", silent=True,
     description="Auto-discover the lldap directory (from the secprov deploy record "
@@ -231,6 +232,7 @@ async def cap_lldap_status(host_id: str = "local", trace_id=None) -> Dict:
 
 @capability(
     "identity.lldap.users",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "users"}, "draw": {"columns": ["id", "display_name", "email", "creation_date"]}}},
     http_method="GET", http_path="/identity/lldap/users", http_tags=["identity"],
     memory="off", silent=True,
     description="List directory users. Input: host_id (str='local'). Output: "
@@ -253,6 +255,7 @@ async def cap_lldap_users(host_id: str = "local", trace_id=None) -> Dict:
 
 @capability(
     "identity.lldap.groups",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "groups"}, "draw": {"columns": ["display_name", "id"]}}},
     http_method="GET", http_path="/identity/lldap/groups", http_tags=["identity"],
     memory="off", silent=True,
     description="List directory groups. Input: host_id (str='local'). Output: "

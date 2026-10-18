@@ -199,6 +199,7 @@ async def cap_config_save(
 
 @capability(
     "identity.status",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/identity/status", http_tags=["identity"],
     memory="off", silent=True,
     description="Probe FreeIPA: reachable + admin login OK. Output: "
@@ -260,6 +261,7 @@ async def cap_host_register(fqdn: str = "", ip: str = "", os: str = "",
 
 @capability(
     "identity.host.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "hosts"}, "draw": {"columns": ["fqdn", "enrolled"]}, "empty": "No IPA hosts registered"}},
     http_method="GET", http_path="/identity/host/list", http_tags=["identity"],
     memory="off", silent=True,
     description="List registered IPA hosts. Output: {hosts:[{fqdn, enrolled}]}.",
@@ -383,6 +385,7 @@ async def cap_user_mfa(login: str = "", title: str = "", no_expiry: bool = False
 
 @capability(
     "identity.user.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "users"}, "draw": {"columns": ["login", "name"]}}},
     http_method="GET", http_path="/identity/user/list", http_tags=["identity"],
     memory="off", silent=True,
     description="List IPA users. Output: {users:[{login, name}]}.",
@@ -402,6 +405,7 @@ async def cap_user_list(trace_id=None) -> Dict:
 
 @capability(
     "identity.group.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "groups"}, "draw": {"columns": ["name", "description", "members"]}}},
     http_method="GET", http_path="/identity/group/list", http_tags=["identity"],
     memory="off", silent=True,
     description="List IPA groups (permission sets). Output: {groups:[{name, "

@@ -9609,6 +9609,7 @@ async def _session_containers() -> List[Dict[str, Any]]:
 
 
 @capability("docker.disk.status", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
             http_method="GET", http_path="/docker/disk/status",
             http_tags=["docker", "obs"],
             description="Headroom on the filesystem holding docker's data-root, "

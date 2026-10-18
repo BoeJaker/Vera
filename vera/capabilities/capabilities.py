@@ -2638,6 +2638,7 @@ async def system_ping(host: str, timeout: int = 5, trace_id=None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @capability("ollama.list_models",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["status", "has_gpu", "count", "url"]}}},
     http_method="GET", http_path="/ollama/models", http_tags=["ollama"],
     memory="off",
     description="List models available on one or all Ollama cluster nodes. "
