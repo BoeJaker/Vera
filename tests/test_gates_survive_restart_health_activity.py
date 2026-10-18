@@ -198,3 +198,11 @@ def test_health_and_caps_are_wired():
     assert '@capability("sys.activity.declare"' in CO and '@capability("sys.activity.clear"' in CO
     h = CO[CO.index("async def _health_activity()"):]
     assert '"_AGENT_LOOP_TASKS"' in h[:1500] and '"_GATES_ACTIVE"' in h[:2000]
+
+
+def test_a_pooled_gate_cut_off_while_its_chunks_waited_is_resumed():
+    # 18 Oct 2026: the pool's own notes are the last step while chunks wait; a restart then stranded the pipeline
+    rec = _rec("p", "test runners all busy - waiting for one", last="test-pool")
+    assert G.interrupted(rec, NOW)
+    rec2 = _rec("q", "1079 test files in 12 chunks over the host and the nodes as they free up", last="test-pool")
+    assert G.interrupted(rec2, NOW)
