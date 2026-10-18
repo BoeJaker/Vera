@@ -395,6 +395,7 @@ PREBAKED_SOURCES: Dict[str, dict] = {
 
 @capability(
     "collector.catalog",
+    contract={"presentation": {"kind": "records", "map": {"rows": "sources", "id": "id", "title": "label", "snippet": "description", "url": "url", "domain": "category"}}},
     http_method="GET", http_path="/collector/catalog", http_tags=["collector"],
     memory="off", silent=True,
     description="List all prebaked data source definitions. "
@@ -2578,6 +2579,7 @@ async def cap_collector_stealth_domain_config(
 
 @capability(
     "collector.stealth_list_domains",
+    contract={"presentation": {"kind": "table", "map": {"rows": "domains"}, "empty": "No domain has a saved scraper config"}},
     http_method="GET", http_path="/collector/stealth/domains",
     http_tags=["collector", "stealth"],
     memory="off",

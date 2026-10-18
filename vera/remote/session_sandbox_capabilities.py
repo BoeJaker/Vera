@@ -1574,6 +1574,7 @@ async def cap_sbx_stop(session_id: str = "", sync: Optional[bool] = None,
 
 @capability(
     "sandbox.session.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sandboxes"}, "draw": {"columns": ["session_id", "state", "kind", "label", "image", "source", "session_count"]}, "empty": "No session sandboxes"}},
     http_method="GET", http_path="/remote/sandbox/list", http_tags=["remote", "sandbox"],
     memory="off", silent=True,
     description="List all known session sandboxes. Output: {sandboxes:[{session_id,"
@@ -1988,6 +1989,7 @@ async def link_session(session_id: str, target: str, *, kind: str = "",
 
 @capability(
     "sandbox.config.get",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/remote/sandbox/config", http_tags=["remote", "sandbox"],
     memory="off", silent=True,
     description="Get the global session-sandbox defaults (which docker host runs "
@@ -3067,6 +3069,7 @@ async def sandbox_package_hint(session_id: str, language: str = "python") -> str
 
 @capability(
     "sandbox.packages.catalog",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "catalog"}, "draw": {"columns": ["name", "kind", "group", "installed", "summary"]}}},
     http_method="GET", http_path="/remote/sandbox/packages/catalog",
     http_tags=["remote", "sandbox"], memory="off", silent=True,
     description="The curated menu of packages that can be installed into session "
@@ -3184,6 +3187,7 @@ async def cap_sbx_pkg_remove(session_id: str = "", packages: Any = "", kind: str
 
 @capability(
     "sandbox.packages.pending",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "pending"}, "draw": {"columns": ["id", "session_id", "context", "created", "expires_in"]}, "empty": "No package installs are waiting"}},
     http_method="GET", http_path="/remote/sandbox/packages/pending",
     http_tags=["remote", "sandbox"], memory="off", silent=True,
     description="Package installs currently waiting on the user's approval (a run "

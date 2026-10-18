@@ -222,6 +222,7 @@ async def _cfg_put(cluster_id: str, cfg: Dict) -> None:
 
 @capability(
     "pxstore.settings.get",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "settings"}}},
     http_method="GET", http_path="/pxstore/settings/get", http_tags=["pxstore"],
     memory="off", silent=True,
     description="Read the storage-fabric settings for a Proxmox cluster "
@@ -525,6 +526,7 @@ def _guest_datasets(vmid: int, datasets: List[Dict]) -> List[Dict]:
 
 @capability(
     "pxstore.inventory",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "pools", "name": "name", "value": "cap_pct"}, "title": "Pools"}, {"kind": "table", "map": {"rows": "guests"}, "title": "Guests"}, {"kind": "table", "map": {"rows": "storages"}, "title": "Storages"}]}},
     http_method="POST", http_path="/pxstore/inventory", http_tags=["pxstore"],
     memory="off", silent=True,
     description="Full storage inventory of a Proxmox node: guests keyed by real "
@@ -829,6 +831,7 @@ echo SYNC_OK
 
 @capability(
     "pxstore.fs.status",
+    contract={"presentation": {"kind": "table", "map": {"rows": "entries"}}},
     http_method="POST", http_path="/pxstore/fs/status", http_tags=["pxstore"],
     memory="off", silent=True,
     description="File-server status on a node: smbd state, share tree entries, "
@@ -1115,6 +1118,7 @@ def _numa_of(cpus: List[int], topo: List[Dict]) -> List[int]:
 
 @capability(
     "pxstore.cpu.topology",
+    contract={"presentation": {"kind": "table", "map": {"rows": "cpus"}}},
     http_method="POST", http_path="/pxstore/cpu/topology", http_tags=["pxstore"],
     memory="off", silent=True,
     description="CPU/NUMA topology of a node from lscpu: every CPU with its "
@@ -1136,6 +1140,7 @@ async def cap_cpu_topology(cluster_id: str = "", node: str = "", trace_id=None) 
 
 @capability(
     "pxstore.cpu.map",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "guests"}, "draw": {"columns": ["vmid", "name", "type", "status", "pinned", "live", "cores"]}}},
     http_method="POST", http_path="/pxstore/cpu/map", http_tags=["pxstore"],
     memory="off", silent=True,
     description="Per-guest CPU pinning map with conflict analysis: each guest's "
@@ -1516,6 +1521,7 @@ rsync {_RSYNC_FLAGS} {shlex.quote(src + '/')} {shlex.quote(dst + '/')}
 
 @capability(
     "pxstore.store.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "consumers"}, "title": "Consumers"}, {"kind": "kv", "map": {"fields": "writer"}, "title": "Writer"}]}},
     http_method="POST", http_path="/pxstore/store/status", http_tags=["pxstore"],
     memory="off", silent=True,
     description="The shared model store at a glance: dataset usage and "
@@ -1871,6 +1877,7 @@ services:
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "pxstore.vscode.targets",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "targets"}, "draw": {"columns": ["name", "vmid", "type", "via", "uri", "smb"]}}},
     http_method="POST", http_path="/pxstore/vscode/targets", http_tags=["pxstore"],
     memory="off", silent=True,
     description="Everything VSCode needs to open cluster guests: per-guest "
@@ -1937,6 +1944,7 @@ def _pct_exec(vmid: int, inner: str) -> str:
 
 @capability(
     "pxstore.backend.status",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "guests"}, "draw": {"columns": ["vmid", "name", "status", "ollama", "vllm", "vllm_provisioned", "error"]}}},
     http_method="POST", http_path="/pxstore/backend/status", http_tags=["pxstore"],
     memory="off", silent=True,
     description="Which LLM backend each container is running: checks the ollama "
@@ -2372,6 +2380,7 @@ echo ATTACH_OK
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "pxstore.disks",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "disks"}, "draw": {"columns": ["name", "size", "model", "transport", "role", "state", "pool"]}}},
     http_method="POST", http_path="/pxstore/disks", http_tags=["pxstore"],
     memory="off", silent=True,
     description="Every physical disk on a Proxmox node and what it is used for: "
@@ -2397,6 +2406,7 @@ async def cap_disks(cluster_id: str = "", node: str = "", trace_id=None) -> Dict
 
 @capability(
     "pxstore.backup.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "log", "map": {"events": "runs", "text": "line", "kind": "result"}, "title": "Latest runs"}, {"kind": "table", "map": {"rows": "jobs"}, "title": "Jobs"}, {"kind": "table", "map": {"rows": "storages", "name": "name", "value": "used"}, "title": "Storages"}]}},
     http_method="POST", http_path="/pxstore/backup/status", http_tags=["pxstore"],
     memory="off", silent=True,
     description="The backup system on a Proxmox node at a glance: backup jobs "
@@ -2506,6 +2516,7 @@ _CT_RE = re.compile(
 
 @capability(
     "pxstore.nwm.flows",
+    contract={"presentation": {"kind": "table", "map": {"rows": "flows"}}},
     http_method="POST", http_path="/pxstore/nwm/flows", http_tags=["pxstore"],
     memory="off", silent=True,
     description="Live connection table from the NWM-01 monitor container (all "

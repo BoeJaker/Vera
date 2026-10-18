@@ -10452,7 +10452,7 @@ async def topology_snapshot(trace_id=None) -> Dict:
 
 @capability("ollama.instances", memory="off", silent=True,
             http_method="GET", http_path="/ollama/instances", http_tags=["ollama"],
-            contract={"presentation": {"kind": "table", "form": "table"}},
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["name", "label", "status", "has_gpu", "latency_ms", "in_use", "errors", "num_ctx", "backend"]}}},
             description="Live status of all Ollama cluster nodes. Output: {instance_id: {url,status,models,in_use,latency_ms,has_gpu,num_thread,...}} - num_thread is what a request to the node carries (0 = none: a GPU node).")
 async def cap_ollama_instances(trace_id=None):
     # The one registration of ollama.instances (D11 a): capabilities.py's copy,

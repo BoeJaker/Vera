@@ -86,4 +86,8 @@ def test_the_one_registration_carries_num_thread_and_a_presentation():
     assert {"num_thread", "num_ctx", "enabled", "status"} <= keys
     kw = {k.arg: k.value for k in dec.keywords}
     contract = ast.literal_eval(kw["contract"])
-    assert contract["presentation"] == {"kind": "table", "form": "table"}
+    # the answer is keyed by instance id: rows '$' reads it as rows, the key as the first column ('name') - with no
+    # map the table form drew nothing (DA-01e, tried on prod's real answer)
+    P = contract["presentation"]
+    assert (P["kind"], P["form"], P["map"]) == ("table", "table", {"rows": "$"})
+    assert P["draw"]["columns"][0] == "name"

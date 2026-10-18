@@ -498,6 +498,7 @@ OLLAMA_LIBRARY: List[dict] = [
 
 
 @capability("catalog.browse.index", memory="off", silent=True,
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "families"}, "title": "Families"}, {"kind": "table", "map": {"rows": "ollama_library"}, "title": "Ollama library"}, {"kind": "table", "map": {"rows": "sizes"}, "title": "Sizes"}, {"kind": "table", "map": {"rows": "publishers"}, "title": "Publishers"}]}},
             http_method="GET", http_path="/catalog/browse/index", http_tags=["catalog"],
             description="The browse entry points: model families, GGUF publishers, size "
                         "buckets (annotated with what the cluster can actually run) and "
@@ -730,6 +731,7 @@ async def _node_view_full(iid: str, base: dict) -> dict:
 
 
 @capability("catalog.nodes", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "status", "has_gpu", "gpu_name", "vram_gb", "ram_gb", "cpu_cores", "class"]}}},
             http_method="GET", http_path="/catalog/nodes", http_tags=["catalog"],
             description="Unified per-node view for the catalog: Ollama + vLLM nodes with "
                         "their detected/overridden hardware (VRAM/RAM/GPU), free DISK "
@@ -1029,6 +1031,7 @@ async def _ollama_inventory(iid: str, url: str) -> dict:
 
 
 @capability("catalog.installed", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "status", "has_gpu", "count", "size_gb", "ram_gb", "vram_gb"]}}},
             http_method="GET", http_path="/catalog/installed", http_tags=["catalog"],
             description="Models ALREADY installed on each node, with their real quant, "
                         "parameter size, on-disk size, whether they are resident in VRAM "
