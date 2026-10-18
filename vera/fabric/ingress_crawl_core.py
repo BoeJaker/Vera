@@ -108,3 +108,37 @@ BATCH_FN = "ingress.fetch.batch"
 def batch_timeout_s(n_urls: int) -> int:
     """How long a batch of n URLs may take - the host waits this long, and the reservation lasts as long."""
     return 30 + 25 * max(1, int(n_urls or 1))
+
+
+# ── bodies in the blob store, and conditional GET (WI-12c, PLAN §13.2) ───────
+
+BLOB_PREFIX = "web/"
+
+
+def blob_key(content_hash: str) -> str:
+    """Content-addressed: one object per distinct body, whatever URL or dataset it came from."""
+    h = "".join(c for c in str(content_hash or "") if c.isalnum())
+    return f"{BLOB_PREFIX}{h[:2]}/{h}.zst" if h else ""
+
+
+def pack(body: str) -> bytes:
+    import zstandard
+    return zstandard.ZstdCompressor(level=3).compress(str(body or "").encode("utf-8", "replace"))
+
+
+def unpack(data: bytes) -> str:
+    import zstandard
+    return zstandard.ZstdDecompressor().decompress(data).decode("utf-8", "replace")
+
+
+def conditional_headers(known: Mapping[str, Any]) -> Dict[str, str]:
+    """If-None-Match / If-Modified-Since from what the map holds for a URL - only when its body is in the blob store,
+    because a 304 must be answered from somewhere."""
+    if not known or not known.get("blob"):
+        return {}
+    h = {}
+    if known.get("etag"):
+        h["If-None-Match"] = str(known["etag"])
+    if known.get("last_modified"):
+        h["If-Modified-Since"] = str(known["last_modified"])
+    return h

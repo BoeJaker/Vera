@@ -108,6 +108,7 @@ DDL: Tuple[str, ...] = (
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS canonical_hash TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_novelty REAL",
     "ALTER TABLE web_fetches ADD COLUMN IF NOT EXISTS content_hash TEXT",
+    "ALTER TABLE web_content ADD COLUMN IF NOT EXISTS blob_at TIMESTAMPTZ",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_twin TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_at TIMESTAMPTZ",
     # WI-8: topic maps, keyed on the intel topic id
@@ -200,6 +201,11 @@ UPDATE_URL_NOVELTY = ("UPDATE web_urls SET novelty = $2::real, novelty_kind = $3
                       "WHERE url_key = $1::text")
 UPDATE_URL_SEMANTIC = ("UPDATE web_urls SET semantic_novelty = $2::real, semantic_twin = $3::text, semantic_at = NOW() "
                        "WHERE url_key = $1::text")
+BLOB_MISSING = "SELECT content_hash FROM web_content WHERE content_hash = ANY($1::text[]) AND blob_at IS NULL"
+BLOB_MARK = "UPDATE web_content SET blob_at = NOW() WHERE content_hash = ANY($1::text[])"
+#: per URL, what a conditional GET needs: the validators and whether the body is in the blob store
+KNOWN_FOR_KEYS = ("SELECT u.url_key, u.etag, u.last_modified, u.content_hash, (c.blob_at IS NOT NULL) AS blob "
+                  "FROM web_urls u LEFT JOIN web_content c USING (content_hash) WHERE u.url_key = ANY($1::text[])")
 UPDATE_HOST_YIELD = ("UPDATE web_hosts SET novel_yield = CASE WHEN novel_yield IS NULL THEN $2::real "
                      "ELSE novel_yield * 0.9 + $2::real * 0.1 END WHERE host = $1::text")
 

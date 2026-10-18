@@ -77,7 +77,28 @@ def _pool():
     return getattr(pg, "_pool", None)
 
 
-WRITER = iw.ReceiptWriter(_pool, novelty_getter=lambda: _SW["novelty"] == "on")
+def _object_store():
+    df = _data_fabric()
+    st = getattr(df, "OBJECT_STORE", None) if df else None
+    return st if st is not None and st.available() else None
+
+
+def _blob_put(key: str, data: bytes) -> bool:
+    st = _object_store()
+    return bool(st and key and st.put(key, data, content_type="application/zstd"))
+
+
+def blob_body(content_hash: str) -> str:
+    """A stored body by its content hash ('' when the store or the object is missing)."""
+    st = _object_store()
+    key = cc.blob_key(content_hash)
+    data = st.get(key) if st and key else None
+    return cc.unpack(data) if data else ""
+
+
+WRITER = iw.ReceiptWriter(_pool, novelty_getter=lambda: _SW["novelty"] == "on",
+                          blob_getter=lambda: str((_SW.get("modes") or {}).get("ingress.blobs") or "off") == "on",
+                          blob_putter=_blob_put)
 
 
 # ── the switch ───────────────────────────────────────────────────────────────
@@ -920,13 +941,13 @@ async def _host_slot(host: str) -> None:
                         "{ok, results:[{url, final_url, status, content_type, html, text, elapsed_ms, error, etag, "
                         "last_modified, bytes}], ran_on}.")
 async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY_CHARS, _timeout: Any = None,
-                                  trace_id=None):
+                                  validators: Any = None, trace_id=None):
     # _timeout: the host's wait for this call - on an offloaded call the orchestrator sends it along in the payload
     # (it pops it only after dispatch), and a worker then called this with an argument it did not take (18 Oct)
     us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])][:cc.MAX_BATCH]
     res_key, res_field = await _reserve_self(len(us))
     try:
-        return await _fetch_batch(us, max_chars)
+        return await _fetch_batch(us, max_chars, validators if isinstance(validators, dict) else None)
     finally:
         await _release_self(res_key, res_field)
 
@@ -961,7 +982,7 @@ async def _release_self(key: str, field: str) -> None:
         log.debug("crawl reservation release: %s", e)
 
 
-async def _fetch_batch(us: List[str], max_chars: int) -> Dict[str, Any]:
+async def _fetch_batch(us: List[str], max_chars: int, validators: Optional[Dict[str, Dict[str, str]]] = None) -> Dict[str, Any]:
     import socket
     import httpx
     headers = dict(getattr(_wc, "BROWSER_HEADERS", {}) or {})
@@ -975,7 +996,7 @@ async def _fetch_batch(us: List[str], max_chars: int) -> Dict[str, Any]:
             await _host_slot(ic.host_of(u))
             t0, at = time.monotonic(), time.time()
             try:
-                resp = await c.get(u)
+                resp = await c.get(u, headers=(validators or {}).get(u) or None)
                 out.append(cc.fetch_row(u, final_url=str(resp.url), status=resp.status_code,
                                         content_type=resp.headers.get("content-type", ""), body=resp.text,
                                         elapsed_ms=int((time.monotonic() - t0) * 1000),
@@ -1007,13 +1028,18 @@ async def cap_crawl_fetch_many(urls: Any = None, parallel: int = 4, per_batch: i
     sem = asyncio.Semaphore(max(1, min(int(parallel or 4), 16)))
     t0 = time.monotonic()
 
+    known = await _known_for(us) if _blobs_on() else {}
+
     async def _one(b: List[str]) -> Dict[str, Any]:
         async with sem:
             r: Dict[str, Any] = {}
             attempts = 0
+            vals = {u: cc.conditional_headers(known.get(ic.url_key(u)) or {}) for u in b}
+            vals = {u: h for u, h in vals.items() if h}
             for attempts in (1, 2):
                 try:
-                    r = await _call("ingress.fetch.batch", urls=b, _timeout=cc.batch_timeout_s(len(b)))
+                    r = await _call("ingress.fetch.batch", urls=b, _timeout=cc.batch_timeout_s(len(b)),
+                                    **({"validators": vals} if vals else {}))
                 except Exception as e:  # noqa: BLE001
                     r = {"error": str(e)[:200]}
                 if isinstance(r.get("results"), list) and len(r["results"]) == len(b):
@@ -1021,6 +1047,13 @@ async def cap_crawl_fetch_many(urls: Any = None, parallel: int = 4, per_batch: i
             rows = r.get("results") if isinstance(r.get("results"), list) and len(r["results"]) == len(b) \
                 else [cc.failed_row(u, str(r.get("error") or "batch failed twice")) for u in b]
             for row in rows:
+                if int(row.get("status") or 0) == 304:           # unchanged: the body the blob store holds
+                    k = known.get(ic.url_key(row.get("url") or "")) or {}
+                    body = await asyncio.to_thread(blob_body, k.get("content_hash") or "") if k.get("content_hash") else ""
+                    row["from_cache"] = True
+                    if body:
+                        row.update(status=200, not_modified=True,
+                                   **({"html": body} if "html" in (row.get("content_type") or "html") else {"text": body}))
                 record_fetch_result(row, caller=caller, purpose=purpose)
             return {"results": rows, "ran_on": r.get("ran_on") or "failed", "attempts": attempts}
 
@@ -1344,3 +1377,22 @@ async def cap_map_topic_concepts(topic_id: str = "", sample: int = 12, trace_id=
         except Exception as e:  # noqa: BLE001
             out.append({"topic_key": key, "error": str(e)[:120]})
     return {"topics": out}
+
+
+def _blobs_on() -> bool:
+    mode()
+    return str((_SW.get("modes") or {}).get("ingress.blobs") or "off") == "on"
+
+
+async def _known_for(urls: List[str]) -> Dict[str, Dict[str, Any]]:
+    """{url_key: {etag, last_modified, content_hash, blob}} for the URLs the map has seen (one indexed read)."""
+    pool = _pool()
+    keys = sorted({ic.url_key(u) for u in urls or () if u})
+    if pool is None or not keys:
+        return {}
+    try:
+        async with pool.acquire() as conn:
+            return {r["url_key"]: dict(r) for r in await conn.fetch(rc.KNOWN_FOR_KEYS, keys)}
+    except Exception as e:  # noqa: BLE001
+        log.debug("known for conditional GET: %s", e)
+        return {}
