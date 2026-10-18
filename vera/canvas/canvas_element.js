@@ -4280,6 +4280,7 @@
        its fields merged); the page has already drawn it, so nothing waits on the answer. Keyless blocks keep theirs here. */
     _itemSet(key, f) {
       key = String(key || ''); if (!key || !this.canvasId || this._bidOf(key)) return;
+      f = this._itemRec(key, f);
       const q = this._itemQ || (this._itemQ = {}); const was = q[key] || {};
       if (f.place && was.place) f = Object.assign({}, f, { place: Object.assign({}, was.place, f.place) });
       q[key] = Object.assign(was, f); (this._itemPend || (this._itemPend = new Set())).add(key);
@@ -4307,11 +4308,31 @@
        of ours to that item is still on its way. A record that says nothing leaves the copy as it is (so what was kept here
        before the record carried it is not lost; it goes up with the next change). */
     _itemHydrate(doc) {
-      const pend = this._itemPend || new Set(); let lk = 0, ps = 0, pl = 0, vw = 0, fd = 0;
+      const pend = this._itemPend || new Set(); let lk = 0, ps = 0, pl = 0, vw = 0, fd = 0, wn = 0, ly = 0, gs = 0, gj = 0, gf = 0;
       const locks = this._lockGet(), pos = this._deskPosGet(), pills = this._pillReal(), views = viewStore(this), folds = this._folds();
+      /* WSU-58 S7: the rest of the item's state - maximised (face 'full' + back), its layer (place.layer), its group (taken out,
+         joined, when its tab was in front) and a kept window (face 'window' + its place) - comes back from the record the same way */
+      const cid = this.canvasId, maxK = 'vera:canvas:max:' + cid, wins = this._winKeepGet(), seps = this._sepGet(), joins = this._joinGet(), fronts = this._cmpGet();
+      let picks = null, maxWas = ''; try { maxWas = this._maxFor === cid ? (this._max || '') : (localStorage.getItem(maxK) || ''); } catch (e) { maxWas = this._max || ''; }
+      let maxNow = maxWas, maxRec = '';
       ((doc && doc.blocks) || []).forEach((b) => { const key = b && b.key ? String(b.key) : ''; if (!key || pend.has(key)) return;
-        if (b.face === 'pill' || b.face === 'tile') { const on = b.face === 'pill' && b.state !== 'parked'; if (!!pills[key] !== on) { if (on) pills[key] = 1; else delete pills[key]; pl++; } }
+        /* under a full item, the face it returns to is what the pill and window caches hold */
+        const full = b.face === 'full', under = full ? (['pill', 'tile', 'window'].indexOf(b.back) >= 0 ? b.back : 'tile') : b.face;
+        if (under === 'pill' || under === 'tile') { const on = under === 'pill' && b.state !== 'parked'; if (!!pills[key] !== on) { if (on) pills[key] = 1; else delete pills[key]; pl++; } }
         const P = b.place && typeof b.place === 'object' ? b.place : null;
+        if (full && ['now', 'pinned'].indexOf(b.state || 'now') >= 0) { if (!maxRec || key === maxWas) maxRec = key; }
+        else if (key === maxWas && b.face && 'back' in b) maxNow = '';   /* the record says it was restored */
+        /* a record from before S7 carries no back: this browser's maximise stands, and goes up */
+        else if (key === maxWas && b.face && !full && !(this._maxUp || (this._maxUp = new Set())).has(key)) { this._maxUp.add(key); this._maxWrite('', key, true); }
+        if (under === 'window' && P && P.fx != null && P.w > 0 && P.h > 0) { const v = { w: P.w, h: P.h, fx: P.fx, fy: P.fy }; if (JSON.stringify(wins[key]) !== JSON.stringify(v)) { wins[key] = v; wn++; } }
+        else if (b.face && under !== 'window' && wins[key]) { delete wins[key]; wn++; }
+        if (P && ['among', 'behind', 'front'].indexOf(P.layer) >= 0) { picks = picks || layersLoad(); if (picks[key] !== P.layer) { picks[key] = P.layer; ly++; }
+          if (P.layer === 'among') { if (this._layer[key]) { delete this._layer[key]; ly++; } } else if (this._layer[key] !== P.layer) { this._layer[key] = P.layer; ly++; } }
+        const G = b.group && typeof b.group === 'object' ? b.group : null;
+        if (G) { if (!!seps[key] !== !!G.sep) { if (G.sep) seps[key] = 1; else delete seps[key]; gs++; }
+          const jid = G.sep ? '' : String(G.id || ''); if ((joins[key] || '') !== jid) { if (jid) joins[key] = jid; else delete joins[key]; gj++; }
+          /* the front tab: the latest time any browser brought a tab to the front wins (a time is never taken back) */
+          if (typeof G.at === 'number' && G.at > (fronts[key] || 0)) { fronts[key] = G.at; gf++; } }
         if (P && 'locked' in P) { if (P.locked && P.fx != null) { const v = { fx: P.fx, fy: P.fy, w: P.w, h: P.h, face: b.face === 'pill' ? 'chip' : 'card' }; if (JSON.stringify(locks[key]) !== JSON.stringify(v)) { locks[key] = v; lk++; } } else if (!P.locked && locks[key]) { delete locks[key]; lk++; } }
         if (P && P.by === 'person' && !P.locked && P.fx != null) { const v = { fx: P.fx, fy: P.fy }; if (P.w) v.w = P.w; if (P.h) v.h = P.h; if (JSON.stringify(pos[key]) !== JSON.stringify(v)) { pos[key] = v; ps++; } }
         else if (P && P.by === 'auto' && pos[key]) { delete pos[key]; ps++; }
@@ -4320,7 +4341,37 @@
       const save = (n, k, v) => { if (n) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* this page only */ } } };
       save(lk, 'vera:canvas:desklock:' + this.canvasId, locks); save(ps, 'vera:canvas:deskpos:' + this.canvasId, pos); save(pl, 'vera:canvas:deskpill:' + this.canvasId, pills);
       save(vw, 'vera:canvas:views:' + this.canvasId, views); save(fd, 'vera:canvas:fold:' + this._foldsFor, folds);
-      if (lk || ps || pl) this._html = null;
+      save(wn, 'vera:canvas:deskwin:' + cid, wins); save(gs, 'vera:canvas:desksep:' + cid, seps); save(gj, 'vera:canvas:deskjoin:' + cid, joins);
+      if (gf) this._cmpSet(fronts); if (ly && picks) layersSave(picks);
+      if (maxRec) maxNow = maxRec;
+      if (maxNow !== maxWas) { try { if (maxNow) localStorage.setItem(maxK, maxNow); else localStorage.removeItem(maxK); } catch (e) { /* this page only */ }
+        if (this._maxFor === cid) this._max = maxNow; }
+      if (lk || ps || pl || wn || ly || gs || gj || gf || maxNow !== maxWas) this._html = null;
+    }
+    /* WHAT GOES UP FOR A FULL ITEM (WSU-58 S7): the record holds face 'full' and the face it returns to (back); a face written for an
+       item while it fills the desk (its pill control, a window sent back) is the face it will return to, so it goes up as back */
+    _itemRec(key, f) {
+      if (!f || !f.face || f.face === 'full' || !this._max || this._max !== String(key)) return f;
+      return Object.assign({}, f, { face: 'full', back: f.face });
+    }
+    /* the face an item has under the desk's own caches, as the record holds it: a kept window, the person's pill, else a tile */
+    _recFace(key) { return this._winKeepGet()[key] ? 'window' : this._pillReal()[key] ? 'pill' : 'tile'; }
+    /* maximise / restore on the record, by the face rule (VeraItem.transition 'max'): `was` the item that filled the desk before
+       (restored), `key` the item toggled - full when it is this._max (or `on`), else back to the face it came from */
+    _maxWrite(was, key, on) {
+      const rec = (k, full) => { const under = this._recFace(k), dock = under === 'window' ? 'tile' : '';
+        const s = full ? { face: under, dock } : { face: 'full', back: under, dock };
+        const t = VI && VI.transition ? VI.transition(s, 'max') : (full ? { face: 'full', back: under, dock } : { face: under, back: '', dock });
+        return { face: t.face, back: t.back || '', dock: t.dock || '' }; };
+      if (was && was !== key) this._itemSet(was, rec(was, false));
+      if (key) this._itemSet(key, rec(key, !!on || this._max === key));
+    }
+    /* the item's group as the record holds it (WSU-58 S7): taken out (sep), joined to a card (id, LV-11), when its tab was last in front (at) */
+    _groupRec(key) {
+      const sep = this._sepGet()[key], jn = this._joinGet()[key], at = this._cmpGet()[key], g = {};
+      if (!sep && !jn && !at) return {};
+      if (jn && !sep) g.id = String(jn);
+      g.front = !!(this._grpFront || {})[key]; if (at) g.at = Math.round(at); if (sep) g.sep = true; return g;
     }
     /* the ⋯ menu of a desk card: what is not worth a place in its one row of controls. On the stage (a card clips what is
        inside it), under the button, closed by its own use, a second ⋯ or a press anywhere else. */
@@ -4440,8 +4491,9 @@
       key = String(key || ''); if (!key) return;
       if (mode === 'behind' || mode === 'front') this._layer[key] = mode; else delete this._layer[key];
       /* a card made to fill the desk (its maximise) sent behind or in front: that layer is its place now, not the maximise */
-      if (this._max === key) { this._max = ''; try { localStorage.removeItem('vera:canvas:max:' + this.canvasId); } catch (e) { /* this page only */ } delete this.dataset.maxed; this._html = null; if (this._doc) { this.render(this._doc); } }
+      if (this._max === key) { this._max = ''; try { localStorage.removeItem('vera:canvas:max:' + this.canvasId); } catch (e) { /* this page only */ } this._maxWrite('', key); delete this.dataset.maxed; this._html = null; if (this._doc) { this.render(this._doc); } }
       const picks = layersLoad(); picks[key] = (mode === 'behind' || mode === 'front') ? mode : 'among'; layersSave(picks);
+      this._itemSet(key, { place: { layer: picks[key] } });   /* WSU-58 S7: the layer is on the item record (place.layer); this browser's pick is its cache */
       const card = this.shadowRoot && [...this.shadowRoot.querySelectorAll('.stage .it')].find((c) => c.dataset.key === key);
       if (card) card.querySelectorAll('[data-act^="layer-"]').forEach((bt) => bt.classList.toggle('on', bt.dataset.act === 'layer-' + this._layer[key]));
       /* any other item's head gains (or loses) its Behind / Front with the layer: drawn again (a panel's are always there) */
@@ -4654,9 +4706,11 @@
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
     /* JOINED BY THE PERSON (LV-11, WSU-97): a card dropped on another - {member key: the card it was dropped on}, per canvas, in this browser */
     _joinGet() { if (this._joinA) return this._joinA; try { this._joinA = JSON.parse(localStorage.getItem('vera:canvas:deskjoin:' + this.canvasId) || '{}') || {}; } catch (e) { this._joinA = {}; } return this._joinA; }
-    _joinSet(key, to) { const m = this._joinGet(); if (to) m[key] = to; else delete m[key]; try { localStorage.setItem('vera:canvas:deskjoin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } }
+    _joinSet(key, to) { const m = this._joinGet(); const was = m[key] || ''; if (to) m[key] = to; else delete m[key]; try { localStorage.setItem('vera:canvas:deskjoin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ }
+      if (was !== (m[key] || '')) this._itemSet(key, { group: this._groupRec(key) }); }   /* WSU-58 S7: on the item record too */
     _sepGet() { if (this._sepA) return this._sepA; try { this._sepA = JSON.parse(localStorage.getItem('vera:canvas:desksep:' + this.canvasId) || '{}') || {}; } catch (e) { this._sepA = {}; } return this._sepA; }
-    _sepSet(key, on) { const m = this._sepGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:desksep:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
+    _sepSet(key, on) { const m = this._sepGet(); const was = !!m[key]; if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:desksep:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ }
+      if (was !== !!on) this._itemSet(key, { group: this._groupRec(key) }); }   /* WSU-58 S7: on the item record too */
     _placeDesk(st, cards) {
       const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
       this._liveFollow(650);   /* every card it places may glide (.45 s): what is drawn over them follows each frame */
@@ -6743,7 +6797,8 @@
       try { localStorage.setItem('vera:canvas:deskwin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ }
       /* a window made by this pass gets its head's dock control: drawn again once the pass is done */
       if (at && !this._winRedrawT) this._winRedrawT = setTimeout(() => { this._winRedrawT = 0; this._html = null; if (this._doc) this.render(this._doc); }, 0);
-      this._itemSet(key, at ? { face: 'window', place: { fx: at.fx, fy: at.fy, w: at.w, h: at.h, by: 'person' } } : { face: 'tile' }); }
+      /* dock: a window the desk kept goes back to a tile when it is sent back (WSU-58 S7) */
+      this._itemSet(key, at ? { face: 'window', dock: 'tile', place: { fx: at.fx, fy: at.fy, w: at.w, h: at.h, by: 'person' } } : { face: 'tile', dock: '' }); }
     /* BACK TO THE DESK: the window goes, and so does the size that made it one - the card is placed again like any other */
     _winDock(key) {
       key = String(key || ''); if (!this._winKeepGet()[key]) return false;
@@ -6945,8 +7000,9 @@
       if (this._max !== key) { const b0 = this._blockOf(key); if (b0 && ['now', 'pinned'].indexOf(b0.state || 'now') < 0) return; }
       const body = this.shadowRoot.getElementById('body');
       if (this._max !== key && body) this._maxTop = body.scrollTop;   // where the reader was, for when it is restored
-      const back = this._max === key; this._max = back ? '' : key;
+      const back = this._max === key, was = this._max; this._max = back ? '' : key;
       try { const k = 'vera:canvas:max:' + this.canvasId; if (this._max) localStorage.setItem(k, this._max); else localStorage.removeItem(k); } catch (e) {}
+      if (typeof this._maxWrite === 'function') this._maxWrite(was, key);   /* WSU-58 S7: face 'full' (and what it returns to) on the item record */
       if (this._max) this.dataset.maxed = '1'; else delete this.dataset.maxed;
       try { this.dispatchEvent(new CustomEvent('vera:canvas:max', { bubbles: true, detail: { key, max: this._max === key } })); } catch (e) {}
       if (this._doc) this.render(this._doc);
@@ -7098,7 +7154,11 @@
           if (opened) { const wasWin = this._wins && this._wins.has(fr.dataset.key); if (wasWin) this._wins.delete(fr.dataset.key);
             requestAnimationFrame(() => requestAnimationFrame(() => { const stg = this.shadowRoot.getElementById('stage'); const n = stg && [...stg.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
               if (n && n.classList.contains('desk-chip')) { if (wasWin) this._winOpen(n); else this._pillCard(n); } })); } }
-        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
+        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now();
+          /* WSU-58 S7: the front tab on the item record - the picked one, and the times of the other tabs of its card, so another
+             browser puts the same tab in front */
+          const bar = btn && btn.closest ? btn.closest('.cmp-tabs') : null; const mem = bar ? [...bar.querySelectorAll('[data-act="cmptab"][data-layer-key]')].map((x) => x.dataset.layerKey) : [];
+          const fr = this._grpFront = this._grpFront || {}; [...new Set(mem.concat([key]))].forEach((k) => { fr[k] = k === key; this._itemSet(k, { group: this._groupRec(k) }); }); }
         else { if (act === 'cmpsep') { this._histPush('cmpsep', key); this._joinSet(key, null); } else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);

@@ -35,7 +35,9 @@
   var LAYERS = ['among', 'behind', 'front'];
   var PLACED_BY = ['auto', 'person'];
   var VIEWS = ['list', 'cards', 'table', 'graph', 'chart', 'chips', 'fields', 'code', 'structure', 'both', 'tree', 'flat', 'validate', 'drawn'];   /* = item_core.VIEWS (WSU-58 S1) */
-  var SETTABLE = ['face', 'place', 'view', 'size', 'locked', 'folded', 'group', 'state'];
+  /* what a full item returns to, what a window gives when sent back (WSU-58 S7: on the record, = item_core.BACKS / DOCKS) */
+  var BACKS = ['pill', 'tile', 'window'], DOCKS = ['tile', 'pill'];
+  var SETTABLE = ['face', 'place', 'view', 'size', 'locked', 'folded', 'group', 'state', 'back', 'dock'];
   var PLACE_NUM = { fx: [0, 1], fy: [0, 1], w: [34, 8000], h: [24, 8000], z: [0, 999] };
 
   /* Decision 6: one z table. A tile's z rises with its closeness to the chat (10-110); a window's with how recently it
@@ -88,10 +90,19 @@
     return { place: Object.keys(out).length ? out : null, bad: bad };
   }
 
+  /* the item's composite (WSU-58 S7, = item_core.norm_group): {} the surface's own grouping; id the item the person joined
+     it to (LV-11); sep the person took it out; at when its tab was last brought to the front (ms); front it was, as written */
+  var GROUP_BAD = "group must be {id?, front?, at?, sep?} naming an id, sep or at - or {} for the surface's own grouping";
   function normGroup(g) {
     if (g === null || g === undefined || g === '' || (isObj(g) && !Object.keys(g).length)) return { group: {}, bad: [] };
-    if (!isObj(g) || !String(g.id || '').trim()) return { group: null, bad: ['group must be {id, front?} or {} to separate'] };
-    return { group: { id: String(g.id).trim().slice(0, 80), front: !!g.front }, bad: [] };
+    if (!isObj(g)) return { group: null, bad: [GROUP_BAD] };
+    var gid = String(g.id || '').trim().slice(0, 80), sep = !!g.sep, at = null;
+    if (g.at !== null && g.at !== undefined && g.at !== '') { at = num(g.at); if (at === null) return { group: null, bad: ['group.at must be a number (ms)'] }; }
+    if (!gid && !sep && at === null) return { group: null, bad: [GROUP_BAD] };
+    var out = {}; if (gid && !sep) out.id = gid; out.front = !!g.front;
+    if (at !== null) out.at = pyRound(Math.max(0, at), 0);
+    if (sep) out.sep = true;
+    return { group: out, bad: [] };
   }
 
   function normalise(block) {
@@ -104,11 +115,13 @@
       var c = b.content; src = { cap: c.cap, args: c.args || {}, ts: c.ts || '', ms: c.ms || 0 };
     }
     var anchors = Array.isArray(b.anchors) ? b.anchors : (isObj(b.anchor) ? [b.anchor] : []);
-    var state = has(STATES, b.state) ? b.state : 'now';
+    var state = has(STATES, b.state) ? b.state : 'now', face = faceOf({ face: b.face, state: state });
+    var back = face === 'full' && has(BACKS, b.back) ? b.back : '';
+    var dock = (face === 'window' || (face === 'full' && back === 'window')) && has(DOCKS, b.dock) ? b.dock : '';
     return {
       key: String(b.key || b.id || ''), id: b.id === undefined ? null : b.id,
       kind: String(b.type || b.kind || 'note'), content: isObj(b.content) ? b.content : {},
-      source: src || {}, anchors: anchors, state: state, face: faceOf({ face: b.face, state: state }),
+      source: src || {}, anchors: anchors, state: state, face: face, back: back, dock: dock,
       size: has(SIZES, size) ? size : 'm', place: place, locked: !!place.locked,
       view: has(VIEWS, view) ? view : '', group: group, folded: !!b.folded,
       ts: b.ts || '', score: b.score === undefined ? null : b.score
@@ -127,6 +140,8 @@
       else if (k === 'locked') { var p = isObj(block.place) ? clone(block.place) : {}; var w = want.place || {}; for (var q in w) p[q] = w[q]; p.locked = !!v; want.place = p; }
       else if (k === 'folded') want.folded = !!v;
       else if (k === 'group') { var g = normGroup(v); probs = probs.concat(g.bad); if (g.group) want.group = g.group; }
+      else if (k === 'back' || k === 'dock') { var ok = k === 'back' ? BACKS : DOCKS;   /* '' clears it */
+        if (v !== '' && !has(ok, v)) probs.push(k + ' must be one of ' + ok.join('|') + " or ''"); else want[k] = v; }
     });
     if (probs.length) return { changed: {}, prev: {}, problems: probs };
     if (has(['tile', 'window', 'full'], want.face) && !('state' in want) && block.state === 'parked') want.state = 'now';
@@ -204,7 +219,7 @@
     if (state === 'parked') face = 'pill';
     var place = isObj(it.place) ? it.place : {};
     var locked = !!(it.locked || place.locked);
-    var back = has(['pill', 'tile', 'window'], it.back) ? it.back : '', dock = has(['tile', 'pill'], it.dock) ? it.dock : '';
+    var back = has(BACKS, it.back) ? it.back : '', dock = has(DOCKS, it.dock) ? it.dock : '';
     back = face === 'full' ? (back || 'tile') : '';
     dock = (face === 'window' || (face === 'full' && back === 'window')) ? (dock || 'tile') : '';
     var pilled = ('pilled' in it) ? !!it.pilled : ((face === 'pill' || (face === 'full' && back === 'pill')) && state !== 'parked');
@@ -261,7 +276,7 @@
     return s;
   }
 
-  var api = { STATES: STATES, FACES: FACES, SIZES: SIZES, LAYERS: LAYERS, VIEWS: VIEWS, SETTABLE: SETTABLE, Z: Z, z: z,
+  var api = { STATES: STATES, FACES: FACES, SIZES: SIZES, LAYERS: LAYERS, VIEWS: VIEWS, BACKS: BACKS, DOCKS: DOCKS, SETTABLE: SETTABLE, Z: Z, z: z,
             ROW: ROW, ROW_NARROW: ROW_NARROW, MENU: MENU, MENU_ALL: MENU_ALL, faceOf: faceOf, normalise: normalise, applySet: applySet,
             registerBody: registerBody, body: body, bodies: bodies, controls: controls, menu: menu, action: action,
             EVENTS: EVENTS, FACE_EVENTS: FACE_EVENTS, LAYOUT_EVENTS: LAYOUT_EVENTS, faceState: faceState, transition: transition };
