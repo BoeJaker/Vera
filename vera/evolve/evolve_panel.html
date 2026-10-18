@@ -849,6 +849,18 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card"><div class="card-h"><span class="card-t">Which model serves which job</span><span class="hint">seconds a call · tokens a second · ollama.route_stats</span></div><div id="mdl-matrix" class="hint">loading…</div></div>
     <div class="card"><div class="card-h"><span class="card-t">Students</span><span class="hint">small models learning Vera's yes/no decisions, scored in shadow · decide.shadow.report</span></div><div id="mdl-students" class="hint">loading…</div></div>
   </div>
+  <!-- Routing (looplab-control §9.4 S6; owner 18 Oct: "better vis over the routing history and why things were routed where
+       they were"): THE matrix of job type x node (live speed from ollama.route_stats), every recent decision with its
+       reason (ollama.request_log: route_reason, rule, estimate vs actual, queue, GPU residency), THE drill for a cell (the
+       models there + the job type's rule) and for one call. History past the log's ring waits on B1+ (the durable record). -->
+  <div class="card" id="rt-card">
+    <div class="card-h"><span class="card-t">Routing</span><span class="hint" id="rt-hint">job type &times; node &middot; tokens a second &middot; <code>ollama.route_stats</code></span>
+      <select id="rt-val" onchange="routingLoad()" title="what a cell shows"><option value="tps">tokens / s</option><option value="elapsed">seconds a call</option><option value="n">calls</option></select></div>
+    <div id="rt-mx"></div>
+    <div class="card-h" style="margin-top:10px"><span class="card-t" style="font-size:12px">Recent decisions</span><span class="hint" id="rt-dec-hint"></span></div>
+    <div id="rt-dec"></div>
+    <vera-drill class="olv-drill" id="rt-drill" url></vera-drill>
+  </div>
   <div class="kp-two">
     <div class="card"><div class="card-h"><span class="card-t">Benchmarks</span><span class="hint">every run · bench.results</span></div><div id="mdl-bench" class="hint">loading…</div></div>
     <div class="card"><div class="card-h"><span class="card-t">Nodes</span><span class="hint">what each is warm with now · bench.node_perf</span></div><div id="mdl-nodes" class="hint">loading…</div></div>
@@ -1808,6 +1820,68 @@ function runsStepDiff(a,b,an,bn){
     '<table class="tst-t"><tr><th>#</th><th>'+esc(an)+'</th><th>'+esc(bn)+'</th></tr>'+rows.join('')+'</table>';
 }
 
+/* ═══ ROUTING — where calls go and why (looplab-control §9.4 S6) ═══ */
+// The ollama family's own reads: route_stats (EMA per model x node x job type), request_log (each recent call with the
+// router's stated reason) and routing.get (the job-type rules). Durable history past the log's ring is B1+.
+let _rtStats=[],_rtLog=[],_rtRules=null,_rtKind=false;
+async function routingLoad(){
+  try{await Promise.all([_olvScript(),_olvLib('vera-matrix.js',()=>window.VeraMatrix&&customElements.get('vera-matrix'))])}catch(e){return}
+  if(!_rtKind){_rtKind=true;_rtKinds()}
+  const [st,lg,ru]=await Promise.all([VeraDrill.call('ollama.route_stats',{}).catch(e=>({error:e.message})),
+    VeraDrill.call('ollama.request_log',{limit:500}).catch(e=>({error:e.message})),VeraDrill.call('ollama.routing.get',{}).catch(()=>null)]);
+  if(!st||st.error){$('rt-mx').innerHTML=VeraStates.html('error','could not read ollama.route_stats'+(st&&st.error?': '+st.error:''));return}
+  _rtStats=st.stats||[];_rtLog=(lg&&lg.entries)||[];_rtRules=ru;
+  const val=$('rt-val').value,by={};
+  _rtStats.forEach(s=>{const k=(s.job_type||'?')+'\u0000'+s.instance,c=by[k]||(by[k]={job:s.job_type||'?',node:s.instance,n:0,w:0,tps:0,el:0,models:[]});
+    c.n+=s.n||0;c.tps+=(s.ema_tps||0)*(s.n||0);c.el+=(s.ema_elapsed_s||0)*(s.n||0);c.models.push(s)});
+  const cells=Object.values(by).map(c=>({job:c.job,node:c.node,n:c.n,tps:c.n?+(c.tps/c.n).toFixed(1):null,el:c.n?+(c.el/c.n).toFixed(1):null,models:c.models.length,
+    v:val==='n'?c.n:val==='elapsed'?(c.n?c.el/c.n:null):(c.n?c.tps/c.n:null)}));
+  const vs=cells.map(c=>c.v).filter(v=>v!=null),lo=Math.min(...vs,0),hi=Math.max(...vs,1);
+  $('rt-hint').innerHTML=esc(cells.length+' job type x node cells · '+_rtStats.length+' model rows · '+(val==='tps'?'tokens a second':val==='elapsed'?'seconds a call':'calls')+' (EMA, weighted by calls)')+' · <code>ollama.route_stats</code>';
+  let el=$('rt-mxel');
+  if(!el){$('rt-mx').innerHTML='<vera-matrix id="rt-mxel"></vera-matrix>';el=$('rt-mxel');
+    el.addEventListener('matrix:select',e=>{const c=e.detail.cell;if(c)$('rt-drill').open('route-cell',c.job+'|'+c.node,{root:true})})}
+  el.record={map:{cells:'cells',row:'job',col:'node',value:'v',tip:'{job} on {node} · {n} calls · {tps} tok/s · {el} s a call · {models} model(s)'},
+    colour:{scale:[lo,hi],good:val==='elapsed'?'low':'high'},data:{cells}};
+  routingDecisions();
+}
+function routingDecisions(){
+  const g=_rtLog.filter(x=>x.route_reason||x.job_type);
+  if(!g.length){$('rt-dec').innerHTML=VeraStates.html('empty','no routed call in the request log right now');
+    $('rt-dec-hint').innerHTML=esc('the log keeps a short ring ('+_rtLog.length+' entr'+(_rtLog.length===1?'y':'ies')+' now) - history waits on B1+, the durable per-call record')+' · <code>ollama.request_log</code>';return}
+  const est=g.filter(x=>+x.est_seconds>0&&+x.elapsed_s>0),err=est.length?est.reduce((s,x)=>s+Math.abs(x.elapsed_s-x.est_seconds)/x.est_seconds,0)/est.length:null;
+  const spill=g.filter(x=>x.cpu_spill).length,esc8=g.filter(x=>x.escalated).length,span=g.length>1?(Date.parse(g[0].ts)-Date.parse(g[g.length-1].ts))/60000:0;
+  $('rt-dec-hint').innerHTML=esc(g.length+' call(s) over the last '+Math.max(1,Math.round(span))+' min (the log keeps a short ring - history waits on B1+)'+(err!=null?' · estimate off by '+Math.round(100*err)+'% on average':'')+(spill?' · '+spill+' spilled to CPU':'')+(esc8?' · '+esc8+' escalated':''))+' · <code>ollama.request_log</code>';
+  window._rtRows=g;
+  $('rt-dec').innerHTML='<table class="tst-t"><tr><th>when</th><th>job</th><th>model @ node</th><th>why</th><th>est / took</th><th>queue</th><th>GPU</th></tr>'+g.slice(0,40).map((x,i)=>
+    '<tr class="tst-r" onclick="$(\'rt-drill\').open(\'route-call\',window._rtRows['+i+'].req_id,{rec:window._rtRows['+i+'],root:true})"><td class="tst-src">'+esc(_tstAgo(x.ts))+'</td><td>'+esc(x.job_type||x.kind||'')+'</td><td>'+esc((x.model||'')+' @ '+(x.instance||''))+'</td>'+
+    '<td title="'+esc(x.route_reason||'')+'">'+esc(String(x.rule_source||'')+(x.route_reason?' · '+String(x.route_reason).replace(/^job-type rule '[^']*' \([^)]*\); ?/,'').slice(0,90):''))+'</td>'+
+    '<td>'+esc((x.est_seconds!=null?(+x.est_seconds).toFixed(1):'–')+' / '+(x.elapsed_s!=null?(+x.elapsed_s).toFixed(1):'–')+' s')+'</td><td class="tst-src">'+esc(x.queue_ms!=null?x.queue_ms+' ms':'')+'</td>'+
+    '<td>'+esc(x.gpu_resident_pct!=null?x.gpu_resident_pct+'%':'')+(x.cpu_spill?' <span class="tst-f" style="color:#e0a458">spill</span>':'')+'</td></tr>').join('')+'</table>';
+}
+function _rtRule(job){const r=_rtRules||{},p=(r.profiles||{})[r.active_profile]||{};return (p.effective||{})[job]||(p.rules||{})[job]||(r.defaults||{})[job]||null}
+function _rtKinds(){
+  const row=_olvRow;
+  VeraDrill.registerKind('route-cell',{label:'Routing',
+    load:(id)=>{const [job,node]=id.split('|');const ms=_rtStats.filter(s=>(s.job_type||'?')===job&&s.instance===node);if(!ms.length)throw new Error('no traffic for '+job+' on '+node);return {job,node,models:ms}},
+    title:(c)=>c.job+' on '+c.node,
+    tabs:[{id:'models',label:'Models here'},{id:'rule',label:'The rule'},{id:'calls',label:'Recent calls'}],
+    render:(c,tab)=>{
+      if(tab==='rule'){const r=_rtRule(c.job);return r?'<pre>'+esc(JSON.stringify(r,null,2))+'</pre><div class="tst-src">profile '+esc((_rtRules||{}).active_profile||'')+' · ollama.routing.get</div>':VeraStates.html('empty','no rule for '+c.job+' - the default applies')}
+      if(tab==='calls'){const g=_rtLog.filter(x=>(x.job_type||'?')===c.job&&x.instance===c.node);return g.length?'<table>'+g.map(x=>'<tr><td class="tst-src">'+esc(_tstAgo(x.ts))+'</td><td>'+esc(x.model)+'</td><td>'+esc(x.elapsed_s)+' s</td><td>'+esc(x.route_reason||'')+'</td></tr>').join('')+'</table>':VeraStates.html('empty','none in the log\'s ring right now')}
+      return '<table class="tst-t"><tr><th>model</th><th>calls</th><th>tok/s</th><th>s a call</th><th>tokens</th><th>prompt chars</th><th>last</th></tr>'+c.models.map(m=>'<tr><td>'+esc(m.model)+'</td><td>'+m.n+'</td><td>'+esc(m.ema_tps)+'</td><td>'+esc(m.ema_elapsed_s)+'</td><td>'+esc(m.ema_tokens)+'</td><td>'+esc(m.ema_prompt_chars)+'</td><td class="tst-src">'+esc(_tstAgo(m.last_ts))+'</td></tr>').join('')+'</table>';
+    }});
+  VeraDrill.registerKind('route-call',{label:'Call',
+    load:(id)=>{const x=_rtLog.find(y=>y.req_id===id);if(!x)throw new Error('gone from the log\'s ring');return x},
+    title:(x)=>(x.job_type||x.kind||'call')+' · '+x.model,
+    tabs:[{id:'why',label:'Why here'},{id:'record',label:'Record'}],
+    render:(x,tab)=>tab==='record'?'<pre>'+esc(JSON.stringify(x,null,2))+'</pre>':
+      row('job',x.job_type||x.kind)+row('model',x.model)+row('node',x.instance+' ('+(x.backend||'')+')')+row('rule',x.rule_source)+row('why',x.route_reason)+
+      row('estimate',x.est_seconds!=null?x.est_seconds+' s':'')+row('took',x.elapsed_s!=null?x.elapsed_s+' s (queue '+(x.queue_ms||0)+' ms, provider '+(x.provider_ms||0)+' ms)':'')+
+      row('tokens',x.tokens!=null?x.tokens+' at '+x.tok_per_s+' tok/s':'')+row('GPU',x.gpu_resident_pct!=null?x.gpu_resident_pct+'% resident'+(x.cpu_spill?' - spilled to CPU':''):'')+
+      row('escalated',x.escalated?'yes':'')+row('caller',(x.caller_file||'')+' '+(x.caller_func||''))+row('session',x.session_id)});
+}
+
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
 // Any Loop Lab work on a weekly window or once: a census, a suite, a task, a pipeline step, a board item's dispatch, an
 // agentic loop on a goal, a branch's unit tests, or any capability - and any of them may be FOR a board item (board_id):
@@ -2037,6 +2111,7 @@ function kpTile(label,big,sub,bad,onclick){return '<button class="kp-tile'+(bad?
 function kpNote(t,tone){return '<div class="kp-note '+(tone||'warn')+'">'+t+'</div>'}
 function kpShort(m){return String(m||'').replace(/^jaahas\//,'').replace(/^hf\.co\/[^/]+\//,'')}
 async function loadModels(){
+  routingLoad();
   const d=await api('/evolve/models/view');
   if(!d||d.error){$('mdl-table').innerHTML='<div class="empty">'+esc((d&&d.error)||'models unavailable')+'</div>';return}
   _mdl=d; const s=d.summary||{}, lb=s.last_bench, bs=s.best_student;
