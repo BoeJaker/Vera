@@ -4,6 +4,7 @@ from __future__ import annotations
 import inspect
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability
@@ -16,6 +17,8 @@ try:
     )
     from vera.discovery_orchestration import DiscoveryRoutePolicy, run_discovery_route
     from vera.discovery_routing import DiscoveryWorkerOffer, WorkerProviderBinding
+    from vera.discovery_frozen_benchmark import evaluate_corpus, load_corpus
+    from vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
 except ImportError:  # pragma: no cover - installed application spelling
     from Vera.vera.discovery_contract import DiscoveryRequest
     from Vera.vera.discovery_native_web import (
@@ -24,6 +27,8 @@ except ImportError:  # pragma: no cover - installed application spelling
     )
     from Vera.vera.discovery_orchestration import DiscoveryRoutePolicy, run_discovery_route
     from Vera.vera.discovery_routing import DiscoveryWorkerOffer, WorkerProviderBinding
+    from Vera.vera.discovery_frozen_benchmark import evaluate_corpus, load_corpus
+    from Vera.vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
 
 
 SEARCH_REVISION = "web.search-adapter/v1"
@@ -135,3 +140,19 @@ async def cap_discovery_route_run(query: str, max_sources: int = 6,
             scout_timeout_ms=scout_ms, collection_timeout_ms=collection_ms),
         as_of_ms=observed_ms)
     return {"ok": True, **_report_dict(report)}
+
+
+@capability(
+    "discovery.benchmark.evaluate", http_method="GET",
+    http_path="/discovery/benchmark/evaluate",
+    http_tags=["discovery", "context", "evaluation"], memory="off", silent=True,
+    description="Replay Vera's versioned synthetic discovery/context corpus through the existing benchmark contracts. Measures frozen relevance, diversity, useful-context latency and resource receipts. It never calls a provider, model, capability or worker, writes no durable state, makes no production-readiness claim and changes no routing authority.",
+)
+async def cap_discovery_benchmark_evaluate(trace_id=None):
+    corpus_path = (Path(__file__).resolve().parents[1] / "evaluations" /
+                   "discovery-cooperation-v1.json")
+    result = evaluate_corpus(load_corpus(corpus_path))
+    projection = None
+    if result.get("comparison") is not None:
+        projection = DISCOVERY_OPERATOR_LEDGER.record_benchmark(result["comparison"])
+    return {**result, "operator_projection": projection}
