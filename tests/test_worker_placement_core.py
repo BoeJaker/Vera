@@ -298,3 +298,10 @@ def test_revision_bound_memory_caps_stay_on_one_authoritative_host():
             is_sandbox=False, args_ok=True,
         )
         assert ok is False and decision == "host-bound", cap
+
+
+def test_the_switchboard_runs_on_the_host():
+    # 18 Oct 2026: a worker on older code rejected a just-released switch and minds.effective ignored it
+    for cap in ("minds.switch.set", "minds.switch.get", "minds.switch.list", "minds.validate", "minds.effective"):
+        where, why = wp.placement(cap)
+        assert where == "host" and "registry" in why, cap
