@@ -104,6 +104,18 @@ async def _refresh() -> None:
         log.debug("ingress switch read: %s", ex)
 
 
+async def _refresh_tick() -> None:
+    """Keep the cached switches fresh in every process: a decision taken once (a crawl reads defer / read_files at its
+    start) must not see a value from before the switch changed (18 Oct: a crawl started 20 s after
+    discovery.defer_enrichment=on still ran inline - nothing had read the cache in between)."""
+    if _has("minds.effective"):
+        await _refresh()
+        _SW["at"] = time.monotonic()
+
+
+schedule(_refresh_tick, SWITCH_TTL_S, name="ingress.switches", skip_in_sandbox=False, singleton=False)
+
+
 def _requested_for(m: str) -> str:
     return {"on": "full", "meta": "meta"}.get(m, "none")
 

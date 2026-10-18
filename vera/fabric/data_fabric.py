@@ -2793,7 +2793,10 @@ async def ingest_dataset(
     source_id:  str = "",
     defer_embedding: bool = False,
     queue_backfill: bool = True,
+    post_entities: bool = True,
 ) -> Dict:
+    # post_entities=False: the caller runs the entity pass itself (a deferred crawl queues one discovery.t3 job), so
+    # the post-ingest pipeline must not run a second one over the same records (web-ingress WI-4c; DEEP-07: NER twice)
     # Embedding policy. EMBED_EXCLUDED_DATASETS has always existed, but until
     # 2026-09-20 only the BACKFILL consulted it — so a producer could declare
     # its dataset excluded and still pay for an embed on every single ingest.
@@ -2931,13 +2934,13 @@ async def ingest_dataset(
     # Ensures every ingestion point gets: source registration, entity
     # extraction, and optional loom linking — matching the web acquisition's
     # automated processing. Settings are configurable per dataset.
-    asyncio.create_task(_post_ingest_pipeline(dataset_id, source, source_id, ingested))
+    asyncio.create_task(_post_ingest_pipeline(dataset_id, source, source_id, ingested, extract=post_entities))
 
     return {"ingested": ingested, "errors": errors, "dataset_id": dataset_id}
 
 
 async def _post_ingest_pipeline(
-    dataset_id: str, source: str, source_id: str, record_count: int
+    dataset_id: str, source: str, source_id: str, record_count: int, extract: bool = True
 ):
     """Background post-ingestion tasks. Non-blocking — errors are logged, not raised."""
     # Everything here is BACKGROUND work: any LLM call it makes (extraction,
@@ -2954,7 +2957,7 @@ async def _post_ingest_pipeline(
         cfg = await _get_dataset_processing_config(dataset_id)
 
         # 3) Entity extraction (if enabled for this dataset)
-        if cfg.get("auto_extract_entities", True) and record_count > 0:
+        if extract and cfg.get("auto_extract_entities", True) and record_count > 0:
             try:
                 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
                 extract_cap = CAPABILITY_REGISTRY.get("fabric.entity_graph.extract")

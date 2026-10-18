@@ -98,3 +98,22 @@ def test_discovery_uses_the_doc_core_the_dedupe_and_the_deferral():
     assert "register_handler" in src and "T3_KIND" in src
     from vera.minds import switchboard_core as SB
     assert SB.REGISTRY["ingress.dedupe"].default == "off" and SB.REGISTRY["discovery.defer_enrichment"].default == "off"
+
+
+
+def test_a_deferred_crawl_runs_one_entity_pass_and_switches_stay_fresh():
+    """18 Oct on prod: ingest_dataset's post-ingest pipeline extracted entities for every crawl page as well as the
+    crawl's own pass; and a crawl read discovery.defer_enrichment from a cache nothing had refreshed."""
+    import ast
+    df = (ROOT / "vera" / "fabric" / "data_fabric.py").read_text(encoding="utf-8")
+    tree = ast.parse(df)
+    ing = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "ingest_dataset")
+    assert "post_entities" in [a.arg for a in ing.args.args + ing.args.kwonlyargs]
+    assert "extract=post_entities" in df
+    post = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_post_ingest_pipeline")
+    assert "extract" in [a.arg for a in post.args.args] and 'if extract and cfg.get("auto_extract_entities"' in df
+    disc = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    i = disc.index("if _defer_t3:     # one entity pass")
+    assert "post_entities=False" in disc[i:i + 400]
+    ing_caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert 'schedule(_refresh_tick, SWITCH_TTL_S, name="ingress.switches"' in ing_caps and "singleton=False" in ing_caps
