@@ -2158,6 +2158,7 @@
   /* a composite card (see _deskGroups): its members behind the front one are not drawn; the front one carries the tabs
      under its header, and as a pill says how many it holds */
   :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-behind:not(.cmp-front){display:none!important}   /* stronger than a pill's display:flex */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-behind.cmp-leaving:not(.cmp-front){display:flex!important;opacity:0;transition:opacity .18s;pointer-events:none}   /* ...after it fades (WSU-96) */
   .cmp-tabs{display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-front:not(.desk-chip) > .cmp-tabs{display:flex;gap:2px;flex:none;overflow-x:auto;scrollbar-width:none;padding:0 6px;margin:0 0 4px;border-bottom:1px solid var(--border,#2a2f37)}
   .cmp-tabs::-webkit-scrollbar{display:none}
@@ -4696,7 +4697,11 @@
             if (inT.length && !pickedSince) front = inT[0];
           }
           res.membersOf.set(front, g); res.groups.push(g.map((c) => c.dataset.key));
-          g.forEach((c) => { if (c !== front) { res.behind.add(c); c.classList.add('cmp-behind'); } });
+          g.forEach((c) => { if (c !== front) { res.behind.add(c); c.classList.add('cmp-behind');
+            /* A CARD GOING BEHIND A TAB FADES OUT, IT DOES NOT VANISH (WSU-96 remainder; owner 2026-10-17: "... needs to be better and
+               smoother transition, same for if items enter or leave the desk"): one that was in view the pass before stays drawn while
+               it fades (the face-swap time), then the tab rule hides it */
+            if (this._shownLast && this._shownLast.has(c.dataset.key) && !c.classList.contains('desk-new')) { c.classList.add('cmp-leaving'); clearTimeout(c._clT); c._clT = setTimeout(() => c.classList.remove('cmp-leaving'), 200); } } });
           front.classList.add('cmp-front'); front.dataset.cmpN = String(g.length);
           /* the tabs name what differs: on one subject, the part before it (Web, From the fabric, Research); else the title */
           const subs = new Set(g.map((c) => subjOf(titleOf(c))));
