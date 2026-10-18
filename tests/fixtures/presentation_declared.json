@@ -4410,13 +4410,15 @@
     "held",
     "free",
     "owners"
-   ]
+   ],
+   "tag": "vera-node-activity"
   },
-  "form": "table",
+  "form": "element",
   "kind": "table",
   "map": {
    "rows": "nodes"
-  }
+  },
+  "title": "GPU gate"
  },
  "ollama.instances": {
   "draw": {

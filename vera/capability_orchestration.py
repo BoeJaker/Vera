@@ -10068,7 +10068,9 @@ async def obs_neo4j_diag(trace_id=None):
     return out
 
 @capability("ollama.gate.status", memory="off", silent=True,
-            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["node", "has_gpu", "gated", "capacity", "held", "free", "owners"]}}},
+            # the Workers panel's node activity pane: each node's gate (held / capacity · who holds it) beside its load and what it runs
+            # now - the gate in context (Wave 1: panel-derived); the table stays a view of it
+            contract={"presentation": {"kind": "table", "form": "element", "map": {"rows": "nodes"}, "draw": {"tag": "vera-node-activity", "columns": ["node", "has_gpu", "gated", "capacity", "held", "free", "owners"]}, "title": "GPU gate"}},
             http_method="GET", http_path="/ollama/gate", http_tags=["ollama", "obs"],
             description="Cross-process Ollama GPU gate ('one big queue') status: "
                         "whether it is enabled, the coordination Redis DB, and per-node "
