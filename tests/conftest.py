@@ -17,6 +17,7 @@ _CRITICAL_MODULES = {
     "test_edge_guard_asgi",  # the guard refuses before routing and closes foreign WebSockets (2026-10-17)
     "test_term_tickets",  # a terminal socket was a shell for anyone who knew the path (2026-10-17)
     "test_terminal_ws_tickets",  # the terminal routes refuse a foreign Origin and a missing ticket (2026-10-17)
+    "test_live_picker_parity",  # S2: the live picker ignored GPU-off, the slot guard and the sweep (2026-10-18)
     "test_money_guard_core",  # a loop or widget could place a real broker order by name (2026-10-17)
     "test_money_tag_dispatch",  # the dispatcher refuses money caps except from their own route (2026-10-17)
     "test_caller_context_core",  # "order by usage" counted screen refresh as interest; no actor or surface (2026-10-18)
