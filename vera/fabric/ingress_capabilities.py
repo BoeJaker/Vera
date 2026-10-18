@@ -1083,6 +1083,12 @@ async def cap_map_metrics(days: int = 1, sample: int = 20, store: bool = False, 
         overlaps.append(sc.overlap_at([x.get("key") for x in r.get("results") or []], list(srow["result_keys"] or [])))
     m = sc.daily_metrics(purposes, overlaps, fresh, crawl, fetches)
     m["days"] = d
+    if store:
+        try:            # WI-15c: refresh each topic's worldview concepts once a night, with the metrics row
+            tcs = (await cap_map_topic_concepts()).get("topics") or []
+            m["topic_concepts"] = {"topics": len(tcs), "with_concepts": sum(1 for t in tcs if t.get("concepts"))}
+        except Exception as e:  # noqa: BLE001
+            m["topic_concepts"] = {"error": str(e)[:120]}
     try:
         m["retention"] = (await cap_map_retention(days=90)).get("retention")
     except Exception as e:  # noqa: BLE001
@@ -1270,3 +1276,71 @@ try:
     )
 except Exception as _e:  # noqa: BLE001 - a stand-in orchestration (tests) has no UI registry
     log.debug("web map panel not registered: %s", _e)
+
+
+# ── each topic's worldview concepts (WI-15c, PLAN §13.4: web_topic.worldview_concepts[]) ────────────────
+
+TOPIC_SAMPLE_SQL = ("SELECT m.url_key FROM web_topic_members m LEFT JOIN web_urls u USING (url_key) WHERE m.topic_key = $1 "
+                    "ORDER BY u.last_seen DESC NULLS LAST LIMIT $2")
+
+
+def _page_texts(keys: List[str]) -> List[str]:
+    """Page-index text for the given url keys (title + body), where the page is held."""
+    df = _data_fabric()
+    if df is None or not keys:
+        return []
+    try:
+        from Vera.vera.fabric import discovery_store_core as _dsc
+    except ImportError:  # pragma: no cover
+        from vera.fabric import discovery_store_core as _dsc
+    conn = df._sqlite_conn()
+    out = []
+    for k in keys:
+        row = conn.execute("SELECT title, full_text FROM fabric_pages WHERE id = ? OR url = ? LIMIT 1",
+                           (_dsc.page_id(k), k)).fetchone()
+        if row and (row[1] or "").strip():
+            out.append(((row[0] or "") + ". " + " ".join((row[1] or "").split()))[:2000])
+    return out
+
+
+@capability("fabric.map.topic.concepts", http_method="POST", http_path="/fabric/map/topic/concepts",
+            http_tags=["fabric", "ingress"], memory="off", silent=True,
+            description="Which worldview concepts each topic map's pages fall in: a sample of the topic's most "
+                        "recently seen pages is encoded by worldview (worldview.encode on the page text) and the "
+                        "concepts holding at least 2 pages and 15% of the sample are written to the topic "
+                        "(web_topic.worldview_concepts, replaced each run). Read-only on worldview. Input: topic_id "
+                        "(str: one topic, blank = all), sample (int, default 12). Output: {topics:[{topic_key, "
+                        "encoded, concepts}]}.")
+async def cap_map_topic_concepts(topic_id: str = "", sample: int = 12, trace_id=None):
+    pool = _pool()
+    if pool is None or not _has("worldview.encode"):
+        return {"error": "the web map's store or worldview.encode is not available", "topics": []}
+    n = max(2, min(int(sample or 12), 50))
+    try:
+        async with pool.acquire() as conn:
+            keys = ([tc.topic_key(topic_id)] if topic_id else
+                    [r[0] for r in await conn.fetch("SELECT topic_key FROM web_topic ORDER BY topic_key")])
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:160], "topics": []}
+    out = []
+    for key in keys:
+        try:
+            async with pool.acquire() as conn:
+                urls = [r[0] for r in await conn.fetch(TOPIC_SAMPLE_SQL, key, n * 2)]
+            texts = (await asyncio.to_thread(_page_texts, urls))[:n]
+            got = []
+            for t in texts:
+                try:
+                    e = await asyncio.wait_for(_call("worldview.encode", text=t), 20)
+                except Exception:  # noqa: BLE001
+                    continue
+                if isinstance(e, dict) and e.get("concept") is not None:
+                    got.append(e["concept"])
+            concepts = sc.topic_concepts(got)
+            if got:
+                async with pool.acquire() as conn:
+                    await conn.execute(rc.SET_TOPIC_CONCEPTS, key, concepts)
+            out.append({"topic_key": key, "encoded": len(got), "concepts": concepts})
+        except Exception as e:  # noqa: BLE001
+            out.append({"topic_key": key, "error": str(e)[:120]})
+    return {"topics": out}

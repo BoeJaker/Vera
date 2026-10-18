@@ -314,6 +314,7 @@ UPSERT_TOPIC = """INSERT INTO web_topic (topic_key, name, intel_topic_id, seeds,
     queries = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(web_topic.queries || EXCLUDED.queries) AS x)),
     entities = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(web_topic.entities || EXCLUDED.entities) AS x)),
     updated = NOW()"""
+SET_TOPIC_CONCEPTS = "UPDATE web_topic SET worldview_concepts = $2::text[], updated = NOW() WHERE topic_key = $1"
 LINK_TOPIC = {
     "dataset": "UPDATE web_topic SET dataset_ids = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(dataset_ids || $2::text[]) AS x)), updated = NOW() WHERE topic_key = $1",
     "kb": "UPDATE web_topic SET kb_ids = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(kb_ids || $2::text[]) AS x)), updated = NOW() WHERE topic_key = $1",

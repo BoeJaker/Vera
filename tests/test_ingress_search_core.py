@@ -186,3 +186,13 @@ def test_seeded_pages_carry_their_concept_and_the_on_target_share():
     assert sc.on_target_share([]) == {"pages": 0, "on_target": 0, "share": None}
     caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
     assert 'sc.seed_tag(seed["idx"])' in caps and '"worldview.encode", record_id=rid' in caps
+
+
+def test_a_topic_names_the_concepts_most_of_its_pages_fall_in():
+    assert sc.topic_concepts([7, 7, 7, 3, 3, 9, None]) == ["7", "3"]          # 9: one stray page names nothing
+    assert sc.topic_concepts([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 1]) == ["1"]   # 2 of 12 < 15 %
+    assert sc.topic_concepts([]) == [] and sc.topic_concepts([4]) == []
+    assert sc.topic_concepts([1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6], min_share=0.0, top=3) == ["1", "2", "3"]
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert '@capability("fabric.map.topic.concepts"' in caps and '"worldview.encode", text=t' in caps
+    assert "SET_TOPIC_CONCEPTS" in caps and 'm["topic_concepts"]' in caps

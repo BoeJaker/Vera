@@ -331,3 +331,17 @@ def on_target_share(pairs: Iterable[Tuple[int, Sequence[int]]]) -> Dict[str, Any
             n += 1
             hit += int(g) == int(seed)
     return {"pages": n, "on_target": hit, "share": round(hit / n, 3) if n else None}
+
+
+def topic_concepts(encoded: Iterable[Any], *, min_n: int = 2, min_share: float = 0.15, top: int = 5) -> List[str]:
+    """The worldview concepts a topic's sampled pages fall in, most pages first: a concept counts with at least
+    `min_n` pages and `min_share` of those encoded, at most `top` (one stray page names nothing)."""
+    got = [int(c) for c in encoded or () if c is not None]
+    if not got:
+        return []
+    counts: Dict[int, int] = {}
+    for c in got:
+        counts[c] = counts.get(c, 0) + 1
+    keep = [c for c, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            if n >= min_n and n / len(got) >= min_share]
+    return [str(c) for c in keep[:top]]
