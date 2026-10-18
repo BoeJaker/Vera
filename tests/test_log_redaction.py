@@ -142,3 +142,15 @@ def test_a_url_object_argument_is_redacted_like_httpx_logs_it():
     assert ("A" * 35) not in out
     assert "/bot1234567890:<redacted>" in out and "200 OK" in out
     assert rec.args[3] == 200 and isinstance(rec.args[3], int), "typed args keep their type"
+
+
+def test_home_public_name_is_masked():
+    """Owner 2026-10-18: the home's public address is never written unmasked to a log."""
+    try:
+        from Vera.vera import log_setup as ls
+    except Exception:
+        from vera import log_setup as ls
+    out = ls.redact("door endpoint boejaker.duckdns.org:51821 up")
+    assert "boejaker" not in out and "***.duckdns.org:51821" in out
+    assert ls.redact("peer at home-1.ddns.net") == "peer at ***.ddns.net"
+    assert ls.redact("nothing to hide here") == "nothing to hide here"

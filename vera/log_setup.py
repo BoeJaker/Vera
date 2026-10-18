@@ -167,6 +167,10 @@ _ENV_SECRET = re.compile(
 # asyncssh logged the whole command at INFO - Redis, Postgres and Neo4j
 # credentials, encoded but not protected (45 lines on 2026-10-03). The payload
 # is dropped whatever it decodes to; the command around it stays readable.
+#: The home's public name on a dynamic-DNS service (owner 2026-10-18: the public address must never be shown
+#: unmasked in logs). The host part goes; the service and any port stay, so a line still says what it was.
+_DYNDNS_HOST = re.compile(r"\b[a-z0-9][a-z0-9\-]*\.(duckdns\.org|ddns\.net|no-ip\.(?:org|com|biz|info)|dynu\.(?:net|com)|dyndns\.org|freedns\.afraid\.org)\b", re.I)
+
 _INLINE_PAYLOAD = re.compile(
     r"((?:printf\s+%s|echo(?:\s+-n)?)\s+['\"]?)([A-Za-z0-9+/=]{24,})(['\"]?\s*\|\s*base64\s+(?:-d|--decode))")
 
@@ -186,6 +190,8 @@ def redact(text: str) -> str:
         out = _ENV_SECRET.sub(r"\1<redacted>", out)
     if "base64" in out:
         out = _INLINE_PAYLOAD.sub(r"\1<redacted>\3", out)
+    if any(d in out.lower() for d in ("duckdns", "ddns", "no-ip", "dynu", "dyndns", "afraid")):
+        out = _DYNDNS_HOST.sub(r"***.\1", out)
     return out
 
 
