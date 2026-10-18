@@ -163,6 +163,7 @@ async def _ssh_host_ids() -> Dict[str, str]:
 
 @capability(
     "specialist.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "summary"}, "title": "Summary"}, {"kind": "table", "form": "table", "map": {"rows": "nlp.nodes"}, "draw": {"columns": ["node_id", "state", "version", "threads"]}, "title": "NLP nodes", "empty": "No nLP nodes"}, {"kind": "table", "form": "table", "map": {"rows": "media.nodes"}, "draw": {"columns": ["label", "status", "has_gpu", "services", "in_use"]}, "title": "Media nodes", "empty": "No media nodes"}, {"kind": "table", "form": "table", "map": {"rows": "nlp.registry"}, "draw": {"columns": ["task", "model", "kind"]}, "title": "NLP models", "empty": "No nLP models"}]}},
     http_method="GET", http_path="/specialist/status", http_tags=["models", "nlp", "media"],
     memory="off", silent=True,
     description="The non-LLM ('specialist') models across the estate, per node: NLP "

@@ -1,0 +1,195 @@
+[
+  {
+    "id": "estate.nodes",
+    "panel": "estate",
+    "title": "Compute nodes",
+    "icon": "server",
+    "summary": "Every compute node the node agent reports - cores, load, memory, GPU and its runners",
+    "view": {
+      "kind": "table",
+      "views": [
+        "table",
+        "cards"
+      ]
+    },
+    "read": {
+      "cap": "nodes.agent.status",
+      "args": {},
+      "refresh": {
+        "every_s": 30
+      }
+    },
+    "actions": [
+      {
+        "id": "stuck",
+        "label": "Check stuck runners",
+        "cap": "nodes.runner.reap",
+        "where": "header",
+        "title": "A dry run: what the stuck rule would stop, and why - nothing is stopped",
+        "args": {
+          "dry_run": true
+        }
+      }
+    ],
+    "related": [
+      "nodes.runner.list",
+      "estate.health",
+      "sysmon.status"
+    ],
+    "size": {
+      "default": "m",
+      "min": "s"
+    }
+  },
+  {
+    "id": "estate.glance",
+    "panel": "estate",
+    "title": "Estate at a glance",
+    "icon": "server",
+    "summary": "Every machine, how hot it runs, the model servers and the latest errors - side by side",
+    "view": {
+      "kind": "composite",
+      "layout": "dashboard",
+      "parts": [
+        {
+          "from": "nodes",
+          "kind": "table",
+          "title": "Machines",
+          "columns": ["label", "addr", "docker_kind", "user"]
+        },
+        {
+          "from": "temps",
+          "kind": "status",
+          "title": "Temperatures"
+        },
+        {
+          "from": "models",
+          "kind": "status",
+          "title": "Model servers"
+        },
+        {
+          "from": "errors",
+          "kind": "log",
+          "title": "Latest errors"
+        }
+      ]
+    },
+    "read": [
+      {
+        "as": "nodes",
+        "cap": "nodes.list",
+        "args": {},
+        "refresh": {
+          "every_s": 120
+        }
+      },
+      {
+        "as": "temps",
+        "cap": "obs.node_temps",
+        "args": {},
+        "refresh": {
+          "every_s": 60
+        }
+      },
+      {
+        "as": "models",
+        "cap": "ollama.instances",
+        "args": {},
+        "refresh": {
+          "every_s": 60
+        }
+      },
+      {
+        "as": "errors",
+        "cap": "syslog.errors",
+        "args": {
+          "limit": 20,
+          "include_code": false
+        },
+        "refresh": {
+          "every_s": 60
+        }
+      }
+    ],
+    "related": [
+      "estate.nodes",
+      "system-monitor.now"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
+  },
+  {
+    "id": "estate.host",
+    "panel": "estate",
+    "title": "Host",
+    "icon": "server",
+    "summary": "One machine: its node record, its containers, its temperatures - pick a node to light its containers",
+    "view": {
+      "kind": "composite",
+      "layout": "dashboard",
+      "parts": [
+        {
+          "from": "nodes",
+          "kind": "table",
+          "title": "Nodes",
+          "columns": ["label", "addr", "docker_host_id", "docker_kind", "ssh_host_id", "user"]
+        },
+        {
+          "from": "containers",
+          "kind": "table",
+          "title": "Containers",
+          "columns": ["Names", "Image", "State", "Status"]
+        },
+        {
+          "from": "temps",
+          "kind": "table",
+          "title": "Temperatures",
+          "columns": ["label", "max_c", "virt", "temps_from", "error"]
+        }
+      ],
+      "join": [
+        {"nodes.docker_host_id": "containers.host_id"},
+        {"nodes.ssh_host_id": "temps.host_id"}
+      ]
+    },
+    "read": [
+      {
+        "as": "nodes",
+        "cap": "nodes.list",
+        "args": {},
+        "refresh": {
+          "every_s": 120
+        }
+      },
+      {
+        "as": "containers",
+        "cap": "docker.ps",
+        "args": {
+          "host_id": "{arg.host}",
+          "slim": true
+        },
+        "refresh": {
+          "every_s": 30
+        }
+      },
+      {
+        "as": "temps",
+        "cap": "obs.node_temps",
+        "args": {},
+        "refresh": {
+          "every_s": 60
+        }
+      }
+    ],
+    "related": [
+      "estate.nodes",
+      "estate.glance"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
+  }
+]

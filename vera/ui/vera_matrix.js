@@ -121,7 +121,7 @@
   var api = { problems: problems, cellsOf: cellsOf, layout: layout, colourOf: colourOf, render: render, isOk: isOk };
   root.VeraMatrix = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  if (root.VeraItem && typeof root.VeraItem.registerBody === 'function') root.VeraItem.registerBody('matrix', { views: ['table', 'chart'], fit: 'fill', minSize: 'm' });
+  /* registered in vera/ui/vera_item.js's element registry (DO-0.2), not here: a bare registerBody under a block's name replaced that block's body */
   if (typeof root.customElements === 'undefined' || typeof root.HTMLElement === 'undefined') return;
 
   var CSS = 'vera-matrix{display:block;font-size:11.5px}vera-matrix .vm-ch{text-align:center;color:#8a93a0;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +

@@ -1,0 +1,79 @@
+{
+ "cap": "demo.search",
+ "args": {},
+ "presentation": {
+  "kind": "records",
+  "map": {
+   "rows": "hits",
+   "title": "name"
+  },
+  "draw": {
+   "sort": "name"
+  }
+ },
+ "result": {
+  "hits": [
+   {
+    "name": "beta",
+    "url": "https://b.example/"
+   },
+   {
+    "name": "",
+    "url": "https://e.example/"
+   },
+   {
+    "name": "Alpha",
+    "url": "https://a.example/"
+   },
+   {
+    "name": "alpha",
+    "url": "https://a2.example/"
+   },
+   {
+    "url": "https://n.example/"
+   },
+   {
+    "name": "Gamma",
+    "url": "https://g.example/"
+   }
+  ]
+ },
+ "expect": {
+  "element": "records",
+  "kind": "records",
+  "title": "demo.search",
+  "forms": [
+   "reading"
+  ],
+  "data": [
+   {
+    "name": "Alpha",
+    "url": "https://a.example/",
+    "title": "Alpha"
+   },
+   {
+    "name": "alpha",
+    "url": "https://a2.example/",
+    "title": "alpha"
+   },
+   {
+    "name": "beta",
+    "url": "https://b.example/",
+    "title": "beta"
+   },
+   {
+    "name": "Gamma",
+    "url": "https://g.example/",
+    "title": "Gamma"
+   },
+   {
+    "name": "",
+    "url": "https://e.example/",
+    "title": ""
+   },
+   {
+    "url": "https://n.example/"
+   }
+  ]
+ }
+}

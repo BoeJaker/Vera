@@ -24,7 +24,7 @@ t('...falling back to render() for an element that cannot stream, so an older li
 t('the stream branch comes FIRST — the order is the whole fix',
   SRC.indexOf("typeof inner.stream === 'function'") < SRC.indexOf("if (typeof inner.render === 'function') { try { inner.render(code)"));
 t('an updated slot re-mounts through the same path, so an update streams exactly like the first write',
-  /else if \(kind === 'mermaid'\) \{ if \(h\.textContent\) h\.textContent = ''; this\._mermaidInto\(el\.firstChild, key\);/.test(SRC));
+  /else if \(kind === 'mermaid'\) \{ if \(h\.textContent\) h\.textContent = '';[^\n]*\n?\s*this\._mermaidInto\(el\.firstChild, key\);/.test(SRC));   /* the desk sets max-scale first (WSU-44) */
 
 /* ── 2. ONE PLACE: on the canvas while the canvas is open, back in the reply when it closes ──────────────────── */
 t('the reader chooses where canvas-compatible elements are drawn, and the canvas is the default',

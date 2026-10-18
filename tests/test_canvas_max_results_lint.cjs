@@ -19,17 +19,17 @@ t('a redraw on the stage puts the column back where it was',
 t('the turn in view changing still redraws (it is the redraw that must not move the column)', /if \(fm !== this\._focusMid\) \{ this\._focusMid = fm;/.test(SRC));
 
 // ── maximise ────────────────────────────────────────────────────────────────────────────────────────────────────
-t('every item carries the maximise control, in both heads', (SRC.match(/data-act="max"/g) || []).length === 2);
+t('every item carries the maximise control, in its one head', SRC.includes("max: () => hb('max', maxed ? 'restore' : 'max'") && require('../vera/ui/vera_item.js').controls('note', { lock: false, pill: false }).includes('max')   /* WSU-58 S6: the row is VeraItem.controls - every item has max */ && !SRC.includes('class="mx'));
 t('the control reaches the dispatcher', /if \(act === 'max'\) return this\._toggleMax\(key\);/.test(SRC));
 t('the choice is kept per canvas', /'vera:canvas:max:' \+ this\.canvasId/.test(SRC));
 t('a maximised item is open', /const open = this\._open\.has\(key\) \|\| editing \|\| this\._max === key;/.test(SRC));
 t('the placer leaves it out and puts it over the view', /filter\(\(c\) => c !== maxCard\)/.test(SRC) && /maxCard\.style\.top = mtop \+ 'px'/.test(SRC));
 t('the column does not scroll under it', /:host\(\[data-maxed\]\) #body\{overflow:hidden!important\}/.test(SRC));
-t('nothing else\'s live content is drawn over it', /if \(this\._max && k !== this\._max\) \{ L\[k\]\.style\.display = 'none'; return; \}/.test(SRC));
+t('nothing else\'s live content is drawn over it', /if \(this\._max && k !== this\._max[^{]*\) \{ el\.style\.display = 'none';/.test(SRC)   /* the filled card's own live content stays */);
 
 // ── the preview never blanks ────────────────────────────────────────────────────────────────────────────────────
 t('an html item redraws from its html, not an empty code field', /this\._previewSwap\(el, this\._pdoc\(key, h\.dataset\.lang \|\| cc\.lang, cc\.code \|\| cc\.html \|\| ''\)\)/.test(SRC));
-t('a page still streaming opens at its newest line', /_pdoc\(key, lang, src\) \{ const d = previewDoc\(lang, src\); return \(this\._liveOv && this\._liveOv\[String\(key\)\]\) \? d \+ '<script>try\{scrollTo\(0,document\.documentElement\.scrollHeight\)\}/.test(SRC));
+t('a page still streaming opens at its newest line', /_pdoc\(key, lang, src\) \{ const d = previewDoc\(lang, src\)(?: \+ PREVIEW_H)?; return \(this\._liveOv && this\._liveOv\[String\(key\)\]\) \? d \+ '<script>try\{scrollTo\(0,document\.documentElement\.scrollHeight\)\}/.test(SRC));
 t('the first document is remembered, so an unchanged one is not reloaded', /inner\._doc = pd; inner\.srcdoc = pd;/.test(SRC));
 t('the next document loads behind the one on screen', /nf\.className = 'vc-pframe vc-pnext'/.test(SRC) && /#live \.lv > iframe\.vc-pnext\{position:absolute;left:0;top:0;opacity:0/.test(SRC));
 t('and a swap is at most every half second', /Math\.max\(0, 500 - \(Date\.now\(\) - t0\)\)/.test(SRC));
@@ -66,14 +66,17 @@ t('and a swap is at most every half second', /Math\.max\(0, 500 - \(Date\.now\(\
   t('the tree opens its first levels', /<details class="j-node" open>/.test(tree) && /j-str/.test(tree));
   const g = globalThis; const was = g.VeraCanvasAdapt;
   g.VeraCanvasAdapt = (cap, res) => (res && res.hosts ? { kind: 'table', content: { columns: ['name'], rows: [['a']] } } : null);
-  const r = V.BLOCK.result({ cap: 'docker.hosts', args: { all: true }, result: { hosts: [{ name: 'a' }] }, ok: true, ms: 1200 }, 'm', 'result:docker.hosts:x', null);
+  const er = {}; const r = V.BLOCK.result({ cap: 'docker.hosts', args: { all: true }, result: { hosts: [{ name: 'a' }] }, ok: true, ms: 1200 }, 'm', 'result:docker.hosts:x', er);
   t('a result is drawn as the element the chat\'s registry says it is', /data-as="table"/.test(r) && /<table class="vc-table">/.test(r), r.slice(0, 300));
-  t('with the cap, its arguments and how long it took', /<code>docker\.hosts<\/code>/.test(r) && /all=true/.test(r) && /1\.2 s/.test(r));
-  t('and a way to run it again', /data-act="rerun"/.test(r));
+  /* its line is declared for the item's head (DEEP-29 11A.4: a body draws no head) */
+  const rd = (er._decl || {})['result:docker.hosts:x'] || {};
+  t('with the cap, its arguments and how long it took', /docker\.hosts/.test(rd.sub || '') && /all=true/.test(rd.sub || '') && /1\.2 s/.test(rd.sub || '') && !/vc-res-h/.test(r));
+  /* WSU-58 S3: the head's generic Refresh, for any item with a source - a result's is its call */
+  t('and a way to run it again - a head button of the item', SRC.includes("const src = sourceOf(b); if (src.cap) hx('data-act=\"rerun\"', 'Refresh', 'Run ' + src.cap + ' again with the same arguments');"));
   const bad = V.BLOCK.result({ cap: 'x.y', ok: false, error: 'boom' }, 'm', 'result:x', null);
   t('a failed run says so', /vc-res-err/.test(bad) && /boom/.test(bad));
   g.VeraCanvasAdapt = was;
-  t('run again goes through canvas.run with the same key', /this\.call\('canvas\.run', \{ cap: c\.cap, args: c\.args \|\| \{\}, key \}\)/.test(SRC));
+  t('run again goes through canvas.run with the same key', /this\.call\('canvas\.run', \{ cap: c\.cap, args: c\.args \|\| \{\}, key \}, \{ trace: tr\.tid \}\)/.test(SRC));   // on its own trace, for its steps (DA-04c (e))
   t('a result\'s live slot reads the element it is drawn as', /if \(b\.type === 'result'\) \{ const v = resultView\(b\.content \|\| \{\}\);/.test(SRC));
   t('the chat hands the element its registry', /window\.VeraCanvasAdapt=_cvAdapt;/.test(CHAT));
   t('the new elements exist', ['json', 'kv', 'chat', 'result', '_many'].every((k) => typeof V.BLOCK[k] === 'function'));

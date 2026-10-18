@@ -1,0 +1,1472 @@
+{
+ "forms": {
+  "trace": {
+   "options": [
+    "bands"
+   ],
+   "ui": [],
+   "empty": []
+  },
+  "radial": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a ring needs { value, min, max }"
+   ]
+  },
+  "counter": {
+   "options": [
+    "digits"
+   ],
+   "ui": [],
+   "empty": [
+    "a counter needs a value"
+   ]
+  },
+  "bar": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a meter needs { value, min, max }"
+   ]
+  },
+  "bars": {
+   "options": [
+    "limit",
+    "palette",
+    "sort"
+   ],
+   "ui": [],
+   "empty": [
+    "no numbers to draw"
+   ]
+  },
+  "thermo": {
+   "options": [
+    "limit"
+   ],
+   "ui": [],
+   "empty": [
+    "no numbers to draw"
+   ]
+  },
+  "heat": {
+   "options": [
+    "bands",
+    "key",
+    "palette",
+    "total"
+   ],
+   "ui": [],
+   "empty": [
+    "a heat map needs rows of numbers"
+   ]
+  },
+  "matrix": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a matrix needs rows of values"
+   ]
+  },
+  "donut": {
+   "options": [
+    "palette"
+   ],
+   "ui": [],
+   "empty": [
+    "parts need { name: number }"
+   ]
+  },
+  "stack": {
+   "options": [
+    "columns"
+   ],
+   "ui": [],
+   "empty": [
+    "a card stack needs items"
+   ]
+  },
+  "pills": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "pills need rows with a status or { name: number }"
+   ]
+  },
+  "log": {
+   "options": [
+    "limit",
+    "tail"
+   ],
+   "ui": [],
+   "empty": [
+    "a log needs rows with text"
+   ]
+  },
+  "lane": {
+   "options": [
+    "lanes"
+   ],
+   "ui": [],
+   "empty": [
+    "a lane needs events"
+   ]
+  },
+  "table": {
+   "options": [
+    "limit",
+    "lit"
+   ],
+   "ui": [
+    "page",
+    "q"
+   ],
+   "empty": [
+    "no rows"
+   ]
+  },
+  "reading": {
+   "options": [],
+   "ui": [
+    "open",
+    "page"
+   ],
+   "empty": [
+    "a reading list needs pages"
+   ]
+  },
+  "files": {
+   "options": [
+    "columns",
+    "limit",
+    "sort"
+   ],
+   "ui": [
+    "dir",
+    "sort"
+   ],
+   "empty": [
+    "files need a path or a name",
+    "no rows"
+   ]
+  },
+  "list": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "no rows"
+   ]
+  },
+  "checklist": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a checklist needs items"
+   ]
+  },
+  "stepper": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "stages need a list"
+   ]
+  },
+  "calendar": {
+   "options": [
+    "weeks",
+    "what"
+   ],
+   "ui": [],
+   "empty": [
+    "a calendar needs dated rows"
+   ]
+  },
+  "string": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "nothing to show"
+   ]
+  },
+  "kv": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "no plain values to list",
+    "nothing to list"
+   ]
+  },
+  "form": {
+   "options": [],
+   "ui": [
+    "_edits",
+    "_fmStatus"
+   ],
+   "empty": []
+  },
+  "scatter": {
+   "options": [
+    "size",
+    "x",
+    "y"
+   ],
+   "ui": [],
+   "empty": [
+    "a scatter needs points"
+   ]
+  },
+  "context_graph": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "no context yet"
+   ]
+  },
+  "diagram": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "no nodes"
+   ]
+  },
+  "panel": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a panel widget names a registered panel (panel:<id>)"
+   ]
+  },
+  "structgraph": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a structured graph needs an Explode contract",
+    "nothing was found in this source"
+   ]
+  },
+  "composite": {
+   "options": [
+    "bands",
+    "palette"
+   ],
+   "ui": [],
+   "empty": [
+    "a composite needs children"
+   ]
+  },
+  "feed": {
+   "options": [],
+   "ui": [
+    "page"
+   ],
+   "empty": [
+    "a feed needs stories"
+   ]
+  },
+  "rows": {
+   "options": [],
+   "ui": [
+    "f",
+    "sort"
+   ],
+   "empty": [
+    "no rows"
+   ]
+  },
+  "cards": {
+   "options": [
+    "limit"
+   ],
+   "ui": [],
+   "empty": [
+    "cards need rows"
+   ]
+  },
+  "temps": {
+   "options": [
+    "limit",
+    "max",
+    "sort",
+    "throttle",
+    "unit"
+   ],
+   "ui": [],
+   "empty": [
+    "a temp list needs named values"
+   ]
+  },
+  "gallery": {
+   "options": [
+    "thumbs"
+   ],
+   "ui": [],
+   "empty": [
+    "a gallery needs items"
+   ]
+  },
+  "terminal": {
+   "options": [
+    "lines"
+   ],
+   "ui": [],
+   "empty": [
+    "a terminal needs lines"
+   ]
+  },
+  "agenda": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "an agenda needs bookings"
+   ]
+  },
+  "people": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "people need rows"
+   ]
+  },
+  "links": {
+   "options": [
+    "tiles"
+   ],
+   "ui": [],
+   "empty": [
+    "links need items"
+   ]
+  },
+  "announcement": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a notice needs text"
+   ]
+  },
+  "board": {
+   "options": [
+    "columns",
+    "trend"
+   ],
+   "ui": [],
+   "empty": [
+    "a board needs columns of cards"
+   ]
+  },
+  "hero": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a hero needs a value"
+   ]
+  },
+  "gauge": {
+   "options": [
+    "max"
+   ],
+   "ui": [],
+   "empty": [
+    "gauges need values"
+   ]
+  },
+  "ring": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a ring needs { value, min, max }"
+   ]
+  },
+  "meter": {
+   "options": [
+    "palette",
+    "what"
+   ],
+   "ui": [],
+   "empty": [
+    "a meter needs { value, min, max }"
+   ]
+  },
+  "level": {
+   "options": [
+    "cells"
+   ],
+   "ui": [],
+   "empty": [
+    "a level needs { value, max }"
+   ]
+  },
+  "area": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "an area needs series"
+   ]
+  },
+  "histogram": {
+   "options": [
+    "bins"
+   ],
+   "ui": [],
+   "empty": [
+    "a histogram needs counts"
+   ]
+  },
+  "step": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a step chart needs two points"
+   ]
+  },
+  "slope": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a slope needs before/after pairs"
+   ]
+  },
+  "horizon": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a horizon needs series"
+   ]
+  },
+  "bump": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a bump needs ranks over time"
+   ]
+  },
+  "small-multiples": {
+   "options": [
+    "rows",
+    "unit"
+   ],
+   "ui": [],
+   "empty": [
+    "small multiples need series"
+   ]
+  },
+  "spark-table": {
+   "options": [
+    "figure",
+    "name"
+   ],
+   "ui": [],
+   "empty": [
+    "a spark table needs rows with a series"
+   ]
+  },
+  "lines": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a line chart needs a series of two points or more"
+   ]
+  },
+  "column": {
+   "options": [
+    "limit"
+   ],
+   "ui": [],
+   "empty": [
+    "columns need values"
+   ]
+  },
+  "ranked": {
+   "options": [
+    "limit",
+    "palette"
+   ],
+   "ui": [],
+   "empty": [
+    "ranked bars need values"
+   ]
+  },
+  "lollipop": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a lollipop needs values"
+   ]
+  },
+  "waterfall": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a waterfall needs parts"
+   ]
+  },
+  "pareto": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a pareto needs counts"
+   ]
+  },
+  "box": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a box plot needs rows with quartiles or samples"
+   ]
+  },
+  "diverging": {
+   "options": [
+    "centre"
+   ],
+   "ui": [],
+   "empty": [
+    "a diverging needs signed values"
+   ]
+  },
+  "bullet": {
+   "options": [
+    "limit",
+    "target"
+   ],
+   "ui": [],
+   "empty": [
+    "bullet bars need values"
+   ]
+  },
+  "threshold": {
+   "options": [
+    "bands",
+    "max",
+    "unit"
+   ],
+   "ui": [],
+   "empty": [
+    "a threshold scale needs values"
+   ]
+  },
+  "radar": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a radar needs three or more values"
+   ]
+  },
+  "numbers": {
+   "options": [
+    "bytes"
+   ],
+   "ui": [],
+   "empty": [
+    "a number grid needs values"
+   ]
+  },
+  "funnel": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a funnel needs stages with counts"
+   ]
+  },
+  "waffle": {
+   "options": [
+    "cells"
+   ],
+   "ui": [],
+   "empty": [
+    "a waffle needs parts"
+   ]
+  },
+  "stacked-bar": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a stacked bar needs parts"
+   ]
+  },
+  "treemap": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a treemap needs parts"
+   ]
+  },
+  "cellmap": {
+   "options": [],
+   "ui": [
+    "lens"
+   ],
+   "empty": [
+    "a status matrix needs hosts with per-core readings, or a cpu map"
+   ]
+  },
+  "dots": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a dot matrix needs a level or values"
+   ]
+  },
+  "tabs": {
+   "options": [],
+   "ui": [
+    "tab"
+   ],
+   "empty": [
+    "tabs need rows × measures"
+   ]
+  },
+  "slider": {
+   "options": [
+    "max",
+    "min",
+    "threshold",
+    "unit",
+    "what"
+   ],
+   "ui": [
+    "thr"
+   ],
+   "empty": [
+    "a threshold slider needs values"
+   ]
+  },
+  "gantt": {
+   "options": [
+    "names",
+    "rows"
+   ],
+   "ui": [],
+   "empty": [
+    "a gantt needs rows with a start and a length"
+   ]
+  },
+  "timeline": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a timeline needs timed events"
+   ]
+  },
+  "pipeline": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a pipeline needs stages"
+   ]
+  },
+  "graph": {
+   "options": [
+    "layout"
+   ],
+   "ui": [],
+   "empty": [
+    "a graph needs nodes"
+   ]
+  },
+  "flow": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a flow needs nodes and flows"
+   ]
+  },
+  "minigraph": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a mini graph needs nodes"
+   ]
+  },
+  "node": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a node card needs measures"
+   ]
+  },
+  "glance": {
+   "options": [
+    "figures"
+   ],
+   "ui": [],
+   "empty": [
+    "a glance needs figures"
+   ]
+  },
+  "compare": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a compare needs two sides per measure"
+   ]
+  },
+  "carousel": {
+   "options": [
+    "what"
+   ],
+   "ui": [
+    "page"
+   ],
+   "empty": [
+    "a carousel needs rows"
+   ]
+  },
+  "rail": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "candles": {
+   "options": [
+    "bars"
+   ],
+   "ui": [],
+   "empty": [
+    "candles need OHLC bars"
+   ]
+  },
+  "rings": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "activity rings need up to three values"
+   ]
+  },
+  "globe": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a globe needs points with a longitude and a latitude"
+   ]
+  },
+  "globe@iso": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "dial": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a dial needs { value, min, max }"
+   ]
+  },
+  "radial@iso": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "tank": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a tank needs { value, max }"
+   ]
+  },
+  "thermo@iso": {
+   "options": [
+    "max",
+    "throttle",
+    "unit"
+   ],
+   "ui": [],
+   "empty": [
+    "thermometers need values"
+   ]
+  },
+  "stacks": {
+   "options": [
+    "coin",
+    "columns"
+   ],
+   "ui": [],
+   "empty": [
+    "coin stacks need parts"
+   ]
+  },
+  "candles@iso": {
+   "options": [
+    "bars"
+   ],
+   "ui": [],
+   "empty": [
+    "candles need OHLC bars"
+   ]
+  },
+  "conveyor": {
+   "options": [
+    "work"
+   ],
+   "ui": [],
+   "empty": [
+    "a conveyor needs stages"
+   ]
+  },
+  "city": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a city needs nodes"
+   ]
+  },
+  "shelf": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a shelf needs items"
+   ]
+  },
+  "sweep": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a radar needs events"
+   ]
+  },
+  "meter-panel": {
+   "options": [
+    "columns",
+    "hot",
+    "max"
+   ],
+   "ui": [],
+   "empty": [
+    "a meter panel needs rates"
+   ]
+  },
+  "pipes": {
+   "options": [
+    "engine"
+   ],
+   "ui": [],
+   "empty": [
+    "pipes need nodes and links"
+   ]
+  },
+  "topology@iso": {
+   "options": [
+    "floors"
+   ],
+   "ui": [],
+   "empty": [
+    "a topology needs nodes"
+   ]
+  },
+  "table@iso": {
+   "options": [
+    "lit",
+    "sort"
+   ],
+   "ui": [],
+   "empty": [
+    "no rows"
+   ]
+  },
+  "files@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "no rows"
+   ]
+  },
+  "feed@iso": {
+   "options": [],
+   "ui": [
+    "page"
+   ],
+   "empty": [
+    "a feed needs stories"
+   ]
+  },
+  "board@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a board needs columns of cards"
+   ]
+  },
+  "agenda@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "an agenda needs bookings"
+   ]
+  },
+  "log@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a log needs rows with text"
+   ]
+  },
+  "column@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "columns need values"
+   ]
+  },
+  "bars@iso": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "heat@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a heat map needs rows of numbers"
+   ]
+  },
+  "treemap@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a treemap needs parts"
+   ]
+  },
+  "waffle@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a waffle needs parts"
+   ]
+  },
+  "small-multiples@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "terraces need series"
+   ]
+  },
+  "gantt@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a gantt needs rows"
+   ]
+  },
+  "calendar@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a calendar needs dated rows"
+   ]
+  },
+  "scatter@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a scatter needs points"
+   ]
+  },
+  "funnel@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a funnel needs stages with counts"
+   ]
+  },
+  "area@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a stacked wall needs series"
+   ]
+  },
+  "racks": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "library": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a library needs documents"
+   ]
+  },
+  "pages": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "site pages need items"
+   ]
+  },
+  "list@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "no rows"
+   ]
+  },
+  "people@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "people need rows"
+   ]
+  },
+  "notices": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "notices need posts"
+   ]
+  },
+  "approvals": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "approvals need stages"
+   ]
+  },
+  "wiki": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "form@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a form needs fields"
+   ]
+  },
+  "devices": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "devices need rows"
+   ]
+  },
+  "notebook": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a notebook needs cells"
+   ]
+  },
+  "gallery@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a gallery needs items"
+   ]
+  },
+  "pipeline@iso": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a pipeline needs stages"
+   ]
+  },
+  "datasets": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "datasets need rows"
+   ]
+  },
+  "hosts": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "hosts need rows"
+   ]
+  },
+  "containers": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "containers need rows"
+   ]
+  },
+  "models": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "models need rows"
+   ]
+  },
+  "activity": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "activity needs events"
+   ]
+  },
+  "sandboxes": {
+   "options": [
+    "max"
+   ],
+   "ui": [],
+   "empty": [
+    "sandboxes need rows"
+   ]
+  },
+  "frame": {
+   "options": [
+    "kind",
+    "stand"
+   ],
+   "ui": [],
+   "empty": []
+  },
+  "terminal@iso": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "panel@iso": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "orbit": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "an orbit needs items"
+   ]
+  },
+  "turbine": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a turbine needs a rate"
+   ]
+  },
+  "scope": {
+   "options": [
+    "unit"
+   ],
+   "ui": [],
+   "empty": [
+    "a scope needs a series"
+   ]
+  },
+  "pulse": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a pulse needs events"
+   ]
+  },
+  "comet": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a comet needs events"
+   ]
+  },
+  "split-flap": {
+   "options": [
+    "lines"
+   ],
+   "ui": [],
+   "empty": [
+    "a split-flap needs a line of text"
+   ]
+  },
+  "ticker": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "topology": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "json": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "nothing to show"
+   ]
+  },
+  "diff": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a diff needs a patch"
+   ]
+  },
+  "code": {
+   "options": [
+    "lang"
+   ],
+   "ui": [],
+   "empty": [
+    "code needs source"
+   ]
+  },
+  "progress": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "progress needs steps"
+   ]
+  },
+  "status": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a status needs a verdict or checks"
+   ]
+  },
+  "media": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "media needs an image, a video or a sound"
+   ]
+  },
+  "error": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "markdown": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "nothing written"
+   ]
+  },
+  "month": {
+   "options": [
+    "controls"
+   ],
+   "ui": [
+    "off",
+    "sel"
+   ],
+   "empty": []
+  },
+  "schedule": {
+   "options": [],
+   "ui": [
+    "sel"
+   ],
+   "empty": [
+    "a schedule needs events"
+   ]
+  },
+  "calnav": {
+   "options": [
+    "group",
+    "view",
+    "views"
+   ],
+   "ui": [
+    "off",
+    "view"
+   ],
+   "empty": []
+  },
+  "vgraph": {
+   "options": [
+    "layer",
+    "mode"
+   ],
+   "ui": [],
+   "empty": [
+    "a graph needs nodes (and edges), or draw.layer"
+   ]
+  },
+  "status-matrix": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a status matrix needs lanes of runs"
+   ]
+  },
+  "race-green": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a race needs lanes of runs"
+   ]
+  },
+  "test-grid": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a test grid needs tests across runs"
+   ]
+  },
+  "ci-board": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a board needs columns"
+   ]
+  },
+  "run-track": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a run track needs stages"
+   ]
+  },
+  "run-compare": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a comparison needs two runs"
+   ]
+  },
+  "ci-pulse": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a pulse needs runs over time"
+   ]
+  },
+  "ci-fleet": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a fleet needs sandboxes"
+   ]
+  },
+  "ci-run": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "a run needs a result or a pipeline"
+   ]
+  },
+  "census-commits": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "census × commits reads ci.census"
+   ]
+  },
+  "element": {
+   "options": [],
+   "ui": [],
+   "empty": []
+  },
+  "loop-perf": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "loop performance reads loop.ci.perf"
+   ]
+  },
+  "census-live": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "the live census reads census.live"
+   ]
+  },
+  "census-timeline": {
+   "options": [],
+   "ui": [],
+   "empty": [
+    "the census timeline reads ci.census"
+   ]
+  },
+  "trend-layers": {
+   "options": [
+    "id",
+    "motion",
+    "pick"
+   ],
+   "ui": [
+    "f_",
+    "mode",
+    "q",
+    "range",
+    "s_"
+   ],
+   "empty": [
+    "a composite needs children",
+    "a trend needs a time field (draw.t)",
+    "a trend needs rows with a time and numbers",
+    "could not draw ",
+    "form ",
+    "no data yet"
+   ]
+  },
+  "images": {
+   "options": [
+    "limit",
+    "thumb"
+   ],
+   "ui": [],
+   "empty": [
+    "images need rows with an image address"
+   ]
+  },
+  "sprite": {
+   "options": [
+    "anim",
+    "max",
+    "play",
+    "strip"
+   ],
+   "ui": [
+    "anim"
+   ],
+   "empty": [
+    "a sprite needs a sheet (url · columns · count · fps) or its frames"
+   ]
+  },
+  "sprites": {
+   "options": [
+    "limit"
+   ],
+   "ui": [],
+   "empty": [
+    "a sprite library needs sprite records"
+   ]
+  },
+  "character": {
+   "options": [
+    "limit",
+    "max",
+    "roster"
+   ],
+   "ui": [],
+   "empty": [
+    "a character needs a record",
+    "a roster needs character records"
+   ]
+  }
+ },
+ "aliases": {
+  "sparkline": "trace",
+  "line": "trace",
+  "chart": "trace",
+  "parts": "donut",
+  "tree": "files",
+  "stages": "stepper",
+  "program": "stepper",
+  "ask": "string",
+  "rate": "counter",
+  "iso": "table",
+  "controls": "pills",
+  "button": "string",
+  "header": "string",
+  "galaxy": "context_graph",
+  "battery": "level",
+  "tablei": "table",
+  "checks": "checklist",
+  "memgraph": "minigraph",
+  "logi": "log",
+  "notice": "announcement",
+  "trend": "hero",
+  "sparks": "small-multiples",
+  "multiline": "lines",
+  "multi-line": "lines",
+  "cores": "cellmap",
+  "core-matrix": "cellmap",
+  "cpumap": "cellmap"
+ }
+}

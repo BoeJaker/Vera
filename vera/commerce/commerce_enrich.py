@@ -675,6 +675,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.catalog.products", http_method="GET",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "products"}, "draw": {"columns": ["title", "console", "cib", "market", "rarity", "sold_count", "stale", "updated_at"]}, "empty": "The product catalog is empty"}},
         http_path="/business/catalog/products", http_tags=["commerce"],
         memory="off", silent=True,
         description="Browse the internal product DB that accretes as you scan: every "

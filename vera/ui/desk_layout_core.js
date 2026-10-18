@@ -66,7 +66,9 @@
     var face = t > 0.6 ? 'max' : t > 0.25 ? 'card' : 'chip';
     /* d.scale grows or shrinks the larger faces with the desk (a narrow canvas column, a wide screen); a chip keeps its
        size so its title stays readable */
-    var sc = (d && d.scale) || 1, mw = SIZE.max.w * sc, mh = SIZE.max.h * sc;
+    /* d.scaleY, when given, grows the faces' height apart from their width: a tall desk beside a docked chat fills its
+       bands' length with taller cards rather than leaving half of it empty */
+    var sc = (d && d.scale) || 1, mw = SIZE.max.w * sc, mh = SIZE.max.h * ((d && d.scaleY) || sc);
     var w = Math.round(SIZE.chip.w + t * (mw - SIZE.chip.w)), h = Math.round(SIZE.chip.h + t * (mh - SIZE.chip.h));
     var why = '';
     if (o.size && o.pinned) { w = o.size.w; h = o.size.h; face = faceOf(w, h); t = 1; why = 'pinned'; }
@@ -164,6 +166,11 @@
     d = desk(d);
     var W = d.W, H = d.H, cx = (R.l + R.r) / 2, cy = (R.t + R.b) / 2, hw = (R.r - R.l) / 2, hh = (R.b - R.t) / 2;
     var pos = {}, chips = [];
+    /* OUT OF THE TOPIC, OUT TO THE BORDER (owner, 2026-10-10: the chat's primary topic decides "how close they are to chat
+       or if they are moved all the way out of focus and minimised"): an item marked border takes no band beside the chat,
+       however few the others are - it is a chip at the far border, after the items the arrangement places. */
+    var outside = items.filter(function (it) { return it && it.border; });
+    if (outside.length) items = items.filter(function (it) { return !(it && it.border); });
     var dockedLeft = R.l < 200, dockedRight = R.r > W - 200, below = R.t > H * 0.55;
     var sides = dockedLeft ? [1] : dockedRight ? [-1] : [1, -1];
     function cl(x, y) { return [clamp(x, Math.min(90, W / 2), Math.max(W / 2, W - 90)), clamp(y, Math.min(60, H / 2), Math.max(H / 2, H - 40))]; }
@@ -209,6 +216,7 @@
       }
       chips = items.slice(k);
     }
+    chips = chips.concat(outside);
     var cells = iconCells(R, d, edgeSlots(R, d, chips.length), chips.length);
     chips.forEach(function (it, i) { if (cells.length) pos[it.id] = cells[i % cells.length]; });
     return pos;
@@ -277,8 +285,100 @@
           if (clear(t)) { best = t; break; }
         }
       }
-      if (best) { b.x = best.x; b.y = best.y; b.w = best.w; b.h = best.h; }
+      /* NONE CLEAR AT THE SIZE ITS PLACE WOULD GIVE IT: searched again at the size it HAS. A chip pushed off the border by a
+         card the person grew out to it was re-sized at every spot tried - near the chat it would be a full card, and no
+         such room was left - so it stayed where it was, inside the grown card's right edge (owner, 2026-10-10: "another
+         element can fall inside it from the right edge"). As it is, it fits somewhere clear; it keeps that size there. */
+      if (!best && !b.fixed) {
+        for (var rad2 = 24; rad2 <= Math.max(d.W, d.H) && !best; rad2 += 24) {
+          var n2 = Math.max(8, Math.round(rad2 / 12));
+          for (var k2 = 0; k2 < n2; k2++) {
+            var ang2 = (k2 / n2) * 2 * Math.PI, t2 = { x: b.x + rad2 * Math.cos(ang2), y: b.y + rad2 * Math.sin(ang2), w: b.w, h: b.h };
+            if (clear(t2)) { best = t2; best.keep = true; break; }
+          }
+        }
+      }
+      if (best) { b.x = best.x; b.y = best.y; b.w = best.w; b.h = best.h; if (best.keep) b.keepSize = true; }
       placed.push(b);
+    });
+    return items;
+  }
+
+  /* THE CARDS TAKE THE ROOM AROUND THEM (owner, 2026-10-10: "for things on the desk to take up as much space as possible
+     and as good design allows"). After the cards are placed and pulled apart, each one that may grow (not a chip, not
+     fixed: the person's size, a lock and the card being sized stay as they are) grows into the free desk round it - a
+     step at a time, right, down, left and up in turn, while a side stays clear of the chat, the desk's edge and every
+     other card by `gap` - until no side can. Its width and height keep within an aspect of 1:2.2 either way, so a
+     card grows into a page, never a ribbon (an item's own `ratio` - a chart's, a list's - widens that); `maxW` / `maxH` cap it, and an item's own maxW / maxH (what it holds). Order is the items' order: the first (the topic's)
+     grow first. Items are {x, y, w, h (centre and size), fixed?, chip?}; each grown one gets grown: true. */
+  function grow(items, R, d, o) {
+    d = desk(d); o = o || {};
+    var gap = o.gap || 14, step = o.step || 8, ratio = o.ratio || 2.2;
+    var maxW = o.maxW || d.W - 16, maxH = o.maxH || d.H - 8;
+    function box(it) { return { l: it.x - it.w / 2, t: it.y - it.h / 2, r: it.x + it.w / 2, b: it.y + it.h / 2 }; }
+    function hit(a, b, g) { return a.l < b.r + g && b.l < a.r + g && a.t < b.b + g && b.t < a.b + g; }
+    var chat = R && R.r > R.l ? R : null;
+    items.forEach(function (it) {
+      if (it.fixed || it.chip || it.own) return;   /* own: a size the person gave - kept, never grown (WSU-74) */
+      var others = items.filter(function (x) { return x !== it; });
+      /* the gap is kept in the direction it grows; across it only a hairline, or a neighbour 12 px to the side would stop it
+         growing up or down at all */
+      function hit2(a, q, gx, gy) { return a.l < q.r + gx && q.l < a.r + gx && a.t < q.b + gy && q.t < a.b + gy; }
+      function clear(b, s) {
+        if (b.l < 0 || b.t < 0 || b.r > d.W || b.b > d.H) return false;
+        var gx = s === 'r' || s === 'l' ? gap : 4, gy = s === 'b' || s === 't' ? gap : 4;
+        if (chat && hit2(b, chat, gx, gy)) return false;
+        for (var i = 0; i < others.length; i++) if (hit2(b, box(others[i]), gx, gy)) return false;
+        return true;
+      }
+      /* only the strip a side grows into is tested: cards the arrangement set closer than `gap` (its bands are 12 px
+         apart) are not blocked by the room they already have */
+      var b = box(it);
+      /* a side is closed by a neighbour, an edge or the cap; the aspect only holds it back for a round (it opens again
+         once the other way has grown). Done when a round grows nothing. */
+      var open = { r: true, b: true, l: true, t: true }, n = 0, moved = true;
+      while (moved && n++ < 800) {
+        moved = false;
+        ['r', 'b', 'l', 't'].forEach(function (s) {
+          if (!open[s]) return;
+          var t = { l: b.l, t: b.t, r: b.r, b: b.b }; t[s] += (s === 'r' || s === 'b') ? step : -step;
+          var w = t.r - t.l, h = t.b - t.t;
+          var strip = s === 'r' ? { l: b.r, t: b.t, r: t.r, b: b.b } : s === 'l' ? { l: t.l, t: b.t, r: b.l, b: b.b }
+            : s === 'b' ? { l: b.l, t: b.b, r: b.r, b: t.b } : { l: b.l, t: t.t, r: b.r, b: b.t };
+          if (w > Math.min(maxW, it.maxW || Infinity) || h > Math.min(maxH, it.maxH || Infinity) || !clear(strip, s)) { open[s] = false; return; }
+          var rt = it.ratio || ratio;   /* a kind's own aspect: a chart may be wider, a list taller, than a page */
+          if (w / h > rt || h / w > rt) return;
+          b = t; moved = true;
+        });
+      }
+      var nw = b.r - b.l, nh = b.b - b.t;
+      if (nw > it.w + 1 || nh > it.h + 1) { it.x = b.l + nw / 2; it.y = b.t + nh / 2; it.w = nw; it.h = nh; it.grown = true; }
+    });
+    return items;
+  }
+
+  /* THE CARDS SIT UP THE DESK (owner, 2026-10-11: "desk elements seem to not use the entire height of the desk and drop in
+     in the middle ... they could be further up the desk"): the bands are dealt round the chat's middle, and a card fitted
+     to what it holds left the room above it empty. After they are pulled apart, each card that may move (not fixed: the
+     person's place, a lock, the card being sized) rises, top-most first, until it meets a card above it, the chat or the
+     top of the desk, keeping `gap`. Items are {x, y, w, h (centre and size), fixed?}; a moved one gets settled: true. */
+  function settle(items, R, d, o) {
+    d = desk(d); o = o || {};
+    var gap = o.gap == null ? 12 : o.gap, step = o.step || 4, top = o.top == null ? 4 : o.top;
+    var chat = R && R.r > R.l ? R : null;
+    /* the gap is kept above and below; beside, a hairline - the next band is 12 px away and must not stop a card rising */
+    function hit(a, b) { return a.x - a.w / 2 < b.x + b.w / 2 + 2 && b.x - b.w / 2 < a.x + a.w / 2 + 2 && a.y - a.h / 2 < b.y + b.h / 2 + gap && b.y - b.h / 2 < a.y + a.h / 2 + gap; }
+    function inChat(a) { return chat && a.x + a.w / 2 > chat.l - gap && a.x - a.w / 2 < chat.r + gap && a.y + a.h / 2 > chat.t - gap && a.y - a.h / 2 < chat.b + gap; }
+    var order = items.slice().sort(function (a, b) { return (a.y - a.h / 2) - (b.y - b.h / 2); });
+    order.forEach(function (it) {
+      if (it.fixed || it.stay) return;   /* stay: put there by the person's hand - it stays where it was let go */
+      var others = items.filter(function (x) { return x !== it; }), y0 = it.y, n = 0;
+      while (it.y - it.h / 2 - step >= top && n++ < 2000) {
+        var t = { x: it.x, y: it.y - step, w: it.w, h: it.h };
+        if (inChat(t) || others.some(function (b) { return hit(t, b); })) break;
+        it.y = t.y;
+      }
+      if (it.y !== y0) it.settled = true;
     });
     return items;
   }
@@ -410,9 +510,256 @@
     return { planes: planes, areas: areas, nodes: nodes, links: links };
   }
 
-  var api = { DESK: DESK, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
+
+  /* ── THE DESK'S MODES (DESK-ARRANGEMENT DR-01..03; owner decision D2, 2026-10-16: "replace with new modes") ──────────
+     orbit / by kind / by time / stack barely differed (most items were border pills in every one). The modes now lay the
+     desk out by the situation: auto (the topic's items in bands out from the chat - the old orbit), focus (one large, its
+     relations round it), compare (2-4 of a kind side by side, the same size, tops aligned), flow (in the order the work
+     happened), board (columns by status), map (clusters of what shares context), free (the person's places; automation
+     only fills holes). Items: [{id, kind, rel:[keys], status, t, border}] in the desk's order, the most relevant first.
+     A layout returns {cells:{id:{x,y,w,h}} (centre and size), chips:[id], lanes:[{x,y,w,h,label}]}. */
+  var MODES = ['auto', 'focus', 'compare', 'flow', 'board', 'map', 'free', 'slots'];
+  var LEGACY_MODE = { orbit: 'auto', stack: 'auto', kind: 'map', timeline: 'flow' };
+  function modeOf(m) { m = String(m || ''); if (LEGACY_MODE[m]) return LEGACY_MODE[m]; return MODES.indexOf(m) >= 0 ? m : 'auto'; }
+
+  /* the free part of the desk: beside the chat on its roomier side, short of the pill strip at the far end */
+  function freeRegion(R, d, strip) {
+    d = desk(d); var g = 14, s = strip == null ? SIZE.chip.w + 20 : strip, top = d.top == null ? 4 : d.top;
+    if (R.t > d.H * 0.55 && R.l < d.W * 0.5 && R.r > d.W * 0.5) return { l: d.m, t: top, r: d.W - d.m - s, b: R.t - g, farRight: true };
+    var leftRoom = R.l - d.m, rightRoom = d.W - d.m - R.r;
+    if (rightRoom >= leftRoom) return { l: Math.max(d.m, R.r + g), t: top, r: d.W - d.m - s, b: d.H - 8, farRight: true };
+    return { l: d.m + s, t: top, r: Math.min(d.W - d.m, R.l - g), b: d.H - 8, farRight: false };
+  }
+  function cellAt(l, t, w, h) { return { x: l + w / 2, y: t + h / 2, w: Math.round(w), h: Math.round(h) }; }
+  function shares(a, b) { var ra = (a && a.rel) || [], rb = (b && b.rel) || []; for (var i = 0; i < ra.length; i++) if (rb.indexOf(ra[i]) >= 0) return true; return false; }
+
+  function layoutMode(mode, R, items, d, o) {
+    d = desk(d); o = o || {}; mode = modeOf(mode);
+    var out = { cells: {}, chips: [], lanes: [] };
+    if (mode === 'auto') return null;
+    var F = freeRegion(R, d, o.strip), fw = Math.max(0, F.r - F.l), fh = Math.max(0, F.b - F.t), g = 12;
+    var live = items.filter(function (it) { return it && !it.border; });
+    items.forEach(function (it) { if (it && it.border) out.chips.push(it.id); });
+    var used = {}; var put = function (it, c) { out.cells[it.id] = c; used[it.id] = true; };
+    var rest = function () { live.forEach(function (it) { if (!used[it.id]) out.chips.push(it.id); }); return out; };
+    if (!live.length || fw < 160 || fh < 90) { live.forEach(function (it) { out.chips.push(it.id); }); return out; }
+    if (mode === 'free') { out.free = true; return out; }
+    /* SLOTS (LV-2/3, DESK-ARRANGEMENT 7): fitLayout over the free desk - each item's `aspect` and its place in the order as its rank;
+       the front of each slot is a cell, the rest of a slot (its composite tabs, grouped by the canvas before this) and the pills chips */
+    if (mode === 'slots') { var L = fitLayout(live.map(function (it, i) { return { id: it.id, aspect: it.aspect || 'square', rank: it.rank != null ? it.rank : i, want: it.want }; }), F, { near: F.farRight ? 'left' : 'right', current: o.current || {}, noComposite: o.noComposite });
+      L.slots.forEach(function (s) { var id = s.ids[0]; out.cells[id] = cellAt(s.l, s.t, s.w, s.h); used[id] = true; s.ids.slice(1).forEach(function (m) { out.chips.push(m); used[m] = true; }); });
+      L.pills.forEach(function (id) { out.chips.push(id); used[id] = true; }); out.fit = L; return rest(); }
+
+    if (mode === 'focus') {
+      var lead = live[0]; var leadW = Math.round(fw * 0.6), leadH = Math.round(Math.min(fh, leadW * 0.85));
+      put(lead, cellAt(F.farRight ? F.l : F.r - leadW, F.t, leadW, leadH));
+      var sat = live.slice(1).filter(function (it) { return shares(it, lead); }).slice(0, 6);
+      var colW = fw - leadW - g;
+      if (colW >= 200 && sat.length) { var hh = Math.min(260, (fh - g * (sat.length - 1)) / sat.length);
+        if (hh >= 80) sat.forEach(function (it, i) { put(it, cellAt(F.farRight ? F.l + leadW + g : F.l, F.t + i * (hh + g), colW, hh)); }); }
+      return rest();
+    }
+    if (mode === 'compare') {
+      var k0 = live[0].kind; var set = live.filter(function (it) { return it.kind === k0; }).slice(0, 4);
+      if (set.length < 2) set = live.slice(0, Math.min(4, live.length));
+      var n = set.length, cols = fw / n >= 260 ? n : Math.min(2, n), rows = Math.ceil(n / cols);
+      var w = (fw - g * (cols - 1)) / cols, h = Math.min((fh - g * (rows - 1)) / rows, w * 0.9);
+      set.forEach(function (it, i) { put(it, cellAt(F.l + (i % cols) * (w + g), F.t + Math.floor(i / cols) * (h + g), w, h)); });
+      return rest();
+    }
+    if (mode === 'flow') {
+      var ord = live.slice().sort(function (a, b) { return (a.t || 0) - (b.t || 0); });
+      var c3 = Math.max(1, Math.min(3, Math.floor((fw + g) / (280 + g)))); var fwc = (fw - g * (c3 - 1)) / c3, fhc = Math.min(fwc * 0.75, 300);
+      var rws = Math.max(1, Math.floor((fh + g) / (fhc + g))), cap = c3 * rws; var shown = ord.length > cap ? ord.slice(-cap) : ord;
+      shown.forEach(function (it, i) { put(it, cellAt(F.l + (i % c3) * (fwc + g), F.t + Math.floor(i / c3) * (fhc + g), fwc, fhc)); });
+      return rest();
+    }
+    if (mode === 'board') {
+      var LANES = [['todo', 'To do'], ['running', 'Running'], ['needs', 'Needs you'], ['done', 'Done']], HD = 22;
+      var lw = (fw - g * 3) / 4;
+      LANES.forEach(function (ln, li) { var x0 = F.l + li * (lw + g); out.lanes.push({ x: x0, y: F.t, w: lw, h: HD, label: ln[1], n: 0 });
+        var its = live.filter(function (it) { return (it.status || 'todo') === ln[0]; }); out.lanes[li].n = its.length;
+        var k = its.length; if (!k) return; var hb = Math.min(200, (fh - HD - g * (k - 1)) / k);
+        if (hb < 80) { var fit = Math.max(0, Math.floor((fh - HD + g) / (80 + g))); its.slice(0, fit).forEach(function (it, i) { put(it, cellAt(x0, F.t + HD + i * (80 + g), lw, 80)); }); return; }
+        its.forEach(function (it, i) { put(it, cellAt(x0, F.t + HD + i * (hb + g), lw, hb)); }); });
+      return rest();
+    }
+    if (mode === 'map') {
+      /* clusters: items joined by a shared key, biggest first; each a cell of the desk, its items a small grid in it */
+      var par = live.map(function (_, i) { return i; }); var find = function (i) { while (par[i] !== i) { par[i] = par[par[i]]; i = par[i]; } return i; };
+      /* a key most items hold (the topic, one long turn) tells nothing apart: clusters are made of the keys that do */
+      var freq = {}; live.forEach(function (it) { (it.rel || []).forEach(function (k) { freq[k] = (freq[k] || 0) + 1; }); });
+      var common = function (k) { return freq[k] > Math.max(2, live.length * 0.6); };
+      var keysOf = function (it) { return (it.rel || []).filter(function (k) { return !common(k); }); };
+      for (var a = 0; a < live.length; a++) for (var b = a + 1; b < live.length; b++) if (shares({ rel: keysOf(live[a]) }, { rel: keysOf(live[b]) })) par[find(a)] = find(b);
+      var cl = {}; live.forEach(function (it, i) { var r = find(i); (cl[r] = cl[r] || []).push(it); });
+      var cls = Object.keys(cl).map(function (k) { return cl[k]; }).sort(function (x, y) { return y.length - x.length; });
+      var cc = Math.ceil(Math.sqrt(cls.length)), cr = Math.ceil(cls.length / cc), HD2 = 20;
+      var cw = (fw - g * (cc - 1)) / cc, ch = (fh - g * (cr - 1)) / cr;
+      cls.forEach(function (list, ci) { var x0 = F.l + (ci % cc) * (cw + g), y0 = F.t + Math.floor(ci / cc) * (ch + g);
+        var key = ''; keysOf(list[0]).some(function (k) { if (list.every(function (it) { return (it.rel || []).indexOf(k) >= 0; })) { key = k; return true; } return false; });
+        out.lanes.push({ x: x0, y: y0, w: cw, h: HD2, label: (key || list[0].kind || '').replace(/^[a-z]+:/, '').slice(0, 40), n: list.length });
+        /* the grid of the cluster's cards that gives each the most room, then no taller than 1.2 x its width */
+        var k = list.length, gc = 1, best = -1; for (var q = 1; q <= k; q++) { var r0 = Math.ceil(k / q), w0 = (cw - 8 * (q - 1)) / q, h0 = (ch - HD2 - 8 * (r0 - 1)) / r0, sc0 = Math.min(w0, h0 * 1.5); if (sc0 > best) { best = sc0; gc = q; } }
+        var gr = Math.ceil(k / gc), iw = (cw - 8 * (gc - 1)) / gc, ih = Math.min((ch - HD2 - 8 * (gr - 1)) / gr, iw * 1.2);
+        if (iw < 150 || ih < 70) return;
+        list.forEach(function (it, i) { put(it, cellAt(x0 + (i % gc) * (iw + 8), y0 + HD2 + Math.floor(i / gc) * (ih + 8), iw, ih)); }); });
+      return rest();
+    }
+    return null;
+  }
+
+  /* THE PLACE FOR ONE MORE (DR-01): the free slot a new item fits best - 3 x relation (how many of its neighbours share its
+     keys) + 2 x attention (nearness to the chat) + 1 x fit (its size, or three quarters of it) - nothing displaced, as only
+     free room is a candidate. placed: [{x,y,w,h,rel}] (centres). Returns {x,y,w,h,score} or null. */
+  function bestSlot(item, placed, R, d, o) {
+    d = desk(d); o = o || {}; var F = o.region || freeRegion(R, d, o.strip), g = 10, step = o.step || 24;
+    var hit = function (a, b) { return a.l < b.r + g && b.l < a.r + g && a.t < b.b + g && b.t < a.b + g; };
+    var boxes = (placed || []).map(function (p) { return { l: p.x - p.w / 2, t: p.y - p.h / 2, r: p.x + p.w / 2, b: p.y + p.h / 2, rel: p.rel || [] }; });
+    var chat = { l: R.l, t: R.t, r: R.r, b: R.b }, best = null;
+    [1, 0.75].forEach(function (k) { if (best) return; var w = Math.round(item.w * k), h = Math.round(item.h * k);
+      for (var y = F.t; y + h <= F.b; y += step) for (var x = F.l; x + w <= F.r; x += step) {
+        var c = { l: x, t: y, r: x + w, b: y + h }; if (hit(c, chat) || boxes.some(function (b) { return hit(c, b); })) continue;
+        var cx = x + w / 2, cy = y + h / 2, reach = 1.5 * Math.max(w, h);
+        /* each neighbour sharing its keys counts by how close it is: next to it is worth more than across the desk */
+        var rel = Math.min(1, boxes.reduce(function (s, b) { if (!shares({ rel: b.rel }, item)) return s; var dd = Math.hypot((b.l + b.r) / 2 - cx, (b.t + b.b) / 2 - cy); return s + Math.max(0, 1 - dd / reach); }, 0));
+        var att = clamp(1 - distance(R, cx, cy, d), 0, 1);
+        var s = 3 * rel + 2 * att + k;
+        if (!best || s > best.score) best = { x: cx, y: cy, w: w, h: h, score: +s.toFixed(3) };
+      } });
+    return best;
+  }
+
+  /* PRE-TURN ITEMS LEAVE FOCUS FIRST (LV-9 / WSU-87, owner 2026-10-17: "some elements are added before the llm returns anything
+     - they seem to be a bit more sticky ... they should probably move out of focus the fastest"). A pre-turn item is one the
+     chat put on the canvas AROUND the reply, not one the reply made: what turn.prepare placed before the answer (anchor from
+     'prepare', keys enrich:... or pre:panel:...) and what the enrichment pass brings after it (from 'enrich', keys enrich:...).
+       preTurn(key, from)              is it one
+       topicOrder(keys, score, isPre)  the topic's keys best first - every reply item before every pre-turn item, so a topic
+                                       with more items than the room beside the chat drops the pre-turn ones first
+       preTurnOut(items, keys, mid)    the pre-turn items the topic has moved past: [key]. items: [{key, from, anchors:[mid],
+                                       pinned, locked, kept}]. In the topic, or made for the turn in focus (one of its anchors
+                                       is mid), it stays; pinned, locked (the person said "do not move") or kept (opened again
+                                       by the person under this topic) it stays; any other goes - its place by hand
+                                       (place.by 'person') included: that place is where it sits WHEN it is in focus, and is
+                                       kept for then, but it does not hold the item in focus. */
+  function preTurn(key, from) { key = String(key || ''); from = String(from || '');
+    return key.indexOf('enrich:') === 0 || key.indexOf('pre:') === 0 || from === 'enrich' || from === 'prepare'; }
+  function topicOrder(keys, score, isPre) {
+    var sc = typeof score === 'function' ? score : function () { return 0; }, pre = typeof isPre === 'function' ? isPre : function (k) { return preTurn(k); };
+    return (keys || []).map(function (k, i) { k = String(k); return { k: k, i: i, p: pre(k) ? 1 : 0, s: +sc(k) || 0 }; })
+      .sort(function (a, b) { return (a.p - b.p) || (b.s - a.s) || (a.i - b.i); }).map(function (x) { return x.k; });
+  }
+  function preTurnOut(items, keys, mid) {
+    var inT = {}; (keys || []).forEach(function (k) { inT[String(k)] = 1; }); mid = String(mid || '');
+    return (items || []).filter(function (x) { if (!x || !x.key || !preTurn(x.key, x.from)) return false;
+      if (inT[String(x.key)] || x.pinned || x.locked || x.kept) return false;
+      return !(mid && (x.anchors || []).map(String).indexOf(mid) >= 0); }).map(function (x) { return String(x.key); });
+  }
+
+
+  /* LAYOUT v2: SLOTS BY ASPECT (DESK-ARRANGEMENT 7, LV-2; owner 2026-10-17: "define some layouts that can be used to construct any
+     type of layout and try to fit to one of these layouts"; "when the layout runs out of space, instead of making each element in
+     the layout smaller they can composite in their preferred aspect").
+
+     fitLayout(items, region, o) -> { name, slots: [{ id, aspect, l, t, w, h, ids: [front, ...behind] }], pills: [ids], score }
+       items   [{ id, aspect: 'portrait'|'landscape'|'square'|'tile', rank (0 = most relevant) }]
+       region  { l, t, r, b } - the free desk (the chat and the pill strip already taken out)
+       o       { gap, current: { id: { x, y, w, h } (centre and size) }, near: 'left'|'right' (the chat's side), noComposite: { id: 1 } }
+
+     One recipe builds every layout: portrait COLUMNS down one side, and the rest in ROWS - landscape BANDS, a row of SQUARES, a
+     GRID of tiles. The candidates differ in how many columns, which side, and whether the bands go above or below. Each item takes
+     a slot of its aspect, most relevant first; when its aspect has no free slot it JOINS the least full slot of that aspect (a
+     composite) rather than every slot shrinking; tiles join last (they would rather be pills). The best candidate keeps the most
+     items in slots of their own, makes the fewest composites and pills, and - when the desk already shows something (o.current) -
+     moves the fewest cards. Pure: no DOM. */
+  var ASPECT_SIZE = { portrait: { w: 460, minW: 340, maxW: 560, minH: 320 }, landscape: { minW: 480, h: 360, minH: 240, maxH: 600 },
+    square: { w: 500, h: 400, minW: 300, minH: 220, maxW: 720, maxH: 560 }, tile: { w: 280, h: 180 } };
+  function fitLayout(items, region, o) {
+    o = o || {}; var G = o.gap == null ? 10 : o.gap, cur = o.current || {};
+    var reg = { l: region.l, t: region.t, w: Math.max(0, region.r - region.l), h: Math.max(0, region.b - region.t) };
+    var by = { portrait: [], landscape: [], square: [], tile: [] };
+    (items || []).slice().sort(function (a, b) { return (a.rank || 0) - (b.rank || 0); }).forEach(function (it) { (by[it.aspect] || by.square).push(it); });
+    var plans = [], sides = o.near === 'right' ? ['right', 'left'] : ['left', 'right'];
+    /* columns: with nothing but lists they may take the whole desk; with other things, about 3/5 of it */
+    var onlyP = by.landscape.length + by.square.length + by.tile.length === 0;
+    var maxCols = Math.max(0, Math.min(by.portrait.length, onlyP ? 4 : 3, Math.floor(((onlyP ? reg.w : reg.w * 0.62) + G) / (ASPECT_SIZE.portrait.minW + G))));
+    for (var np = maxCols; np >= 0; np--) {
+      for (var si = 0; si < (np ? 2 : 1); si++) for (var lp = 0; lp < 2; lp++) { var pl0 = build(np, sides[si], lp ? 'bottom' : 'top'); if (pl0) plans.push(pl0); }
+    }
+    function build(np, side, lpos) {
+      var slots = [], P = ASPECT_SIZE.portrait;
+      var pw = np ? Math.max(P.minW, Math.min(P.maxW, Math.floor((reg.w - G * np) * (np === 1 ? 0.36 : 0.62) / np))) : 0;
+      if (onlyP && np) pw = Math.min(P.maxW, Math.floor((reg.w - G * (np - 1)) / np));
+      if (np) { pw = Math.min(pw, Math.floor((reg.w - G * (np - 1)) / np)); if (pw < P.minW - 60) return null; }
+      var colsW = np ? np * pw + (np - 1) * G : 0;
+      for (var c = 0; c < np; c++) slots.push({ aspect: 'portrait', l: side === 'left' ? reg.l + c * (pw + G) : reg.l + reg.w - colsW + c * (pw + G), t: reg.t, w: pw, h: reg.h });
+      var rx = side === 'left' ? reg.l + colsW + (np ? G : 0) : reg.l, rw = reg.w - colsW - (np ? G : 0);
+      if (rw >= 240) {
+        var nL = Math.min(by.landscape.length, 2), nS = by.square.length, nT = by.tile.length;
+        var perS = nS ? Math.max(1, Math.min(nS, Math.floor((rw + G) / (ASPECT_SIZE.square.minW + G)))) : 0;
+        var tw = Math.min(ASPECT_SIZE.tile.w, rw);
+        var perT = nT ? Math.max(1, Math.floor((rw + G) / (tw + G))) : 0, rowsT = nT ? Math.min(2, Math.ceil(nT / perT)) : 0;
+        /* a band is wide: no taller than its width / 1.6 (and 600) */
+        var maxBand = Math.min(ASPECT_SIZE.landscape.maxH, Math.floor(rw / 1.6));
+        /* A ROW AS TALL AS WHAT IT HOLDS (LV-3; owner: "tables would be ... suitable to be any size that fits the number of rows and columns"): a
+           square row is as tall as its tallest item wants (its measured content, `want`), within the square's least and usual height - a
+           five-row table was given 560 px; the room left goes to the bands */
+        var wantS = by.square.slice(0, perS || 0).map(function (it) { return +it.want || 0; }), wS = wantS.some(function (x) { return x > 0; }) ? Math.max.apply(null, wantS) + 8 : 0;   /* fitted to the items that say; the others scroll in it */
+        var hT = rowsT ? rowsT * ASPECT_SIZE.tile.h + (rowsT - 1) * G : 0, hS = perS ? (wS ? Math.max(ASPECT_SIZE.square.minH, Math.min(ASPECT_SIZE.square.h, wS)) : ASPECT_SIZE.square.h) : 0, hL = nL ? Math.min(ASPECT_SIZE.landscape.h, maxBand) * nL + (nL - 1) * G : 0;
+        /* too tall for the desk: the rows shrink together, and a row shrunk past use drops out (tiles first, then squares, then a
+           second band) - its items go to the next aspect's slots, or join them */
+        var gaps = function () { return Math.max(0, (hT ? 1 : 0) + (hS ? 1 : 0) + (hL ? 1 : 0) - 1) * G; };
+        for (var guard = 0; guard < 6; guard++) { var sum = hT + hS + hL; if (sum + gaps() <= reg.h) break; var k = (reg.h - gaps()) / Math.max(1, sum);
+          if (hT && hT * k < 110 * rowsT) { if (rowsT > 1) { rowsT = 1; hT = ASPECT_SIZE.tile.h; } else { hT = 0; rowsT = 0; } continue; }
+          if (hS && hS * k < ASPECT_SIZE.square.minH) { hS = 0; perS = 0; continue; }
+          if (hL && nL > 1 && hL * k / nL < ASPECT_SIZE.landscape.minH) { nL = 1; hL = Math.min(ASPECT_SIZE.landscape.h, maxBand); continue; }
+          hT = Math.floor(hT * k); hS = Math.floor(hS * k); hL = Math.floor(hL * k); break; }
+        var spare = reg.h - (hT + hS + hL + gaps());
+        if (hL) { var gl = Math.max(0, Math.min(spare, maxBand * nL + (nL - 1) * G - hL)); hL += gl; spare -= gl; }
+        if (hS && !wS) { var gs = Math.max(0, Math.min(spare, ASPECT_SIZE.square.maxH - hS)); hS += gs; spare -= gs; }   /* a row fitted to what it holds does not grow */
+        var rows = []; if (hT) rows.push(['tile', hT]); if (hS) rows.push(['square', hS]); if (hL) rows[lpos === 'top' ? 'unshift' : 'push'](['landscape', hL]);
+        var y = reg.t;
+        rows.forEach(function (row) { var a = row[0], h = row[1];
+          if (a === 'landscape') { var bh = Math.floor((h - (nL - 1) * G) / nL); for (var i = 0; i < nL; i++) slots.push({ aspect: a, l: rx, t: y + i * (bh + G), w: rw, h: bh }); }
+          else if (a === 'square') { var sw = Math.min(ASPECT_SIZE.square.maxW, Math.floor((rw - (perS - 1) * G) / perS)); for (var j = 0; j < perS; j++) slots.push({ aspect: a, l: rx + j * (sw + G), t: y, w: sw, h: h }); }
+          else { var th = Math.floor((h - (rowsT - 1) * G) / rowsT); for (var q = 0; q < rowsT * perT; q++) slots.push({ aspect: a, l: rx + (q % perT) * (tw + G), t: y + Math.floor(q / perT) * (th + G), w: tw, h: th }); }
+          y += h + G; });
+      }
+      slots.forEach(function (sl, i) { sl.id = sl.aspect[0] + i; sl.ids = []; });
+      /* items to slots: their own aspect only; with none free, the least full slot of their aspect (tiles last) */
+      var pills = [], ALT = { portrait: ['square', 'landscape'], landscape: ['square', 'portrait'], square: ['landscape', 'portrait'], tile: ['square'] };
+      ['landscape', 'portrait', 'square', 'tile'].forEach(function (a) { by[a].forEach(function (it) {
+        var own = slots.filter(function (s) { return s.aspect === a; }), free = own.filter(function (s) { return !s.ids.length; });
+        if (free.length) { free.sort(function (p, q2) { return slotCost(it, p) - slotCost(it, q2); }); free[0].ids.push(it.id); return; }
+        /* a composite is always of one aspect: another aspect's slot is taken only while it is FREE (a list never a tab of a table) */
+        /* never in a slot of another aspect (owner 2026-10-17: "composites of elements that have different aspects are being made i.e. a node
+           graph in a tall slot"): no slot of its aspect - a pill; the score then prefers the layouts that have its slot */
+        if (!own.length) { pills.push(it.id); return; }
+        /* a card holds at most o.maxTabs (8) tabs - past that, a pill of its own (a ninth was split off as a card and took the column) */
+        var room = own.filter(function (s) { return s.ids.length < (o.maxTabs || 8); });
+        if (!room.length || (o.noComposite && o.noComposite[it.id]) || (a === 'tile' && own.length < 2)) { pills.push(it.id); return; }
+        room.sort(function (p, q2) { return p.ids.length - q2.ids.length || slotCost(it, p) - slotCost(it, q2); }); room[0].ids.push(it.id); }); });
+      var used = slots.filter(function (s) { return s.ids.length; });
+      return { name: (np ? np + ' column' + (np > 1 ? 's' : '') + ' ' + side : 'rows') + ', bands ' + lpos, slots: used, pills: pills, empty: slots.length - used.length };
+    }
+    /* how far a slot is from where the item is now (0 when it is new) */
+    function slotCost(it, s) { var c0 = cur[it.id]; if (!c0) return 0; var cx = s.l + s.w / 2, cy = s.t + s.h / 2;
+      return Math.hypot(cx - c0.x, cy - c0.y) / 200 + (Math.abs(s.w - c0.w) + Math.abs(s.h - c0.h)) / 400; }
+    var best = null;
+    plans.forEach(function (pl) {
+      var score = 0;
+      pl.slots.forEach(function (s) { s.ids.forEach(function (id, i) { var it = (items || []).find(function (x) { return x.id === id; }) || {}; var wgt = 1 / (1 + (it.rank || 0) * 0.25);
+        score += i === 0 ? 10 * wgt : -4 * wgt; score -= 2 * slotCost(it, s); }); });
+      score -= 12 * pl.pills.length + 0.5 * pl.empty;
+      pl.score = Math.round(score * 100) / 100;
+      if (!best || pl.score > best.score) best = pl; });
+    return best || { name: 'none', slots: [], pills: (items || []).map(function (x) { return x.id; }), score: 0 };
+  }
+
+  var api = { DESK: DESK, grow: grow, MODES: MODES, modeOf: modeOf, freeRegion: freeRegion, layoutMode: layoutMode, bestSlot: bestSlot, settle: settle, layerOrder: layerOrder, chatRect: chatRect, snapEdge: snapEdge, distance: distance, sizeAt: sizeAt, faceOf: faceOf,
               arrange: arrange, pushOut: pushOut, separate: separate, stackOrder: stackOrder, fullRegion: fullRegion, makeRoom: makeRoom,
-              latticeOf: latticeOf };
+              latticeOf: latticeOf, preTurn: preTurn, topicOrder: topicOrder, preTurnOut: preTurnOut, fitLayout: fitLayout, ASPECT_SIZE: ASPECT_SIZE };
   root.VeraDesk = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

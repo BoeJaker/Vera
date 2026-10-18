@@ -1,0 +1,41 @@
+{
+ "cap": "demo.quotes",
+ "args": {
+  "symbols": [
+   "BTC",
+   "ETH"
+  ]
+ },
+ "presentation": {
+  "kind": "table",
+  "map": {
+   "rows": "quotes",
+   "name": "symbol",
+   "value": "last"
+  },
+  "title": "Quotes · {symbols}"
+ },
+ "result": {
+  "quotes": [
+   {
+    "symbol": "BTC",
+    "last": 61000,
+    "pct": 1.2
+   },
+   {
+    "symbol": "ETH",
+    "last": 2400,
+    "pct": -0.4
+   }
+  ]
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "Quotes · BTC, ETH",
+  "forms": [
+   "table",
+   "ranked"
+  ]
+ }
+}

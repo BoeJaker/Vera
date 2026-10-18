@@ -67,6 +67,7 @@ _EVENT_PREFIX = "pydanticai.run"
     description="PydanticAI bridge status: enabled flag, docker availability, "
                 "whether the vera-pydanticai image exists yet. "
                 "Output: {enabled, docker_ok, image, image_present}.",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
 )
 async def pydanticai_status(trace_id=None) -> Dict[str, Any]:
     from Vera.vera.agentbridges.agentbridge_runtime import sh

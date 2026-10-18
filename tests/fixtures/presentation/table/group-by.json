@@ -1,0 +1,100 @@
+{
+ "cap": "demo.panels",
+ "args": {},
+ "presentation": {
+  "kind": "table",
+  "map": {
+   "rows": "panels"
+  },
+  "draw": {
+   "sort": "tab_order",
+   "group_by": "mode"
+  }
+ },
+ "result": {
+  "panels": [
+   {
+    "id": "memory",
+    "label": "Memory",
+    "mode": "element",
+    "tab_order": 72
+   },
+   {
+    "id": "chat",
+    "label": "Chat",
+    "mode": "tab",
+    "tab_order": 1
+   },
+   {
+    "id": "perf",
+    "label": "Perf",
+    "mode": "inject",
+    "tab_order": 58
+   },
+   {
+    "id": "notes",
+    "label": "Notes",
+    "mode": "tab",
+    "tab_order": 9
+   },
+   {
+    "id": "odd",
+    "label": "Odd",
+    "tab_order": 2
+   },
+   {
+    "id": "graph",
+    "label": "Graph",
+    "mode": "element",
+    "tab_order": 30
+   }
+  ]
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.panels",
+  "forms": [
+   "table"
+  ],
+  "data": {
+   "panels": [
+    {
+     "mode": "tab",
+     "id": "chat",
+     "label": "Chat",
+     "tab_order": 1
+    },
+    {
+     "mode": "tab",
+     "id": "notes",
+     "label": "Notes",
+     "tab_order": 9
+    },
+    {
+     "mode": "element",
+     "id": "graph",
+     "label": "Graph",
+     "tab_order": 30
+    },
+    {
+     "mode": "element",
+     "id": "memory",
+     "label": "Memory",
+     "tab_order": 72
+    },
+    {
+     "mode": "inject",
+     "id": "perf",
+     "label": "Perf",
+     "tab_order": 58
+    },
+    {
+     "id": "odd",
+     "label": "Odd",
+     "tab_order": 2
+    }
+   ]
+  }
+ }
+}

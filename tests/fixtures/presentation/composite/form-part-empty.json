@@ -1,0 +1,52 @@
+{
+ "cap": "demo.host",
+ "args": {},
+ "presentation": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "form": "table",
+    "map": {
+     "rows": "jobs"
+    },
+    "draw": {
+     "columns": [
+      "name",
+      "state"
+     ]
+    },
+    "title": "Jobs"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "host"
+    },
+    "title": "Host"
+   }
+  ]
+ },
+ "result": {
+  "jobs": [],
+  "host": {
+   "name": "pve01",
+   "load": 0.5
+  }
+ },
+ "expect": {
+  "element": "composite",
+  "kind": "composite",
+  "title": "demo.host",
+  "forms": [
+   "kv"
+  ],
+  "part_kinds": [
+   "kv"
+  ],
+  "data": {
+   "name": "pve01",
+   "load": 0.5
+  }
+ }
+}

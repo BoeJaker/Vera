@@ -42,7 +42,8 @@ def _strings(value: Any) -> set[str]:
 def evaluate_policy_shadow(name: str, contract: Mapping[str, Any] | None,
                            context: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Predict a policy verdict without granting authority or inspecting payloads."""
-    declared = _mapping(contract)
+    # how an answer is drawn (presentation, DA-01) says nothing about authority: a contract holding only that is unknown
+    declared = {k: v for k, v in _mapping(contract).items() if k != "presentation"}
     scope = _mapping(context)
     reasons = []
     deny = False

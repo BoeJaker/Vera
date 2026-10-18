@@ -11084,6 +11084,7 @@ if _VERA_MODE:
 
     @capability(
         "research.agents.status",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "slots"}, "draw": {"columns": ["id", "tier", "status", "model", "job_id", "tokens", "elapsed"]}}},
         http_method="GET", http_path="/research/agents/status",
         http_tags=["research"], memory="off", silent=True,
         description="Get real-time status of research agent slots.",
@@ -11101,6 +11102,7 @@ if _VERA_MODE:
 
     @capability(
         "research.history",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "jobs"}, "draw": {"columns": ["query", "mode", "status", "citation_count", "token_count", "created_at", "finished_at", "error", "id"]}, "empty": "No research jobs"}},
         http_method="GET", http_path="/research/history",
         http_tags=["research"], memory="off", silent=True,
         description="List research job history.",
@@ -11250,6 +11252,7 @@ if _VERA_MODE:
 
     @capability(
         "research.sources",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["label", "id", "type", "enabled", "status"]}, "empty": "No research sources"}},
         http_method="GET", http_path="/research/sources",
         http_tags=["research"], memory="off", silent=True,
         description="List configured research data sources.",
@@ -11351,6 +11354,7 @@ if _VERA_MODE:
 
     @capability(
         "research.websearch.config.get",
+        contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
         http_method="GET", http_path="/research/websearch/config",
         http_tags=["research"], memory="off", silent=True,
         description="Get web search configuration.",
@@ -11392,6 +11396,7 @@ if _VERA_MODE:
 
     @capability(
         "research.models",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["instance", "tier", "host", "current_model", "enabled"]}}},
         http_method="GET", http_path="/research/models",
         http_tags=["research"], memory="off", silent=True,
         description="List Ollama model instances and their available models.",
@@ -11403,6 +11408,7 @@ if _VERA_MODE:
 
     @capability(
         "research.config.instances.get",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["name", "tier", "model", "host", "port", "ctx_size", "enabled", "enable_thinking"]}}},
         http_method="GET", http_path="/research/config/instances",
         http_tags=["research"], memory="off", silent=True,
         description="Get Ollama instance configurations.",
@@ -11520,6 +11526,7 @@ if _VERA_MODE:
 
     @capability(
         "research.db.stats",
+        contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
         http_method="GET", http_path="/research/db/stats",
         http_tags=["research"], memory="off", silent=True,
         description="Database statistics.",
@@ -11638,6 +11645,7 @@ if _VERA_MODE:
 
     @capability(
         "research.notebook.list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["title", "description", "project_id", "updated_at", "id"]}, "empty": "No notebooks"}},
         http_method="GET", http_path="/research/notebook/list",
         http_tags=["research", "notebook"], memory="off", silent=True,
         description="List notebooks.",
@@ -11963,6 +11971,7 @@ if _VERA_MODE:
 
     @capability(
         "research.recall.datasets",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "datasets"}, "draw": {"columns": ["dataset_id", "record_count", "updated_at", "has_children"]}, "empty": "No research datasets"}},
         http_method="GET", http_path="/research/recall/datasets",
         http_tags=["research", "recall"], memory="off", silent=True,
         description="List all research datasets in the fabric.",
@@ -11974,6 +11983,7 @@ if _VERA_MODE:
 
     @capability(
         "research.health",
+        contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
         http_method="GET", http_path="/research/health",
         http_tags=["research"], memory="off", silent=True,
         description="Health check for the research subsystem.",

@@ -26,6 +26,8 @@ def _load(name, *rel):
 CO = _load("widget_cap_output", "vera", "widgets", "widget_cap_output.py")
 REC = _load("widget_record", "vera", "widgets", "widget_record.py")
 FIX = json.load(open(os.path.join(os.path.dirname(__file__), "widget_cap_fixtures.json"), encoding="utf-8"))
+# the capabilities' declared drawings (DA-01d - their former widget hints), as /mcp/tools carries them to the page
+DECL = json.load(open(os.path.join(os.path.dirname(__file__), "fixtures", "presentation_declared.json"), encoding="utf-8"))
 
 
 def test_every_result_form_is_a_catalogue_form():
@@ -38,7 +40,7 @@ def test_every_result_form_is_a_catalogue_form():
 
 def test_the_mirror_draws_every_fixture_as_the_page_does():
     for f in FIX:
-        recs = CO.from_cap_result(f["cap"], f["result"], args={"a": 1})
+        recs = CO.from_cap_result(f["cap"], f["result"], args={"a": 1}, presentation=DECL.get(f["cap"]))
         got = [r["form"] for r in recs]
         if f["form"] is None:
             assert recs == [], f["cap"]

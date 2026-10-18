@@ -1,0 +1,26 @@
+{
+ "cap": "demo.rows",
+ "args": {},
+ "result": {
+  "quotes": [
+   {
+    "symbol": "BTC",
+    "last": 61000,
+    "pct": 1.2
+   },
+   {
+    "symbol": "ETH",
+    "last": 2400,
+    "pct": -0.4
+   }
+  ]
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.rows",
+  "forms": [
+   "table"
+  ]
+ }
+}

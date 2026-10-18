@@ -517,6 +517,7 @@ async def markets_evolve_stop(trace_id=None):
 
 
 @capability("markets.evolve.status", memory="off", silent=True,
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "leaderboard"}, "title": "Leaderboard", "form": "table", "draw": {"columns": ["name", "metric", "ts", "strategy_id"]}}, {"kind": "kv", "map": {"fields": "config"}, "title": "Config"}]}},
             http_method="GET", http_path="/markets/evolve/status", http_tags=["markets"],
             description="Markets self-improvement status: config, live flag, "
                         "leaderboard (best metric per strategy), recent ticks.")

@@ -2477,6 +2477,9 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                     "symbol_key (str — blank = whole market), query (str — "
                     "override), limit (int=8), map_to_chart (bool=False). "
                     "Output: {headlines:[{title,snippet,url}], query, cached_at}.",
+        # the desk's records browser (list / cards / table, the page in a drawer) - not a JSON tree
+        contract={"presentation": {'kind': 'records', 'map': {'rows': 'headlines', 'title': 'title', 'url': 'url', 'snippet': 'snippet'},
+                                   'title': 'Headlines', 'empty': 'no headlines found'}},
     )
     async def cap_news_feed(symbol_key: str = "", query: str = "", limit: int = 8,
                             map_to_chart: bool = False, trace_id=None) -> dict:
@@ -2588,6 +2591,9 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                     "Input: symbol_key (str — also include this asset's news), "
                     "per_source (int=5), extra_query (str — one-off search). "
                     "Output: {items:[{title,snippet,url,source}], sources_used}.",
+        # the desk's records browser; each story's source (a subscription's label, or the asset) shown where a site is
+        contract={"presentation": {'kind': 'records', 'map': {'rows': 'items', 'title': 'title', 'url': 'url', 'snippet': 'snippet', 'domain': 'source'},
+                                   'title': 'News', 'empty': 'no headlines found'}},
     )
     async def cap_news_digest(symbol_key: str = "", per_source: int = 5,
                               extra_query: str = "", trace_id=None) -> dict:
@@ -3236,6 +3242,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.baseline.list", http_method="GET", http_path="/markets/baseline",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "assets"}, "draw": {"columns": ["name", "symbol", "group", "provider", "tracked", "last_bar"]}}},
         http_tags=["markets"], memory="off", silent=True,
         description="The curated baseline estate (indices, all SPDR sectors, rates, "
                     "FX, commodities, BTC/ETH) with tracked/bar status. "
@@ -3323,6 +3330,10 @@ if _CAP_AVAILABLE and HAS_NUMPY:
     @capability(
         "markets.overview", http_method="GET", http_path="/markets/overview",
         http_tags=["markets"], memory="off", silent=True,
+        # how its answer is drawn: the market map (the Quant Studio's Pulse map): the desk mounts <vera-mkt-map> for it; elsewhere the treemap form
+        # draws the groups by their asset count
+        contract={"presentation": {'kind': 'parts', 'form': 'treemap', 'map': {'parts': 'groups', 'name': 'name', 'value': 'count'},
+                                   'title': 'Market map', 'empty': 'no tracked assets in the overview yet'}},
         description="Whole-market / per-sector / per-asset overview computed from "
                     "stored 1d bars for every watched asset (incl. the baseline "
                     "estate): last price, changes over 1d/1w/1m/3m/6m/ytd/1y, 30d "
@@ -3702,6 +3713,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.macro.catalog", http_method="GET", http_path="/markets/macro/catalog",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "series"}, "draw": {"columns": ["name", "group", "unit", "source", "last", "fetched"]}}},
         http_tags=["markets"], memory="off", silent=True,
         description="Catalog of layerable macro / on-chain series (FRED rates & "
                     "inflation & money supply, BTC hash rate / transactions / "
@@ -3966,6 +3978,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.sim.list", http_method="GET", http_path="/markets/sim/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "accounts"}, "draw": {"columns": ["name", "value", "cash", "ret_pct", "start_cash", "currency"]}, "empty": "No sim accounts"}},
         http_tags=["markets"], memory="off", silent=True,
         description="List sim accounts with live valuation, P&L and positions — "
                     "the paper-trading leaderboard. Output: {accounts:[{id,name,"

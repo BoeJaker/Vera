@@ -643,6 +643,7 @@ async def project_plan_advance(slug: str = "", portion_id: str = "", status: str
 
 @capability(
     "project.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "projects"}, "draw": {"columns": ["name", "status", "dream_count", "last_dream_at", "updated_at", "slug"]}, "empty": "No projects"}},
     http_method="GET", http_path="/dream/projects/list", http_tags=["project"],
     description="List all projects with their summary metadata.",
 )
@@ -703,6 +704,7 @@ async def _goal_active_loop(r, slug: str):
 
 @capability(
     "goals.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "goals"}, "draw": {"columns": ["name", "status", "dream_count", "last_dream_at", "loop_status", "created_at"]}, "empty": "No long-term goals"}},
     http_method="GET", http_path="/dream/goals/list", http_tags=["project", "goals"],
     description="List the LONG-TERM GOALS the system is tracking — strategic goals a broad "
                 "request escalated to, persisted as dream projects (tagged 'strategic'). Each "

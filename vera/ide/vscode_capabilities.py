@@ -789,6 +789,7 @@ async def ide_vscode_central_ensure(
 
 @capability(
     "ide.vscode.central.status",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/ide/vscode/central/status", http_tags=["ide", "vscode"],
     memory="off", silent=True,
     description="Central code-server health: container state (when docker-managed) "

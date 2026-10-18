@@ -1,0 +1,36 @@
+{
+ "cap": "demo.history",
+ "args": {},
+ "presentation": {
+  "kind": "series",
+  "map": {
+   "points": "samples",
+   "t": "ts",
+   "v": "cpu"
+  }
+ },
+ "result": {
+  "samples": [
+   {
+    "ts": 1,
+    "cpu": 3
+   },
+   {
+    "ts": 2,
+    "cpu": 5
+   },
+   {
+    "ts": 3,
+    "cpu": 4
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "series",
+  "title": "demo.history",
+  "forms": [
+   "trace"
+  ]
+ }
+}

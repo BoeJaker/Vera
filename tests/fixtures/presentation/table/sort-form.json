@@ -1,0 +1,94 @@
+{
+ "cap": "demo.passive",
+ "args": {},
+ "presentation": {
+  "kind": "table",
+  "form": "table",
+  "map": {
+   "rows": "data.rows"
+  },
+  "draw": {
+   "columns": [
+    "model",
+    "calls",
+    "tps"
+   ],
+   "sort": "-calls",
+   "limit": 2
+  }
+ },
+ "result": {
+  "data": {
+   "rows": [
+    {
+     "model": "a",
+     "calls": 3,
+     "tps": 1
+    },
+    {
+     "model": "b",
+     "calls": 27478,
+     "tps": 30.6
+    },
+    {
+     "model": "c",
+     "calls": "n/a",
+     "tps": 2
+    },
+    {
+     "model": "d",
+     "calls": 1636,
+     "tps": 18.5
+    },
+    {
+     "model": "e",
+     "calls": true,
+     "tps": 0
+    }
+   ]
+  },
+  "count": 5,
+  "role": "passive"
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.passive",
+  "forms": [
+   "table"
+  ],
+  "data": {
+   "data": {
+    "rows": [
+     {
+      "model": "b",
+      "calls": 27478,
+      "tps": 30.6
+     },
+     {
+      "model": "d",
+      "calls": 1636,
+      "tps": 18.5
+     },
+     {
+      "model": "a",
+      "calls": 3,
+      "tps": 1
+     },
+     {
+      "model": "e",
+      "calls": true,
+      "tps": 0
+     },
+     {
+      "model": "c",
+      "calls": "n/a",
+      "tps": 2
+     }
+    ]
+   },
+   "count": 5,
+   "role": "passive"
+  }
+ }
+}

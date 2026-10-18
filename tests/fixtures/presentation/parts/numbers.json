@@ -1,0 +1,50 @@
+{
+ "cap": "demo.docker_disk",
+ "args": {},
+ "presentation": {
+  "kind": "parts",
+  "map": {
+   "parts": "docker[0]"
+  }
+ },
+ "result": {
+  "docker": [
+   {
+    "host_id": "local",
+    "label": "local",
+    "volumes": [
+     {
+      "name": "v1"
+     }
+    ],
+    "volumes_gb": 138.42,
+    "images_gb": 137.24,
+    "containers_gb": 25.31,
+    "build_gb": 0
+   }
+  ],
+  "errors": []
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "parts",
+  "title": "demo.docker_disk",
+  "forms": [
+   "donut"
+  ],
+  "data": [
+   {
+    "name": "volumes_gb",
+    "value": 138.42
+   },
+   {
+    "name": "images_gb",
+    "value": 137.24
+   },
+   {
+    "name": "containers_gb",
+    "value": 25.31
+   }
+  ]
+ }
+}

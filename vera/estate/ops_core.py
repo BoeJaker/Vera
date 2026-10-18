@@ -146,7 +146,7 @@ def _machines(src: Mapping[str, Any], own_ips: Iterable[str], nodes: Dict[str, D
             hw = [str(h) for h in (r.get("hardware") or [])]
             n = _node(nid, label, "host", COMPUTE, kind="host", detail=" · ".join(hw[:3]) or "proxmox node",
                       ref=("host:" + str(r["ssh_host_id"])) if r.get("ssh_host_id") else "",
-                      req={"name": "proxmox.status", "arguments": {}},
+                      req={"name": "proxmox.status", "arguments": {"cluster_id": str(r["cluster_id"])} if r.get("cluster_id") else {}},
                       ips=ips[:4], ssh_host_id=str(r.get("ssh_host_id") or ""))
             nodes[nid] = n
             out["pve_nodes"][str(r.get("node") or "")] = nid

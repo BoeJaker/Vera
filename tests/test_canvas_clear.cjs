@@ -13,7 +13,7 @@ t('it empties the canvas but never deletes it — the session canvas is the chat
   /doc\["blocks"\] = \[b for b in doc\.get\("blocks", \[\]\) if b\.get\("key"\) and str\(b\.get\("key"\)\) in keys\]/.test(PY) &&
   /"cleared": before - len\(doc\["blocks"\]\), *\n? *"kept": len\(doc\["blocks"\]\)/.test(PY.replace(/\s+/g, ' ')) === false || /"cleared"/.test(PY));
 t('it takes keys to keep, so what you pinned can survive it', /keep \(str, comma-separated keys to/.test(PY) && /keys = \{k\.strip\(\) for k in str\(keep or ""\)\.split\(","\)/.test(PY));
-t('it is listed with the other canvas caps on the panel', /"canvas\.remove", "canvas\.clear", "canvas\.delete"/.test(PY));
+t('it is listed with the other canvas caps on the panel', /"canvas\.remove", ("canvas\.removed", "canvas\.restore", )?"canvas\.clear", "canvas\.delete"/.test(PY));
 t('the banner offers it, and only when there is something to clear', /keyed\.length \? `<button class="hidbtn" data-act="clear"/.test(SRC));
 t('the first press keeps what you pinned; a second within the beat takes those too',
   /const again = this\._clearAt && \(Date\.now\(\) - this\._clearAt\) < 4000;/.test(SRC) &&

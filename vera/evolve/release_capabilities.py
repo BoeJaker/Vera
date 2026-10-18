@@ -594,6 +594,7 @@ async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = 
 
 
 @capability("evolve.release.status", memory="off", silent=True,
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "census"}, "title": "Census"}, {"kind": "table", "map": {"rows": "history"}, "title": "Recent releases"}]}},
             http_method="GET", http_path="/evolve/release/status", http_tags=["evolve", "release"],
             description="The pending prod release (if any), the census summary and what happens next; "
                         "plus the last few releases.")

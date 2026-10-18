@@ -787,6 +787,7 @@ async def _store_result(record: dict) -> None:
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("bench.suites", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "suites"}, "draw": {"columns": ["role", "label", "kind", "items", "blurb"]}}},
             http_method="GET", http_path="/bench/suites", http_tags=["bench"],
             description="List the deterministic benchmark ROLE PACKS: id, label, what it "
                         "measures, item count and kind (generate|embed|vision). These are "
@@ -908,6 +909,7 @@ async def cap_bench_status(run_id: str = "", trace_id=None):
 
 
 @capability("bench.results", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "results"}, "draw": {"columns": ["model", "node_label", "role", "accuracy", "items_passed", "items_total", "quant", "created_at"]}, "empty": "No benchmark results yet"}},
             http_method="GET", http_path="/bench/results", http_tags=["bench"],
             description="Recent benchmark results (compact, newest first). Query: model "
                         "(str filter), instance_id (str filter), role (str filter), limit "
@@ -954,6 +956,7 @@ async def cap_bench_result_get(id: str = "", trace_id=None):
 
 
 @capability("bench.compare", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["model", "node_label", "accuracy", "gen_tps", "load_ms", "size_gb", "quant"]}, "empty": "No benchmark results for this role yet"}},
             http_method="GET", http_path="/bench/compare", http_tags=["bench"],
             description="Role LEADERBOARD: the latest benchmark result per (model, node) "
                         "for a role, ranked by accuracy then generation tokens-sec — the "
@@ -1003,6 +1006,7 @@ async def cap_bench_compare(role: str = "all", instance_id: str = "", trace_id=N
 
 
 @capability("bench.passive", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["model", "node_label", "obs_tps", "avg_latency_s", "calls", "last_ts"], "sort": "-calls", "units": {"obs_tps": "tok/s", "avg_latency_s": "s"}}, "empty": "No production traffic seen yet"}},
             http_method="GET", http_path="/bench/passive", http_tags=["bench"],
             description="PASSIVE benchmark: per-(model, node) metrics harvested from REAL "
                         "production traffic (the router's rolling per-request stats every "
@@ -1249,6 +1253,7 @@ async def _node_perf_tick() -> None:
 
 
 @capability("bench.node_perf", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "status", "reachable", "ping_ms", "loaded_vram_gb", "vram_used_pct", "version"], "units": {"ping_ms": "ms", "loaded_vram_gb": "GB", "vram_used_pct": "%"}}}},
             http_method="GET", http_path="/bench/node_perf", http_tags=["bench"],
             description="PER-NODE live performance monitor for the Ollama cluster — each "
                         "node with its own setup + workload. Per node: reachability + ping "
@@ -1270,6 +1275,7 @@ async def cap_bench_node_perf(fresh: bool = False, trace_id=None):
 
 
 @capability("bench.node_perf.history", memory="off", silent=True,
+            contract={"presentation": {"kind": "series", "map": {"points": "series", "keyed": True, "t": "t", "v": "ping_ms"}, "title": "Node ping · ms", "empty": "No node samples yet"}},
             http_method="GET", http_path="/bench/node_perf/history", http_tags=["bench"],
             description="Per-node time-series ring behind the monitor sparklines: samples "
                         "of {t, tps, calls, loaded_vram_gb, ping_ms, reachable, loaded}. "
@@ -2065,6 +2071,7 @@ async def cap_bench_matrix_status(run_id: str = "", trace_id=None):
 
 
 @capability("bench.matrix.results", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["created_at", "node_label", "state", "cells_total", "errors", "id"]}, "empty": "No context sweeps yet"}},
             http_method="GET", http_path="/bench/matrix/results", http_tags=["bench"],
             description="Recent context × quantisation sweeps, newest first. Query: "
                         "instance_id (str — one node), limit (int, default 20). Output: "

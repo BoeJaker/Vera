@@ -135,7 +135,7 @@ def _finding(fid, severity, area, title, detail, *,
     description="Event-loop stall/hang events captured by the watchdog. Each: "
                 "{kind:'stall'|'hang'|'note', ts, stalled_ms, where, stack}. "
                 "'hang' rows carry the exact blocking call's stack. "
-                "Input: limit (int, default 100). Output: {events:[...], count}.",
+                "Input: limit (int, default 100). Output: {events:[...], count}.", contract={"presentation": {'kind': 'series', 'form': 'column', 'map': {'values': 'events', 'value': 'stalled_ms', 'reverse': True}}}
 )
 async def perf_stalls(limit: int = 100, trace_id=None) -> Dict:
     evs = list(getattr(_orch, "PERF_EVENTS", []))
@@ -151,6 +151,7 @@ async def perf_stalls(limit: int = 100, trace_id=None) -> Dict:
 # ── perf.log.tail / perf.log.files ────────────────────────────────────────────
 @capability(
     "perf.log.tail",
+    contract={"presentation": {"kind": "terminal", "form": "terminal", "map": {}}},
     http_method="GET", http_path="/perf/log/tail", http_tags=["monitor", "perf"],
     memory="off", silent=True,
     description="Tail the captured application log. Serves from the in-memory "
@@ -184,6 +185,7 @@ async def perf_log_tail(lines: int = 200, grep: str = "", file: str = "",
 
 @capability(
     "perf.log.files",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "files"}, "draw": {"columns": ["name", "bytes", "modified"]}, "empty": "No log files"}},
     http_method="GET", http_path="/perf/log/files", http_tags=["monitor", "perf"],
     memory="off", silent=True,
     description="List captured log files on disk (the rotating vera.log set). "
@@ -436,7 +438,7 @@ async def _check_resources() -> List[Dict]:
                 "severity + concrete remediation. Covers: event-loop stalls, "
                 "stale Redis consumers, zombie ollama jobs, Ollama node health / "
                 "saturation, host CPU/RAM. Some findings are auto-remediable via "
-                "perf.remediate. Output: {findings:[...], summary:{crit,warn,info,ok}}.",
+                "perf.remediate. Output: {findings:[...], summary:{crit,warn,info,ok}}.", contract={"presentation": {'kind': 'status', 'form': 'status'}}
 )
 async def perf_scan(trace_id=None) -> Dict:
     findings: List[Dict] = []
@@ -456,6 +458,7 @@ async def perf_scan(trace_id=None) -> Dict:
 # ── perf.gate (M3 perf-gating) ──────────────────────────────────────────────────
 @capability(
     "perf.gate",
+    contract={"presentation": {"kind": "status", "map": {"verdict": "verdict", "checks": "top_findings"}}},
     http_method="GET", http_path="/perf/gate", http_tags=["monitor", "perf"],
     memory="off", silent=True,
     description="Perf-based GATE check (M3 perf-gating): runs perf.scan and reduces "

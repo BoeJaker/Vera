@@ -696,7 +696,9 @@
     /* the same drawing in the theme as it is now; the view (a pan, a zoom) is kept */
     retheme() { if (!this._code || !this._svgEl) return; const keep = Object.assign({}, this._view); this._held = this._held || false; try { this.render(this._code); } catch (_) { return; } if (this._held) { this._view = keep; this._apply(); } }
     /* the height the drawing takes at a width — its aspect kept, at most 1.6× its own size, never under 80 */
-    naturalHeight(width) { const b = this._bounds; if (!b || !b.w || !this._svgEl) return 0; const w = Math.max(1, Number(width) || this._vp.clientWidth || 400); const k = Math.min(w / b.w, 1.25); return Math.max(80, Math.round(b.h * k)); }
+    /* max-scale: how far past its own size a host lets it grow (the desk: a diagram in a wide card fills it - WSU-44) */
+    _maxScale() { const m = parseFloat(this.getAttribute('max-scale')); return m > 0 && isFinite(m) ? Math.min(4, m) : 0; }
+    naturalHeight(width) { const b = this._bounds; if (!b || !b.w || !this._svgEl) return 0; const w = Math.max(1, Number(width) || this._vp.clientWidth || 400); const k = Math.min(w / b.w, this._maxScale() || 1.25); return Math.max(80, Math.round(b.h * k)); }
 
     /* what kind of diagram the source is, and the graph for the flow-like kinds */
     static _kind(code) {
@@ -822,7 +824,7 @@
       if (!this._svgEl) return;
       const vw = this._vp.clientWidth || 400, vh = this._vp.clientHeight || 240;
       const b = this._bounds;
-      const k = Math.min(vw / b.w, vh / b.h, 1.6);
+      const k = Math.min(vw / b.w, vh / b.h, Math.max(1.6, this._maxScale()));
       this._held = false;   // the fitted view: a resize fits again; a pan or a zoom holds it
       this._view.k = k > 0 && isFinite(k) ? k : 1;
       this._view.x = (vw - b.w * this._view.k) / 2 - b.x * this._view.k;

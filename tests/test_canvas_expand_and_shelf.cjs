@@ -46,7 +46,7 @@ t('the banner carries the shelves, built by one helper', /const shelf = \(n, lab
 t('parked and hidden are both on it, in the row that is always in view',
   /shelf\('parkpop', 'parked',[^)]*stage \? parked : \[\]\)/.test(SRC) && /shelf\('hid', 'hidden',/.test(SRC));
 t('the shelf button opens its own popover, and does not collide with parking an item',
-  /if \(act === 'hid' \|\| act === 'parkpop'\)/.test(SRC) && /if \(act === 'park'\) return this\.call\('canvas\.park', \{ key \}\);/.test(SRC));
+  /if \(act === 'hid' \|\| act === 'parkpop'( \|\| act === 'rmvpop')?\)/.test(SRC) && /if \(act === 'park'\) return this\.call\('canvas\.park', \{ key \}\);/.test(SRC));
 t('the band at the foot of the stage is gone (it is kept for the flow projection)',
   /if \(parked\.length && !stage\) html \+= `<div class="band parked">/.test(SRC));
 t('a chip on the shelf brings its item back through the resolver — recall, not re-create',

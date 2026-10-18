@@ -244,10 +244,7 @@ canvas.mini{width:100%;height:110px;background:var(--bg0);border:1px solid var(-
   <span class="railtoggle" id="railT" title="watchlist" onclick="toggleRail()">☰</span>
   <span class="brand">⟁ Markets</span>
   <div class="lookup">
-    <span class="mag">⌕</span>
-    <input id="lkIn" placeholder="Search crypto, stocks, ETFs, collectables…" autocomplete="off"
-           oninput="lkInput()" onfocus="lkInput()" onkeydown="lkKey(event)">
-    <div class="dd-list" id="lkList"></div>
+    <vera-mkt-lookup id="lkEl" placeholder="Search crypto, stocks, ETFs, collectables…" style="display:block;--lk-size:12px;--lk-pad:6px 10px 6px 28px"></vera-mkt-lookup>
   </div>
   <div style="min-width:0">
     <div class="sym-name" id="hSym">—</div>
@@ -271,7 +268,8 @@ canvas.mini{width:100%;height:110px;background:var(--bg0);border:1px solid var(-
     <div class="rail-scroll">
       <div class="railsec">
         <h3>Watchlist <span class="cnt" id="wlCnt"></span>
-          <span class="mini" onclick="toggleForm('addForm')" title="add asset">＋</span></h3>
+          <span class="mini" onclick="toggleForm('addForm')" title="add asset">＋</span>
+          <span class="mini" data-app="markets.watchlist" title="Open the Watchlist app on the desk">&#8862;</span></h3>
         <div class="railform" id="addForm">
           <label>Use the search box above for crypto & stocks — or create a custom asset:</label>
           <input id="caName" placeholder="e.g. Charizard 1st Edition PSA 9">
@@ -696,6 +694,7 @@ canvas.mini{width:100%;height:110px;background:var(--bg0);border:1px solid var(-
   <span style="opacity:.45;font-size:10px" title="charting library credit">charts: TradingView Lightweight Charts™</span>
 </div>
 
+<script src="/markets/chart.js"></script>
 <script>
 /* ═══════════════════════════════════ core ═══════════════════════════════ */
 /* Resolve the backend base URL defensively: reading window.parent from a
@@ -713,7 +712,8 @@ const BASE = (() => {
 const TFS  = ["1m","5m","15m","30m","1h","4h","1d","1w"];
 const YAHOO_TFS = ["1m","5m","15m","30m","1h","1d","1w"];
 const FEATS = ["ret_1","ret_5","ret_10","rsi","macd_hist","stoch_k","bb_pctb","atr_norm","vol_z","ema_ratio","roc","dow"];
-const OVERLAY_COLORS = ["#7aa2f7","#e8b34d","#b48ead","#5ec9b8","#d1848b","#8fb87a"];
+/* the chart's pieces are shared with the desk's chart (WSU-75): /markets/chart.js, window.VeraMktChart */
+const OVERLAY_COLORS = VeraMktChart.OVERLAY_COLORS;
 
 const S = {
   key:null, provider:null, symbol:null, tf:'1d',
@@ -744,7 +744,7 @@ function fmtPx(v){ if(v==null||!isFinite(v))return '—';
   return a>=1000?v.toLocaleString(undefined,{maximumFractionDigits:2})
         :a>=1?v.toFixed(2):a>=0.01?v.toFixed(4):v.toPrecision(4); }
 function fmtPct(v){ return v==null?'—':(v>=0?'+':'')+Number(v).toFixed(2)+'%'; }
-function slug(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'')||'asset'; }
+function slug(s){ return VeraMktChart.slug(s); }
 function dsId(prov,sym,tf){ return 'mkt.'+prov+'.'+slug(sym)+'.'+tf; }
 function pref(k,v){ if(v===undefined){ try{return JSON.parse(localStorage.getItem('mkt_'+k));}catch(_){return null;} }
   try{localStorage.setItem('mkt_'+k,JSON.stringify(v));}catch(_){}}
@@ -770,40 +770,8 @@ document.querySelectorAll('#dockTabs button').forEach(b=>b.onclick=()=>openDock(
 function toggleForm(id){ $(id).classList.toggle('open'); }
 
 /* ═══════════════════════════════ header lookup ═══════════════════════════ */
-let _lkItems=[], _lkActive=-1;
-const lkInput=debounce(async ()=>{
-  const q=$('lkIn').value.trim();
-  if(q.length<1){ hideLk(); return; }
-  const r=await api('/markets/lookup?query='+encodeURIComponent(q)+'&limit=8');
-  if(!r||r.error) return;
-  _lkItems=r.results||[]; _lkActive=-1; renderLk();
-},250);
-function renderLk(){
-  const el=$('lkList');
-  if(!_lkItems.length){ el.innerHTML='<div class="dd-item muted">no matches</div>'; el.style.display='block'; return; }
-  el.innerHTML=_lkItems.map((it,i)=>
-    `<div class="dd-item${i===_lkActive?' active':''}" data-i="${i}">
-      <span class="cls">${esc((it.asset_class||'?').replace('_',' '))}</span>
-      <b>${esc(it.symbol)}</b>
-      <span class="nm">${esc(it.name||'')}</span>
-      ${it.tracked?'<span class="track">tracked</span>':''}</div>`).join('');
-  el.style.display='block';
-  el.querySelectorAll('.dd-item').forEach(d=>d.onmousedown=e=>{e.preventDefault();pickLk(parseInt(d.dataset.i));});
-}
-function hideLk(){ $('lkList').style.display='none'; }
-function lkKey(e){
-  if($('lkList').style.display==='none') return;
-  if(e.key==='ArrowDown'){ _lkActive=Math.min(_lkItems.length-1,_lkActive+1); renderLk(); e.preventDefault(); }
-  else if(e.key==='ArrowUp'){ _lkActive=Math.max(0,_lkActive-1); renderLk(); e.preventDefault(); }
-  else if(e.key==='Enter'&&_lkActive>=0){ pickLk(_lkActive); e.preventDefault(); }
-  else if(e.key==='Escape') hideLk();
-}
-document.addEventListener('click',e=>{ if(!e.target.closest('.lookup')) hideLk(); });
-async function pickLk(i){
-  const it=_lkItems[i]; if(!it) return;
-  hideLk(); $('lkIn').value='';
-  await loadKey(it.key, null, it);
-}
+/* the search is the shared <vera-mkt-lookup> (markets/chart.js) - the desk chart has the same one; a pick loads the asset here */
+document.getElementById('lkEl').addEventListener('mkt-pick', (e) => { const d = e.detail || {}; if (d.key) loadKey(d.key, null, d.item); });
 
 /* ═══════════════════════════ asset load / fetch ══════════════════════════ */
 function watchRow(key){ return S.watch.find(w=>w.id===key); }
@@ -992,32 +960,11 @@ async function pollJobs(force){
 }
 
 /* ═══════════════════════════ charts (lightweight-charts) ═════════════════ */
-let _lwLoading=null;
-function ensureLw(){
-  if(window.LightweightCharts) return Promise.resolve(true);
-  if(_lwLoading) return _lwLoading;
-  _lwLoading=new Promise(res=>{
-    const urls=['https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js',
-                'https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js'];
-    (function go(i){ if(i>=urls.length){res(false);return;}
-      const s=document.createElement('script'); s.src=urls[i];
-      s.onload=()=>res(!!window.LightweightCharts); s.onerror=()=>go(i+1);
-      document.head.appendChild(s); })(0);
-  });
-  return _lwLoading;
-}
-const CHART_OPTS={
-  /* attributionLogo:false — the TV logo repeated on every indicator sub-pane
-     reads as a watermark; a single credit lives in the status bar instead. */
-  layout:{background:{color:'transparent'},textColor:'#8a7e70',fontSize:10,attributionLogo:false},
-  grid:{vertLines:{color:'rgba(56,51,47,.25)'},horzLines:{color:'rgba(56,51,47,.25)'}},
-  rightPriceScale:{borderColor:'rgba(56,51,47,.6)'},
-  timeScale:{borderColor:'rgba(56,51,47,.6)',timeVisible:true,secondsVisible:false},
-  crosshair:{mode:0},
-};
-function lwCandle(c,o){ return c.addCandlestickSeries?c.addCandlestickSeries(o):c.addSeries(LightweightCharts.CandlestickSeries,o); }
-function lwHist(c,o){ return c.addHistogramSeries?c.addHistogramSeries(o):c.addSeries(LightweightCharts.HistogramSeries,o); }
-function lwLine(c,o){ return c.addLineSeries?c.addLineSeries(o):c.addSeries(LightweightCharts.LineSeries,o); }
+function ensureLw(){ return VeraMktChart.ensureLw(); }
+const CHART_OPTS=VeraMktChart.CHART_OPTS;
+function lwCandle(c,o){ return VeraMktChart.lwCandle(c,o); }
+function lwHist(c,o){ return VeraMktChart.lwHist(c,o); }
+function lwLine(c,o){ return VeraMktChart.lwLine(c,o); }
 
 const CH={ main:null, candle:null, vol:null, overlays:[], subs:[] };
 let _syncing=false;
@@ -1060,8 +1007,7 @@ async function renderChart(fit){
 
   const el=$('paneMain');
   CH.main=LightweightCharts.createChart(el,{...CHART_OPTS,width:el.clientWidth,height:el.clientHeight});
-  CH.candle=lwCandle(CH.main,{upColor:'#3fd0a4',downColor:'#e0705a',borderUpColor:'#3fd0a4',
-    borderDownColor:'#e0705a',wickUpColor:'#3fd0a4',wickDownColor:'#e0705a'});
+  CH.candle=lwCandle(CH.main,VeraMktChart.candleOpts);
   const B=S.bars;
   CH.candle.setData(B.t.map((t,i)=>({time:t,open:B.o[i],high:B.h[i],low:B.l[i],close:B.c[i]})));
   observePane(el,CH.main);
@@ -1083,10 +1029,7 @@ function addSubPane(id,labelHtml){
   CH.subs.push(sub);
   return sub;
 }
-function seriesData(t,vals){
-  /* whitespace items for nulls keep logical indices aligned across panes */
-  return t.map((tt,i)=>vals[i]==null?{time:tt}:{time:tt,value:vals[i]});
-}
+function seriesData(t,vals){ return VeraMktChart.seriesData(t,vals); }
 
 /* ── indicator rendering from config ──
    Data is fetched FIRST and the chart is torn down + rebuilt in one
@@ -1128,83 +1071,16 @@ async function applyIndicators(save){
   if(cfg.volume!==false && B.v.some(x=>x>0)){
     CH.vol=lwHist(CH.main,{priceFormat:{type:'volume'},priceScaleId:'vol'});
     CH.main.priceScale('vol').applyOptions({scaleMargins:{top:0.84,bottom:0}});
-    CH.vol.setData(B.t.map((t,i)=>({time:t,value:B.v[i]||0,
-      color:B.c[i]>=B.o[i]?'rgba(63,208,164,.4)':'rgba(224,112,90,.4)'})));
+    CH.vol.setData(VeraMktChart.volumeData(B));
   }
   if(!r){ redrawOverlay(); return; }
-  const tmap={}; (r.t||[]).forEach((t,i)=>tmap[t]=i);
-  const val=(arr)=>B.t.map(t=>{const i=tmap[t];return i==null?null:arr[i];});
-
-  let ci=0;
-  const range=CH.main.timeScale().getVisibleLogicalRange();
-  const seen=new Set();
-  for(const ind of (r.indicators||[])){
-    if(ind.error||seen.has(ind.id)) continue;
-    seen.add(ind.id);
-    const custom=ind.custom===true;
-    const baseCol=ind.color||'';
-    if(ind.pane==='main'){
-      const names=Object.keys(ind.series||{});
-      const ribbon=ind.kind==='ribbon';
-      names.forEach((nm,k)=>{
-        const col=ribbon?ribbonColor(k,names.length)
-                 :(ind.kind==='bbands'
-                   ?hexA(baseCol||'#7aa2f7',nm==='bb_mid'?0.9:0.45)
-                   :(baseCol||OVERLAY_COLORS[ci%OVERLAY_COLORS.length]));
-        const s=lwLine(CH.main,{color:col,lineWidth:ribbon?1:2,priceLineVisible:false,
-          lastValueVisible:false,crosshairMarkerVisible:false,
-          lineStyle:(ind.kind==='bbands'&&nm!=='bb_mid')?2:0});
-        s.setData(seriesData(B.t,val(ind.series[nm])));
-        CH.overlays.push(s);
-        if(!ribbon) ci++;
-      });
-      if(ribbon) ci++;
-    } else {
-      const title=custom?(ind.label||ind.kind):ind.kind.toUpperCase();
-      const sub=addSubPane(ind.id,'<b>'+esc(title)+'</b> '+esc(paramStr(ind.params)));
-      if(ind.kind==='macd'){
-        const hs=lwHist(sub.chart,{priceLineVisible:false,lastValueVisible:false});
-        const hv=val(ind.series.macd_hist);
-        hs.setData(B.t.map((t,i)=>hv[i]==null?{time:t}:{time:t,value:hv[i],
-          color:hv[i]>=0?'rgba(63,208,164,.55)':'rgba(224,112,90,.55)'}));
-        const m=lwLine(sub.chart,{color:baseCol||'#7aa2f7',lineWidth:2,priceLineVisible:false,lastValueVisible:false});
-        m.setData(seriesData(B.t,val(ind.series.macd)));
-        const sg=lwLine(sub.chart,{color:'#e8b34d',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
-        sg.setData(seriesData(B.t,val(ind.series.macd_signal)));
-      } else if(ind.kind==='stoch'){
-        const k=lwLine(sub.chart,{color:baseCol||'#7aa2f7',lineWidth:2,priceLineVisible:false,lastValueVisible:false});
-        k.setData(seriesData(B.t,val(ind.series.stoch_k)));
-        const d=lwLine(sub.chart,{color:'#e8b34d',lineWidth:1,priceLineVisible:false,lastValueVisible:false});
-        d.setData(seriesData(B.t,val(ind.series.stoch_d)));
-        [20,80].forEach(lv=>k.createPriceLine({price:lv,color:'rgba(138,126,112,.5)',lineWidth:1,lineStyle:2,axisLabelVisible:false}));
-      } else if(ind.kind==='rsi'){
-        const s=lwLine(sub.chart,{color:baseCol||'#b48ead',lineWidth:2,priceLineVisible:false,lastValueVisible:false});
-        s.setData(seriesData(B.t,val(ind.series.rsi)));
-        [30,70].forEach(lv=>s.createPriceLine({price:lv,color:'rgba(138,126,112,.5)',lineWidth:1,lineStyle:2,axisLabelVisible:false}));
-      } else {
-        Object.keys(ind.series||{}).forEach((nm,k)=>{
-          const s=lwLine(sub.chart,{color:k===0?(baseCol||'#5ec9b8'):OVERLAY_COLORS[k%OVERLAY_COLORS.length],
-            lineWidth:k===0?2:1,priceLineVisible:false,lastValueVisible:false});
-          s.setData(seriesData(B.t,val(ind.series[nm])));
-        });
-      }
-      if(range){ try{sub.chart.timeScale().setVisibleLogicalRange(range);}catch(_){} }
-    }
-  }
+  VeraMktChart.drawIndicators({ main:CH.main, bars:B, result:r, addSub:addSubPane, overlays:CH.overlays, esc });
   redrawOverlay();
 }
-function hexA(hex,a){
-  const m=/^#?([0-9a-f]{6})$/i.exec(hex||'');
-  if(!m) return hex;
-  const n=parseInt(m[1],16);
-  return 'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')';
-}
-function ribbonColor(i,n){ /* sequential teal→blue ramp by period order */
-  const t=n<=1?0:i/(n-1);
-  return 'hsl('+(170-40*t)+' 45% '+(62-26*t)+'%)';
-}
-function paramStr(p){ return Object.entries(p||{}).filter(([k])=>k!=='periods')
-  .map(([k,v])=>k+'='+v).join(' ').slice(0,40); }
+
+function hexA(hex,a){ return VeraMktChart.hexA(hex,a); }
+function ribbonColor(i,n){ return VeraMktChart.ribbonColor(i,n); }
+function paramStr(p){ return VeraMktChart.paramStr(p); }
 
 /* ═══════════════════════════ indicator config tab ════════════════════════ */
 const IND_PARAM_DEFS={
@@ -2163,13 +2039,9 @@ function btStatsHtml(s){
     (s.sqn!=null?cell(s.sqn,'SQN',cls(s.sqn)):cell(s.sortino??'—','sortino',cls(s.sortino)))+
     cell(esc(s.engine||'native'),'engine');
 }
+/* the rows are the shared ones (markets/chart.js VeraMktChart.rows): the desk chart's Backtests tab draws the same */
 function btTradesRows(trades){
-  return (trades||[]).slice(-40).reverse().map(t=>{
-    const d1=new Date(t.entry_t*1000).toISOString().slice(0,10);
-    const d2=t.exit_t?new Date(t.exit_t*1000).toISOString().slice(0,10):'—';
-    return `<tr><td>${d1}</td><td>${d2}</td>
-      <td class="${t.ret_pct>0?'pos':'neg'}">${fmtPct(t.ret_pct)}</td><td class="tx">${esc(t.reason||'')}</td></tr>`;
-  }).join('')||'<tr><td colspan="4" class="tx muted">no trades</td></tr>';
+  return VeraMktChart.rows.trades(trades,{esc,fmtPct});
 }
 function btShowResult(r){
   $('btResCard').style.display='block';
@@ -2182,15 +2054,7 @@ async function btLoadList(){
   const r=await api('/markets/backtest/list?limit=15');
   const el=$('btList');
   if(!r||!(r.backtests||[]).length){ el.innerHTML='<span class="muted">No results yet.</span>'; return; }
-  el.innerHTML=r.backtests.map(b=>{
-    const s=b.stats||{};
-    return `<div style="display:flex;gap:6px;align-items:center;padding:3px 0;font-size:10.5px;cursor:pointer"
-      data-btid="${b.id}">
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        <b>${esc(b.name)}</b> <span class="muted">${esc(b.dataset_id)}</span></span>
-      <span class="${(s.total_return_pct||0)>=0?'pos':'neg'}" style="font-family:var(--mono)">${fmtPct(s.total_return_pct)}</span>
-    </div>`;
-  }).join('');
+  el.innerHTML=VeraMktChart.rows.backtests(r.backtests,{esc,fmtPct});
   el.querySelectorAll('[data-btid]').forEach(x=>x.onclick=()=>btOpen(x.dataset.btid));
 }
 async function btOpen(id){
@@ -2976,17 +2840,7 @@ function pipeTemplate(){
 /* ── signal markers on the main chart (lightweight-charts v4 + v5 APIs) ── */
 function setSignalMarkers(entries,exits){
   if(!CH.candle) return;
-  const mk=[
-    ...(entries||[]).map(t=>({time:t,position:'belowBar',color:'#3fd0a4',shape:'arrowUp'})),
-    ...(exits||[]).map(t=>({time:t,position:'aboveBar',color:'#e0705a',shape:'arrowDown'})),
-  ].sort((a,b)=>a.time-b.time);
-  try{
-    if(typeof CH.candle.setMarkers==='function') CH.candle.setMarkers(mk);
-    else if(window.LightweightCharts&&LightweightCharts.createSeriesMarkers){
-      if(_sigMarkers&&_sigMarkers.setMarkers) _sigMarkers.setMarkers(mk);
-      else _sigMarkers=LightweightCharts.createSeriesMarkers(CH.candle,mk);
-    }
-  }catch(_){}
+  _sigMarkers=VeraMktChart.setMarkers(CH.candle,entries,exits,_sigMarkers);
 }
 
 /* ── parameter sweep (grid optimizer) ── */

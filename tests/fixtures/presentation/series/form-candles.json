@@ -1,0 +1,59 @@
+{
+ "cap": "markets.chart",
+ "args": {
+  "symbol": "btc",
+  "timeframe": "1d"
+ },
+ "presentation": {
+  "kind": "series",
+  "form": "candles",
+  "map": {
+   "bars": "bars"
+  },
+  "views": [
+   "table"
+  ],
+  "title": "{symbol} · {timeframe}",
+  "empty": "no stored bars for {symbol}",
+  "status": "declared"
+ },
+ "result": {
+  "symbol": "BTC-USD",
+  "key": "yahoo:BTC-USD",
+  "provider": "yahoo",
+  "timeframe": "1d",
+  "last": 2.5,
+  "change_pct": 1.2,
+  "count": 2,
+  "bars": [
+   {
+    "t": 1,
+    "open": 1,
+    "high": 2,
+    "low": 0.5,
+    "close": 1.5,
+    "volume": 3
+   },
+   {
+    "t": 2,
+    "open": 1.5,
+    "high": 2.5,
+    "low": 1,
+    "close": 2,
+    "volume": 4
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "series",
+  "title": "btc · 1d",
+  "forms": [
+   "candles"
+  ],
+  "first": {
+   "symbol": "BTC-USD",
+   "provider": "yahoo"
+  }
+ }
+}

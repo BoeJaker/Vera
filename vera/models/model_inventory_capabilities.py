@@ -87,6 +87,7 @@ async def _read_nlp_inventory() -> tuple[dict[str, Any] | None, dict[str, str]]:
 
 @capability(
     "model.inventory",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "counts"}, "title": "Counts"}, {"kind": "table", "form": "table", "map": {"rows": "candidates"}, "draw": {"columns": ["task", "model", "format", "status", "blockers"]}, "title": "Unresolved candidates", "empty": "No unresolved candidates"}]}},
     http_method="GET",
     http_path="/models/inventory",
     http_tags=["models", "inventory"],

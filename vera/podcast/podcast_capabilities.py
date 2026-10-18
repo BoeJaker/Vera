@@ -864,6 +864,7 @@ async def cap_podcast_status(job_id: str = "", trace_id=None) -> dict:
 
 @capability(
     "podcast.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "episodes"}, "draw": {"columns": ["title", "style", "duration_s", "format", "size_bytes", "created"]}, "empty": "No episodes yet"}},
     http_method="GET", http_path="/podcast/list", http_tags=["podcast"],
     memory="off", silent=True,
     description="List generated podcast episodes (newest first). Input: limit (int). "
@@ -931,6 +932,7 @@ async def cap_podcast_delete(episode_id: str = "", trace_id=None) -> dict:
 
 @capability(
     "podcast.settings.get",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "Defaults"}, {"kind": "table", "form": "table", "map": {"rows": "speakers"}, "draw": {"columns": ["name", "voice", "persona"]}, "title": "Speakers", "empty": "No speakers"}]}},
     http_method="GET", http_path="/podcast/settings", http_tags=["podcast"],
     memory="off", silent=True,
     description="Get the persisted podcast defaults (speakers/voices, style, minutes, gap_ms, "

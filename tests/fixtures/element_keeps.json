@@ -1,0 +1,1070 @@
+{
+ "markdown@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-md",
+   "vc-pre",
+   "vc-table",
+   "vc-tablewrap"
+  ],
+  "words": [
+   "Vector databases",
+   "pgvector",
+   "Qdrant"
+  ]
+ },
+ "markdown@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-md",
+   "vc-pre",
+   "vc-table",
+   "vc-tablewrap"
+  ],
+  "words": [
+   "Vector databases",
+   "pgvector",
+   "Qdrant"
+  ]
+ },
+ "calendar@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-cal-day",
+   "data-cal-key",
+   "data-cal-mv"
+  ],
+  "cls": [
+   "vc-cal",
+   "vc-cal-b",
+   "vc-cal-d",
+   "vc-cal-dots",
+   "vc-cal-e",
+   "vc-cal-g",
+   "vc-cal-hd",
+   "vc-cal-in",
+   "vc-cal-l",
+   "vc-cal-m",
+   "vc-cal-n",
+   "vc-cal-sp",
+   "vc-cal-t",
+   "vc-cal-w"
+  ],
+  "words": [
+   "Standup"
+  ]
+ },
+ "calendar@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-cal-day",
+   "data-cal-key",
+   "data-cal-mv"
+  ],
+  "cls": [
+   "vc-cal",
+   "vc-cal-b",
+   "vc-cal-d",
+   "vc-cal-dots",
+   "vc-cal-e",
+   "vc-cal-g",
+   "vc-cal-hd",
+   "vc-cal-in",
+   "vc-cal-l",
+   "vc-cal-m",
+   "vc-cal-n",
+   "vc-cal-sp",
+   "vc-cal-t",
+   "vc-cal-w"
+  ],
+  "words": [
+   "Standup"
+  ]
+ },
+ "timeline@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-i",
+   "data-tl-go"
+  ],
+  "cls": [
+   "vc-tl",
+   "vc-tl-ax",
+   "vc-tl-dot",
+   "vc-tl-e",
+   "vc-tl-gap",
+   "vc-tl-h",
+   "vc-tl-list",
+   "vc-tl-ln",
+   "vc-tl-t",
+   "vc-tl-tick",
+   "vc-tl-w",
+   "vc-tl-y"
+  ],
+  "words": [
+   "The first release",
+   "Census started"
+  ]
+ },
+ "timeline@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-i",
+   "data-tl-go"
+  ],
+  "cls": [
+   "vc-tl",
+   "vc-tl-ax",
+   "vc-tl-dot",
+   "vc-tl-e",
+   "vc-tl-gap",
+   "vc-tl-h",
+   "vc-tl-list",
+   "vc-tl-ln",
+   "vc-tl-t",
+   "vc-tl-tick",
+   "vc-tl-w",
+   "vc-tl-y"
+  ],
+  "words": [
+   "The first release",
+   "Census started"
+  ]
+ },
+ "source@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-src-act",
+   "data-src-key"
+  ],
+  "cls": [
+   "vc-src",
+   "vc-src-act",
+   "vc-src-b",
+   "vc-src-dom",
+   "vc-src-hd",
+   "vc-src-n",
+   "vc-src-s",
+   "vc-src-t"
+  ],
+  "words": [
+   "Qdrant 1.9"
+  ]
+ },
+ "source@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-src-act",
+   "data-src-key"
+  ],
+  "cls": [
+   "vc-src",
+   "vc-src-act",
+   "vc-src-b",
+   "vc-src-dom",
+   "vc-src-hd",
+   "vc-src-n",
+   "vc-src-s",
+   "vc-src-t"
+  ],
+  "words": [
+   "Qdrant 1.9"
+  ]
+ },
+ "code@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-code",
+   "data-line",
+   "data-path"
+  ],
+  "cls": [
+   "vc-code",
+   "vc-codewrap",
+   "vc-line",
+   "vc-lno",
+   "vc-pre"
+  ],
+  "words": [
+   "probe.py"
+  ]
+ },
+ "code@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-code",
+   "data-line",
+   "data-path"
+  ],
+  "cls": [
+   "vc-code",
+   "vc-codewrap",
+   "vc-line",
+   "vc-lno",
+   "vc-pre"
+  ],
+  "words": [
+   "probe.py"
+  ]
+ },
+ "explode@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-key",
+   "data-live",
+   "data-w"
+  ],
+  "cls": [
+   "vc-dim",
+   "vc-live",
+   "vc-xp"
+  ],
+  "words": []
+ },
+ "explode@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-key",
+   "data-live",
+   "data-w"
+  ],
+  "cls": [
+   "vc-dim",
+   "vc-live",
+   "vc-xp"
+  ],
+  "words": []
+ },
+ "diagram@m": {
+  "chars": true,
+  "declared": [
+   "act:dgcopy",
+   "act:dgopen",
+   "act:dgsrc"
+  ],
+  "acts": [],
+  "data": [
+   "data-key",
+   "data-live",
+   "data-title",
+   "data-w"
+  ],
+  "cls": [
+   "vc-cap",
+   "vc-dgsrc",
+   "vc-diag",
+   "vc-dim",
+   "vc-live",
+   "vc-pre"
+  ],
+  "words": [
+   "Search",
+   "the lookup"
+  ]
+ },
+ "diagram@xl": {
+  "chars": true,
+  "declared": [
+   "act:dgcopy",
+   "act:dgopen",
+   "act:dgsrc"
+  ],
+  "acts": [],
+  "data": [
+   "data-key",
+   "data-live",
+   "data-title",
+   "data-w"
+  ],
+  "cls": [
+   "vc-cap",
+   "vc-dgsrc",
+   "vc-diag",
+   "vc-dim",
+   "vc-live",
+   "vc-pre"
+  ],
+  "words": [
+   "Search",
+   "the lookup"
+  ]
+ },
+ "image@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-fig"
+  ],
+  "words": [
+   "render 04"
+  ]
+ },
+ "image@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-fig"
+  ],
+  "words": [
+   "render 04"
+  ]
+ },
+ "note@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-by",
+   "vc-note"
+  ],
+  "words": [
+   "Remember the gate"
+  ]
+ },
+ "note@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-by",
+   "vc-note"
+  ],
+  "words": [
+   "Remember the gate"
+  ]
+ },
+ "records@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-rec-act",
+   "data-rec-arg",
+   "data-rec-key",
+   "data-rec-q",
+   "data-rec-stop"
+  ],
+  "cls": [
+   "vc-rbx",
+   "vc-rbx-b",
+   "vc-rbx-facets",
+   "vc-rbx-fav",
+   "vc-rbx-foot",
+   "vc-rbx-glance",
+   "vc-rbx-h",
+   "vc-rbx-hd",
+   "vc-rbx-ic",
+   "vc-rbx-list",
+   "vc-rbx-map",
+   "vc-rbx-nbtn",
+   "vc-rbx-pg",
+   "vc-rbx-q",
+   "vc-rbx-row",
+   "vc-rbx-s",
+   "vc-rbx-seg",
+   "vc-rbx-sub",
+   "vc-rbx-t",
+   "vc-rbx-tl",
+   "vc-rbx-tlb",
+   "vc-rbx-tools",
+   "vc-rbx-top",
+   "vc-rbx-tt"
+  ],
+  "words": [
+   "Page 0",
+   "Page 4"
+  ]
+ },
+ "records@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-rec-act",
+   "data-rec-arg",
+   "data-rec-key",
+   "data-rec-q",
+   "data-rec-stop"
+  ],
+  "cls": [
+   "vc-rbx",
+   "vc-rbx-b",
+   "vc-rbx-facets",
+   "vc-rbx-fav",
+   "vc-rbx-foot",
+   "vc-rbx-glance",
+   "vc-rbx-h",
+   "vc-rbx-hd",
+   "vc-rbx-ic",
+   "vc-rbx-list",
+   "vc-rbx-map",
+   "vc-rbx-nbtn",
+   "vc-rbx-pg",
+   "vc-rbx-q",
+   "vc-rbx-row",
+   "vc-rbx-s",
+   "vc-rbx-seg",
+   "vc-rbx-sub",
+   "vc-rbx-t",
+   "vc-rbx-tl",
+   "vc-rbx-tlb",
+   "vc-rbx-tools",
+   "vc-rbx-top",
+   "vc-rbx-tt"
+  ],
+  "words": [
+   "Page 0",
+   "Page 4"
+  ]
+ },
+ "table@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-cap",
+   "vc-table",
+   "vc-tablewrap"
+  ],
+  "words": [
+   "ct120",
+   "load"
+  ]
+ },
+ "table@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-cap",
+   "vc-table",
+   "vc-tablewrap"
+  ],
+  "words": [
+   "ct120",
+   "load"
+  ]
+ },
+ "widget@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-badge",
+   "vc-dim",
+   "vc-rec"
+  ],
+  "words": []
+ },
+ "widget@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-badge",
+   "vc-dim",
+   "vc-rec"
+  ],
+  "words": []
+ },
+ "session@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-out",
+   "vc-pre",
+   "vc-ran",
+   "vc-ran-cmd",
+   "vc-term"
+  ],
+  "words": [
+   "uptime"
+  ]
+ },
+ "session@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-out",
+   "vc-pre",
+   "vc-ran",
+   "vc-ran-cmd",
+   "vc-term"
+  ],
+  "words": [
+   "uptime"
+  ]
+ },
+ "notebook@m": {
+  "chars": true,
+  "declared": [
+   "act:nbopen",
+   "act:nbrun"
+  ],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-nb",
+   "vc-nbout",
+   "vc-out",
+   "vc-pre"
+  ],
+  "words": []
+ },
+ "notebook@xl": {
+  "chars": true,
+  "declared": [
+   "act:nbopen",
+   "act:nbrun"
+  ],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-nb",
+   "vc-nbout",
+   "vc-out",
+   "vc-pre"
+  ],
+  "words": []
+ },
+ "panel@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [
+   "psend"
+  ],
+  "data": [
+   "data-f",
+   "data-key",
+   "data-live",
+   "data-src",
+   "data-w"
+  ],
+  "cls": [
+   "vc-bridge",
+   "vc-frame",
+   "vc-live",
+   "vc-out",
+   "vc-panel",
+   "vc-pq",
+   "vc-pre"
+  ],
+  "words": []
+ },
+ "panel@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [
+   "psend"
+  ],
+  "data": [
+   "data-f",
+   "data-key",
+   "data-live",
+   "data-src",
+   "data-w"
+  ],
+  "cls": [
+   "vc-bridge",
+   "vc-frame",
+   "vc-live",
+   "vc-out",
+   "vc-panel",
+   "vc-pq",
+   "vc-pre"
+  ],
+  "words": []
+ },
+ "loop@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-badge",
+   "vc-dim",
+   "vc-loop",
+   "vc-loop-h",
+   "vc-steps"
+  ],
+  "words": [
+   "fix the flaky test"
+  ]
+ },
+ "loop@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-badge",
+   "vc-dim",
+   "vc-loop",
+   "vc-loop-h",
+   "vc-steps"
+  ],
+  "words": [
+   "fix the flaky test"
+  ]
+ },
+ "activity@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-act",
+   "vc-act-dot",
+   "vc-act-h",
+   "vc-act-l",
+   "vc-act-n"
+  ],
+  "words": [
+   "web.search"
+  ]
+ },
+ "activity@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-act",
+   "vc-act-dot",
+   "vc-act-h",
+   "vc-act-l",
+   "vc-act-n"
+  ],
+  "words": [
+   "web.search"
+  ]
+ },
+ "research@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-p",
+   "data-rec-act",
+   "data-rec-arg",
+   "data-rec-key",
+   "data-rec-q",
+   "data-rec-stop",
+   "data-rr-tab",
+   "data-w"
+  ],
+  "cls": [
+   "vc-pre",
+   "vc-rbx",
+   "vc-rbx-fav",
+   "vc-rbx-foot",
+   "vc-rbx-h",
+   "vc-rbx-hd",
+   "vc-rbx-ic",
+   "vc-rbx-list",
+   "vc-rbx-pg",
+   "vc-rbx-q",
+   "vc-rbx-row",
+   "vc-rbx-s",
+   "vc-rbx-seg",
+   "vc-rbx-sub",
+   "vc-rbx-t",
+   "vc-rbx-tools",
+   "vc-rbx-top",
+   "vc-rbx-tt",
+   "vc-rr",
+   "vc-rr-body",
+   "vc-rr-chips",
+   "vc-rr-doc",
+   "vc-rr-dot",
+   "vc-rr-hd",
+   "vc-rr-lay",
+   "vc-rr-n",
+   "vc-rr-p",
+   "vc-rr-q",
+   "vc-rr-sp",
+   "vc-rr-tab",
+   "vc-rr-tabs",
+   "vc-rr-wait",
+   "vc-table",
+   "vc-tablewrap"
+  ],
+  "words": [
+   "Vector databases"
+  ]
+ },
+ "research@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-p",
+   "data-rec-act",
+   "data-rec-arg",
+   "data-rec-key",
+   "data-rec-q",
+   "data-rec-stop",
+   "data-rr-tab",
+   "data-w"
+  ],
+  "cls": [
+   "vc-pre",
+   "vc-rbx",
+   "vc-rbx-fav",
+   "vc-rbx-foot",
+   "vc-rbx-h",
+   "vc-rbx-hd",
+   "vc-rbx-ic",
+   "vc-rbx-list",
+   "vc-rbx-pg",
+   "vc-rbx-q",
+   "vc-rbx-row",
+   "vc-rbx-s",
+   "vc-rbx-seg",
+   "vc-rbx-sub",
+   "vc-rbx-t",
+   "vc-rbx-tools",
+   "vc-rbx-top",
+   "vc-rbx-tt",
+   "vc-rr",
+   "vc-rr-body",
+   "vc-rr-chips",
+   "vc-rr-doc",
+   "vc-rr-dot",
+   "vc-rr-hd",
+   "vc-rr-lay",
+   "vc-rr-n",
+   "vc-rr-p",
+   "vc-rr-q",
+   "vc-rr-sp",
+   "vc-rr-tab",
+   "vc-rr-tabs",
+   "vc-rr-wait",
+   "vc-table",
+   "vc-tablewrap"
+  ],
+  "words": [
+   "Vector databases"
+  ]
+ },
+ "entities@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [
+   "entopen"
+  ],
+  "data": [
+   "data-ent",
+   "data-w"
+  ],
+  "cls": [
+   "vc-chip",
+   "vc-ent",
+   "vc-ent-cs",
+   "vc-ent-g",
+   "vc-ent-gl"
+  ],
+  "words": [
+   "Qdrant",
+   "pgvector"
+  ]
+ },
+ "entities@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [
+   "entopen"
+  ],
+  "data": [
+   "data-ent",
+   "data-w"
+  ],
+  "cls": [
+   "vc-chip",
+   "vc-ent",
+   "vc-ent-cs",
+   "vc-ent-g",
+   "vc-ent-gl"
+  ],
+  "words": [
+   "Qdrant",
+   "pgvector"
+  ]
+ },
+ "json@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-json",
+   "vc-json-t"
+  ],
+  "words": [
+   "ct126"
+  ]
+ },
+ "json@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-json",
+   "vc-json-t"
+  ],
+  "words": [
+   "ct126"
+  ]
+ },
+ "kv@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-kv",
+   "vc-kv-g"
+  ],
+  "words": [
+   "ct126",
+   "cores"
+  ]
+ },
+ "kv@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-kv",
+   "vc-kv-g"
+  ],
+  "words": [
+   "ct126",
+   "cores"
+  ]
+ },
+ "chat@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-chat",
+   "vc-json-t",
+   "vc-md",
+   "vc-msg",
+   "vc-who"
+  ],
+  "words": [
+   "pgvector"
+  ]
+ },
+ "chat@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-w"
+  ],
+  "cls": [
+   "vc-chat",
+   "vc-json-t",
+   "vc-md",
+   "vc-msg",
+   "vc-who"
+  ],
+  "words": [
+   "pgvector"
+  ]
+ },
+ "_many@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-many",
+   "vc-note"
+  ],
+  "words": [
+   "one",
+   "two"
+  ]
+ },
+ "_many@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-many",
+   "vc-note"
+  ],
+  "words": [
+   "one",
+   "two"
+  ]
+ },
+ "result@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-as",
+   "data-w"
+  ],
+  "cls": [
+   "vc-kv",
+   "vc-kv-g",
+   "vc-res"
+  ],
+  "words": [
+   "abc123"
+  ]
+ },
+ "result@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [
+   "data-as",
+   "data-w"
+  ],
+  "cls": [
+   "vc-kv",
+   "vc-kv-g",
+   "vc-res"
+  ],
+  "words": [
+   "abc123"
+  ]
+ },
+ "schedule@m": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-badge",
+   "vc-stub"
+  ],
+  "words": [
+   "backup"
+  ]
+ },
+ "schedule@xl": {
+  "chars": true,
+  "declared": [],
+  "acts": [],
+  "data": [],
+  "cls": [
+   "vc-badge",
+   "vc-stub"
+  ],
+  "words": [
+   "backup"
+  ]
+ },
+ "html@m": {
+  "chars": true,
+  "declared": [
+   "act:cprev"
+  ],
+  "acts": [],
+  "data": [
+   "data-key",
+   "data-lang",
+   "data-live"
+  ],
+  "cls": [
+   "vc-codewrap",
+   "vc-dim",
+   "vc-live",
+   "vc-preview"
+  ],
+  "words": []
+ },
+ "html@xl": {
+  "chars": true,
+  "declared": [
+   "act:cprev"
+  ],
+  "acts": [],
+  "data": [
+   "data-key",
+   "data-lang",
+   "data-live"
+  ],
+  "cls": [
+   "vc-codewrap",
+   "vc-dim",
+   "vc-live",
+   "vc-preview"
+  ],
+  "words": []
+ }
+}

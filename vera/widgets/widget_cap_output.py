@@ -13,9 +13,14 @@ The rules (see widget_element.js for the long form): error . terminal . media . 
 progress . events . series . files . level . prose . status . table . list . numbers . record . json . text.
 
 The result forms it picks from (CAP_FORMS) are all in widget_record.FORMS.
+
+present() below is the mirror of VeraWidget.present (a declared presentation first); its timeline, matrix and parts kinds
+(DA-01e) read onto the gantt, the heat map / status matrix and the donut.
 """
 from __future__ import annotations
 
+import calendar
+import math
 import re
 from typing import Any, Dict, List, Optional
 
@@ -23,42 +28,13 @@ CAP_FORMS = ("kv", "table", "list", "json", "log", "terminal", "diff", "code", "
              "column", "status", "files", "media", "error", "markdown", "reading")
 
 # the capability's own hint: what the dashboard already reads each of these as (kept in step with CAP_HINTS in the element)
+# The capabilities' own widget hints are declarations on them now (DA-01d): Contract v2 presentation {kind, form, map,
+# draw}, read first by present(). This table is for an answer no capability declares a drawing for - empty today.
 CAP_HINTS: Dict[str, Dict[str, Any]] = {
-    "markets.chart": {"form": "candles", "map": {"bars": "bars"}},   # a symbol's candles (canvas enrichment, slice 5)
-    "sysmon.history": {"form": "trace", "map": {"series": "samples", "v": "cpu"}},
-    "sysmon.status": {"form": "numbers", "map": {"pick": {"cpu": "resources.cpu", "memory": "resources.mem", "guests": "proxmox.running", "containers": "docker.running"}}},
-    "obs.events": {"form": "log", "map": {"events": "$", "t": "ts", "kind": "type", "text": "name"}},
-    "ollama.request_log": {"form": "log", "map": {"events": "entries", "t": "ts", "kind": "instance", "text": "model"}},
-    "ollama.route_stats": {"form": "ranked", "map": {"values": "stats", "count": "model", "sum": "n"}},
-    "obs.node_temps": {"form": "temps", "map": {"values": "hosts", "name": "label", "value": "max_c"}},
-    "evolve.activity": {"form": "area", "map": {"series": "buckets", "split": ["pass", "fail"], "t": "hour"}},
-    "evolve.pipeline.list": {"form": "status-matrix"},
-    "evolve.unittest.history": {"form": "race-green"},
-    "perf.stalls": {"form": "column", "map": {"values": "events", "value": "stalled_ms", "reverse": True}},
-    "syslog.errors": {"form": "log", "map": {"events": "warnings", "t": "ts", "kind": "cap_group", "text": "message"}},
-    "dash.health.summary": {"form": "pills", "map": {"values": "$", "entries": "status"}},
-    "obs.modules": {"form": "treemap", "map": {"parts": "modules", "name": "name", "value": "caps_added"}},
-    "estate.health": {"form": "status"}, "perf.scan": {"form": "status"}, "obs.health": {"form": "status"},
-    "backup.status": {"form": "table", "map": {"rows": "guests"}, "draw": {"columns": ["name", "status", "state", "backups"]}},
-    "docker.ps": {"form": "containers", "map": {"rows": "containers", "name": "Names", "status": "State", "host": "host_id"}},
-    "evolve.sandbox.list": {"form": "sandboxes", "map": {"rows": "sandboxes", "name": "name", "status": "running"}},
-    "dream.history": {"form": "table", "map": {"rows": "history"}, "draw": {"columns": ["label", "title", "started_at", "signal"]}},
-    "fabric.graphs.snapshot": {"form": "vgraph"}, "fabric.entity_graph.snapshot": {"form": "vgraph"}, "memory.graph_full": {"form": "vgraph"},
-    "topology.snapshot": {"form": "vgraph"}, "mesh.topology": {"form": "vgraph"}, "cal.events.list": {"form": "schedule"},
-    "exec.bash.run": {"form": "terminal"}, "code.read": {"form": "code"}, "code.diff": {"form": "diff"},
-    "evolve.pipeline.diff": {"form": "diff"}, "evolve.sandbox.diff": {"form": "diff"},
-    # the Loop Lab's pictures: ci.* (code work), loop.ci.* (the agentic loop), and the Loop Lab's own capabilities
-    "ci.matrix": {"form": "status-matrix"}, "ci.race": {"form": "race-green"}, "ci.tests": {"form": "test-grid"},
-    "ci.board": {"form": "ci-board"}, "ci.track": {"form": "run-track"}, "ci.compare": {"form": "run-compare"},
-    "ci.pulse": {"form": "ci-pulse"}, "ci.fleet": {"form": "ci-fleet"}, "ci.run": {"form": "ci-run"},
-    "ci.census": {"form": "census-commits"}, "loop.ci.perf": {"form": "loop-perf"}, "census.live": {"form": "census-live"},
-    "loop.ci.matrix": {"form": "status-matrix"}, "loop.ci.race": {"form": "race-green"}, "loop.ci.board": {"form": "ci-board"},
-    "evolve.pipeline.get": {"form": "run-track"}, "evolve.tasks.overview": {"form": "status-matrix"},
-    "workshop.agent_loop.trace": {"form": "status-matrix"}, "board.items": {"form": "ci-board"},
 }
 #: the CI forms draw their answer whole (ci_view_core's payload): no rows companion beside them
 CI_FORMS = ("status-matrix", "race-green", "test-grid", "ci-board", "run-track", "run-compare", "ci-pulse", "ci-fleet", "ci-run",
-            "census-commits", "loop-perf", "census-live", "census-timeline", "trend-layers")
+            "census-commits", "element", "loop-perf", "census-live", "census-timeline", "trend-layers")
 _ROW_KEYS = ("data", "result", "items", "rows", "results", "entries", "events", "points", "series", "values")
 _TIME = ("t", "ts", "time", "when", "at", "timestamp", "created_at", "started_at", "hour", "date")
 _TEXT = ("text", "msg", "message", "line", "event", "summary", "title")
@@ -80,7 +56,13 @@ def _num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
-def _hint(cap: str) -> Optional[Dict[str, Any]]:
+def _hint(cap: str, presentation: Optional[dict] = None) -> Optional[Dict[str, Any]]:
+    # the capability's declared form first (DA-01d: the hints are Contract v2 presentation declarations now)
+    if isinstance(presentation, dict) and isinstance(presentation.get("form"), str) and presentation.get("form"):
+        h = {"form": presentation["form"], "map": dict(presentation.get("map") or {})}
+        if isinstance(presentation.get("draw"), dict):
+            h["draw"] = presentation["draw"]
+        return h
     if cap in CAP_HINTS:
         return CAP_HINTS[cap]
     if re.search(r"\.(diff|patch)$", cap):
@@ -157,7 +139,7 @@ def _checks(d: Any) -> List[dict]:
 
 
 def from_cap_result(cap: str, result: Any, args: Optional[dict] = None, title: str = "", size: str = "l",
-                    max_records: int = 3) -> List[Dict[str, Any]]:
+                    max_records: int = 3, presentation: Optional[dict] = None) -> List[Dict[str, Any]]:
     """The widget record(s) that draw a capability's answer, best first (the mirror of VeraWidget.fromCapResult)."""
     c = result
     if _is_obj(c) and c.get("type") == "tool_result" and "content" in c:
@@ -218,7 +200,7 @@ def from_cap_result(cap: str, result: Any, args: Optional[dict] = None, title: s
         mk("code", c, "source: code, or a file's content")
         return done()
     # 6 the capability's hint
-    h = _hint(cap)
+    h = _hint(cap, presentation)
     if h:
         r = mk(h["form"], c, "the " + cap + " hint", h.get("map"), h.get("draw"))
         if h["form"] not in CI_FORMS:
@@ -330,3 +312,829 @@ def from_cap_result(cap: str, result: Any, args: Optional[dict] = None, title: s
         mk("hero", {"value": c}, "a number")
         return done()
     return done()
+
+
+# ── present(): ONE reading of an answer for the desk (DA-02b - the mirror of VeraWidget.present, vera/widgets/present.js;
+#    DESK-SPINE-DESIGN.md §2). A declared presentation (Contract v2, DA-01) decides exactly; else from_cap_result's hint
+#    and shape rules, unchanged and read as one kind; nothing drawable -> records [] and element 'none'. The shared
+#    fixtures tests/fixtures/presentation/ run on both sides and must agree. ───────────────────────────────────────────
+import json as _json  # noqa: E402
+
+PRESENT_KINDS: Dict[str, Dict[str, Any]] = {
+    "table": {"element": "table", "form": "table", "content": ["rows"], "views": ["table", "cards", "list", "chart", "graph"]},
+    "records": {"element": "records", "form": "reading", "content": ["rows"], "views": ["list", "cards", "table", "graph"]},
+    "reading": {"element": "records", "form": "reading", "content": ["rows"], "views": ["list", "cards", "table", "graph"]},
+    "document": {"element": "markdown", "form": "markdown", "content": ["body"], "views": ["document", "outline"]},
+    "status": {"element": "widget", "form": "status", "content": ["verdict"], "views": ["status", "table"]},
+    "metric": {"element": "widget", "form": "hero", "content": ["value"], "views": ["hero", "ring", "trace"]},
+    "series": {"element": "widget", "form": "trace", "content": ["points"], "views": ["trace", "area", "column", "table"]},
+    "graph": {"element": "widget", "form": "vgraph", "content": ["nodes"], "views": ["graph", "table"]},
+    "log": {"element": "widget", "form": "log", "content": ["events"], "views": ["log", "table", "pareto"]},
+    "progress": {"element": "widget", "form": "progress", "content": ["steps"], "views": ["progress", "log"]},
+    "terminal": {"element": "session", "form": "terminal", "content": ["stdout"], "views": ["terminal"]},
+    "media": {"element": "image", "form": "media", "content": ["url", "b64"], "views": ["media", "gallery"]},
+    "code": {"element": "code", "form": "code", "content": ["code"], "views": ["code", "explode"]},
+    "diff": {"element": "code", "form": "diff", "content": ["diff"], "views": ["diff", "split"]},
+    "kv": {"element": "kv", "form": "kv", "content": ["fields"], "views": ["tiles", "rows", "graph"]},
+    "calendar": {"element": "calendar", "form": "schedule", "content": ["events"], "views": ["month", "agenda", "schedule"]},
+    "timeline": {"element": "widget", "form": "gantt", "content": ["spans"], "views": ["gantt", "stepper", "table"]},
+    "matrix": {"element": "widget", "form": "heat", "content": ["cells"], "views": ["heat", "matrix", "table"]},
+    "parts": {"element": "widget", "form": "donut", "content": ["parts"], "views": ["donut", "treemap", "waffle", "table"]},
+    "entities": {"element": "entities", "form": "pills", "content": ["groups", "entities"], "views": ["chips", "list", "graph"]},
+    "receipt": {"element": "receipt", "form": "", "content": [], "views": []},
+    "job": {"element": "job", "form": "", "content": ["job_id"], "views": []},
+    "composite": {"element": "composite", "form": "", "content": [], "views": []},
+}
+_FORM_KIND = {"table": "table", "ranked": "table", "containers": "table", "sandboxes": "table", "reading": "reading", "files": "table",
+              "markdown": "document", "status": "status", "hero": "metric", "ring": "metric", "numbers": "kv", "kv": "kv",
+              "trace": "series", "area": "series", "candles": "series", "column": "series", "log": "log", "pareto": "log",
+              "progress": "progress", "terminal": "terminal", "media": "media", "code": "code", "diff": "diff", "vgraph": "graph",
+              "schedule": "calendar", "agenda": "calendar", "error": "status", "list": "table", "json": "kv", "string": "document"}
+_MISSING = object()
+
+
+def pick(x: Any, path: Any) -> Any:
+    """One dotted path out of an answer (a.b[2].c, history[-1], '$' the whole) - VeraWidget.pick. _MISSING when absent."""
+    if x is None:
+        return _MISSING
+    p = str("" if path is None else path).strip()
+    if not p or p == "$":
+        return x
+    parts = [s for s in re.sub(r"\[(-?\d+)\]", r".\1", re.sub(r"^\$\.?", "", p)).split(".") if s]
+    cur = x
+    for k in parts:
+        if cur is None or cur is _MISSING:
+            return _MISSING
+        if isinstance(cur, list) and re.fullmatch(r"-?\d+", k):
+            i = int(k)
+            if -len(cur) <= i < len(cur):
+                cur = cur[i]
+            else:
+                return _MISSING
+        elif isinstance(cur, dict):
+            cur = cur.get(k, _MISSING)
+        else:
+            return _MISSING
+    return cur
+
+
+def _open(c: Any, content_path: str = "") -> Any:
+    """§2.3: the envelopes every answer is opened from."""
+    for _ in range(4):
+        if isinstance(c, str):
+            s = c.strip()
+            if (s[:1] == "{" and s.endswith("}")) or (s[:1] == "[" and s.endswith("]")):
+                try:
+                    c = _json.loads(s)
+                    continue
+                except ValueError:
+                    pass
+            return c
+        if not _is_obj(c):
+            return c
+        if c.get("type") == "tool_result" and "content" in c:
+            c = c["content"]
+            continue
+        if c.get("ok") is True and "result" in c and len(c) <= 4:
+            c = c["result"]
+            continue
+        d = c.get("data")
+        if d is not None and isinstance(d, (dict, list)):
+            if content_path:
+                if pick(c, content_path) is _MISSING and pick(d, content_path) is not _MISSING:
+                    c = d
+                    continue
+            elif len(c) <= 2:
+                c = d
+                continue
+        return c
+    return c
+
+
+def _empty(v: Any) -> bool:
+    return v is None or v is _MISSING or v == "" or (isinstance(v, (list, dict)) and not v)
+
+
+def _fill(t: Any, args: Optional[dict]) -> str:
+    def one(m):
+        v = pick(args or {}, m.group(1))
+        if v is None or v is _MISSING:
+            return ""
+        if isinstance(v, list):
+            return ", ".join(str(x) for x in v)
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        return str(v)
+    return re.sub(r"\s*·\s*$", "", re.sub(r"\{([a-zA-Z0-9_.]+)\}", one, str(t))).strip()
+
+
+def _as_rows(v: Any) -> list:
+    if isinstance(v, list):
+        return v
+    if _is_obj(v):
+        return [dict({"name": k}, **v[k]) if _is_obj(v[k]) else {"name": k, "value": v[k]} for k in v]
+    return []
+
+
+def _keyed_num(x: Any) -> Any:
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return x if math.isfinite(x) else None
+    if isinstance(x, str) and x.strip():
+        try:
+            f = float(x)
+        except ValueError:
+            return None
+        return (int(f) if f.is_integer() else f) if math.isfinite(f) else None
+    return None
+
+
+def _keyed_point(p: Any, i: int, tk: Any, vk: Any) -> dict:
+    if not _is_obj(p):
+        return {"t": i, "v": _keyed_num(p)}
+    if tk:
+        t = pick(p, tk)
+    else:
+        t = next((p[k] for k in ("t", "ts", "time") if p.get(k) is not None), None)
+    v = pick(p, vk) if vk else next((p[k] for k in ("v", "value") if p.get(k) is not None), None)
+    return {"t": i if t is None or t is _MISSING else t, "v": _keyed_num(None if v is _MISSING else v)}
+
+
+def keyed_series(v: Any, tk: Any = None, vk: Any = None) -> Dict[str, list]:
+    """Series keyed by name (DA-01e, map.keyed) - present.js keyedSeries: {name: [{t, v}, ...]} or {name: {t: [...],
+    v: [...]}} as {name: [{t, v}]}, one line per key; v a number or None."""
+    out: Dict[str, list] = {}
+    if not _is_obj(v):
+        return out
+    for k, s in v.items():
+        pts = None
+        if isinstance(s, list):
+            pts = [_keyed_point(p, i, tk, vk) for i, p in enumerate(s)]
+        elif _is_obj(s):
+            ts, vs = pick(s, tk or "t"), pick(s, vk or "v")
+            if isinstance(vs, list):
+                pts = [{"t": ts[i] if isinstance(ts, list) and i < len(ts) and ts[i] is not None else i, "v": _keyed_num(x)}
+                       for i, x in enumerate(vs)]
+        if pts:
+            out[str(k)] = pts
+    return out
+
+
+# ── DA-01e (1): three kinds read onto forms the widget already draws - present.js timelineSpans / matrixOf / partsOf,
+#    field for field (the shared fixtures hold both sides to it) ─────────────────────────────────────────────────────
+def _nil(x: Any) -> bool:
+    return x is None or x is _MISSING
+
+
+def _field(r: dict, m: dict, k: str, names) -> Any:
+    """The declared path (map[k]) if there is one, else the first of the usual names the row has; _MISSING when none."""
+    if m.get(k):
+        return pick(r, m[k])
+    for n in names:
+        if r.get(n) is not None:
+            return r[n]
+    return _MISSING
+
+
+def _jstr(x: Any) -> str:
+    """String(x) as the page writes it: true / false, 1 not 1.0."""
+    if isinstance(x, bool):
+        return "true" if x else "false"
+    if isinstance(x, float) and x.is_integer() and math.isfinite(x):
+        return str(int(x))
+    return str(x)
+
+
+def _label(x: Any, i: int) -> str:
+    return "#" + str(i + 1) if _nil(x) or isinstance(x, (dict, list)) else _jstr(x)
+
+
+def _js_num(x: Any) -> Any:
+    """A number as the page keeps it: an integral float as an int (JSON writes 3, not 3.0)."""
+    return int(x) if isinstance(x, float) and x.is_integer() else x
+
+
+_ISO_T = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$", re.I)
+
+
+def _span_time(x: Any) -> Any:
+    """A time in seconds - a number as it is, a plain number string, an ISO date or date-time (no zone = UTC); else None."""
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return x if math.isfinite(x) else None
+    if not isinstance(x, str):
+        return None
+    s = x.strip()
+    if re.fullmatch(r"-?\d+(\.\d+)?", s):
+        return _js_num(float(s))
+    t = _ISO_T.match(s)
+    if not t or int(t.group(1)) < 100 or not 1 <= int(t.group(2)) <= 12:
+        return None
+    off = 0
+    if t.group(8) and t.group(8).upper() != "Z":
+        z = t.group(8).replace(":", "")
+        off = (-1 if z[0] == "-" else 1) * (int(z[1:3]) * 60 + int(z[3:5]))
+    ms = (calendar.timegm((int(t.group(1)), int(t.group(2)), int(t.group(3)), int(t.group(4) or 0), int(t.group(5) or 0),
+                           int(t.group(6) or 0), 0, 0, 0)) * 1000 + int(((t.group(7) or "") + "000")[:3]) - off * 60000)
+    return ms // 1000 if ms % 1000 == 0 else ms / 1000
+
+
+_SPAN_STATE = [(re.compile(r"^(ok|done|pass|passed|success|succeeded|merged|complete|completed|finished|ended|green)$", re.I), "done"),
+               (re.compile(r"^(running|active|started|live|current|in[ _-]?progress)$", re.I), "running"),
+               (re.compile(r"^(fail|failed|failure|error|errored|red|timeout|timed[ _-]?out|crashed|aborted|interrupted|cancelled|canceled)$", re.I), "failed")]
+
+
+def _span_state(s: str) -> str:
+    return next((st for rx, st in _SPAN_STATE if rx.match(s)), "")
+
+
+def _js_round3(x: float) -> Any:
+    """Math.round(x * 1000) / 1000 as the page does it (half up)."""
+    return _js_num(math.floor(x * 1000 + 0.5) / 1000)
+
+
+def timeline_spans(rows: Any, m: dict) -> List[dict]:
+    """Dated spans -> gantt rows {name, start, end, at, status?, state?}: start / end in seconds from the first start, at the
+    start as given. No end: start + duration, else open (to the latest time in the answer, running). No start: skipped."""
+    got = []
+    for i, r in enumerate(rows if isinstance(rows, list) else []):
+        if not _is_obj(r):
+            continue
+        a = _field(r, m, "start", ["start", "started_at", "start_at", "begin", "from"])
+        t0 = _span_time(None if a is _MISSING else a)
+        if t0 is None:
+            continue
+        e = _field(r, m, "end", ["end", "finished_at", "ended_at", "end_at", "until", "to"])
+        t1 = _span_time(None if e is _MISSING else e)
+        if t1 is None:
+            d = _field(r, m, "duration", ["duration", "duration_s", "seconds"])
+            du = _span_time(None if d is _MISSING else d)
+            if du is not None:
+                t1 = t0 + du
+        st = _field(r, m, "status", ["status", "state", "result"])
+        nm = _field(r, m, "name", ["name", "title", "label", "id"])
+        got.append({"name": _label(nm, i), "t0": t0, "t1": t1, "at": a,
+                    "status": "" if _nil(st) or isinstance(st, (dict, list)) else _jstr(st)})
+    if not got:
+        return []
+    lo = min(g["t0"] for g in got)
+    hi = max(g["t0"] if g["t1"] is None else max(g["t0"], g["t1"]) for g in got)
+    out = []
+    for g in got:
+        state = _span_state(g["status"]) or ("running" if g["t1"] is None else "")
+        o = {"name": g["name"], "start": _js_round3(g["t0"] - lo), "end": _js_round3((hi if g["t1"] is None else g["t1"]) - lo),
+             "at": g["at"]}
+        if g["status"]:
+            o["status"] = g["status"]
+        if state:
+            o["state"] = state
+        out.append(o)
+    return out
+
+
+def matrix_of(v: Any, m: dict) -> Optional[dict]:
+    """Rows x columns of a measure -> {rows: {row: {column: value}}, form: heat | matrix} - every row has every column
+    ('' where it has none); heat when every value is a number. From a grid {row: {column: cell}}, wide rows, long
+    rows (map.column) or rows with their cells in a list (map.entries); an object cell is read at map.value."""
+    order: List[str] = []
+    cols: List[str] = []
+    at: Dict[str, Dict[str, Any]] = {}
+
+    def put(rn, cn, x):
+        rn, cn = _jstr(rn), _jstr(cn)
+        if cn == "name":
+            return
+        if rn not in at:
+            at[rn] = {}
+            order.append(rn)
+        if cn not in cols:
+            cols.append(cn)
+        at[rn][cn] = x
+
+    def scalar(x):
+        return "" if _nil(x) or isinstance(x, (dict, list)) else x
+
+    def cell_of(x):
+        return scalar(pick(x, m["value"])) if _is_obj(x) and m.get("value") else scalar(x)
+
+    def is_cell(x):
+        return not isinstance(x, list) and not (_is_obj(x) and not m.get("value"))
+
+    def value_of(e):
+        return scalar(_field(e, m, "value", ["value", "v", "status", "state"]))
+
+    if _is_obj(v):
+        for k, row in v.items():
+            if _is_obj(row):
+                for c, x in row.items():
+                    if is_cell(x):
+                        put(k, c, cell_of(x))
+    elif isinstance(v, list):
+        for i, r in enumerate(v):
+            if not _is_obj(r):
+                continue
+            rn = _label(_field(r, m, "row", ["name", "id", "key", "label", "title"]), i)
+            if m.get("entries"):
+                es = pick(r, m["entries"])
+                if isinstance(es, list):
+                    for j, e in enumerate(es):
+                        if _is_obj(e):
+                            put(rn, _label(_field(e, m, "column", ["column", "name", "key", "label", "dimension"]), j), value_of(e))
+            elif m.get("column"):
+                cn = pick(r, m["column"])
+                if not _nil(cn) and not isinstance(cn, (dict, list)):
+                    put(rn, cn, value_of(r))
+            else:
+                if m.get("row"):
+                    own = str(m["row"]) if re.fullmatch(r"[A-Za-z0-9_-]+", str(m["row"])) else None
+                else:
+                    own = next((n for n in ("name", "id", "key", "label", "title") if r.get(n) is not None), None)
+                for c, x in r.items():
+                    if c != own and is_cell(x):
+                        put(rn, c, cell_of(x))
+    if not order or not cols:
+        return None
+    rows = {rn: {c: at[rn].get(c, "") for c in cols} for rn in order}
+    vals = [rows[rn][c] for rn in order for c in cols if not (isinstance(rows[rn][c], str) and rows[rn][c] == "")]
+    heat = bool(vals) and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vals)
+    return {"rows": rows, "form": "heat" if heat else "matrix"}
+
+
+_PART_VALUE = ["value", "v", "count", "n", "size", "total"]
+
+
+def parts_of(v: Any, m: dict) -> List[dict]:
+    """Shares of a whole -> [{name, value}], the parts more than nothing; past eight, the seven largest and 'other'."""
+    out = []
+    if isinstance(v, list):
+        for i, r in enumerate(v):
+            if _is_obj(r):
+                x = _field(r, m, "value", _PART_VALUE)
+                out.append({"name": _label(_field(r, m, "name", ["name", "label", "key", "id", "type"]), i),
+                            "value": _keyed_num(None if x is _MISSING else x)})
+    elif _is_obj(v):
+        for k, x in v.items():
+            if _is_obj(x):
+                x = _field(x, m, "value", _PART_VALUE)
+            out.append({"name": str(k), "value": _keyed_num(None if x is _MISSING else x)})
+    out = [p for p in out if p["value"] is not None and p["value"] > 0]
+    if len(out) > 8:
+        by = sorted(out, key=lambda p: -p["value"])
+        rest = 0
+        for p in by[7:]:
+            rest = rest + p["value"]
+        out = by[:7] + [{"name": "other", "value": _js_num(rest)}]
+    return out
+
+
+# ── DA-01e (3): OPTIONS on a declaration's rows - present.js arrange / optSort / optGroup / optUnits, field for field.
+# draw: {sort, group_by, units}; without them nothing below runs and the answer reads exactly as it did.
+#   sort "field" low first, "-field" high first (numbers by value, then words without case, missing last, ties kept)
+#   group_by 'field' (table): the groups in the order they first appear, no value last, the field the row's FIRST key
+#   units {field: unit}: a number in that field becomes its text with the unit ("12.5 ms", "40%")
+OPT_KEYS = ("sort", "group_by", "units")
+OPT_ROW_FORMS = ("table", "rows", "cards", "list", "reading")
+
+
+def _opt_num(x: Any) -> Any:
+    if isinstance(x, bool):
+        return int(x)
+    if isinstance(x, (int, float)):
+        return x if math.isfinite(x) else None
+    return None
+
+
+def _opt_missing(x: Any) -> bool:
+    return (x is None or x is _MISSING or isinstance(x, (dict, list))
+            or (isinstance(x, float) and not math.isfinite(x)) or (isinstance(x, str) and not x.strip()))
+
+
+def _opt_cmp(a: Any, b: Any) -> int:
+    na, nb = _opt_num(a), _opt_num(b)
+    if na is not None and nb is not None:
+        return -1 if na < nb else 1 if na > nb else 0
+    if na is not None:
+        return -1
+    if nb is not None:
+        return 1
+    sa, sb = str(a).lower(), str(b).lower()
+    return -1 if sa < sb else 1 if sa > sb else 0
+
+
+def _opt_path(p: Any) -> list:
+    return [s for s in re.sub(r"\[(-?\d+)\]", r".\1", re.sub(r"^\$\.?", "", str(p))).split(".") if s]
+
+
+def _opt_set(x: Any, parts: list, v: Any) -> Any:
+    """A copy of x with the value at the path set (each dict or list on the way copied); x itself when it does not reach."""
+    if not parts:
+        return v
+    k, rest = parts[0], parts[1:]
+    if isinstance(x, list) and re.fullmatch(r"-?\d+", k):
+        i = int(k)
+        if i < 0:
+            i += len(x)
+        if i < 0 or i >= len(x):
+            return x
+        y = list(x)
+        y[i] = _opt_set(x[i], rest, v)
+        return y
+    if _is_obj(x) and (not rest or k in x):
+        y = dict(x)
+        y[k] = _opt_set(x.get(k, _MISSING), rest, v)
+        return y
+    return x
+
+
+def _opt_sort(rows: list, spec: str) -> list:
+    import functools
+    desc = spec.startswith("-")
+    f = (spec[1:] if desc else spec).strip()
+    keyed = [(r, pick(r, f) if _is_obj(r) else _MISSING, i) for i, r in enumerate(rows)]
+
+    def cmp(x, y):
+        mx, my = int(_opt_missing(x[1])), int(_opt_missing(y[1]))
+        if mx or my:
+            return (mx - my) or (x[2] - y[2])
+        tx, ty = int(_opt_num(x[1]) is None), int(_opt_num(y[1]) is None)   # numbers before words either way
+        if tx != ty:
+            return tx - ty
+        c = _opt_cmp(x[1], y[1])
+        return (-c if desc else c) or (x[2] - y[2])
+    return [x[0] for x in sorted(keyed, key=functools.cmp_to_key(cmp))]
+
+
+def _opt_group(rows: list, f: str) -> list:
+    order: list = []
+    by: Dict[Any, list] = {}
+    none = []
+    for r in rows:
+        v = pick(r, f) if _is_obj(r) else _MISSING
+        if _opt_missing(v):
+            none.append(r)
+            continue
+        n = _opt_num(v)
+        k = ("n", float(n)) if n is not None else ("s", str(v))
+        if k not in by:
+            by[k] = []
+            order.append(k)
+        by[k].append(dict({f: v}, **{kk: vv for kk, vv in r.items() if kk != f}))   # the group's field first
+    return [r for k in order for r in by[k]] + none
+
+
+def _opt_fmt(x: Any, u: str) -> str:
+    a = abs(x)
+    d = 0 if a >= 100 else 1 if a >= 10 else 2 if a >= 1 else 3
+    k = 10 ** d
+    y = x * k
+    r = math.floor(y)
+    if y - r >= 0.5:   # Math.round: halves up
+        r += 1
+    q = r / k
+    s = str(int(q)) if float(q).is_integer() else repr(q)
+    return s + ("" if re.match(r"^[%°]", u) else " ") + u
+
+
+def _opt_units(r: Any, units: dict) -> Any:
+    if not _is_obj(r):
+        return r
+    for f, u in units.items():
+        v = pick(r, f)
+        if isinstance(u, str) and u and isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
+            r = _opt_set(r, _opt_path(f), _opt_fmt(v, u))
+    return r
+
+
+def _opts_of(P: dict) -> Optional[dict]:
+    d = P.get("draw")
+    return d if _is_obj(d) and any(d.get(k) is not None for k in OPT_KEYS) else None
+
+
+def arrange(rows: list, d: dict, grouped: bool) -> list:
+    """The rows sorted, grouped (a table's) and with their units, as the declaration's draw says - present.js arrange."""
+    rw = rows
+    if isinstance(d.get("sort"), str) and re.sub(r"^-", "", d["sort"]).strip():
+        rw = _opt_sort(rw, d["sort"].strip())
+    if grouped and isinstance(d.get("group_by"), str) and d["group_by"].strip():
+        rw = _opt_group(rw, d["group_by"].strip())
+    if _is_obj(d.get("units")):
+        rw = [_opt_units(r, d["units"]) for r in rw]
+    return rw
+
+
+def _arranged_at(c: Any, path: Any, d: dict, grouped: bool) -> Any:
+    rs = pick(c, path or "")
+    if isinstance(rs, list) or _is_obj(rs):
+        return _opt_set(c, _opt_path(path or ""), arrange(_as_rows(rs), d, grouped))
+    return c
+
+
+# ENTITIES (DO-0.3) - present.js entitiesOf, field for field: one row {name, type, count, group} per name of a type
+def _nil(x: Any) -> bool:
+    return x is None or x is _MISSING
+
+
+def entities_of(groups: Any, ents: Any) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen: Dict[str, Dict[str, Any]] = {}
+
+    def put(e: Any, grp: Optional[str]) -> None:
+        if not _is_obj(e):
+            return
+        t0 = e.get("text") if not _nil(e.get("text")) else e.get("word") if not _nil(e.get("word")) else e.get("name")
+        if _nil(t0) or isinstance(t0, (dict, list, bool)):
+            return
+        name = _js_str(t0).strip()
+        if not name:
+            return
+        ty = next((e.get(k) for k in ("type", "entity", "entity_group") if not _nil(e.get(k))), e.get("label"))
+        typ = "" if (_nil(ty) or isinstance(ty, (dict, list, bool))) else _js_str(ty)
+        n = _keyed_num(e.get("count"))
+        k = name + "\u0000" + typ
+        if k in seen:
+            seen[k]["count"] += 1 if n is None else n
+            return
+        r = {"name": name, "type": typ, "count": 1 if n is None else n, "group": (typ or "other") if grp is None else grp}
+        seen[k] = r
+        out.append(r)
+
+    if isinstance(groups, list):
+        for g in groups:
+            if not _is_obj(g) or not isinstance(g.get("entities"), list):
+                continue
+            gv, nv = g.get("group"), g.get("name")
+            gn = _js_str(gv) if not _nil(gv) and not isinstance(gv, (dict, list)) else (_js_str(nv) if not _nil(nv) and not isinstance(nv, (dict, list)) else None)
+            for e in g["entities"]:
+                put(e, gn)
+    elif isinstance(ents, list):
+        for e in ents:
+            put(e, None)
+    return out
+
+
+def _js_str(x: Any) -> str:
+    """String(x) as the page writes it (a whole float without its .0, true / false)."""
+    if isinstance(x, bool):
+        return "true" if x else "false"
+    if isinstance(x, float) and math.isfinite(x) and x.is_integer():
+        return str(int(x))
+    return str(x)
+
+
+# NO SAMPLE FACE ON THE DESK (DO-0.3) - present.js formEmpty: a declared form whose content is there but empty, an empty
+# answer, or an answer that is only an error, is the declaration's empty line (the error's own words when it is one)
+FORM_CONTENT = ("rows", "series", "values", "events", "stages", "parts", "bars", "cells", "days", "points", "nodes", "text")
+_ERR_KEYS = ("error", "ok", "detail", "hint", "message")
+
+
+def _err_of(c: Any) -> str:
+    return c["error"].strip() if (_is_obj(c) and isinstance(c.get("error"), str) and c["error"].strip() and c.get("ok") is not True) else ""
+
+
+def _form_empty(c: Any, m: dict, P: dict, args: Optional[dict]) -> Optional[Dict[str, Any]]:
+    def line(err: str) -> Dict[str, Any]:
+        return {"records": [], "empty": err or (_fill(P["empty"], args) if P.get("empty") else "nothing to show")}
+    if _empty(c):
+        return line("")
+    err = _err_of(c)
+    ck = next((k for k in FORM_CONTENT if isinstance(m.get(k), str) and m.get(k)), None)
+    if ck:
+        v = pick(c, m[ck])
+        if v is _MISSING:
+            return line(err) if err else None
+        return line(err) if _empty(v) else None
+    return line(err) if (err and all(k in _ERR_KEYS for k in c)) else None
+
+
+def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size: str, max_records: int) -> Dict[str, Any]:
+    K = PRESENT_KINDS[P["kind"]]
+    m = P.get("map") if _is_obj(P.get("map")) else {}
+    ttl = title or (_fill(P["title"], args) if P.get("title") else "") or cap or "result"
+    out: List[Dict[str, Any]] = []
+    why = "declared: " + P["kind"]
+
+    def rec(form, data, map_=None, t=None, draw=None):
+        r = {"id": re.sub(r"[^a-z0-9]+", "-", (cap or "result"), flags=re.I) + "-" + form + ("-" + str(len(out)) if out else ""),
+             "form": form, "title": t or ttl, "source": cap,
+             "read": {"args": dict(args or {}), "map": {k: v for k, v in (map_ or {}).items() if v is not None}},
+             "frame": {"size": size}, "data": data, "why": why, "presentation": P}
+        if draw:
+            r["draw"] = draw
+        out.append(r)
+        return r
+
+    # a declaration that names its widget form (DA-01d): the form draws the answer through the map in its own words
+    opts = _opts_of(P)
+    if isinstance(P.get("form"), str) and P.get("form"):
+        rows_form = P["kind"] in ("table", "records", "reading") and P["form"] in OPT_ROW_FORMS
+        # a row form with no rows drew its SAMPLE rows, which read as real data: the declaration's empty line instead
+        # (a composite's part drops out, as a plain table part with no rows does)
+        if rows_form and _empty(pick(c, m.get("rows") or "")):
+            return {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+        fe = _form_empty(c, m, P, args)   # any form: nothing in the answer, or only its error (DO-0.3)
+        if fe:
+            return fe
+        if opts and P["kind"] in ("table", "records", "reading") and P["form"] in OPT_ROW_FORMS:
+            # DA-01e (3): the options read here, the rest of draw is the form's
+            g = opts["group_by"].strip() if P["kind"] == "table" and isinstance(opts.get("group_by"), str) else ""
+            dr = {k: v for k, v in opts.items() if k not in OPT_KEYS}
+            if g and isinstance(dr.get("columns"), list):
+                dr["columns"] = [g] + [x for x in dr["columns"] if x != g]
+            rec(P["form"], _arranged_at(c, m.get("rows"), opts, P["kind"] == "table"), dict(m), draw=dr or None)
+            return {"records": out[:1]}
+        rec(P["form"], c, dict(m), draw=P.get("draw") if _is_obj(P.get("draw")) else None)
+        return {"records": out[:1]}
+
+    def at(k):
+        return pick(c, m[k]) if m.get(k) else _MISSING
+
+    def val(k, default=None):
+        v = at(k)
+        return default if v is _MISSING else v
+
+    content = next((v for v in (at(k) for k in K["content"]) if v is not _MISSING), _MISSING)
+    if K["content"] and _empty(content):
+        return {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+
+    def renamed(rows, keys):
+        res = []
+        for r in rows:
+            if not _is_obj(r):
+                res.append(r)
+                continue
+            x = dict(r)
+            for k in keys:
+                if m.get(k) and k not in x:
+                    v = pick(r, m[k])
+                    if v is not _MISSING:
+                        x[k] = v
+            res.append(x)
+        return res
+
+    kind = P["kind"]
+    if kind == "table":
+        rec("table", _arranged_at(c, m.get("rows"), opts, True) if opts else c, {"rows": m.get("rows")})
+        if m.get("name") and m.get("value"):
+            rec("ranked", c, {"values": m.get("rows"), "name": m["name"], "value": m["value"]},
+                t=ttl + " · by " + str(m["value"]).split(".")[-1].replace("_", " "))
+    elif kind in ("records", "reading"):
+        rows = renamed(_as_rows(val("rows")), ["id", "title", "url", "snippet", "when", "score", "domain", "text", "cited"])
+        rec("reading", arrange(rows, opts, False) if opts else rows)
+    elif kind == "document":
+        rec("markdown", str(val("body")))
+    elif kind == "status":
+        d = {"status": val("verdict")}
+        if m.get("checks"):
+            d["checks"] = _as_rows(val("checks"))
+        rec("status", d)
+    elif kind == "metric":
+        # the trend is the series too, so the metric's trace view draws it (DO-0.3)
+        rec("ring" if m.get("max") else "hero", c,
+            dict({"value": m.get("value"), "max": m.get("max"), "unit": m.get("unit"), "trend": m.get("trend")},
+                 **({"series": m["trend"]} if m.get("trend") else {})))
+    elif kind == "series":
+        if m.get("keyed") is True:
+            ks = keyed_series(val("points"), m.get("t"), m.get("v"))
+            if not ks:
+                return {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+            rec("trace", ks)
+        elif isinstance(m.get("split"), list) and m["split"]:
+            rec("area", c, {"series": m.get("points"), "t": m.get("t"), "split": m["split"]})
+        else:
+            rec("trace", c, {"series": m.get("points"), "t": m.get("t"), "v": m.get("v")})
+    elif kind == "log":
+        rec("log", c, {"events": m.get("events"), "t": m.get("t"), "text": m.get("text"), "kind": m.get("kind") or m.get("level")})
+    elif kind == "progress":
+        rec("progress", {"steps": renamed(_as_rows(val("steps")), ["name", "status", "detail"])})
+    elif kind == "graph":
+        nid, ef, et = m.get("node_id"), m.get("edge_from"), m.get("edge_to")
+        nodes = []
+        for n in _as_rows(val("nodes")):
+            if _is_obj(n) and nid and "id" not in n:
+                v = pick(n, nid)
+                n = dict({"id": None if v is _MISSING else v}, **n)
+            nodes.append(n)
+        edges = []
+        for e in _as_rows(val("edges")):
+            if _is_obj(e):
+                e = dict(e)
+                if ef and "source" not in e:
+                    v = pick(e, ef)
+                    e["source"] = None if v is _MISSING else v
+                if et and "target" not in e:
+                    v = pick(e, et)
+                    e["target"] = None if v is _MISSING else v
+            edges.append(e)
+        rec("vgraph", {"nodes": nodes, "edges": edges, "links": edges})
+    elif kind == "terminal":
+        cmd = val("command")
+        lines = ["$ " + str(cmd) if cmd else ""] + str(val("stdout") or "").split(chr(10)) + str(val("stderr") or "").split(chr(10))
+        lines = [ln for i, ln in enumerate(lines) if i > 0 or ln]
+        rc = val("rc")
+        rec("terminal", {"lines": lines, "state": "rc " + str(rc) if rc is not None else ""})
+    elif kind == "media":
+        d = {}
+        if val("url"):
+            d["url"] = val("url")
+        if val("b64"):
+            d["image_b64"] = val("b64")
+        if m.get("kind"):
+            d["kind"] = val("kind")
+        if m.get("caption"):
+            d["caption"] = val("caption")
+        rec("media", d)
+    elif kind == "code":
+        rec("code", {"code": str(val("code")), "lang": val("lang") or "", "path": val("path") or ""})
+    elif kind == "diff":
+        rec("diff", {"diff": str(val("diff"))})
+    elif kind == "kv":
+        f = val("fields")
+        rec("kv", _opt_units(f, opts["units"]) if opts and _is_obj(opts.get("units")) and _is_obj(f) else f)
+    elif kind == "calendar":
+        rec("schedule", renamed(_as_rows(val("events")), ["start", "end", "title"]))
+    elif kind == "entities":
+        es = entities_of(val("groups") if m.get("groups") else None, None if m.get("groups") else val("entities"))
+        if not es:
+            return {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+        rec("pills", es)
+    # DA-01e (1): the new kinds read to their form's own data - nothing left in it to draw: the empty line
+    elif kind in ("timeline", "matrix", "parts"):
+        nothing = {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+        if kind == "timeline":
+            sp = timeline_spans(_as_rows(val("spans")), m)
+            if not sp:
+                return nothing
+            rec("gantt", sp)
+        elif kind == "matrix":
+            mx = matrix_of(val("cells"), m)
+            if not mx:
+                return nothing
+            rec(mx["form"], mx["rows"])
+        else:
+            ps = parts_of(val("parts"), m)
+            if not ps:
+                return nothing
+            rec("donut", ps)
+    return {"records": out[:max(1, int(max_records or 3))]}
+
+
+def present(cap: str, result: Any, args: Optional[dict] = None, title: str = "", size: str = "l", max_records: int = 3,
+            presentation: Optional[dict] = None) -> Dict[str, Any]:
+    """{element, kind, map, views, title, detail, records, why, declared, empty?} - the mirror of VeraWidget.present."""
+    cap = str(cap or "")
+    P = presentation if (_is_obj(presentation) and presentation.get("kind") in PRESENT_KINDS
+                         and presentation.get("status") != "invalid") else None
+    K = PRESENT_KINDS[P["kind"]] if P else None
+    path = next((P["map"][k] for k in K["content"] if _is_obj(P.get("map")) and P["map"].get(k)), "") if P and not P.get("form") else ""
+    c = _open(result, path)
+
+    def base(kind, why):
+        own = P.get("views") if P and isinstance(P.get("views"), list) and P.get("views") else None
+        views = own or (PRESENT_KINDS[kind]["views"] if kind in PRESENT_KINDS else [])
+        return {"element": PRESENT_KINDS[kind]["element"] if kind in PRESENT_KINDS else "widget", "kind": kind,
+                "map": dict(P.get("map") or {}) if P else {}, "views": list(views),
+                "title": title or (_fill(P["title"], args) if P and P.get("title") else "") or cap or "result",
+                "detail": P.get("detail") if P else None, "why": why, "declared": bool(P)}
+
+    if P:
+        m = P.get("map") if _is_obj(P.get("map")) else {}
+        if P["kind"] == "receipt":
+            def g(k):
+                if m.get(k):
+                    v = pick(c, m[k])
+                elif k == "ok" and _is_obj(c):
+                    v = c.get("ok", _MISSING)
+                else:
+                    v = _MISSING
+                return None if v is _MISSING else v
+            return dict(base("receipt", "declared: receipt - it updates what it acted on"), records=[],
+                        receipt={"ok": g("ok"), "id": g("id"), "message": g("message")})
+        if P["kind"] == "job":
+            v = pick(c, m.get("job_id") or "job_id")
+            s = pick(c, m["stream"]) if m.get("stream") else _MISSING
+            return dict(base("job", "declared: job - its live item follows"), records=[],
+                        job={"job_id": None if v is _MISSING else v, "stream": None if s is _MISSING else s})
+        if P["kind"] == "composite":
+            parts = []
+            for pt in (P.get("parts") if isinstance(P.get("parts"), list) else []):
+                if _is_obj(pt) and pt.get("kind") in PRESENT_KINDS and pt.get("kind") != "composite":
+                    got = _declared(cap, c, dict(pt, title=pt.get("title") or ""), args, pt.get("title") or title, size, 1)["records"]
+                    if got:
+                        parts.append(got[0])
+            r = dict(base("composite", "declared: composite of " + str(len(parts))), records=parts)
+            if not parts:
+                r["element"] = "none"
+                r["empty"] = _fill(P["empty"], args) if P.get("empty") else "nothing to show"
+            return r
+        d = _declared(cap, c, P, args, title, size, max_records)
+        r = dict(base(P["kind"], "declared: " + P["kind"]), records=d["records"])
+        if "empty" in d:
+            r["empty"] = d["empty"]
+        return r
+    recs = from_cap_result(cap, c, args=args, title=title, size=size, max_records=max_records)
+    if not recs:
+        return dict(base("none", "nothing drawable"), element="none", records=[])
+    kind = _FORM_KIND.get(recs[0]["form"], "widget")
+    return dict(base(kind, recs[0].get("why") or ""), records=recs)

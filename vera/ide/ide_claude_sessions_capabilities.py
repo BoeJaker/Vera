@@ -879,6 +879,7 @@ async def _query_records_for_recent_sessions(max_sessions: int, per_session_limi
 
 @capability(
     "ide.claude_sessions.list_sessions",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sessions"}, "draw": {"columns": ["title", "agent", "turns", "last_ts", "last_role", "project_dir", "claude_session_id"]}, "empty": "No Claude Code sessions ingested"}},
     http_method="GET", http_path="/ide/claude_sessions/list_sessions", http_tags=["ide", "claude_sessions"],
     memory="off", silent=True,
     description="Group ingested Claude Code turns into a session list for the "
@@ -1376,6 +1377,7 @@ async def _idle_queue_tick():
 
 
 @capability("background.status", memory="off", silent=True,
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "queue.waiting"}, "draw": {"columns": ["title", "kind", "state", "waiting_for_s", "attempts", "stranded"]}, "title": "Waiting", "empty": "No waiting"}, {"kind": "kv", "map": {"fields": "queue.running"}, "title": "Running"}, {"kind": "table", "form": "table", "map": {"rows": "jobs"}, "draw": {"columns": ["name", "priority", "interval_s", "runs", "defers", "last_defer"]}, "title": "Producers", "empty": "No producers"}]}},
             http_method="GET", http_path="/background/status",
             http_tags=["obs"],
             description="The awaiting-idle queue: jobs waiting for the box to "

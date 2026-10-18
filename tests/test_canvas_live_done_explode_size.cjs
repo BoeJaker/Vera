@@ -16,11 +16,11 @@ t('the canvas sizes its own explode item: no grip there', C.includes("inner = do
 
 t('the explode caption wraps rather than clips', G.includes("left.style.cssText = 'min-width:0;overflow-wrap:anywhere';"));
 t('a struct diagram gets a drag grip unless the host says resize="off"', G.includes("=== 'struct' && this.getAttribute('resize') !== 'off') this._mkGrip();") && G.includes("g.style.cssText = 'height:9px;cursor:ns-resize;"));
-t('...bounded between 160 px and most of the window', G.includes('h = Math.max(160, Math.min(Math.round(h), Math.round((window.innerHeight || 900) * 0.92)));'));
+t('...bounded between 160 px and most of the window', G.includes("if (!(mn >= 40)) mn = 160;") && G.includes('h = Math.max(mn, Math.min(Math.round(h), Math.round((window.innerHeight || 900) * 0.92)));')   /* a host may ask for less (min-h, a desk card) */);
 t('"enlarge" opens it over the window, with a placeholder holding its place', G.includes("big.textContent = this._ov ? 'back to size ✕' : 'enlarge ⤢';") && G.includes('this.parentNode.insertBefore(this._ph, this);') && G.includes("ov.style.cssText = 'position:fixed;inset:3vh 3vw;"));
 t('...Esc and the backdrop put it back', G.includes("if (ev.key === 'Escape') { ev.stopPropagation(); self._enlarge(false); }") && G.includes('back.onclick = function () { self._enlarge(false); };'));
 t('...and the move up and back does not tear the graph down', G.includes('if (this._ov) return;   // only moving up to (or back from) the enlarged view'));
-t('the chat panel no longer fixes the body under the diagram (it clipped the caption)', !H.includes('<div class="xp-body" style="height:340px"></div>') && H.includes("+ '<div class=\"xp-body\"></div>';"));
+t('the chat panel no longer fixes the body under the diagram (it clipped the caption)', !H.includes('<div class="xp-body" style="height:340px"></div>') && H.includes("'<div class=\"xp-body\"></div>'")   /* full screen fills instead: flex, never a fixed height */);
 t('...nor does the kit card', !K.includes('.code-card .xp-body{height:340px}'));
 
 // the embed parses

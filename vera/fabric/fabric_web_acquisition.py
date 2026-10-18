@@ -4023,7 +4023,7 @@ async def cap_entity_graph_record_entities(
                 "limit (int default 200), "
                 "include_datasets (bool default False), "
                 "include_records (bool default False). "
-                "Output: {nodes, edges, node_count, edge_count}.",
+                "Output: {nodes, edges, node_count, edge_count}.", contract={"presentation": {'kind': 'graph', 'form': 'vgraph'}}
 )
 async def cap_entity_graph_snapshot(
     dataset_id:        str  = "",
@@ -4363,6 +4363,7 @@ async def cap_web_acquire_status(
 
 @capability(
     "fabric.entity_graph.types",
+    contract={"presentation": {"kind": "table", "form": "ranked", "map": {"values": "types", "count": "type", "sum": "count"}}},
     http_method="GET", http_path="/fabric/entity_graph/types",
     http_tags=["fabric", "graph", "entity"],
     memory="off",

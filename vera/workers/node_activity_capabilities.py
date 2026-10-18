@@ -148,6 +148,8 @@ def _instances() -> Dict[str, Dict[str, Any]]:
 
 @capability(
     "nodes.activity",
+    # the Workers panel's own element on the desk (Wave 1: panel-derived): the widget `element` form mounts it, and it reads itself
+    contract={"presentation": {"kind": "table", "form": "element", "draw": {"tag": "vera-node-activity"}, "title": "Node activity"}},
     http_method="GET", http_path="/nodes/activity", http_tags=["nodes", "obs"],
     memory="off", silent=True,
     description="Everything the compute nodes are doing, in one view: per node what is "

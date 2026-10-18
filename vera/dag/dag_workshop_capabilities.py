@@ -3256,7 +3256,7 @@ async def _loop_run_is_stale(r, sid: str, run: dict) -> bool:
         "registry-served re-reads, and failures. Use this to diagnose a run "
         "instead of reading session_state by eye. Inputs: session_id (str!), "
         "include_text (bool — full assessment/direction text, default false). "
-        "Output: {run, plan, steps[], control[], counters, warnings[]}."),
+        "Output: {run, plan, steps[], control[], counters, warnings[]}."), contract={"presentation": {'kind': 'status', 'form': 'status-matrix'}}
 )
 async def cap_workshop_agent_loop_trace(session_id: str = "",
                                         include_text: bool = False,
@@ -12619,7 +12619,7 @@ async def cap_code_edit(path: str, task: str = "", session_id: str = "", repo: s
     description="Read a versioned file from the code store. Returns the LATEST version by "
                 "default (the agent should only see latest unless it explicitly asks for "
                 "history). Input: path (str!), session_id (str), repo (str), version (int — "
-                "omit/0 for latest). Output: {ok, path, version, content, bytes, lang, latest}.",
+                "omit/0 for latest). Output: {ok, path, version, content, bytes, lang, latest}.", contract={"presentation": {'kind': 'code', 'form': 'code'}}
 )
 async def cap_code_read(path: str, session_id: str = "", repo: str = "", version: int = 0,
                         trace_id=None) -> Dict[str, Any]:
@@ -12667,7 +12667,7 @@ async def cap_code_versions(path: str, session_id: str = "", repo: str = "",
     http_method="POST", http_path="/code/diff", http_tags=["code", "fabric"],
     description="Unified diff between two versions of a file (defaults to previous→latest). "
                 "Input: path (str!), session_id (str), repo (str), v1 (int), v2 (int). "
-                "Output: {ok, path, v1, v2, diff}.",
+                "Output: {ok, path, v1, v2, diff}.", contract={"presentation": {'kind': 'diff', 'form': 'diff'}}
 )
 async def cap_code_diff(path: str, session_id: str = "", repo: str = "",
                         v1: int = 0, v2: int = 0, trace_id=None) -> Dict[str, Any]:

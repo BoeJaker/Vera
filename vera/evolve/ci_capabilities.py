@@ -170,7 +170,7 @@ async def _filtered(branch: str = "", q: str = "", controller: str = "", status:
                  "(int, 0 = every run — else the newest N per lane, with the rest counted in "
                  "`hidden`), order (recent|red|name). " + _FILTER_DOC +
                  " Output: {kind:'ci', view:'matrix', lanes:[{id, name, cells, hidden, race, "
-                 "state}], summary}."))
+                 "state}], summary}."), contract={"presentation": {'kind': 'status', 'form': 'status-matrix'}})
 async def ci_matrix(group: str = "branch", cols: int = 0, order: str = "recent",
                     branch: str = "", q: str = "", controller: str = "", status: str = "",
                     since: str = "", until: str = "", markers: str = "", repo: str = "",
@@ -187,7 +187,7 @@ async def ci_matrix(group: str = "branch", cols: int = 0, order: str = "recent",
                  "lanes still red first, then by how quickly they last came good. Drawn as the "
                  "race-green widget. Inputs: group (branch|controller|day), cols. " + _FILTER_DOC +
                  " Output: {kind:'ci', view:'race', lanes:[{name, cells, race:{state, streak, laps, "
-                 "red_runs, best_attempts}}], summary:{median_attempts, median_seconds_to_green, …}}."))
+                 "red_runs, best_attempts}}], summary:{median_attempts, median_seconds_to_green, …}}."), contract={"presentation": {'kind': 'status', 'form': 'race-green'}})
 async def ci_race(group: str = "branch", cols: int = 0, branch: str = "", q: str = "",
                   controller: str = "", status: str = "", since: str = "", until: str = "",
                   markers: str = "", repo: str = "", session_id: str = "", trace_id=None):
@@ -203,7 +203,7 @@ async def ci_race(group: str = "branch", cols: int = 0, branch: str = "", q: str
                  "A run whose failure list was cut short shows `unknown`, never a false pass. Drawn "
                  "as the test-grid widget. Inputs: cols (newest N runs; 0 = all). " + _FILTER_DOC +
                  " Output: {kind:'ci', view:'tests', columns:[run], tests:[{id, cells, class, "
-                 "flips, description}], summary}."))
+                 "flips, description}], summary}."), contract={"presentation": {'kind': 'status', 'form': 'test-grid'}})
 async def ci_tests(cols: int = 0, branch: str = "", q: str = "", controller: str = "",
                    status: str = "", since: str = "", until: str = "", markers: str = "",
                    repo: str = "", session_id: str = "", trace_id=None):
@@ -236,7 +236,7 @@ def _pick(rows: List[Dict[str, Any]], ref: str) -> Optional[Dict[str, Any]]:
                  "and the time between. Drawn as the run-compare widget. Inputs: a, b (each a run's "
                  "ts, its pipeline id, or 'branch@N' = the branch's N-th newest run), or branch "
                  "alone (its newest run against the one before). Output: {kind:'ci', view:'compare', "
-                 "a, b, delta, fixed, broken, still, partial}."))
+                 "a, b, delta, fixed, broken, still, partial}."), contract={"presentation": {'kind': 'table', 'form': 'run-compare'}})
 async def ci_compare(a: str = "", b: str = "", branch: str = "", trace_id=None):
     rows = await _history()
     rows = _attribute(rows, await _pipelines())
@@ -257,7 +257,7 @@ async def ci_compare(a: str = "", b: str = "", branch: str = "", trace_id=None):
                  "agent (claude · codex · vera · user), median attempts and seconds to green. Drawn "
                  "as the ci-pulse widget. Inputs: buckets (day|hour). " + _FILTER_DOC +
                  " Output: {kind:'ci', view:'pulse', series:[{t, runs, pass, red, rate, tests}], "
-                 "summary, latest}."))
+                 "summary, latest}."), contract={"presentation": {'kind': 'status', 'form': 'ci-pulse'}})
 async def ci_pulse(buckets: str = "day", branch: str = "", q: str = "", controller: str = "",
                    status: str = "", since: str = "", until: str = "", markers: str = "",
                    repo: str = "", session_id: str = "", trace_id=None):
@@ -271,7 +271,7 @@ async def ci_pulse(buckets: str = "day", branch: str = "", q: str = "", controll
     description=("One pipeline as a TRACK of stages (begin → commit → compile → tests → review → "
                  "promote), each with its steps' full detail. Drawn as the run-track widget. Input: "
                  "id (pipeline id) or branch (its newest pipeline). Output: {kind:'ci', view:'track', "
-                 "pipeline, controller, stages, commits, changed_files}."))
+                 "pipeline, controller, stages, commits, changed_files}."), contract={"presentation": {'kind': 'progress', 'form': 'run-track'}})
 async def ci_track(id: str = "", branch: str = "", trace_id=None):
     if not id and branch:
         p = next((p for p in await _pipelines() if p.get("branch") == branch), None)
@@ -291,7 +291,7 @@ async def ci_track(id: str = "", branch: str = "", trace_id=None):
     description=("The WORK BOARD as columns, each card joined to its pipeline's gate state and "
                  "decision. Drawn as the ci-board widget. Inputs: include_done (bool=true), label, "
                  "agent, repo, text. Output: {kind:'ci', view:'board', columns:[{name, items}], "
-                 "summary}."))
+                 "summary}."), contract={"presentation": {'kind': 'status', 'form': 'ci-board'}})
 async def ci_board(include_done: bool = True, label: str = "", agent: str = "", repo: str = "",
                    text: str = "", trace_id=None):
     res = await _read("board.items", label=label, agent=agent, repo=repo, text=text)
@@ -339,7 +339,7 @@ async def _conversations() -> List[Dict[str, Any]]:
     http_method="GET", http_path="/ci/fleet", http_tags=["ci", "evolve"],
     description=("The FLEET: every sandbox with its branch's latest pipeline (gate, decision), its "
                  "owner and how many conversations drove the branch. Drawn as the ci-fleet widget. "
-                 "Output: {kind:'ci', view:'fleet', cards, summary}."))
+                 "Output: {kind:'ci', view:'fleet', cards, summary}."), contract={"presentation": {'kind': 'status', 'form': 'ci-fleet'}})
 async def ci_fleet(trace_id=None):
     sb = await _read("evolve.sandbox.list")
     boxes = (sb or {}).get("sandboxes") or [] if isinstance(sb, dict) else []
@@ -354,7 +354,7 @@ async def ci_fleet(trace_id=None):
                  "(as a track), the branch's whole lane of runs and its race, the board items linked "
                  "by pipeline or branch, and the conversation (session) that drove it. Input: ref "
                  "(a run's ts, its pipeline id, or 'branch@N'), or pipeline (id). Output: {kind:'ci', "
-                 "view:'run', run, track, lane, board_items, conversation}."))
+                 "view:'run', run, track, lane, board_items, conversation}."), contract={"presentation": {'kind': 'progress', 'form': 'ci-run'}})
 async def ci_run(ref: str = "", pipeline: str = "", trace_id=None):
     pipes = await _pipelines()
     rows = _attribute(await _history(), pipes)
@@ -405,7 +405,7 @@ async def _latest_session() -> str:
     description=("The AGENTIC LOOP as a status matrix. With session_id: one lane per plan step, one "
                  "cell per tool call (ok/failed, ms, repeated). Without: one lane per goal, one cell "
                  "per loop run (last 100), so repeated goals race each other. Drawn as the "
-                 "status-matrix widget. Output: {kind:'ci', view:'matrix', lanes, summary}."))
+                 "status-matrix widget. Output: {kind:'ci', view:'matrix', lanes, summary}."), contract={"presentation": {'kind': 'status', 'form': 'status-matrix'}})
 async def loop_ci_matrix(session_id: str = "", trace_id=None):
     if not session_id:
         return cv.loops_matrix(await _loop_sessions(100))
@@ -420,7 +420,7 @@ async def loop_ci_matrix(session_id: str = "", trace_id=None):
     http_method="GET", http_path="/loop/ci/race", http_tags=["ci", "workshop"],
     description=("One agentic loop's RACE TO GREEN: the completion gate's rounds and each step's "
                  "calls, red→green. Defaults to the newest loop. Drawn as the race-green widget. "
-                 "Input: session_id. Output: {kind:'ci', view:'race', lanes, summary}."))
+                 "Input: session_id. Output: {kind:'ci', view:'race', lanes, summary}."), contract={"presentation": {'kind': 'status', 'form': 'race-green'}})
 async def loop_ci_race(session_id: str = "", trace_id=None):
     session_id = session_id or await _latest_session()
     if not session_id:
@@ -437,7 +437,7 @@ async def loop_ci_race(session_id: str = "", trace_id=None):
     description=("One agentic loop's PLAN as a board — planned · running · done · failed — each "
                  "step with its call count and time. Defaults to the newest loop. Drawn as the "
                  "ci-board widget. Input: session_id. Output: {kind:'ci', view:'board', columns, "
-                 "summary}."))
+                 "summary}."), contract={"presentation": {'kind': 'status', 'form': 'ci-board'}})
 async def loop_ci_board(session_id: str = "", trace_id=None):
     session_id = session_id or await _latest_session()
     if not session_id:
@@ -580,7 +580,7 @@ _CENSUS = TTLCache(60.0, max_entries=8)
                  "the goal x run matrix (each goal's outcome in each run). Drawn as the census-commits widget. "
                  "Inputs: template (str=default). Output: {kind:'ci', view:'census', runs:[{id, ended_at, done, "
                  "goals, capped, wall_s, quality, delta_done, delta_wall, verdict, direction, commits[], "
-                 "commit_count}], goals:[{id, name, cells[]}], summary}."))
+                 "commit_count}], goals:[{id, name, cells[]}], summary}."), contract={"presentation": {'kind': 'status', 'form': 'census-commits'}})
 async def ci_census(template: str = "default", trace_id=None):
     template = (template or "default").strip()
 
@@ -619,7 +619,7 @@ _PERF = TTLCache(30.0, max_entries=8)
                  "rounds and recoveries - so a slow loop says whether its time went to tools, the model or retries. "
                  "Drawn as the loop-perf widget; a row opens the loop. Inputs: limit (int=16 runs, up to 40), "
                  "status (str - e.g. done). Output: {kind:'ci', view:'loop-perf', rows:[{id, goal, status, wall_s, "
-                 "steps, calls, fails, repeats, tool_ms, by_tool[], llm_calls, stages[]}], summary}."))
+                 "steps, calls, fails, repeats, tool_ms, by_tool[], llm_calls, stages[]}], summary}."), contract={"presentation": {'kind': 'series', 'form': 'loop-perf'}})
 async def loop_ci_perf(limit: int = 16, status: str = "", trace_id=None):
     n = max(1, min(40, int(limit or 16)))
 

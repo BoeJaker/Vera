@@ -1,0 +1,21 @@
+{
+ "cap": "demo.toggle",
+ "args": {},
+ "presentation": {
+  "kind": "receipt",
+  "map": {
+   "ok": "ok",
+   "message": "msg"
+  }
+ },
+ "result": {
+  "ok": true,
+  "msg": "switched on"
+ },
+ "expect": {
+  "element": "receipt",
+  "kind": "receipt",
+  "title": "demo.toggle",
+  "forms": []
+ }
+}

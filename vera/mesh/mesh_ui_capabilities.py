@@ -2014,6 +2014,7 @@ async def cap_mesh_ui_sprite(node_id: str = "", sprite: str = "", animation: str
 
 @capability(
     "mesh.ui.sprites", http_method="GET", http_path="/mesh/ui/sprites",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sprites"}, "draw": {"columns": ["label", "id", "ready", "frames", "animation", "animations", "source"]}}},
     http_tags=["mesh", "ui"], memory="off", silent=True,
     description="List Sprite Studio characters that can be shown on a display node. "
                 "Output: {sprites:[{id,label}], count} (empty when spritegen is not installed).",

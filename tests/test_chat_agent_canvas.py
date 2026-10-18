@@ -168,7 +168,7 @@ def test_the_reply_record_says_its_renderer_form():
     assert "if(w.rec.reads&&w.rec.reads.cap) delete content.data;" in src
     assert "kind:'widget', key, form:w.rec.draw.form, record:w.rec}); if(_xpl.on) _xplRefresh();" in src
     # Pin anchors to the turn (the question's mid): a reply row's pin used to key the landed layer by the reply's own mid
-    assert "function _turnMidOf(wrap){" in src and "const mid=_turnMidOf(btn&&btn.closest('.mwrap'));" in src
+    assert "function _turnMidOf(wrap){" in src and "const blk=document.getElementById(id); const mid=_turnMidOf(blk&&blk.closest('.mwrap'));" in src
 
 
 def test_canvas_draws_a_record_carried_in_the_content():

@@ -8,20 +8,20 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
 /* ── one header ──────────────────────────────────────────────────────────────────────────────────────────────── */
-t('the kinds whose drawer draws its own head are named', /const OWN_HEAD = new Set\(\['code', 'html', 'explode', 'session', 'diagram', 'notebook', 'panel'\]\);/.test(SRC));
-t('the card does not draw a second header over them — only the corner controls (desk reset, maximise, expand)',
-  /\$\{ownHead && !compact \? `<span class="dp solo[^`]*?<span class="mx solo[^`]*?<span class="xp solo" data-act="open"/.test(SRC) && /\.xp\.solo\{position:absolute/.test(SRC));
-t('a FOLDED item keeps the card header, because then it is the whole item', /ownHead && !compact/.test(SRC));
-t('the expand mark is there when you are on the item, not always', /\.it:is\(:hover,\.hov\) > \.xp\.solo,\.it:focus-within > \.xp\.solo\{opacity:\.8\}/.test(SRC));
+/* DEEP-29 11A.4 (owner decision D1, 2026-10-16): no kind draws a head of its own - the container draws the one head for every
+   kind, and a body declares what its head held */
+t('no kind is set apart as drawing its own head', !/OWN_HEAD|ownHead|\.ownhead|own-fold/.test(SRC));
+t('the card draws no corner controls: the one head carries the row', !/class="(?:dp|mx|xp|fd) solo/.test(SRC) && !/\.xp\.solo\{/.test(SRC) && SRC.includes('<div class="hda" data-w="canvas.item.controls">'));
+t('a folded item keeps the one head, because then it is the whole item', SRC.includes('`<div class="it-hd" style="--hda-n:${ctl.length};--hda-nn:${nn}">'));
+t('the row is there when you are on the item, not always (Hover and Zen)', SRC.includes(':host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.desk-locked,.maxed) > .hda{opacity:1}'));
 
 /* ── headers belong to Full ──────────────────────────────────────────────────────────────────────────────────── */
 t('the element carries the tier, because a rule on <html> cannot cross a shadow root', /if \(this\.dataset\.tier !== tier\) this\.dataset\.tier = tier;/.test(SRC));
-t('in Hover and Zen the header and the rail are held back until you are on the item',
+t('in Hover and Zen the head is held back until you are on the item',
   // held back as OVERLAYS that fade in, never display:none - an item grew by them when pointed at near an edge, and
   // the edge flickered (2026-10-01)
   /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\):not\(\.overfold\) > \.it-hd,:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\):not\(\.overfold\) > \.it-hd\{position:absolute;[^}]*opacity:0;pointer-events:none/.test(SRC) &&
-  /:host\(\[data-tier="hover"\]\) \.it:not\(\.compact\):not\(\.overfold\) > \.it-ft,:host\(\[data-tier="zen"\]\) \.it:not\(\.compact\):not\(\.overfold\) > \.it-ft\{position:absolute;[^}]*opacity:0/.test(SRC) &&
-  /:is\(:hover,\.hov,:focus-within\) > :is\(\.it-hd,\.it-ft\)[^{]*\{opacity:1;pointer-events:auto\}/.test(SRC) &&
+  /:is\(:hover,\.hov,:focus-within\) > \.it-hd[^{]*\{opacity:1;pointer-events:auto\}/.test(SRC) &&
   !/:not\(:hover\):not\(:focus-within\) > \.it-(hd|ft)/.test(SRC));
 
 /* ── room for what you read ──────────────────────────────────────────────────────────────────────────────────── */
@@ -60,10 +60,10 @@ t('the rule is its own function, and the band no longer carries the offer',
   typeof V.canExplode === 'function' && V.suggestionsOf({}, [{ key: 'c', type: 'code', content: { code: Array(20).fill('x').join('\n') } }], '', {}).length === 0);
 t('an item that can be exploded carries the switch, and knows which way round it is',
   /const xplodable = !bid && !!canExplode\(b, this\.explodeOffer\(\)\);/.test(SRC) && /const xploded = xplodable && xplodedKeys\.has\(String\(b\.key\)\);/.test(SRC));
-t('the switch says what it does, both ways', /\$\{xploded \? 'source' : 'graph'\}/.test(SRC));
+t('the switch says what it does, both ways', SRC.includes("ca.explode.on ? 'Back to the source' : 'Explode'"));
 t('taking it builds the bound item; taking it back removes it',
   /this\.call\('canvas\.add', Object\.assign\(\{ kind: 'explode', key: 'explode:' \+ key, content, at: b\.state === 'pinned' \? 'pinned' : 'now', size: 'l' \}/.test(SRC) &&
-  /if \(bound\) return this\.call\('canvas\.remove'/.test(SRC));
+  /if \(bound\) (?:\{ if \(this\.deskAlign\(\) && this\._max === key\) this\._toggleMax\(key\); )?return this\.call\('canvas\.remove'/.test(SRC));
 
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

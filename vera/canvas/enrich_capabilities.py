@@ -31,6 +31,7 @@ except ImportError:                                   # pragma: no cover
 log = logging.getLogger("vera.canvas.enrich")
 
 STEP_TIMEOUT_S = 15.0
+NAMES_BUDGET_S = 3.0      # canvas.enrich's question NER: the names lead the query when they come back this fast
 
 
 async def _call(name: str, **kw) -> Any:
@@ -123,6 +124,16 @@ async def cap_canvas_enrich(session_id: str = "", text: str = "", reply: str = "
         return {"ok": True, "query": "", "items": [], "skipped": [{"cap": "", "why": "nothing specific in the turn"}],
                 "ms": int((time.monotonic() - t0) * 1000)}
     words = text if len(ec.terms(text)) >= 2 else (text + " " + str(reply or "")[:300])
+    # THE NAMES THE QUESTION IS ABOUT LEAD THE QUERY (the NLP tier, CPU, a short budget): "what's new with the phi-4 models
+    # from microsoft" asks the web and the fabric for "microsoft phi-4 ..." rather than the first twelve content words
+    names: List[str] = []
+    try:
+        body = tc.prose(text)[:1500]
+        names = [str(e["text"]) for e in tc.to_look(tc.merge(body, await asyncio.wait_for(_ner(body), NAMES_BUDGET_S)), 3)]
+    except (asyncio.TimeoutError, Exception):
+        names = []
+    if names:
+        words = " ".join(names) + " " + words
     src = [s.strip() for s in str(sources or "").split(",") if s.strip()] or ["caps", "query", "memory"]
     ws = _sources_mod()
     measured = getattr(ws, "MEASURED", {}) if ws else {}
@@ -194,7 +205,7 @@ async def cap_canvas_enrich(session_id: str = "", text: str = "", reply: str = "
         items.append({"key": key, "kind": block, "cap": cap, "why": step["why"],
                       "resolved": (added or {}).get("resolved") if isinstance(added, dict) else None,
                       "error": (added or {}).get("error") if isinstance(added, dict) else None})
-    return {"ok": True, "query": p["query"], "gates": p["gates"], "items": items, "skipped": skipped,
+    return {"ok": True, "query": p["query"], "names": names, "gates": p["gates"], "items": items, "skipped": skipped,
             "ms": int((time.monotonic() - t0) * 1000)}
 
 
@@ -237,12 +248,15 @@ async def _ner(text: str) -> List[Any]:
                 "links in a text (a reply, a report, a question) - the NLP tier's entity model (nlp.ner, CPU nodes) "
                 "read chunk by chunk, merged with patterns, one entry per name with how often it was named and the "
                 "sentences it was named in. place=true lands them on the session canvas as one `entities` item "
-                "(keyed by the turn) when at least `min_entities` things are named. No model is called. Inputs: text "
-                "(str!), session_id (str), mid (str - the turn's message id), place (bool=false), min_entities "
-                "(int=3), subject (str - the item's title). Output: {ok, entities:[{text, type, group, count, score, "
-                "sentences}], salient:int, placed?:{key, resolved}, ner:{chunks, failed}, ms}.")
+                "(keyed by the turn) when at least `min_entities` things are named; look=N also looks up the N names "
+                "the text is most about (most named, then confidence, then name - the same names every time) and lands "
+                "the fabric's records and, for things outside the estate, a web search for each, beside it. No model is "
+                "called. Inputs: text (str!), session_id (str), mid (str - the turn's message id), place (bool=false), "
+                "min_entities (int=3), subject (str - the item's title), look (int=0). Output: {ok, entities:[{text, "
+                "type, group, count, score, sentences}], salient:int, placed?:{key, resolved}, looked?:[{name, type, "
+                "items, skipped}], ner:{chunks, failed}, ms}.")
 async def cap_turn_understand(text: str = "", session_id: str = "", mid: str = "", place: bool = False,
-                              min_entities: int = 3, subject: str = "", trace_id=None) -> Dict[str, Any]:
+                              min_entities: int = 3, subject: str = "", look: int = 0, trace_id=None) -> Dict[str, Any]:
     t0 = time.monotonic()
     body = tc.prose(text)
     if not body.strip():
@@ -259,6 +273,18 @@ async def cap_turn_understand(text: str = "", session_id: str = "", mid: str = "
                             content=tc.item(ents, mid=mid, subject=subject), anchor=anchor)
         out["placed"] = {"key": key, "resolved": (added or {}).get("resolved") if isinstance(added, dict) else None,
                          "error": (added or {}).get("error") if isinstance(added, dict) else None}
+    # THE TURN'S LEADING NAMES, FETCHED FOR IT (owner, 2026-10-10: "better use of NLP and deterministic fetching of items for
+    # the desk"): what a chip does when pressed, done unasked for the names the text is most about - the same names, in the
+    # same order, under the same keys, every time the same text is read
+    try:
+        n_look = max(0, min(4, int(look or 0)))
+    except (TypeError, ValueError):
+        n_look = 0
+    if n_look and session_id:
+        picks = tc.to_look(ents, n_look)
+        res = await asyncio.gather(*[_look(session_id, str(e["text"]), str(e.get("type") or ""), mid) for e in picks])
+        out["looked"] = [{"name": e["text"], "type": e.get("type"), "items": (r or {}).get("items") or [],
+                          "skipped": (r or {}).get("skipped") or []} for e, r in zip(picks, res)]
     out["ms"] = int((time.monotonic() - t0) * 1000)
     return out
 
@@ -276,7 +302,11 @@ async def cap_turn_entity_look(session_id: str = "", text: str = "", type: str =
     name = str(text or "").strip()
     if not session_id or not name:
         return {"ok": False, "error": "session_id and text required"}
-    typ = str(type or "").upper()
+    return await _look(session_id, name, str(type or "").upper(), mid, web)
+
+
+async def _look(session_id: str, name: str, typ: str, mid: str = "", web: Any = None) -> Dict[str, Any]:
+    """What a name's chip does when pressed, and what turn.understand does unasked for the turn's leading names."""
     use_web = bool(web) if web is not None else typ in ("PERSON", "ORG", "GPE", "LOC", "NORP", "FAC", "PRODUCT",
                                                          "EVENT", "WORK_OF_ART", "LAW", "TICKER", "")
     steps = [("fabric.query", {"text": name, "top_k": 30}, "memory", "what the fabric holds on " + name)]

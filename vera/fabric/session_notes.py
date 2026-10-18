@@ -446,6 +446,7 @@ async def notes_clear(scope: str, ref_id: str, trace_id=None):
 
 @capability(
     "notes.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "notes"}, "draw": {"columns": ["scope", "ref_id", "updated_by", "chars", "updated_at"]}, "empty": "No notes"}},
     http_method="GET", http_path="/notes/list", http_tags=["notes"],
     description="List session memory notes. Inputs: scope (optional filter).",
 )

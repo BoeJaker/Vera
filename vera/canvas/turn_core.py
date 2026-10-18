@@ -189,6 +189,29 @@ def salient(entities: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return [e for e in entities if e.get("type") not in ("DATE", "MONEY", "URL")]
 
 
+#: the kinds of name worth fetching for unasked: things in the world the fabric or the web can say something about
+LOOKABLE = ("PERSON", "ORG", "PRODUCT", "EVENT", "GPE", "LOC", "FAC", "NORP", "WORK_OF_ART", "LAW", "TICKER")
+
+
+def to_look(entities: Sequence[Dict[str, Any]], n: int = 2) -> List[Dict[str, Any]]:
+    """The names a turn is most about, to fetch for it unasked - DETERMINISTIC (owner, 2026-10-10: "better use of NLP and
+    deterministic fetching of items for the desk"): the same entities always give the same names in the same order -
+    most named, then the model's confidence, then the name - each name once, whatever its type was tagged."""
+    seen, out = set(), []
+    if max(0, int(n or 0)) == 0:
+        return out
+    cands = [e for e in salient(entities) if e.get("type") in LOOKABLE and len(_norm(str(e.get("text") or ""))) >= 3]
+    for e in sorted(cands, key=lambda e: (-int(e.get("count") or 0), -float(e.get("score") or 0.0), str(e.get("text") or "").lower())):
+        k = str(e.get("text") or "").strip().lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(e)
+        if len(out) >= max(0, int(n or 0)):
+            break
+    return out
+
+
 def item(entities: Sequence[Dict[str, Any]], *, mid: str = "", subject: str = "", limit: int = 40) -> Dict[str, Any]:
     """The canvas `entities` item: the groups in a fixed order, each its entities, most named first."""
     groups: Dict[str, List[Dict[str, Any]]] = {}

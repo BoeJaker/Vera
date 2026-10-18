@@ -1,0 +1,71 @@
+{
+ "cap": "demo.workers",
+ "args": {},
+ "presentation": {
+  "kind": "table",
+  "form": "table",
+  "map": {
+   "rows": "workers"
+  },
+  "draw": {
+   "columns": [
+    "name",
+    "state",
+    "load"
+   ],
+   "group_by": "state"
+  }
+ },
+ "result": {
+  "workers": {
+   "w1": {
+    "state": "idle",
+    "load": 0.1
+   },
+   "w2": {
+    "state": "busy",
+    "load": 0.9
+   },
+   "w3": {
+    "state": "idle",
+    "load": 0.2
+   },
+   "w4": {
+    "state": "busy",
+    "load": 0.7
+   }
+  }
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.workers",
+  "forms": [
+   "table"
+  ],
+  "data": {
+   "workers": [
+    {
+     "state": "idle",
+     "name": "w1",
+     "load": 0.1
+    },
+    {
+     "state": "idle",
+     "name": "w3",
+     "load": 0.2
+    },
+    {
+     "state": "busy",
+     "name": "w2",
+     "load": 0.9
+    },
+    {
+     "state": "busy",
+     "name": "w4",
+     "load": 0.7
+    }
+   ]
+  }
+ }
+}

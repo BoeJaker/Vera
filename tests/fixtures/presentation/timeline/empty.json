@@ -1,0 +1,33 @@
+{
+ "cap": "demo.schedule_history",
+ "args": {
+  "schedule": "s1"
+ },
+ "presentation": {
+  "kind": "timeline",
+  "map": {
+   "spans": "runs",
+   "start": "started_at"
+  },
+  "empty": "No runs of {schedule} yet"
+ },
+ "result": {
+  "runs": [
+   {
+    "title": "x",
+    "started_at": "not a date"
+   },
+   {
+    "title": "y"
+   }
+  ],
+  "count": 2
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "timeline",
+  "title": "demo.schedule_history",
+  "forms": [],
+  "empty": "No runs of s1 yet"
+ }
+}

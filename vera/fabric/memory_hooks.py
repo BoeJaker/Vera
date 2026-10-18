@@ -35,7 +35,7 @@ Memory routing — three modes per capability
 
 The mode is set in the @capability decorator:
   @capability("llm.generate", memory="on", ...)
-  @capability("obs.health",   memory="off", ...)
+  @capability("obs.health",   memory="off", ..., contract={"presentation": {'kind': 'status', 'form': 'status'}})
 
 Memory injection for agents
 ───────────────────────────
@@ -1142,7 +1142,9 @@ async def record_turn_usage(session_id: str, reply: str, page_ids: Optional[List
         out = {"injected": len(verdicts), "used": sum(1 for v in verdicts if v["used"]), "revived": len(revived)}
         try:
             await emit_event({"type": "memory.feedback", "session_id": session_id, **out,
-                              "used_ids": [v["id"] for v in verdicts if v["used"]][:20]})
+                              "used_ids": [v["id"] for v in verdicts if v["used"]][:20],
+                              # what the turn was given, so the chat can drop the runs of what it did not use (WSU-62)
+                              "injected_ids": [v["id"] for v in verdicts][:60]})
         except Exception:
             pass
     except Exception as e:
@@ -1268,6 +1270,7 @@ async def memory_agent_context(
 
 @capability(
     "memory.usage.top",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["text", "record_type", "injected_n", "used_n", "use_rate", "last_used"]}, "empty": "No memory use recorded yet"}},
     http_method="GET", http_path="/memory/usage/top", http_tags=["memory"],
     memory="off", silent=True,
     description="Which memories chat turns draw on, and which they are given but ignore (counted after every chat "
@@ -1340,6 +1343,7 @@ async def _fade_overrides() -> Dict[str, Any]:
 
 @capability(
     "memory.fade.policy",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "policy"}, "draw": {"columns": ["name", "enabled", "half_life_days", "floor"]}}},
     http_method="POST", http_path="/memory/fade/policy", http_tags=["memory"],
     memory="off",
     description="The user's controls over memory fading (owner, 2026-10-05: 'select what gets forgotten and how "
@@ -2131,7 +2135,7 @@ async def memory_all_edges(limit: int = 1000, trace_id=None):
     "memory.graph_full",
     http_method="GET", http_path="/memory/graph/full", http_tags=["memory"],
     memory="off",
-    description="Return nodes + edges in one call. Use mode=session (+session_id), mode=recent, or mode=all.",
+    description="Return nodes + edges in one call. Use mode=session (+session_id), mode=recent, or mode=all.", contract={"presentation": {'kind': 'graph', 'form': 'vgraph'}}
 )
 async def memory_graph_full(session_id:  str = "",
                              limit_nodes: int = 300,
@@ -2505,6 +2509,7 @@ async def memory_session_graph(
 
 @capability(
     "memory.graph_stats",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "categories"}, "title": "Categories"}, {"kind": "table", "map": {"rows": "edge_types"}, "title": "Edge types"}, {"kind": "table", "map": {"rows": "sessions"}, "title": "Recent sessions"}]}},
     http_method="GET", http_path="/memory/graph/stats", http_tags=["memory"],
     memory="off",
     description="Counts by label / category / per-session for the memory graph.",

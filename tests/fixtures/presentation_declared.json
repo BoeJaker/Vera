@@ -1,0 +1,6099 @@
+{
+ "agent.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "model",
+    "tool_mode",
+    "voice",
+    "memory_enabled",
+    "archived",
+    "updated_at"
+   ]
+  },
+  "empty": "No agents",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "agents"
+  }
+ },
+ "agent.models": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "gpu",
+    "models"
+   ]
+  },
+  "empty": "No Ollama instance is online",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "instances"
+  }
+ },
+ "agentbridge.catalog": {
+  "draw": {
+   "columns": [
+    "label",
+    "paradigm",
+    "enabled",
+    "image_present",
+    "image",
+    "run_cap",
+    "run_cap_registered",
+    "docs_url"
+   ]
+  },
+  "empty": "No agent bridges registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "bridges"
+  }
+ },
+ "agentbridge.check_updates": {
+  "draw": {
+   "columns": [
+    "bridge",
+    "package",
+    "pinned",
+    "latest",
+    "drift"
+   ]
+  },
+  "empty": "No pinned packages to check",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "results"
+  }
+ },
+ "agentbridge.interoperability": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "id",
+      "capability",
+      "registered"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "shared_contracts"
+    },
+    "title": "Shared contracts"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "runtime_id",
+      "image",
+      "execution_supported",
+      "inspection_executes"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "runtime_adapters"
+    },
+    "title": "Runtime adapters"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "a2a"
+    },
+    "title": "A2A adapter"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "runtime_matrix"
+    },
+    "title": "Runtime matrix"
+   }
+  ]
+ },
+ "agentbridge.runtime_matrix": {
+  "draw": {
+   "columns": [
+    "label",
+    "runtime_id",
+    "integration",
+    "execution_lane",
+    "executes",
+    "upstream_url"
+   ]
+  },
+  "empty": "No runtime candidates",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "candidates"
+  }
+ },
+ "automations.overview": {
+  "draw": {
+   "columns": [
+    "label",
+    "stat",
+    "detail",
+    "severity"
+   ]
+  },
+  "empty": "No automation sources",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sections"
+  }
+ },
+ "autonomous.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "background.cap.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "state",
+      "title",
+      "waiting_for_s"
+     ]
+    },
+    "empty": "No queued",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "queued"
+    },
+    "title": "Queued"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "state",
+      "elapsed_s",
+      "started"
+     ]
+    },
+    "empty": "No finished",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "finished"
+    },
+    "title": "Finished"
+   }
+  ]
+ },
+ "background.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "title",
+      "kind",
+      "state",
+      "waiting_for_s",
+      "attempts",
+      "stranded"
+     ]
+    },
+    "empty": "No waiting",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "queue.waiting"
+    },
+    "title": "Waiting"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "queue.running"
+    },
+    "title": "Running"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "priority",
+      "interval_s",
+      "runs",
+      "defers",
+      "last_defer"
+     ]
+    },
+    "empty": "No producers",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "jobs"
+    },
+    "title": "Producers"
+   }
+  ]
+ },
+ "backup.status": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "state",
+    "backups"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "guests"
+  }
+ },
+ "bench.compare": {
+  "draw": {
+   "columns": [
+    "model",
+    "node_label",
+    "accuracy",
+    "gen_tps",
+    "load_ms",
+    "size_gb",
+    "quant"
+   ]
+  },
+  "empty": "No benchmark results for this role yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "bench.matrix.results": {
+  "draw": {
+   "columns": [
+    "created_at",
+    "node_label",
+    "state",
+    "cells_total",
+    "errors",
+    "id"
+   ]
+  },
+  "empty": "No context sweeps yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "bench.node_perf": {
+  "draw": {
+   "columns": [
+    "label",
+    "status",
+    "reachable",
+    "ping_ms",
+    "loaded_vram_gb",
+    "vram_used_pct",
+    "version"
+   ],
+   "units": {
+    "loaded_vram_gb": "GB",
+    "ping_ms": "ms",
+    "vram_used_pct": "%"
+   }
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "bench.node_perf.history": {
+  "empty": "No node samples yet",
+  "kind": "series",
+  "map": {
+   "keyed": true,
+   "points": "series",
+   "t": "t",
+   "v": "ping_ms"
+  },
+  "title": "Node ping \u00b7 ms"
+ },
+ "bench.passive": {
+  "draw": {
+   "columns": [
+    "model",
+    "node_label",
+    "obs_tps",
+    "avg_latency_s",
+    "calls",
+    "last_ts"
+   ],
+   "sort": "-calls",
+   "units": {
+    "avg_latency_s": "s",
+    "obs_tps": "tok/s"
+   }
+  },
+  "empty": "No production traffic seen yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "bench.results": {
+  "draw": {
+   "columns": [
+    "model",
+    "node_label",
+    "role",
+    "accuracy",
+    "items_passed",
+    "items_total",
+    "quant",
+    "created_at"
+   ]
+  },
+  "empty": "No benchmark results yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "results"
+  }
+ },
+ "bench.suites": {
+  "draw": {
+   "columns": [
+    "role",
+    "label",
+    "kind",
+    "items",
+    "blurb"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "suites"
+  }
+ },
+ "board.items": {
+  "form": "ci-board",
+  "kind": "status"
+ },
+ "build.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "tools"
+  },
+  "title": "Builder toolchains"
+ },
+ "business.catalog.products": {
+  "draw": {
+   "columns": [
+    "title",
+    "console",
+    "cib",
+    "market",
+    "rarity",
+    "sold_count",
+    "stale",
+    "updated_at"
+   ]
+  },
+  "empty": "The product catalog is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "products"
+  }
+ },
+ "business.dashboard": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Business"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "kind",
+      "status",
+      "revenue_30d",
+      "expense_30d",
+      "net_30d",
+      "goal_monthly",
+      "goal_pct"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "streams"
+    },
+    "title": "Income streams"
+   }
+  ]
+ },
+ "business.graph": {
+  "kind": "graph",
+  "map": {
+   "edge_from": "source",
+   "edge_to": "target",
+   "edges": "edges",
+   "label": "label",
+   "node_id": "id",
+   "nodes": "nodes",
+   "type": "type"
+  }
+ },
+ "business.listing.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "platform",
+    "status",
+    "price",
+    "currency",
+    "condition",
+    "updated_at"
+   ]
+  },
+  "empty": "No listings",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "listings"
+  }
+ },
+ "business.product.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "sku",
+    "category",
+    "qty_on_hand",
+    "price",
+    "cost",
+    "reorder_point",
+    "updated_at"
+   ]
+  },
+  "empty": "No products",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "products"
+  }
+ },
+ "business.product.low_stock": {
+  "draw": {
+   "columns": [
+    "name",
+    "sku",
+    "qty_on_hand",
+    "reorder_point",
+    "reorder_qty",
+    "supplier"
+   ]
+  },
+  "empty": "No products are low on stock",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "products"
+  }
+ },
+ "business.ship.carriers": {
+  "draw": {
+   "columns": [
+    "carrier",
+    "service",
+    "format",
+    "tracked",
+    "signed",
+    "comp"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "services"
+  }
+ },
+ "business.sim.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "run"
+    },
+    "title": "Run"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "totals"
+    },
+    "title": "Totals"
+   }
+  ]
+ },
+ "business.store.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "platform",
+    "status",
+    "product_count",
+    "inventory_retail",
+    "listings_live",
+    "open_orders",
+    "net_30d"
+   ]
+  },
+  "empty": "No stores",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "stores"
+  }
+ },
+ "business.store.master": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "platform",
+      "product_count",
+      "inventory_retail",
+      "listings_live",
+      "open_orders",
+      "net_30d",
+      "net_all"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "stores"
+    },
+    "title": "Stores"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "totals"
+    },
+    "title": "Totals"
+   }
+  ]
+ },
+ "business.stream.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "platform",
+    "status",
+    "goal_monthly",
+    "currency",
+    "created_at"
+   ]
+  },
+  "empty": "No income streams",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "streams"
+  }
+ },
+ "business.tax.summary": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Tax year"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "income"
+    },
+    "title": "Income"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "expenses"
+    },
+    "title": "Expenses"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "vat"
+    },
+    "title": "VAT"
+   }
+  ]
+ },
+ "business.unit.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "sku",
+    "condition",
+    "completeness",
+    "status",
+    "price",
+    "location",
+    "created_at"
+   ]
+  },
+  "empty": "No units",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "units"
+  }
+ },
+ "cal.events.list": {
+  "form": "schedule",
+  "kind": "calendar"
+ },
+ "cal.notes.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "remind_at",
+    "updated",
+    "body"
+   ]
+  },
+  "empty": "No notes",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "notes"
+  }
+ },
+ "cal.sources.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "type",
+    "enabled",
+    "last_sync",
+    "has_refresh_token",
+    "color"
+   ]
+  },
+  "empty": "No calendar sources",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sources"
+  }
+ },
+ "cal.sync.status": {
+  "draw": {
+   "columns": [
+    "label",
+    "added",
+    "updated",
+    "errors",
+    "error",
+    "ts"
+   ]
+  },
+  "empty": "No sync has run yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "results"
+  }
+ },
+ "cap_ontology.list": {
+  "draw": {
+   "columns": [
+    "from",
+    "relation",
+    "to",
+    "strength",
+    "confidence",
+    "auto",
+    "description",
+    "updated_at"
+   ]
+  },
+  "empty": "No capability relations match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "relations"
+  }
+ },
+ "cap_ontology.matrix": {
+  "draw": {
+   "columns": [
+    "from",
+    "relation",
+    "to",
+    "strength",
+    "confidence",
+    "auto",
+    "description"
+   ]
+  },
+  "empty": "No relations among these capabilities",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "cells"
+  }
+ },
+ "cap_ontology.stats": {
+  "form": "numbers",
+  "kind": "kv",
+  "map": {
+   "pick": {
+    "auto": "auto",
+    "caps": "total_caps",
+    "caps covered": "covered_caps",
+    "manual": "manual",
+    "relations": "total"
+   }
+  }
+ },
+ "capacity.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "node",
+      "has_gpu",
+      "gated",
+      "capacity",
+      "held",
+      "free"
+     ]
+    },
+    "empty": "No ollama nodes",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "ollama.nodes"
+    },
+    "title": "Ollama nodes"
+   },
+   {
+    "empty": "No Claude seats",
+    "kind": "table",
+    "map": {
+     "rows": "seats"
+    },
+    "title": "Claude seats"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "summary"
+    },
+    "title": "Seats"
+   }
+  ]
+ },
+ "catalog.browse.index": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "families"
+    },
+    "title": "Families"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "ollama_library"
+    },
+    "title": "Ollama library"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "sizes"
+    },
+    "title": "Sizes"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "publishers"
+    },
+    "title": "Publishers"
+   }
+  ]
+ },
+ "catalog.installed": {
+  "draw": {
+   "columns": [
+    "label",
+    "status",
+    "has_gpu",
+    "count",
+    "size_gb",
+    "ram_gb",
+    "vram_gb"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "catalog.nodes": {
+  "draw": {
+   "columns": [
+    "label",
+    "status",
+    "has_gpu",
+    "gpu_name",
+    "vram_gb",
+    "ram_gb",
+    "cpu_cores",
+    "class"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "census.live": {
+  "form": "census-live",
+  "kind": "status"
+ },
+ "certs.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "parts",
+    "map": {
+     "parts": "counts"
+    },
+    "title": "By state"
+   },
+   {
+    "draw": {
+     "columns": [
+      "severity",
+      "subject",
+      "message"
+     ]
+    },
+    "empty": "No findings",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "findings"
+    },
+    "title": "Findings"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "where",
+      "issuer_kind",
+      "days_left",
+      "state",
+      "source"
+     ]
+    },
+    "empty": "No certificates",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "certs"
+    },
+    "title": "Certificates"
+   }
+  ]
+ },
+ "ci.board": {
+  "form": "ci-board",
+  "kind": "status"
+ },
+ "ci.census": {
+  "form": "census-commits",
+  "kind": "status"
+ },
+ "ci.compare": {
+  "form": "run-compare",
+  "kind": "table"
+ },
+ "ci.fleet": {
+  "form": "ci-fleet",
+  "kind": "status"
+ },
+ "ci.matrix": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "ci.pulse": {
+  "form": "ci-pulse",
+  "kind": "status"
+ },
+ "ci.race": {
+  "form": "race-green",
+  "kind": "status"
+ },
+ "ci.run": {
+  "form": "ci-run",
+  "kind": "progress"
+ },
+ "ci.tests": {
+  "form": "test-grid",
+  "kind": "status"
+ },
+ "ci.track": {
+  "form": "run-track",
+  "kind": "progress"
+ },
+ "cluster.mimic.status": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "routing",
+    "current_target",
+    "paused",
+    "online_nodes",
+    "active",
+    "queue_depth",
+    "queue_max",
+    "max_concurrency",
+    "queue_timeout"
+   ]
+  }
+ },
+ "code.diff": {
+  "form": "diff",
+  "kind": "diff"
+ },
+ "code.read": {
+  "form": "code",
+  "kind": "code"
+ },
+ "collector.catalog": {
+  "kind": "records",
+  "map": {
+   "domain": "category",
+   "id": "id",
+   "rows": "sources",
+   "snippet": "description",
+   "title": "label",
+   "url": "url"
+  }
+ },
+ "collector.stealth_list_domains": {
+  "empty": "No domain has a saved scraper config",
+  "kind": "table",
+  "map": {
+   "rows": "domains"
+  }
+ },
+ "compute.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "host",
+      "status",
+      "compute_slots",
+      "compute_running",
+      "current_task"
+     ]
+    },
+    "empty": "No workers",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "workers"
+    },
+    "title": "Workers"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "would_run",
+      "why",
+      "next_node"
+     ]
+    },
+    "empty": "No functions",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "functions"
+    },
+    "title": "Functions"
+   },
+   {
+    "draw": {
+     "columns": [
+      "fn",
+      "label",
+      "state",
+      "node",
+      "started",
+      "attempt"
+     ]
+    },
+    "empty": "No recent jobs",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "jobs"
+    },
+    "title": "Recent jobs"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
+ "conn.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "container",
+    "docker_host_id",
+    "ssh_host_id",
+    "vmid",
+    "updated"
+   ]
+  },
+  "empty": "No saved connections",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "connections"
+  }
+ },
+ "dag.store_list": {
+  "draw": {
+   "columns": [
+    "name",
+    "category",
+    "description",
+    "use_count",
+    "last_used",
+    "avg_runtime_ms",
+    "author",
+    "updated_at"
+   ]
+  },
+  "empty": "No stored DAGs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "dags"
+  }
+ },
+ "dash.health.summary": {
+  "form": "pills",
+  "kind": "status",
+  "map": {
+   "entries": "status",
+   "values": "$"
+  }
+ },
+ "docker.disk.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "docker.drift": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "drifted"
+    },
+    "title": "Drifted"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "unknown"
+    },
+    "title": "Unknown"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "skipped"
+    },
+    "title": "Skipped"
+   }
+  ]
+ },
+ "docker.host.health": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "docker.hosts.list": {
+  "draw": {
+   "columns": [
+    "id",
+    "label",
+    "kind",
+    "default",
+    "socket",
+    "url"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "hosts"
+  }
+ },
+ "docker.images": {
+  "draw": {
+   "columns": [
+    "RepoTags",
+    "Size",
+    "Created",
+    "Containers",
+    "Id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "images"
+  }
+ },
+ "docker.ps": {
+  "form": "containers",
+  "kind": "table",
+  "map": {
+   "host": "host_id",
+   "name": "Names",
+   "rows": "containers",
+   "status": "State"
+  }
+ },
+ "docker.stack.catalog": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "container_name",
+    "image",
+    "ports",
+    "note"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "services"
+  }
+ },
+ "docker.stack.status": {
+  "draw": {
+   "columns": [
+    "label",
+    "running",
+    "exists",
+    "status",
+    "container_name",
+    "image",
+    "ports"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "services"
+  }
+ },
+ "docker.stats.top": {
+  "empty": "no running container sampled",
+  "form": "ranked",
+  "kind": "table",
+  "map": {
+   "name": "name",
+   "value": "cpu_pct",
+   "values": "top"
+  },
+  "title": "Busiest containers \u00b7 CPU %"
+ },
+ "dream.background.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "dream.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "config"
+  }
+ },
+ "dream.director.queue": {
+  "draw": {
+   "columns": [
+    "topic",
+    "kind",
+    "mode",
+    "goal",
+    "why",
+    "source",
+    "created"
+   ]
+  },
+  "empty": "The director has nothing queued",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "queue"
+  }
+ },
+ "dream.director.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "last_thought"
+    },
+    "title": "Last thought"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "queue"
+    },
+    "title": "Queued"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
+ "dream.history": {
+  "draw": {
+   "columns": [
+    "label",
+    "title",
+    "started_at",
+    "signal"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "history"
+  }
+ },
+ "dream.journal.list": {
+  "draw": {
+   "columns": [
+    "journal_id",
+    "entries",
+    "updated",
+    "created"
+   ]
+  },
+  "empty": "No dream journals",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "journals"
+  }
+ },
+ "dream.last": {
+  "kind": "document",
+  "map": {
+   "body": "report",
+   "title": "title"
+  }
+ },
+ "dream.loop.settings.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "settings"
+  }
+ },
+ "dream.pipeline.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "name",
+    "kind",
+    "mode",
+    "depth",
+    "max_steps",
+    "description"
+   ]
+  },
+  "empty": "No composite pipelines",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "pipelines"
+  }
+ },
+ "dream.review.list": {
+  "draw": {
+   "columns": [
+    "file",
+    "area",
+    "style",
+    "label",
+    "chars",
+    "truncated",
+    "ts",
+    "snapshot_id"
+   ]
+  },
+  "empty": "No stored review reports",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "reports"
+  }
+ },
+ "dream.review.runs": {
+  "draw": {
+   "columns": [
+    "ts",
+    "review_type",
+    "files_reviewed",
+    "reports_generated",
+    "remaining",
+    "stopped_reason",
+    "incomplete",
+    "snapshot_id"
+   ]
+  },
+  "empty": "No review runs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "runs"
+  }
+ },
+ "dream.review.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "dream.review.styles": {
+  "draw": {
+   "columns": [
+    "label",
+    "id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "styles"
+  }
+ },
+ "dream.schedule.events": {
+  "empty": "No dream fires in the window",
+  "kind": "calendar",
+  "map": {
+   "end": "end",
+   "events": "events",
+   "start": "start",
+   "title": "title"
+  }
+ },
+ "dream.scheduler.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "dream.sensor.bus_events": {
+  "empty": "No recent capability events",
+  "kind": "log",
+  "map": {
+   "events": "sample",
+   "kind": "via",
+   "t": "ts",
+   "text": "name"
+  }
+ },
+ "dream.sensor.syslog_errors": {
+  "empty": "No recent errors",
+  "kind": "log",
+  "map": {
+   "events": "sample",
+   "kind": "category",
+   "level": "level",
+   "t": "ts",
+   "text": "message"
+  }
+ },
+ "dream.sensors.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "cap",
+    "description"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sensors"
+  }
+ },
+ "dream.stages.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "phase",
+    "optional",
+    "cap",
+    "description"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "stages"
+  }
+ },
+ "dream.templates.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "mode",
+    "depth",
+    "max_steps",
+    "description"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "templates"
+  }
+ },
+ "dream.think.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "subject",
+    "project",
+    "enabled",
+    "idle_minutes",
+    "interval_minutes",
+    "last_run",
+    "goal"
+   ]
+  },
+  "empty": "No thinking loops",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "thoughts"
+  }
+ },
+ "dream.timeline": {
+  "draw": {
+   "columns": [
+    "label",
+    "fires_in",
+    "hours_window",
+    "mode",
+    "idle_met",
+    "cooldown_until",
+    "last_run",
+    "trigger"
+   ]
+  },
+  "empty": "No triggers to project",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "triggers"
+  }
+ },
+ "dream.trigger.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "name",
+    "enabled",
+    "mode",
+    "hours_start",
+    "hours_end",
+    "min_idle_minutes",
+    "min_interval_minutes",
+    "last_run"
+   ]
+  },
+  "empty": "No dream triggers",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "triggers"
+  }
+ },
+ "estate.health": {
+  "form": "status",
+  "kind": "status"
+ },
+ "evolve.activity": {
+  "form": "area",
+  "kind": "series",
+  "map": {
+   "series": "buckets",
+   "split": [
+    "pass",
+    "fail"
+   ],
+   "t": "hour"
+  }
+ },
+ "evolve.agents.rows": {
+  "draw": {
+   "columns": [
+    "title",
+    "agent",
+    "state",
+    "items_open",
+    "commit_count",
+    "last_activity",
+    "id"
+   ]
+  },
+  "empty": "No agent sessions",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sessions"
+  }
+ },
+ "evolve.audit.list": {
+  "kind": "log",
+  "map": {
+   "events": "audit",
+   "kind": "action",
+   "t": "ts",
+   "text": "summary"
+  }
+ },
+ "evolve.bleeding_edge.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "branch",
+    "base",
+    "main_state",
+    "head",
+    "mirror",
+    "preferred_port",
+    "exists"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "edges"
+  }
+ },
+ "evolve.census.templates": {
+  "draw": {
+   "columns": [
+    "name",
+    "tag",
+    "goals_n",
+    "wall_cap_s",
+    "model",
+    "description"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "templates"
+  }
+ },
+ "evolve.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "config"
+  }
+ },
+ "evolve.delegate.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "status",
+    "mode",
+    "effort",
+    "ref",
+    "created_at",
+    "ended_at",
+    "id"
+   ]
+  },
+  "empty": "No delegated jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
+ "evolve.editq.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "status",
+    "model",
+    "provider",
+    "error",
+    "created_at",
+    "ended_at"
+   ]
+  },
+  "empty": "The edit queue is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "queue"
+  }
+ },
+ "evolve.errors.list": {
+  "empty": "No errors in the queue",
+  "kind": "log",
+  "map": {
+   "events": "items",
+   "kind": "source",
+   "level": "state",
+   "t": "last_seen",
+   "text": "title"
+  }
+ },
+ "evolve.git.graph": {
+  "draw": {
+   "columns": [
+    "subject",
+    "author",
+    "date",
+    "refs",
+    "hash"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "commits"
+  }
+ },
+ "evolve.improve.list": {
+  "draw": {
+   "columns": [
+    "profile",
+    "status",
+    "phase",
+    "rounds_done",
+    "max_rounds",
+    "best_score",
+    "error",
+    "started_at",
+    "id"
+   ]
+  },
+  "empty": "No improvement sessions",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sessions"
+  }
+ },
+ "evolve.mission.events": {
+  "kind": "log",
+  "map": {
+   "events": "events",
+   "kind": "family",
+   "level": "state",
+   "t": "ts",
+   "text": "summary"
+  }
+ },
+ "evolve.pipeline.diff": {
+  "form": "diff",
+  "kind": "diff"
+ },
+ "evolve.pipeline.get": {
+  "form": "run-track",
+  "kind": "progress"
+ },
+ "evolve.pipeline.list": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "evolve.release.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "census"
+    },
+    "title": "Census"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "history"
+    },
+    "title": "Recent releases"
+   }
+  ]
+ },
+ "evolve.report": {
+  "kind": "document",
+  "map": {
+   "body": "text"
+  }
+ },
+ "evolve.results": {
+  "draw": {
+   "columns": [
+    "goal",
+    "template",
+    "source",
+    "status",
+    "ok",
+    "pass_rate",
+    "elapsed_s",
+    "model",
+    "ts"
+   ]
+  },
+  "empty": "No task results",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "results"
+  }
+ },
+ "evolve.runs": {
+  "draw": {
+   "columns": [
+    "label",
+    "template",
+    "status",
+    "ok",
+    "pass_rate",
+    "combined",
+    "elapsed_s",
+    "source",
+    "ts"
+   ]
+  },
+  "empty": "No benchmark runs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "runs"
+  }
+ },
+ "evolve.sandbox.diff": {
+  "form": "diff",
+  "kind": "diff"
+ },
+ "evolve.sandbox.list": {
+  "form": "sandboxes",
+  "kind": "table",
+  "map": {
+   "name": "name",
+   "rows": "sandboxes",
+   "status": "running"
+  }
+ },
+ "evolve.sandbox.logs": {
+  "empty": "No captured sandbox logs",
+  "kind": "log",
+  "map": {
+   "events": "logs",
+   "level": "level",
+   "t": "ts",
+   "text": "text"
+  }
+ },
+ "evolve.sandbox.metrics": {
+  "empty": "No sandbox samples yet",
+  "kind": "series",
+  "map": {
+   "keyed": true,
+   "points": "metrics",
+   "t": "ts",
+   "v": "cpu_pct"
+  },
+  "title": "Sandbox CPU %"
+ },
+ "evolve.sandbox.status": {
+  "kind": "status",
+  "map": {
+   "checks": "checks",
+   "verdict": "verdict"
+  },
+  "title": "Dev sandbox"
+ },
+ "evolve.schedule.events": {
+  "kind": "calendar",
+  "map": {
+   "end": "end",
+   "events": "events",
+   "start": "start",
+   "title": "title"
+  }
+ },
+ "evolve.schedule.history": {
+  "empty": "No scheduled runs yet",
+  "kind": "timeline",
+  "map": {
+   "end": "finished_at",
+   "name": "title",
+   "spans": "runs",
+   "start": "started_at",
+   "status": "result"
+  },
+  "title": "Scheduler runs"
+ },
+ "evolve.schedule.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "kind",
+    "days",
+    "start",
+    "end",
+    "repeat",
+    "enabled",
+    "last_result",
+    "last_started_at"
+   ]
+  },
+  "empty": "No schedules",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "schedules"
+  }
+ },
+ "evolve.ship.branches": {
+  "draw": {
+   "columns": [
+    "branch",
+    "role",
+    "stage",
+    "owner",
+    "pipelines_n",
+    "pending_n",
+    "merged",
+    "last_activity"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "branches"
+  }
+ },
+ "evolve.suites": {
+  "draw": {
+   "columns": [
+    "suite_id",
+    "template",
+    "tasks_n",
+    "done",
+    "pass_rate",
+    "avg_combined",
+    "source",
+    "ts"
+   ]
+  },
+  "empty": "No suite scoreboards",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "suites"
+  }
+ },
+ "evolve.tasks": {
+  "draw": {
+   "columns": [
+    "label",
+    "type",
+    "profile",
+    "enabled",
+    "timeout_s",
+    "id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "tasks"
+  }
+ },
+ "evolve.tasks.overview": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "evolve.test_pool.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "nodes_now"
+    },
+    "title": "Nodes now"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
+ "evolve.unittest.history": {
+  "form": "race-green",
+  "kind": "status"
+ },
+ "evolve.work.drivers": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "template",
+    "status",
+    "tasks_n",
+    "done",
+    "failed",
+    "pass_rate",
+    "ts"
+   ]
+  },
+  "empty": "No driver runs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "drivers"
+  }
+ },
+ "evolve.worktree.claims": {
+  "draw": {
+   "columns": [
+    "path",
+    "owner",
+    "state",
+    "note",
+    "claimed_at",
+    "exists"
+   ]
+  },
+  "empty": "No worktree claims",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "claims"
+  }
+ },
+ "exec.bash.run": {
+  "form": "terminal",
+  "kind": "terminal"
+ },
+ "exec.code.langs": {
+  "draw": {
+   "columns": [
+    "id",
+    "available",
+    "allowed",
+    "bin",
+    "ext"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "languages"
+  }
+ },
+ "exec.llm.models": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "status",
+      "latency_ms",
+      "has_gpu",
+      "backend",
+      "url"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "instances"
+    },
+    "title": "Instances"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "instance_label",
+      "parameter_size",
+      "family",
+      "quantization",
+      "size_bytes",
+      "backend"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "models"
+    },
+    "title": "Models"
+   }
+  ]
+ },
+ "exec.sandbox.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "policy"
+  }
+ },
+ "exec.ssh.hosts.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "host",
+    "port",
+    "user",
+    "auth",
+    "tags",
+    "updated_at"
+   ]
+  },
+  "empty": "No SSH hosts stored",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "hosts"
+  }
+ },
+ "fabric.api.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "url",
+    "kind",
+    "parent_dataset",
+    "confidence",
+    "promoted",
+    "endpoint_count"
+   ]
+  },
+  "empty": "No API surfaces discovered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "apis"
+  }
+ },
+ "fabric.datasets": {
+  "draw": {
+   "columns": [
+    "dataset_id",
+    "record_count",
+    "updated_at",
+    "has_children"
+   ]
+  },
+  "empty": "No datasets",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "datasets"
+  }
+ },
+ "fabric.discover.history": {
+  "draw": {
+   "columns": [
+    "seed_url",
+    "dataset_id",
+    "status",
+    "pages_fetched",
+    "queued",
+    "surfaces_found",
+    "subtables_found",
+    "updated_at"
+   ]
+  },
+  "empty": "No discovery crawls",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "crawls"
+  }
+ },
+ "fabric.domains.authority": {
+  "draw": {
+   "columns": [
+    "domain",
+    "source_type",
+    "score",
+    "base_authority",
+    "avg_relevance",
+    "avg_novelty",
+    "pages"
+   ]
+  },
+  "empty": "No domain authority learned yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "domains"
+  }
+ },
+ "fabric.entity_graph.snapshot": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "fabric.entity_graph.types": {
+  "form": "ranked",
+  "kind": "table",
+  "map": {
+   "count": "type",
+   "sum": "count",
+   "values": "types"
+  }
+ },
+ "fabric.graphs.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "available",
+    "uri",
+    "description"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "graphs"
+  }
+ },
+ "fabric.graphs.snapshot": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "fabric.health": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "fabric.kb.list": {
+  "draw": {
+   "columns": [
+    "subject",
+    "status",
+    "article_count",
+    "fact_count",
+    "updated_at",
+    "kb_id"
+   ]
+  },
+  "empty": "No knowledgebases",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "knowledgebases"
+  }
+ },
+ "fabric.objects.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "fabric.skills.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "description",
+    "dataset_ids",
+    "updated_at",
+    "id"
+   ]
+  },
+  "empty": "No skills",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "skills"
+  }
+ },
+ "fabric.sources": {
+  "draw": {
+   "columns": [
+    "label",
+    "source_type",
+    "dataset_id",
+    "enabled",
+    "interval",
+    "pull_count",
+    "last_pulled",
+    "id"
+   ]
+  },
+  "empty": "No sources registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sources"
+  }
+ },
+ "fabric.subtables.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "kind",
+    "parent_dataset",
+    "row_count",
+    "columns",
+    "from_url",
+    "created_at"
+   ]
+  },
+  "empty": "No sub-tables extracted",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "subtables"
+  }
+ },
+ "fabric.surfaces.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "url",
+    "parent_dataset",
+    "confidence",
+    "promoted",
+    "why"
+   ]
+  },
+  "empty": "No surfaces detected",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "surfaces"
+  }
+ },
+ "foundry.features": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "status",
+    "default",
+    "targets",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "features"
+  }
+ },
+ "foundry.image.list": {
+  "draw": {
+   "columns": [
+    "id",
+    "os",
+    "version",
+    "type",
+    "arch",
+    "status",
+    "is_latest",
+    "size"
+   ]
+  },
+  "empty": "No OS images catalogued",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "images"
+  }
+ },
+ "foundry.jobs": {
+  "draw": {
+   "columns": [
+    "name",
+    "target",
+    "image",
+    "status",
+    "vmid",
+    "features",
+    "id"
+   ]
+  },
+  "empty": "No provision jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
+ "foundry.pxe.config": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "foundry.pxe.macs": {
+  "draw": {
+   "columns": [
+    "mac",
+    "hostname",
+    "ip",
+    "status",
+    "profile_id"
+   ]
+  },
+  "empty": "No machines in the waiting room",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "macs"
+  }
+ },
+ "foundry.pxe.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "foundry.security.standards": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "name",
+      "control_count",
+      "description"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "profiles"
+    },
+    "title": "Profiles"
+   },
+   {
+    "draw": {
+     "columns": [
+      "title",
+      "severity",
+      "standard",
+      "id",
+      "why"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "controls"
+    },
+    "title": "Controls"
+   }
+  ]
+ },
+ "goals.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "dream_count",
+    "last_dream_at",
+    "loop_status",
+    "created_at"
+   ]
+  },
+  "empty": "No long-term goals",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "goals"
+  }
+ },
+ "gpu.health": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "status",
+    "gpu",
+    "cuda",
+    "whisper",
+    "stable_diffusion",
+    "sd_device",
+    "tts",
+    "tts_engine",
+    "sample_rate"
+   ]
+  }
+ },
+ "ha.config.get": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "base_url",
+    "configured",
+    "verify_tls",
+    "updated"
+   ]
+  }
+ },
+ "ha.estate.plan": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "counts"
+    },
+    "title": "Plan"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "entity_id",
+      "kind"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "update"
+    },
+    "title": "To refresh"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "reason"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "skipped"
+    },
+    "title": "Skipped"
+   }
+  ]
+ },
+ "ha.find": {
+  "draw": {
+   "columns": [
+    "name",
+    "entity_id",
+    "state",
+    "domain",
+    "available",
+    "score"
+   ]
+  },
+  "empty": "Nothing matches",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "matches"
+  }
+ },
+ "ha.health": {
+  "form": "status",
+  "kind": "status"
+ },
+ "ha.services": {
+  "draw": {
+   "columns": [
+    "domain",
+    "services"
+   ]
+  },
+  "empty": "No services",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "services"
+  }
+ },
+ "ha.states": {
+  "draw": {
+   "columns": [
+    "name",
+    "entity_id",
+    "state",
+    "domain",
+    "available"
+   ]
+  },
+  "empty": "No entities",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "entities"
+  }
+ },
+ "ha.summary": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "House"
+   },
+   {
+    "kind": "parts",
+    "map": {
+     "parts": "domains"
+    },
+    "title": "Entities by domain"
+   },
+   {
+    "form": "list",
+    "kind": "table",
+    "map": {
+     "rows": "unavailable"
+    },
+    "title": "Unavailable"
+   }
+  ]
+ },
+ "ide.agent.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "name",
+    "model",
+    "temperature",
+    "prefer_gpu",
+    "registered"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "agents"
+  }
+ },
+ "ide.claude_sessions.list_sessions": {
+  "draw": {
+   "columns": [
+    "title",
+    "agent",
+    "turns",
+    "last_ts",
+    "last_role",
+    "project_dir",
+    "claude_session_id"
+   ]
+  },
+  "empty": "No Claude Code sessions ingested",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sessions"
+  }
+ },
+ "ide.fs.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "size",
+    "mtime",
+    "readable"
+   ]
+  },
+  "empty": "The directory is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "entries"
+  }
+ },
+ "ide.fs.roots": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "path"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "roots"
+  }
+ },
+ "ide.git.diff": {
+  "kind": "diff",
+  "map": {
+   "diff": "diff"
+  }
+ },
+ "ide.instances": {
+  "draw": {
+   "columns": [
+    "label",
+    "status",
+    "tier",
+    "backend",
+    "has_gpu",
+    "latency_ms",
+    "in_use",
+    "url"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "instances"
+  }
+ },
+ "ide.models": {
+  "draw": {
+   "columns": [
+    "name",
+    "instances"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "models"
+  }
+ },
+ "ide.remote.instances": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "status",
+    "last_seen",
+    "auth_pool",
+    "workdir"
+   ]
+  },
+  "empty": "No remote IDE instances",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "instances"
+  }
+ },
+ "ide.remote.queue.list": {
+  "draw": {
+   "columns": [
+    "task",
+    "status",
+    "engine",
+    "agent",
+    "summary",
+    "created_at",
+    "finished_at"
+   ]
+  },
+  "empty": "The work queue is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "items"
+  }
+ },
+ "ide.vscode.central.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "identity.group.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "description",
+    "members"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "groups"
+  }
+ },
+ "identity.host.list": {
+  "draw": {
+   "columns": [
+    "fqdn",
+    "enrolled"
+   ]
+  },
+  "empty": "No IPA hosts registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "hosts"
+  }
+ },
+ "identity.lldap.groups": {
+  "draw": {
+   "columns": [
+    "display_name",
+    "id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "groups"
+  }
+ },
+ "identity.lldap.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "identity.lldap.users": {
+  "draw": {
+   "columns": [
+    "id",
+    "display_name",
+    "email",
+    "creation_date"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "users"
+  }
+ },
+ "identity.openbao.seal.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "identity.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "identity.user.list": {
+  "draw": {
+   "columns": [
+    "login",
+    "name"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "users"
+  }
+ },
+ "integration.connections": {
+  "kind": "graph",
+  "map": {
+   "edge_from": "from",
+   "edge_to": "to",
+   "edges": "graph.edges",
+   "label": "label",
+   "node_id": "id",
+   "nodes": "graph.nodes",
+   "type": "type"
+  }
+ },
+ "integration.effect.inventory": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "boundary",
+    "authority",
+    "external_mutation",
+    "source_modules"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "domains"
+  }
+ },
+ "integration.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "host",
+    "port",
+    "scheme",
+    "source",
+    "sensitive",
+    "identity_verified"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "integrations"
+  }
+ },
+ "intel.action.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "status",
+    "cap",
+    "created",
+    "expires",
+    "report_id"
+   ]
+  },
+  "empty": "No actions offered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "intel.activity": {
+  "empty": "No intel activity in the window",
+  "kind": "log",
+  "map": {
+   "events": "events",
+   "kind": "kind",
+   "level": "status",
+   "t": "ts",
+   "text": "title"
+  }
+ },
+ "intel.brief": {
+  "draw": {
+   "columns": [
+    "name",
+    "new_24h",
+    "headline",
+    "depth"
+   ]
+  },
+  "empty": "No topics tracked",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "topics"
+  }
+ },
+ "intel.channel.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "render",
+    "needs_target",
+    "available"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "intel.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "config"
+  }
+ },
+ "intel.decisions.stats": {
+  "draw": {
+   "columns": [
+    "name",
+    "decisions",
+    "with_outcome",
+    "correct",
+    "precision"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "questions"
+  }
+ },
+ "intel.indicator.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "indicators"
+    },
+    "title": "Watched numbers"
+   },
+   {
+    "kind": "log",
+    "map": {
+     "events": "changes",
+     "kind": "kind",
+     "t": "found",
+     "text": "text"
+    },
+    "title": "Changes"
+   }
+  ]
+ },
+ "intel.notes.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "summary",
+    "updated",
+    "size",
+    "path"
+   ]
+  },
+  "empty": "The drop folders hold no notes",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "intel.places.get": {
+  "empty": "No places named yet",
+  "form": "globe",
+  "kind": "table",
+  "map": {}
+ },
+ "intel.proposals.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "category",
+    "risk",
+    "effort",
+    "trigger",
+    "date",
+    "error"
+   ]
+  },
+  "empty": "No automation proposals",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "intel.report.list": {
+  "empty": "No reports yet",
+  "kind": "records",
+  "map": {
+   "id": "id",
+   "rows": "rows",
+   "title": "title",
+   "url": "url",
+   "when": "ts"
+  }
+ },
+ "intel.session.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "alerts"
+    },
+    "title": "Recent alerts"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "wanted"
+    },
+    "title": "Wanted searches"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "night"
+    },
+    "title": "Last night"
+   }
+  ]
+ },
+ "intel.signal.list": {
+  "empty": "No signals in the window",
+  "kind": "records",
+  "map": {
+   "domain": "site",
+   "id": "id",
+   "rows": "rows",
+   "score": "score",
+   "snippet": "snippet",
+   "title": "title",
+   "url": "url",
+   "when": "seen"
+  }
+ },
+ "intel.stories.get": {
+  "empty": "No stories carried by several sources",
+  "kind": "records",
+  "map": {
+   "domain": "topic",
+   "id": "id",
+   "rows": "stories",
+   "score": "score",
+   "snippet": "summary",
+   "title": "title",
+   "url": "url",
+   "when": "first_seen"
+  }
+ },
+ "intel.summary": {
+  "form": "numbers",
+  "kind": "kv",
+  "map": {
+   "pick": {
+    "actions open": "actions_open",
+    "reports 7d": "reports_7d",
+    "signals 24h": "signals_24h",
+    "topics": "topics"
+   }
+  }
+ },
+ "intel.timeline.get": {
+  "kind": "series",
+  "map": {
+   "points": "days",
+   "t": "date",
+   "v": "signals"
+  },
+  "title": "Signals a day"
+ },
+ "intel.topic.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "depth",
+    "cadence",
+    "signals_24h",
+    "signals_total",
+    "confidence",
+    "headline",
+    "last_sweep"
+   ]
+  },
+  "empty": "No topics tracked",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "jobs.history": {
+  "draw": {
+   "columns": [
+    "capability",
+    "status",
+    "elapsed_s",
+    "worker_id",
+    "delivery_count",
+    "updated_at",
+    "error"
+   ]
+  },
+  "empty": "No jobs recorded",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
+ "jobs.stats": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "stats"
+    },
+    "title": "Counters"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "pending",
+      "idle"
+     ]
+    },
+    "empty": "No stream consumers",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "stream.consumers"
+    },
+    "title": "Stream consumers"
+   }
+  ]
+ },
+ "loop.ci.board": {
+  "form": "ci-board",
+  "kind": "status"
+ },
+ "loop.ci.matrix": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "loop.ci.perf": {
+  "form": "loop-perf",
+  "kind": "series"
+ },
+ "loop.ci.race": {
+  "form": "race-green",
+  "kind": "status"
+ },
+ "loops.program.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "horizon_days",
+    "created",
+    "owner_ref"
+   ]
+  },
+  "empty": "No loop programs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "programs"
+  }
+ },
+ "markets.alerts.list": {
+  "kind": "log",
+  "map": {
+   "events": "alerts",
+   "kind": "direction",
+   "t": "created_at",
+   "text": "message"
+  }
+ },
+ "markets.backtest.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "dataset_id",
+    "created_at",
+    "strategy_id",
+    "id"
+   ]
+  },
+  "empty": "No stored backtests",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "backtests"
+  }
+ },
+ "markets.baseline.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "symbol",
+    "group",
+    "provider",
+    "tracked",
+    "last_bar"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "assets"
+  }
+ },
+ "markets.chart": {
+  "empty": "no stored bars for {symbol}",
+  "form": "candles",
+  "kind": "series",
+  "map": {
+   "bars": "bars"
+  },
+  "title": "{symbol} \u00b7 {timeframe}",
+  "views": [
+   "table"
+  ]
+ },
+ "markets.evolve.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "metric",
+      "ts",
+      "strategy_id"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "leaderboard"
+    },
+    "title": "Leaderboard"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
+ "markets.macro.catalog": {
+  "draw": {
+   "columns": [
+    "name",
+    "group",
+    "unit",
+    "source",
+    "last",
+    "fetched"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "series"
+  }
+ },
+ "markets.ml.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "task",
+    "model_kind",
+    "status",
+    "dataset_id",
+    "horizon",
+    "trained_at"
+   ]
+  },
+  "empty": "No ML tools",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "models"
+  }
+ },
+ "markets.monitor.status": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "enabled",
+    "dataset_id",
+    "interval_min",
+    "sim_pct"
+   ]
+  },
+  "empty": "No live monitors",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "monitors"
+  }
+ },
+ "markets.news.digest": {
+  "empty": "no headlines found",
+  "kind": "records",
+  "map": {
+   "domain": "source",
+   "rows": "items",
+   "snippet": "snippet",
+   "title": "title",
+   "url": "url"
+  },
+  "title": "News"
+ },
+ "markets.news.feed": {
+  "empty": "no headlines found",
+  "kind": "records",
+  "map": {
+   "rows": "headlines",
+   "snippet": "snippet",
+   "title": "title",
+   "url": "url"
+  },
+  "title": "Headlines"
+ },
+ "markets.overview": {
+  "empty": "no tracked assets in the overview yet",
+  "form": "treemap",
+  "kind": "parts",
+  "map": {
+   "name": "name",
+   "parts": "groups",
+   "value": "count"
+  },
+  "title": "Market map"
+ },
+ "markets.portfolio.history": {
+  "empty": "No portfolio history",
+  "form": "lines",
+  "kind": "series",
+  "map": {
+   "pick": {
+    "cost": "cost",
+    "value": "value"
+   }
+  },
+  "title": "Portfolio value vs cost"
+ },
+ "markets.portfolio.positions": {
+  "empty": "the real book is empty",
+  "form": "spark-table",
+  "kind": "table",
+  "map": {
+   "name": "symbol_key",
+   "rows": "positions",
+   "value": "market_value"
+  },
+  "title": "Portfolio"
+ },
+ "markets.portfolio.tx_list": {
+  "draw": {
+   "columns": [
+    "ts",
+    "side",
+    "name",
+    "qty",
+    "price",
+    "fees",
+    "currency"
+   ]
+  },
+  "empty": "No portfolio transactions",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "transactions"
+  }
+ },
+ "markets.quotes": {
+  "draw": {
+   "columns": [
+    "symbol",
+    "exchange",
+    "last",
+    "change_pct",
+    "live",
+    "ts"
+   ],
+   "sort": "-change_pct"
+  },
+  "empty": "No watched assets",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "quotes"
+  }
+ },
+ "markets.sentiment.map": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "label",
+      "score",
+      "confidence",
+      "summary",
+      "created_at"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "benchmarks"
+    },
+    "title": "Benchmarks"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "label",
+      "score",
+      "key"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "tracked"
+    },
+    "title": "Tracked assets"
+   }
+  ]
+ },
+ "markets.sim.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "value",
+    "cash",
+    "ret_pct",
+    "start_cash",
+    "currency"
+   ]
+  },
+  "empty": "No sim accounts",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "accounts"
+  }
+ },
+ "markets.strategy.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "status",
+    "updated_at",
+    "id"
+   ]
+  },
+  "empty": "No saved strategies",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "strategies"
+  }
+ },
+ "markets.watchlist.list": {
+  "draw": {
+   "columns": [
+    "symbol",
+    "exchange",
+    "last_status",
+    "last_update",
+    "auto_update",
+    "update_interval_min",
+    "live_track"
+   ]
+  },
+  "empty": "The watchlist is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "watchlist"
+  }
+ },
+ "memory.backends": {
+  "draw": {
+   "columns": [
+    "name",
+    "connected",
+    "total",
+    "active",
+    "edges"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "backends"
+  }
+ },
+ "memory.fade.policy": {
+  "draw": {
+   "columns": [
+    "name",
+    "enabled",
+    "half_life_days",
+    "floor"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "policy"
+  }
+ },
+ "memory.graph_full": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "memory.graph_stats": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "categories"
+    },
+    "title": "Categories"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "edge_types"
+    },
+    "title": "Edge types"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "sessions"
+    },
+    "title": "Recent sessions"
+   }
+  ]
+ },
+ "memory.usage.top": {
+  "draw": {
+   "columns": [
+    "text",
+    "record_type",
+    "injected_n",
+    "used_n",
+    "use_rate",
+    "last_used"
+   ]
+  },
+  "empty": "No memory use recorded yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "mesh.activity": {
+  "empty": "No recent mesh traffic",
+  "kind": "log",
+  "map": {
+   "events": "events",
+   "kind": "kind",
+   "t": "ts",
+   "text": "label"
+  }
+ },
+ "mesh.boards.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "chip",
+    "bus",
+    "controller",
+    "builtin",
+    "note"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "boards"
+  }
+ },
+ "mesh.firmware.catalog": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "kind",
+    "chip",
+    "offset",
+    "source",
+    "note"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "artifacts"
+  }
+ },
+ "mesh.graph": {
+  "kind": "graph",
+  "map": {
+   "edge_from": "from",
+   "edge_to": "to",
+   "edges": "edges",
+   "label": "label",
+   "node_id": "id",
+   "nodes": "nodes",
+   "type": "kind"
+  }
+ },
+ "mesh.jobs": {
+  "empty": "No mesh jobs",
+  "kind": "log",
+  "map": {
+   "events": "jobs",
+   "kind": "status",
+   "t": "created_at",
+   "text": "type"
+  }
+ },
+ "mesh.nodes": {
+  "draw": {
+   "columns": [
+    "name",
+    "node_id",
+    "status",
+    "role",
+    "board",
+    "fw_version",
+    "ip",
+    "rssi",
+    "last_seen"
+   ]
+  },
+  "empty": "No mesh nodes registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "mesh.topology": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "mesh.ui.sprites": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "ready",
+    "frames",
+    "animation",
+    "animations",
+    "source"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sprites"
+  }
+ },
+ "metrics.stack.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "components"
+  },
+  "title": "Metrics stack"
+ },
+ "minds.switch.list": {
+  "draw": {
+   "columns": [
+    "id",
+    "default",
+    "modes",
+    "surface",
+    "package",
+    "owner",
+    "census"
+   ]
+  },
+  "empty": "No switches",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "switches"
+  }
+ },
+ "ml.catalogue": {
+  "draw": {
+   "columns": [
+    "name",
+    "family",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "layers"
+  }
+ },
+ "ml.data.list": {
+  "draw": {
+   "columns": [
+    "dataset_id",
+    "record_count",
+    "is_internal",
+    "updated_at"
+   ]
+  },
+  "empty": "No datasets",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "datasets"
+  }
+ },
+ "ml.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "id",
+    "param_count",
+    "nodes",
+    "edges",
+    "tags",
+    "updated_at",
+    "description"
+   ]
+  },
+  "empty": "No ML modules saved",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "modules"
+  }
+ },
+ "ml.onnx.list": {
+  "draw": {
+   "columns": [
+    "slug",
+    "module_id",
+    "dtype",
+    "node_count",
+    "size_kb",
+    "created",
+    "cap_name"
+   ]
+  },
+  "empty": "No ONNX artifacts",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "artifacts"
+  }
+ },
+ "ml.train.status": {
+  "draw": {
+   "columns": [
+    "job_id",
+    "module_id",
+    "status",
+    "epoch",
+    "progress",
+    "best_val_loss",
+    "created_at"
+   ]
+  },
+  "empty": "No training jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
+ "model.inventory": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "counts"
+    },
+    "title": "Counts"
+   },
+   {
+    "draw": {
+     "columns": [
+      "task",
+      "model",
+      "format",
+      "status",
+      "blockers"
+     ]
+    },
+    "empty": "No unresolved candidates",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "candidates"
+    },
+    "title": "Unresolved candidates"
+   }
+  ]
+ },
+ "n8n.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "netscan.graph": {
+  "draw": {
+   "chrome": "min"
+  },
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "netscan.lan.scan": {
+  "draw": {
+   "columns": [
+    "ip",
+    "hostname",
+    "open_ports",
+    "alive_via",
+    "mac"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "alive"
+  }
+ },
+ "netscan.map.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "node_count",
+    "edge_count",
+    "description",
+    "updated_at",
+    "map_id"
+   ]
+  },
+  "empty": "No saved network maps",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "maps"
+  }
+ },
+ "netscan.osint.campaign.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "hit_count",
+    "query_count",
+    "description",
+    "updated_at",
+    "campaign_id"
+   ]
+  },
+  "empty": "No OSINT campaigns",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "campaigns"
+  }
+ },
+ "nlp.ner": {
+  "empty": "no names found",
+  "kind": "entities",
+  "map": {
+   "entities": "entities"
+  },
+  "title": "Names \u00b7 {task}"
+ },
+ "nodes.activity": {
+  "draw": {
+   "tag": "vera-node-activity"
+  },
+  "form": "element",
+  "kind": "table",
+  "title": "Node activity"
+ },
+ "nodes.agent.status": {
+  "draw": {
+   "tag": "vera-node-activity"
+  },
+  "empty": "No node runs the Vera node agent",
+  "form": "element",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  },
+  "title": "Node activity"
+ },
+ "nodes.backend.overview": {
+  "draw": {
+   "columns": [
+    "label",
+    "instance",
+    "backend",
+    "status",
+    "has_gpu",
+    "served_by",
+    "url"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.components": {
+  "draw": {
+   "columns": [
+    "label",
+    "key",
+    "group",
+    "gpu",
+    "heavy",
+    "needs_model",
+    "backends",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "components"
+  }
+ },
+ "nodes.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "addr",
+    "user",
+    "docker_kind",
+    "tags",
+    "id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.ollama.settings": {
+  "draw": {
+   "columns": [
+    "label",
+    "instance",
+    "status",
+    "enabled",
+    "priority",
+    "num_thread",
+    "has_gpu",
+    "unit"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.parity.status": {
+  "empty": "No parity audit yet",
+  "kind": "matrix",
+  "map": {
+   "cells": "namespaces"
+  },
+  "title": "Node parity by namespace"
+ },
+ "nodes.runner.list": {
+  "draw": {
+   "columns": [
+    "node",
+    "model",
+    "state",
+    "stuck",
+    "rss_mb",
+    "cpu_seconds",
+    "age_s",
+    "reason"
+   ]
+  },
+  "empty": "No compute-worker processes running",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "runners"
+  }
+ },
+ "nodes.storage": {
+  "empty": "No Docker host read",
+  "kind": "parts",
+  "map": {
+   "parts": "docker[0]"
+  },
+  "title": "Docker disk by type"
+ },
+ "nodes.testenv.status": {
+  "draw": {
+   "columns": [
+    "host",
+    "state",
+    "current",
+    "sha",
+    "python",
+    "failed",
+    "error"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.workers.list": {
+  "draw": {
+   "tag": "vera-node-workers"
+  },
+  "form": "element",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  },
+  "title": "Node workers"
+ },
+ "notes.list": {
+  "draw": {
+   "columns": [
+    "scope",
+    "ref_id",
+    "updated_by",
+    "chars",
+    "updated_at"
+   ]
+  },
+  "empty": "No notes",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "notes"
+  }
+ },
+ "obs.cluster": {
+  "kind": "table",
+  "map": {
+   "name": "host",
+   "rows": "workers"
+  }
+ },
+ "obs.diagnostics": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "host",
+    "mode",
+    "redis_connected",
+    "redis_ping",
+    "redis_version",
+    "redis_port",
+    "workers_in_redis",
+    "worker_count_local",
+    "caps"
+   ]
+  }
+ },
+ "obs.events": {
+  "form": "log",
+  "kind": "log",
+  "map": {
+   "events": "$",
+   "kind": "type",
+   "t": "ts",
+   "text": "name"
+  }
+ },
+ "obs.health": {
+  "form": "status",
+  "kind": "status"
+ },
+ "obs.modules": {
+  "form": "treemap",
+  "kind": "table",
+  "map": {
+   "name": "name",
+   "parts": "modules",
+   "value": "caps_added"
+  }
+ },
+ "obs.neo4j_diag": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Driver"
+   },
+   {
+    "draw": {
+     "columns": [
+      "auth",
+      "ok",
+      "error_type",
+      "error"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "probe.attempts"
+    },
+    "title": "Probe"
+   }
+  ]
+ },
+ "obs.node_temps": {
+  "form": "temps",
+  "kind": "table",
+  "map": {
+   "name": "label",
+   "value": "max_c",
+   "values": "hosts"
+  }
+ },
+ "obs.pending": {
+  "kind": "metric",
+  "map": {
+   "value": "count"
+  },
+  "title": "Pending results"
+ },
+ "obs.provenance": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "branch",
+    "git_sha_short",
+    "dirty",
+    "source",
+    "instance",
+    "pid",
+    "started_at"
+   ]
+  }
+ },
+ "obs.proxy_log": {
+  "draw": {
+   "columns": [
+    "ts",
+    "instance",
+    "model",
+    "path",
+    "type"
+   ]
+  },
+  "empty": "No proxied requests",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "log"
+  }
+ },
+ "obs.redis": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "connected_clients",
+    "used_memory_human",
+    "uptime_days"
+   ]
+  }
+ },
+ "obs.scheduler": {
+  "draw": {
+   "columns": [
+    "name",
+    "interval",
+    "runs",
+    "last"
+   ]
+  },
+  "empty": "No scheduled jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "obs.workers": {
+  "draw": {
+   "columns": [
+    "name",
+    "host",
+    "role",
+    "status",
+    "current_task",
+    "cpu_pct",
+    "ram_pct",
+    "tasks_done"
+   ]
+  },
+  "empty": "No workers registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "ollama.gate.status": {
+  "draw": {
+   "columns": [
+    "node",
+    "has_gpu",
+    "gated",
+    "capacity",
+    "held",
+    "free",
+    "owners"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "ollama.instances": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "status",
+    "has_gpu",
+    "latency_ms",
+    "in_use",
+    "errors",
+    "num_ctx",
+    "backend"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "ollama.list_models": {
+  "draw": {
+   "columns": [
+    "status",
+    "has_gpu",
+    "count",
+    "url"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "ollama.request_log": {
+  "form": "log",
+  "kind": "log",
+  "map": {
+   "events": "entries",
+   "kind": "instance",
+   "t": "ts",
+   "text": "model"
+  }
+ },
+ "ollama.route_stats": {
+  "form": "ranked",
+  "kind": "table",
+  "map": {
+   "count": "model",
+   "sum": "n",
+   "values": "stats"
+  }
+ },
+ "ollama.warm.status": {
+  "draw": {
+   "attrs": {
+    "section": "warm"
+   },
+   "tag": "vera-node-models"
+  },
+  "form": "element",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  },
+  "title": "Warm models"
+ },
+ "openclaw.config.get": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "enabled",
+    "agent_id",
+    "auto_reconnect",
+    "reconnect_interval",
+    "run_timeout",
+    "settle_timeout",
+    "client_id",
+    "client_mode",
+    "role",
+    "scopes"
+   ]
+  }
+ },
+ "openclaw.ollama-models": {
+  "empty": "No models found",
+  "form": "list",
+  "kind": "table",
+  "map": {
+   "rows": "models"
+  }
+ },
+ "openclaw.sessions.list": {
+  "draw": {
+   "columns": [
+    "key",
+    "status",
+    "model",
+    "modelProvider",
+    "totalTokens",
+    "contextTokens",
+    "runtimeMs",
+    "updatedAt"
+   ]
+  },
+  "empty": "No OpenClaw sessions",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sessions"
+  }
+ },
+ "openclaw.status": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "enabled",
+    "connected",
+    "connecting",
+    "pairing_required",
+    "gateway_version",
+    "last_connected_at",
+    "last_error",
+    "agent_id",
+    "client_mode",
+    "role",
+    "open_stream_buffers"
+   ]
+  }
+ },
+ "operator.connect.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "group",
+    "type",
+    "source",
+    "url",
+    "driveable",
+    "detail"
+   ]
+  },
+  "empty": "Nothing to connect to",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "connectables"
+  }
+ },
+ "operator.mission.list": {
+  "kind": "kv",
+  "map": {
+   "fields": "missions"
+  }
+ },
+ "operator.runs": {
+  "draw": {
+   "columns": [
+    "goal",
+    "target",
+    "reason",
+    "steps",
+    "errors",
+    "duration_s",
+    "completed",
+    "started_at"
+   ]
+  },
+  "empty": "No operator runs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "runs"
+  }
+ },
+ "perf.gate": {
+  "kind": "status",
+  "map": {
+   "checks": "top_findings",
+   "verdict": "verdict"
+  }
+ },
+ "perf.log.files": {
+  "draw": {
+   "columns": [
+    "name",
+    "bytes",
+    "modified"
+   ]
+  },
+  "empty": "No log files",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "files"
+  }
+ },
+ "perf.log.tail": {
+  "form": "terminal",
+  "kind": "terminal",
+  "map": {}
+ },
+ "perf.scan": {
+  "form": "status",
+  "kind": "status"
+ },
+ "perf.stalls": {
+  "form": "column",
+  "kind": "series",
+  "map": {
+   "reverse": true,
+   "value": "stalled_ms",
+   "values": "events"
+  }
+ },
+ "podcast.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "style",
+    "duration_s",
+    "format",
+    "size_bytes",
+    "created"
+   ]
+  },
+  "empty": "No episodes yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "episodes"
+  }
+ },
+ "podcast.settings.get": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Defaults"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "voice",
+      "persona"
+     ]
+    },
+    "empty": "No speakers",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "speakers"
+    },
+    "title": "Speakers"
+   }
+  ]
+ },
+ "print.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "config"
+  }
+ },
+ "print.printers": {
+  "draw": {
+   "columns": [
+    "name",
+    "transport",
+    "port",
+    "baud",
+    "width_mm",
+    "is_default",
+    "node_id",
+    "updated_at"
+   ]
+  },
+  "empty": "No printers configured",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "printers"
+  }
+ },
+ "print.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "transport",
+      "port",
+      "width_mm",
+      "is_default"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "printers"
+    },
+    "title": "Printers"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Subsystem"
+   }
+  ]
+ },
+ "print.subs.get": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "subs"
+    },
+    "title": "Printing"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "subs.sources"
+    },
+    "title": "Sources"
+   }
+  ]
+ },
+ "project.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "dream_count",
+    "last_dream_at",
+    "updated_at",
+    "slug"
+   ]
+  },
+  "empty": "No projects",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "projects"
+  }
+ },
+ "prov.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "openbao"
+    },
+    "title": "OpenBao"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "stepca"
+    },
+    "title": "step-ca"
+   }
+  ]
+ },
+ "providers.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "enabled",
+    "default_model",
+    "has_key",
+    "base_url"
+   ]
+  },
+  "empty": "No providers configured",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "providers"
+  }
+ },
+ "provision.components": {
+  "draw": {
+   "columns": [
+    "label",
+    "key",
+    "port",
+    "python",
+    "heavy",
+    "needs_vera_url",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "components"
+  }
+ },
+ "provision.overview": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "addr",
+      "backends",
+      "gpu",
+      "target"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "targets.nodes"
+    },
+    "title": "Nodes"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "kind",
+      "target"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "targets.docker_engines"
+    },
+    "title": "Docker engines"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "cluster_id",
+      "target"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "targets.proxmox_clusters"
+    },
+    "title": "Proxmox clusters"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "key",
+      "group",
+      "backends",
+      "gpu",
+      "desc"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "payloads.components"
+    },
+    "title": "Components"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "key",
+      "image",
+      "desc"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "payloads.stacks"
+    },
+    "title": "Stacks"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "key",
+      "system",
+      "desc"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "payloads.security"
+    },
+    "title": "Security"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "key",
+      "desc"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "payloads.special"
+    },
+    "title": "Special"
+   }
+  ]
+ },
+ "provision.store.status": {
+  "draw": {
+   "columns": [
+    "store",
+    "state",
+    "status",
+    "container",
+    "image",
+    "reachable"
+   ]
+  },
+  "empty": "No stores on this host",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "stores"
+  }
+ },
+ "provision.stores": {
+  "draw": {
+   "columns": [
+    "label",
+    "key",
+    "image",
+    "desc",
+    "gpus_hint",
+    "special"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "stores"
+  }
+ },
+ "provision.targets": {
+  "draw": {
+   "columns": [
+    "label",
+    "key",
+    "default_port",
+    "needs_sudo",
+    "register",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "targets"
+  }
+ },
+ "pxstore.backend.status": {
+  "draw": {
+   "columns": [
+    "vmid",
+    "name",
+    "status",
+    "ollama",
+    "vllm",
+    "vllm_provisioned",
+    "error"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "guests"
+  }
+ },
+ "pxstore.backup.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "log",
+    "map": {
+     "events": "runs",
+     "kind": "result",
+     "text": "line"
+    },
+    "title": "Latest runs"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "jobs"
+    },
+    "title": "Jobs"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "name": "name",
+     "rows": "storages",
+     "value": "used"
+    },
+    "title": "Storages"
+   }
+  ]
+ },
+ "pxstore.cpu.map": {
+  "draw": {
+   "columns": [
+    "vmid",
+    "name",
+    "type",
+    "status",
+    "pinned",
+    "live",
+    "cores"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "guests"
+  }
+ },
+ "pxstore.cpu.topology": {
+  "kind": "table",
+  "map": {
+   "rows": "cpus"
+  }
+ },
+ "pxstore.disks": {
+  "draw": {
+   "columns": [
+    "name",
+    "size",
+    "model",
+    "transport",
+    "role",
+    "state",
+    "pool"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "disks"
+  }
+ },
+ "pxstore.fs.status": {
+  "kind": "table",
+  "map": {
+   "rows": "entries"
+  }
+ },
+ "pxstore.inventory": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "name": "name",
+     "rows": "pools",
+     "value": "cap_pct"
+    },
+    "title": "Pools"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "guests"
+    },
+    "title": "Guests"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "storages"
+    },
+    "title": "Storages"
+   }
+  ]
+ },
+ "pxstore.nwm.flows": {
+  "kind": "table",
+  "map": {
+   "rows": "flows"
+  }
+ },
+ "pxstore.settings.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "settings"
+  }
+ },
+ "pxstore.store.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "consumers"
+    },
+    "title": "Consumers"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "writer"
+    },
+    "title": "Writer"
+   }
+  ]
+ },
+ "pxstore.vscode.targets": {
+  "draw": {
+   "columns": [
+    "name",
+    "vmid",
+    "type",
+    "via",
+    "uri",
+    "smb"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "targets"
+  }
+ },
+ "pydanticai.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "redis.info": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Server"
+   },
+   {
+    "kind": "parts",
+    "map": {
+     "parts": "dbs"
+    },
+    "title": "Keys by database"
+   }
+  ]
+ },
+ "redis.keys": {
+  "draw": {
+   "columns": [
+    "key",
+    "type",
+    "len",
+    "ttl"
+   ]
+  },
+  "empty": "No keys match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "keys"
+  }
+ },
+ "registry.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "summary",
+    "tags",
+    "updated_at"
+   ]
+  },
+  "empty": "No registry entries match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "entries"
+  }
+ },
+ "research.agents.status": {
+  "draw": {
+   "columns": [
+    "id",
+    "tier",
+    "status",
+    "model",
+    "job_id",
+    "tokens",
+    "elapsed"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "slots"
+  }
+ },
+ "research.config.instances.get": {
+  "draw": {
+   "columns": [
+    "name",
+    "tier",
+    "model",
+    "host",
+    "port",
+    "ctx_size",
+    "enabled",
+    "enable_thinking"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "research.db.stats": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "research.health": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "research.history": {
+  "draw": {
+   "columns": [
+    "query",
+    "mode",
+    "status",
+    "citation_count",
+    "token_count",
+    "created_at",
+    "finished_at",
+    "error",
+    "id"
+   ]
+  },
+  "empty": "No research jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
+ "research.models": {
+  "draw": {
+   "columns": [
+    "instance",
+    "tier",
+    "host",
+    "current_model",
+    "enabled"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "research.notebook.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "description",
+    "project_id",
+    "updated_at",
+    "id"
+   ]
+  },
+  "empty": "No notebooks",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "research.recall.datasets": {
+  "draw": {
+   "columns": [
+    "dataset_id",
+    "record_count",
+    "updated_at",
+    "has_children"
+   ]
+  },
+  "empty": "No research datasets",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "datasets"
+  }
+ },
+ "research.sources": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "type",
+    "enabled",
+    "status"
+   ]
+  },
+  "empty": "No research sources",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "research.websearch.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "sandbox.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "sandbox.packages.catalog": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "group",
+    "installed",
+    "summary"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "catalog"
+  }
+ },
+ "sandbox.packages.pending": {
+  "draw": {
+   "columns": [
+    "id",
+    "session_id",
+    "context",
+    "created",
+    "expires_in"
+   ]
+  },
+  "empty": "No package installs are waiting",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "pending"
+  }
+ },
+ "sandbox.session.list": {
+  "draw": {
+   "columns": [
+    "session_id",
+    "state",
+    "kind",
+    "label",
+    "image",
+    "source",
+    "session_count"
+   ]
+  },
+  "empty": "No session sandboxes",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sandboxes"
+  }
+ },
+ "skills.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "type",
+    "description",
+    "tags",
+    "enabled",
+    "updated"
+   ]
+  },
+  "empty": "No skills",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "skills"
+  }
+ },
+ "smolagents.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "specialist.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "summary"
+    },
+    "title": "Summary"
+   },
+   {
+    "draw": {
+     "columns": [
+      "node_id",
+      "state",
+      "version",
+      "threads"
+     ]
+    },
+    "empty": "No nLP nodes",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "nlp.nodes"
+    },
+    "title": "NLP nodes"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "status",
+      "has_gpu",
+      "services",
+      "in_use"
+     ]
+    },
+    "empty": "No media nodes",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "media.nodes"
+    },
+    "title": "Media nodes"
+   },
+   {
+    "draw": {
+     "columns": [
+      "task",
+      "model",
+      "kind"
+     ]
+    },
+    "empty": "No nLP models",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "nlp.registry"
+    },
+    "title": "NLP models"
+   }
+  ]
+ },
+ "spritegen.capabilities": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "tiers"
+    },
+    "title": "Tiers"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "style_descriptors"
+    },
+    "title": "Styles"
+   }
+  ]
+ },
+ "spritegen.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "char_id",
+    "style",
+    "sprite_size",
+    "colors",
+    "brief",
+    "archived",
+    "created_at"
+   ]
+  },
+  "empty": "No characters defined",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "characters"
+  }
+ },
+ "sys.debug.tasks": {
+  "draw": {
+   "columns": [
+    "name",
+    "coro",
+    "done",
+    "chain"
+   ]
+  },
+  "empty": "No tasks match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "tasks"
+  }
+ },
+ "syslog.errors": {
+  "form": "log",
+  "kind": "log",
+  "map": {
+   "events": "warnings",
+   "kind": "cap_group",
+   "t": "ts",
+   "text": "message"
+  }
+ },
+ "syslog.status": {
+  "kind": "log",
+  "map": {
+   "events": "recent_errors",
+   "kind": "cap",
+   "t": "ts",
+   "text": "msg"
+  }
+ },
+ "sysmon.history": {
+  "form": "trace",
+  "kind": "series",
+  "map": {
+   "series": "samples",
+   "v": "cpu"
+  }
+ },
+ "sysmon.status": {
+  "form": "numbers",
+  "kind": "kv",
+  "map": {
+   "pick": {
+    "containers": "docker.running",
+    "cpu": "resources.cpu",
+    "guests": "proxmox.running",
+    "memory": "resources.mem"
+   }
+  }
+ },
+ "topology.snapshot": {
+  "form": "vgraph",
+  "kind": "graph"
+ },
+ "ui.caps.scopes": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "whitelist_count",
+    "blacklist_count",
+    "effective_count"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "scopes"
+  }
+ },
+ "ui.directive.vocab": {
+  "draw": {
+   "columns": [
+    "name",
+    "surface",
+    "policy",
+    "undo",
+    "event",
+    "args",
+    "doc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "directives"
+  }
+ },
+ "ui.panel.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "mode",
+    "tab_order",
+    "dynamic",
+    "has_html",
+    "has_js",
+    "ui_caps"
+   ],
+   "group_by": "mode",
+   "sort": "tab_order"
+  },
+  "empty": "No panels registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "panels"
+  }
+ },
+ "ui.places": {
+  "draw": {
+   "columns": [
+    "name",
+    "panel",
+    "pane",
+    "sub"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "places"
+  }
+ },
+ "ui.policy.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "policy"
+  }
+ },
+ "ui.script.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "state",
+    "by",
+    "version",
+    "doc",
+    "runs",
+    "last_run",
+    "shipped"
+   ]
+  },
+  "empty": "No UI scripts",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "scripts"
+  }
+ },
+ "ui.tabs.retired": {
+  "draw": {
+   "columns": [
+    "name",
+    "panel",
+    "pane",
+    "sub",
+    "section"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "tabs"
+  }
+ },
+ "ui.theme.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "vars"
+  }
+ },
+ "ui.themes": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "type",
+    "accent",
+    "builtin"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "themes"
+  }
+ },
+ "vfs.estate.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "source",
+      "kind"
+     ]
+    },
+    "empty": "No exposed",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "entries"
+    },
+    "title": "Exposed"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "reason"
+     ]
+    },
+    "empty": "No skipped",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "skipped"
+    },
+    "title": "Skipped"
+   }
+  ]
+ },
+ "vfs.health": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "services"
+    },
+    "title": "Services up"
+   },
+   {
+    "kind": "metric",
+    "map": {
+     "value": "estate_mounts"
+    },
+    "title": "Estate mounts"
+   }
+  ]
+ },
+ "vfs.peer.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "status",
+    "map": {
+     "verdict": "door.up"
+    },
+    "title": "Door"
+   },
+   {
+    "empty": "No file devices",
+    "kind": "table",
+    "map": {
+     "rows": "peers"
+    },
+    "title": "File devices"
+   }
+  ]
+ },
+ "vfs.shares": {
+  "draw": {
+   "columns": [
+    "name",
+    "path",
+    "drive_letter",
+    "unc",
+    "nfs",
+    "read_only",
+    "admin_only"
+   ]
+  },
+  "empty": "No shares",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "shares"
+  }
+ },
+ "vfs.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "services"
+    },
+    "title": "Services"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "path",
+      "drive_letter",
+      "read_only",
+      "admin_only"
+     ]
+    },
+    "empty": "No shares",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "shares"
+    },
+    "title": "Shares"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "estate"
+    },
+    "title": "Estate tree"
+   }
+  ]
+ },
+ "vllm.models": {
+  "empty": "No vLLM instance is online",
+  "form": "list",
+  "kind": "table",
+  "map": {
+   "rows": "all"
+  },
+  "title": "Models served"
+ },
+ "vllm.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "label",
+      "status",
+      "has_gpu",
+      "latency_ms",
+      "in_use",
+      "errors",
+      "tokens_per_second"
+     ]
+    },
+    "empty": "No instances",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "instances"
+    },
+    "title": "Instances"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "global_config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
+ "web.api.drivers": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "blurb",
+    "domains"
+   ]
+  },
+  "empty": "No API drivers",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "drivers"
+  }
+ },
+ "web.engines.health": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "state",
+    "message",
+    "reachable",
+    "unresponsive",
+    "empty_streak",
+    "last_count",
+    "ok_at",
+    "checked_at"
+   ]
+  }
+ },
+ "widget.forms": {
+  "draw": {
+   "columns": [
+    "name",
+    "id",
+    "shape",
+    "boards",
+    "sizes",
+    "options",
+    "motion"
+   ]
+  },
+  "empty": "No forms match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "forms"
+  }
+ },
+ "widget.layouts": {
+  "draw": {
+   "columns": [
+    "key",
+    "dashboard",
+    "widgets",
+    "records"
+   ]
+  },
+  "empty": "No layouts",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "layouts"
+  }
+ },
+ "widget.sources": {
+  "draw": {
+   "columns": [
+    "cap",
+    "shape",
+    "domain",
+    "tier",
+    "refresh_min",
+    "desc"
+   ]
+  },
+  "empty": "No sources match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sources"
+  }
+ },
+ "widget.template.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "form",
+    "id",
+    "instances",
+    "version"
+   ]
+  },
+  "empty": "No widget templates",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "templates"
+  }
+ },
+ "workshop.agent_loop.trace": {
+  "form": "status-matrix",
+  "kind": "status"
+ },
+ "worldview.concepts": {
+  "draw": {
+   "columns": [
+    "idx",
+    "label",
+    "population"
+   ]
+  },
+  "empty": "No concepts yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "concepts"
+  }
+ },
+ "worldview.config": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "worldview.health": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Verdict"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "metrics"
+    },
+    "title": "Metrics"
+   }
+  ]
+ },
+ "worldview.landscape": {
+  "draw": {
+   "columns": [
+    "idx",
+    "label",
+    "population"
+   ]
+  },
+  "empty": "No concepts yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "concepts"
+  }
+ },
+ "worldview.loss_history": {
+  "kind": "series",
+  "map": {
+   "keyed": true,
+   "points": "$",
+   "t": "epoch",
+   "v": "loss"
+  },
+  "title": "Loss per epoch"
+ },
+ "worldview.retrieval.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "worldview.stats": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "model"
+    },
+    "title": "Model"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "index"
+    },
+    "title": "Index"
+   }
+  ]
+ },
+ "worldview.stream.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "worldview.subview.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "updated_at"
+   ]
+  },
+  "empty": "No sub-worldviews saved",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "subviews"
+  }
+ }
+}

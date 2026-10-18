@@ -675,7 +675,7 @@ if _CAP_AVAILABLE:
         description="A tracked symbol's price chart from stored bars (no network, nothing written): the symbol a person "
                     "names (BTC, $SPY, BTC/USD, eth) resolved to the tracked asset it is, its bars as candle rows. Input: "
                     "symbol (str!), timeframe (str='1d'), limit (int=120, max 2000). Output: {symbol, key, provider, "
-                    "timeframe, last, change_pct, count, bars:[{t, open, high, low, close, volume}]} or {error, tracked}.",
+                    "timeframe, last, change_pct, count, bars:[{t, open, high, low, close, volume}]} or {error, tracked}.", contract={"presentation": {'kind': 'series', 'form': 'candles', 'map': {'bars': 'bars'}, 'views': ['table'], 'title': '{symbol} · {timeframe}', 'empty': 'no stored bars for {symbol}'}}
     )
     async def cap_markets_chart(symbol: str = "", timeframe: str = "1d", limit: int = 120, trace_id=None) -> dict:
         s = re.sub(r"[\s$]", "", str(symbol or "")).upper()
@@ -757,6 +757,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "markets.quotes", http_method="GET", http_path="/markets/quotes",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "quotes"}, "draw": {"columns": ["symbol", "exchange", "last", "change_pct", "live", "ts"], "sort": "-change_pct"}, "empty": "No watched assets"}},
         http_tags=["markets"], memory="off", silent=True,
         description="Last price + day change for every watchlist asset (from stored bars; "
                     "no network). Input: none. Output: {quotes:[{key,exchange,symbol,last,"

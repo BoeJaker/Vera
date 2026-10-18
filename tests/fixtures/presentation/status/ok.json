@@ -1,0 +1,35 @@
+{
+ "cap": "demo.health",
+ "args": {},
+ "presentation": {
+  "kind": "status",
+  "map": {
+   "verdict": "overall",
+   "checks": "checks"
+  }
+ },
+ "result": {
+  "overall": "degraded",
+  "checks": [
+   {
+    "name": "redis",
+    "state": "ok"
+   },
+   {
+    "name": "neo4j",
+    "state": "down"
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "status",
+  "title": "demo.health",
+  "forms": [
+   "status"
+  ],
+  "first": {
+   "status": "degraded"
+  }
+ }
+}

@@ -151,6 +151,7 @@ if True:  # capability registration
 
     @capability(
         "capacity.status", http_method="GET", http_path="/capacity/status",
+        contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "ollama.nodes"}, "draw": {"columns": ["node", "has_gpu", "gated", "capacity", "held", "free"]}, "title": "Ollama nodes", "empty": "No ollama nodes"}, {"kind": "table", "map": {"rows": "seats"}, "title": "Claude seats", "empty": "No Claude seats"}, {"kind": "kv", "map": {"fields": "summary"}, "title": "Seats"}]}},
         http_tags=["capacity"], memory="off", silent=True,
         description="Unified capacity view for the routing/Sessions UI: every registered Claude "
                     "SEAT with its derived state (available|cooling|expired|unauthed), pinned "

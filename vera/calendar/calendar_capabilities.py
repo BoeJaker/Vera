@@ -260,6 +260,40 @@ async def _store_event(ev: Dict[str, Any]) -> Dict[str, Any]:
     return ev
 
 
+async def _get_event(eid: str) -> Optional[Dict[str, Any]]:
+    """The stored event with this id, or None (unknown id / no Redis)."""
+    r = _redis()
+    if not r or not eid:
+        return None
+    raw = await r.hget(KEY_EVENTS, eid)
+    if not raw:
+        return None
+    try:
+        ev = json.loads(raw)
+    except Exception:
+        return None
+    return ev if isinstance(ev, dict) else None
+
+
+def _merge_event_update(existing: Dict[str, Any], sent: Dict[str, Any],
+                        color: str = "", tags: Optional[List[str]] = None
+                        ) -> Dict[str, Any]:
+    """Apply an upsert onto a stored event. The cap's declared fields in
+    ``sent`` overwrite as before; ``source``, ``id`` and every other stored
+    field are kept. Empty ``color`` keeps the stored colour (it used to mean
+    "the default colour"), and ``tags=None`` (not sent) keeps the stored tags."""
+    ev = dict(existing)
+    ev.update(sent)
+    if color:
+        ev["color"] = color
+    elif not ev.get("color"):
+        ev["color"] = SOURCE_COLORS.get(ev.get("source", "local"),
+                                        SOURCE_COLORS["local"])
+    if tags is not None:
+        ev["tags"] = tags
+    return ev
+
+
 async def _delete_event(eid: str) -> bool:
     r = _redis()
     if not r:
@@ -380,7 +414,7 @@ async def _hash_delete(key: str, rid: str) -> bool:
                 "include_dreams (bool — overlay projected scheduled dream fires as "
                 "read-only events), include_loop_lab (bool — overlay the Loop Lab "
                 "schedules' windows and the runs they started, read-only). "
-                "Output: {events:[{id,title,start,end,all_day,location,source,color}]}.",
+                "Output: {events:[{id,title,start,end,all_day,location,source,color}]}.", contract={"presentation": {'kind': 'calendar', 'form': 'schedule'}}
 )
 async def cap_events_list(start: str = "week", end: str = "",
                           source: str = "", include_dreams: bool = False,
@@ -490,14 +524,25 @@ async def cap_event_upsert(
         return {"error": "title is required"}
     if not start:
         return {"error": "start is required"}
-    ev = {
-        "id": id or str(uuid.uuid4()),
+    sent = {
         "title": title, "start": start, "end": end,
         "all_day": bool(all_day), "location": location,
-        "description": description, "source": "local",
-        "color": color or SOURCE_COLORS["local"],
-        "tags": tags or [],
+        "description": description,
     }
+    existing = await _get_event(id) if id else None
+    if existing is not None:
+        # Edit of a stored event: keep its source and every field this call
+        # does not carry (uid, calendar, attendees, recurrence, created, ...).
+        # Synced sources are pull-only - there is no write-back - so the edit
+        # stays local to the diary under the event's own source label.
+        ev = _merge_event_update(existing, sent, color=color, tags=tags)
+    else:
+        ev = dict(sent)
+        ev.update({
+            "id": id or str(uuid.uuid4()), "source": "local",
+            "color": color or SOURCE_COLORS["local"],
+            "tags": tags or [],
+        })
     ev = await _store_event(ev)
     await emit_event({"type": "cal.event", "stage": "upsert",
                       "message": f"saved event {title!r}", "id": ev["id"]})
@@ -596,6 +641,7 @@ async def cap_todo_delete(id: str = "", trace_id=None):
 
 @capability(
     "cal.notes.list", http_method="GET", http_path="/cal/notes",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "notes"}, "draw": {"columns": ["title", "remind_at", "updated", "body"]}, "empty": "No notes"}},
     http_tags=["calendar"], memory="off", silent=True,
     description="List notes / reminders. Output: {notes:[{id,title,body,remind_at}]}.",
 )
@@ -879,6 +925,7 @@ async def _save_source(src: Dict):
 
 @capability(
     "cal.sources.list", http_method="GET", http_path="/cal/sources",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sources"}, "draw": {"columns": ["label", "type", "enabled", "last_sync", "has_refresh_token", "color"]}, "empty": "No calendar sources"}},
     http_tags=["calendar"], memory="off", silent=True,
     description="List configured cloud calendar sources (REDACTED — secrets "
                 "are never returned, only has_* flags). "
@@ -1251,6 +1298,7 @@ async def cap_sync_run(source: str = "", trace_id=None):
 
 @capability(
     "cal.sync.status", http_method="GET", http_path="/cal/sync/status",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "results"}, "draw": {"columns": ["label", "added", "updated", "errors", "error", "ts"]}, "empty": "No sync has run yet"}},
     http_tags=["calendar"], memory="off", silent=True,
     description="Last sync run status. Output: {ts, results:[...]}.",
 )

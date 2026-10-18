@@ -118,6 +118,10 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
                          "as the element that fits it (terminal, table, widget, code, html, image, a record's fields, "
                          "a JSON tree). Keyed by the cap and its arguments, so running it again updates it.",
                  "content": "{cap:str, args:obj, result:any, ok:bool, error?:str, ms?:int, ts?:str}"},
+    "app":      {"desc": "An APP from the catalogue (vera/apps/*.json, ui.apps.list / ui.apps.get) as an item: it reads its "
+                         "source when opened and again on its manifest's interval while it is seen, and draws the answer the "
+                         "way a capability's result is drawn. `args` fill the manifest's {arg.x} templates.",
+                 "content": "{app:str(app id), args?:obj, title?:str}"},
     "json":     {"desc": "Structured data as a tree you can open and close.",
                  "content": "{data:any, title?:str}"},
     "kv":       {"desc": "A record: its fields, name beside value.",
@@ -143,16 +147,29 @@ BLOCK_TYPES: Dict[str, Dict[str, str]] = {
     "loop":     {"desc": "An agentic run as an item: its goal, status and steps (each a "
                          "capability) — written by the chat and by the loop itself (P7).",
                  "content": "{goal:str, status:str, steps:[{n:str, cap?:str, status?:str, ms?:str}], run?:str}"},
+    "activity": {"desc": "What a turn is DOING: the capabilities the chat ran for it, each as it runs - running, then "
+                         "done or failed, how long it took and a line of what it answered. Written by the chat while "
+                         "the turn's calls run (one item per turn, updated in place), so the desk shows work in "
+                         "progress rather than only its results afterwards.",
+                 "content": "{title?:str, mid?:str, status:'running'|'done'|'error', calls:[{cap:str, args?:str, "
+                            "status:'running'|'ok'|'error', started?:num, ms?:int, peek?:str}]}"},
+    "research": {"desc": "A research run as one item: how it stands and its step, its method (depth, style, the "
+                         "questions it answers, its writing brief), every page it read (a records browser: reader "
+                         "mode, the picture, explode), the sources it cited and its report - written as it streams. "
+                         "Written by the chat from the run's own card (one item per job, updated in place).",
+                 "content": "{title?:str, query?:str, job?:str, status:'running'|'done'|'error', step?:str, "
+                            "writing?:bool, started?:num, secs?:int, plan?:{}, items:[{id:str, url:str, domain?:str, "
+                            "title?:str, meta?:{}}], cites?:[{url:str, title?:str}], live?:str, report?:str, error?:str}"},
 }
 CANVAS_MODES = ("dynamic", "static")
 
 # ── The SESSION canvas (Notes/38): one document per chat session, its items KEYED so the same thing is never on
 #    the canvas twice. A keyed block carries key (<kind>:<ref>), state (now · parked · pinned · hidden), size
-#    (s · m · l · xl) and its anchors (the turns that used it — additive, never replaced). The document carries a
+#    (xs · s · m · l · xl) and its anchors (the turns that used it — additive, never replaced). The document carries a
 #    revision (bumped on every write) and a timeline ([{rev, ts, op, key}], append-only; bounded so a runaway loop
 #    cannot grow it forever). Keyless blocks — the existing canvases — are untouched by all of this. ─────────────
 ITEM_STATES = ("now", "parked", "pinned", "hidden")
-ITEM_SIZES = ("s", "m", "l", "xl")
+ITEM_SIZES = ("xs", "s", "m", "l", "xl")   # = item_core.SIZES (WSU-58 S8, Decision 5.1: the canvas gains xs)
 _MAX_TIMELINE = 2000
 _SESSION_PREFIX = "cv_session_"
 
@@ -192,6 +209,23 @@ async def _write(doc: Dict[str, Any], op: str, key: str = "", **extra) -> int:
     return int(doc.get("revision") or 0)
 
 
+REMOVED_KEEP = 30   # the "recently removed" a canvas keeps (WSU-66)
+
+
+def _tombstone(doc: Dict[str, Any], blocks: List[Dict[str, Any]]) -> None:
+    """Keep what is removed so it can be put back (WSU-66, owner 2026-10-11: "removed canvas element should be
+    restorable"): the whole block with its key, newest last, the last REMOVED_KEEP of them. Keyless blocks of an agent's
+    canvas are kept by their id."""
+    gone = [b for b in blocks if isinstance(b, dict)]
+    if not gone:
+        return
+    rem = [r for r in (doc.get("removed") or []) if isinstance(r, dict)]
+    keys = {str(b.get("key") or "") for b in gone if b.get("key")}
+    rem = [r for r in rem if not (r.get("key") and str(r.get("key")) in keys)]   # one entry per key: the latest removal
+    rem += [{"key": str(b.get("key") or ""), "id": str(b.get("id") or ""), "at": now_iso(), "block": b} for b in gone]
+    doc["removed"] = rem[-REMOVED_KEEP:]
+
+
 def _find_key(doc: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
     key = str(key or "")
     if not key:
@@ -209,6 +243,10 @@ async def _target(id: str = "", session_id: str = "", create: bool = True) -> Op
     doc = await _load(cid)
     if doc or not create:
         return doc
+    # NO STORE, NO CANVAS (mirror-diag 2026-10-17): with Redis absent the save is a no-op, and a "created" canvas that was
+    # never stored made canvas.session.resolve answer ok/created while /canvas/get said "unknown canvas". Say there is none.
+    if not _redis():
+        return None
     doc = {"id": cid, "title": "Session canvas", "mode": "session", "topic": "",
            "session": str(session_id), "created": now_iso(), "updated": now_iso(),
            "blocks": [], "revision": 0, "timeline": []}
@@ -219,7 +257,9 @@ async def _target(id: str = "", session_id: str = "", create: bool = True) -> Op
 def _item_view(b: Dict[str, Any]) -> Dict[str, Any]:
     return {"id": b.get("id"), "key": b.get("key"), "type": b.get("type"), "state": b.get("state"),
             "size": b.get("size"), "anchor": b.get("anchor"), "anchors": b.get("anchors") or [],
-            "ts": b.get("ts"), "score": b.get("score")}
+            "ts": b.get("ts"), "score": b.get("score"),
+            # the item contract's fields (canvas.item.set; DEEP-29 11A.4) - only those the item has
+            **{k: b[k] for k in ("face", "back", "dock", "place", "view", "group", "folded") if k in b}}
 
 
 def _anchor_turn(anchor: Any) -> str:
@@ -258,22 +298,114 @@ async def _load(canvas_id: str) -> Optional[Dict[str, Any]]:
     if not raw:
         return None
     try:
-        return json.loads(raw.decode() if isinstance(raw, bytes) else raw)
+        doc = json.loads(raw.decode() if isinstance(raw, bytes) else raw)
     except Exception:
         return None
+    _remember_base(doc)
+    return doc
+
+
+# ── TWO WRITERS, ONE DOCUMENT (B1; DEEP-29 11A.4 Decision 2). A canvas is saved whole, and every write is read - change -
+#    save with awaits between, so two writes at once (two items set from one page, a turn's items landing while the person
+#    drags) each saved what they had read and the later lost the earlier's change (found 2026-10-16: a lock and a pill sent
+#    together kept only the pill). Each save now knows what it read (the base): when the stored document moved on since,
+#    the save is a three-way merge - its own changed, added and removed items over the stored ones, the other writer's left
+#    as they are; the timeline and the removed list keep both; a document field it did not change keeps the stored value.
+#    The read-merge-write of one canvas is serialised in this process. Same format as before, so nothing that reads a
+#    canvas changes; per-item storage (a HASH per canvas) can follow on the same merge rule. ──────────────────────────
+_BASES: Dict[int, Any] = {}          # id(doc) -> (doc, base): the document a write loaded and what it was when loaded
+_BASES_MAX = 256
+_SAVE_LOCKS: Dict[str, asyncio.Lock] = {}
+
+
+def _ident(b: Dict[str, Any]) -> str:
+    return str(b.get("key") or b.get("id") or "")
+
+
+def _dump(v: Any) -> str:
+    return json.dumps(v, sort_keys=True, default=str)
+
+
+def _snapshot(doc: Dict[str, Any]) -> Dict[str, Any]:
+    return {"rev": int(doc.get("revision") or 0),
+            "blocks": {_ident(b): _dump(b) for b in doc.get("blocks", []) if isinstance(b, dict)},
+            "order": [_ident(b) for b in doc.get("blocks", []) if isinstance(b, dict)],
+            "fields": {k: _dump(v) for k, v in doc.items() if k not in ("blocks", "timeline", "removed", "revision", "updated")},
+            "removed": {_dump(x) for x in (doc.get("removed") or [])}}
+
+
+def _remember_base(doc: Dict[str, Any]) -> None:
+    if len(_BASES) >= _BASES_MAX:
+        for k in list(_BASES)[: _BASES_MAX // 4]:
+            _BASES.pop(k, None)
+    _BASES[id(doc)] = (doc, _snapshot(doc))
+
+
+def _merge(cur: Dict[str, Any], mine: Dict[str, Any], base: Dict[str, Any]) -> Dict[str, Any]:
+    """Three-way merge of a write (mine, read at base) over the stored document (cur). Pure."""
+    mb = [b for b in mine.get("blocks", []) if isinstance(b, dict)]
+    mine_map = {_ident(b): b for b in mb}
+    bb = base["blocks"]
+    changed = {k for k, b in mine_map.items() if bb.get(k) != _dump(b)}
+    removed = set(bb) - set(mine_map)
+    reordered = [k for k in base["order"] if k in mine_map] != [_ident(b) for b in mb if _ident(b) in bb]
+    cur_blocks = [b for b in cur.get("blocks", []) if isinstance(b, dict) and _ident(b) not in removed]
+    cur_map = {_ident(b): b for b in cur_blocks}
+    if reordered:   # my order wins for the items I knew; the other writer's new ones follow
+        out = [mine_map[k] if k in changed or k not in cur_map else cur_map[k] for k in (_ident(b) for b in mb) if k in cur_map or k in changed]
+        known = {_ident(b) for b in out}
+        out += [b for b in cur_blocks if _ident(b) not in known]
+    else:
+        out = [mine_map[k] if k in changed else b for k, b in ((_ident(b), b) for b in cur_blocks)]
+        known = {_ident(b) for b in out}
+        out += [mine_map[k] for k in (_ident(b) for b in mb) if k in changed and k not in known]
+    merged = dict(cur)
+    for k, v in mine.items():
+        if k in ("blocks", "timeline", "removed", "revision", "updated"):
+            continue
+        if base["fields"].get(k) != _dump(v):
+            merged[k] = v
+    merged["blocks"] = out
+    tl = list(cur.get("timeline") or [])
+    tl += [e for e in (mine.get("timeline") or []) if isinstance(e, dict) and int(e.get("rev") or 0) > base["rev"]]
+    merged["timeline"] = tl[-_MAX_TIMELINE:]
+    rem = list(cur.get("removed") or [])
+    rem += [x for x in (mine.get("removed") or []) if _dump(x) not in base["removed"]]
+    merged["removed"] = rem[-REMOVED_KEEP:]
+    merged["revision"] = int(cur.get("revision") or 0)
+    return merged
 
 
 async def _save(doc: Dict[str, Any]) -> None:
     r = _redis()
     if not r:
         return
-    doc["updated"] = now_iso()
-    doc["revision"] = int(doc.get("revision") or 0) + 1
-    try:
-        await r.set(KEY_CANVAS + doc["id"], json.dumps(doc))
-        await r.zadd(KEY_CANVAS_INDEX, {doc["id"]: _now_epoch()})
-    except Exception:
-        pass
+    cid = doc["id"]
+    lock = _SAVE_LOCKS.setdefault(cid, asyncio.Lock())
+    async with lock:
+        held = _BASES.get(id(doc))
+        base = held[1] if held and held[0] is doc else None
+        if base is not None:
+            try:
+                raw = await r.get(KEY_CANVAS + cid)
+                cur = json.loads(raw.decode() if isinstance(raw, bytes) else raw) if raw else None
+            except Exception:
+                cur = None
+            if cur and int(cur.get("revision") or 0) != base["rev"]:
+                mine_new = [e for e in (doc.get("timeline") or []) if isinstance(e, dict) and int(e.get("rev") or 0) > base["rev"]]
+                merged = _merge(cur, doc, base)
+                for e in mine_new:                                 # my entries carry the revision they now land at
+                    e["rev"] = int(merged.get("revision") or 0) + 1
+                doc.clear()
+                doc.update(merged)
+        doc["updated"] = now_iso()
+        doc["revision"] = int(doc.get("revision") or 0) + 1
+        try:
+            await r.set(KEY_CANVAS + cid, json.dumps(doc))
+            await r.zadd(KEY_CANVAS_INDEX, {cid: _now_epoch()})
+        except Exception:
+            pass
+        _remember_base(doc)
 
 
 async def _emit(canvas_id: str, op: str, **extra) -> None:
@@ -520,18 +652,66 @@ async def cap_canvas_remove(id: str = "", block_id: str = "", key: str = "",
         if not hit:
             return {"ok": False, "error": f"unknown key: {key}"}
         doc["blocks"] = [b for b in doc.get("blocks", []) if b is not hit]
+        _tombstone(doc, [hit])
         rev = await _write(doc, "remove", key)
-        return {"ok": True, "removed": hit.get("id"), "key": key, "id": doc["id"], "revision": rev}
+        return {"ok": True, "removed": hit.get("id"), "key": key, "id": doc["id"], "revision": rev, "restorable": True}
     doc = await _load(id)
     if not doc:
         return {"error": f"unknown canvas: {id}"}
     before = len(doc.get("blocks", []))
+    gone = [b for b in doc.get("blocks", []) if b.get("id") == block_id]
     doc["blocks"] = [b for b in doc.get("blocks", []) if b.get("id") != block_id]
     if len(doc["blocks"]) == before:
         return {"error": f"unknown block: {block_id}"}
+    _tombstone(doc, gone)
     await _save(doc)
     await _emit(id, "remove", block_id=block_id)
     return {"ok": True, "removed": block_id}
+
+
+@capability(
+    "canvas.removed", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/removed", http_tags=["canvas"],
+    description="What was recently removed from a canvas and can be put back (newest first, up to 30). Inputs: id (str) "
+                "or session_id (str). Output: {ok, removed: [{key, id, at, type, title}]}.",
+)
+async def cap_canvas_removed(id: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    out = []
+    for r in reversed([r for r in (doc.get("removed") or []) if isinstance(r, dict)]):
+        b = r.get("block") or {}
+        c = b.get("content") if isinstance(b.get("content"), dict) else {}
+        out.append({"key": r.get("key") or "", "id": r.get("id") or "", "at": r.get("at") or "",
+                    "type": b.get("type") or "", "title": str(c.get("title") or c.get("name") or r.get("key") or b.get("type") or "")[:120]})
+    return {"ok": True, "removed": out, "id": doc["id"]}
+
+
+@capability(
+    "canvas.restore", memory="off",
+    http_method="POST", http_path="/canvas/restore", http_tags=["canvas"],
+    description="Put a removed item back on its canvas (removing is undoable). Inputs: key (str) for a keyed "
+                "item, or block_id (str) for a keyless block; id (str) or session_id (str). The item comes back as it "
+                "was, in view. Fails if nothing with that key was removed, or an item with that key is on the canvas.",
+)
+async def cap_canvas_restore(key: str = "", block_id: str = "", id: str = "", session_id: str = "", trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    rem = [r for r in (doc.get("removed") or []) if isinstance(r, dict)]
+    want = next((r for r in reversed(rem) if (key and r.get("key") == key) or (block_id and r.get("id") == block_id)), None)
+    if not want:
+        return {"ok": False, "error": f"nothing removed with {'key ' + key if key else 'id ' + block_id}"}
+    blk = dict(want.get("block") or {})
+    if blk.get("key") and _find_key(doc, blk["key"]):
+        return {"ok": False, "error": f"already on the canvas: {blk['key']}"}
+    if blk.get("key"):
+        blk["state"] = "now" if blk.get("state") in (None, "", "hidden") else blk["state"]
+    doc.setdefault("blocks", []).append(blk)
+    doc["removed"] = [r for r in rem if r is not want]
+    rev = await _write(doc, "restore", blk.get("key") or blk.get("id") or "")
+    return {"ok": True, "restored": blk.get("key") or blk.get("id"), "id": doc["id"], "revision": rev}
 
 
 @capability(
@@ -549,7 +729,9 @@ async def cap_canvas_clear(id: str = "", session_id: str = "", keep: str = "", t
     keys = {k.strip() for k in str(keep or "").split(",") if k.strip()}
     before = len(doc.get("blocks", []))
     # a kept key survives; everything else goes, including the keyless blocks of an agent's canvas
+    gone = [b for b in doc.get("blocks", []) if not (b.get("key") and str(b.get("key")) in keys)]
     doc["blocks"] = [b for b in doc.get("blocks", []) if b.get("key") and str(b.get("key")) in keys]
+    _tombstone(doc, gone)   # a clear can be taken back item by item too (WSU-66)
     rev = await _write(doc, "clear", ",".join(sorted(keys)) or "all")
     return {"ok": True, "id": doc["id"], "cleared": before - len(doc["blocks"]),
             "kept": len(doc["blocks"]), "revision": rev}
@@ -611,7 +793,7 @@ async def cap_canvas_session_resolve(session_id: str = "", trace_id=None):
                 "key already exists is not added again, it is brought back into the NOW band (resolved: "
                 "'shown'). Inputs: kind (block type), content (JSON for the kind), key (str, <kind>:<ref>; "
                 "generated if absent), id (canvas id) or session_id (its session canvas), at "
-                "('now'|'pinned'|'parked'|'hidden', default now), size ('s'|'m'|'l'|'xl'), anchor "
+                "('now'|'pinned'|'parked'|'hidden', default now), size ('xs'|'s'|'m'|'l'|'xl'), anchor "
                 "({turn, mid, step} — the turn using it). Output: {ok, resolved: 'added'|'shown', existing, "
                 "key, item, id, revision}.",
 )
@@ -624,7 +806,10 @@ async def cap_canvas_add(id: str = "", session_id: str = "", kind: str = "note",
     hit = _find_key(doc, key)
     if hit is not None:
         # the resolver's whole point: the same key comes back, it does not double
+        face = _ic.face_for_state(hit, "now")   # un-parked (S2 transition 'unpark'): back as a tile, not its old face
         hit["state"] = "now"
+        if face:
+            hit["face"] = face
         hit["ts"] = now_iso()
         _add_anchor(hit, anchor)
         rev = await _write(doc, "show", key, turn=_anchor_turn(anchor))
@@ -659,7 +844,10 @@ async def _set_state(id: str, session_id: str, key: str, state: str, op: str) ->
     if not hit:
         return {"ok": False, "error": f"unknown key: {key}"}
     prev = hit.get("state")
+    face = _ic.face_for_state(hit, state)    # park -> a pill on the shelf; pinned back off it -> a tile (S2 transition)
     hit["state"] = state
+    if face:
+        hit["face"] = face
     rev = await _write(doc, op, key)
     return {"ok": True, "key": key, "state": state, "prev": prev, "item": _item_view(hit),
             "id": doc["id"], "revision": rev}
@@ -687,7 +875,7 @@ async def cap_canvas_park(key: str = "", id: str = "", session_id: str = "", tra
 @capability(
     "canvas.size", memory="off",
     http_method="POST", http_path="/canvas/size", http_tags=["canvas"],
-    description="Resize a session-canvas item. Inputs: key (str!), size ('s'|'m'|'l'|'xl'), id or session_id. "
+    description="Resize a session-canvas item. Inputs: key (str!), size ('xs'|'s'|'m'|'l'|'xl'), id or session_id. "
                 "Output includes prev so it can be undone.",
 )
 async def cap_canvas_size(key: str = "", size: str = "m", id: str = "", session_id: str = "", trace_id=None):
@@ -705,6 +893,75 @@ async def cap_canvas_size(key: str = "", size: str = "m", id: str = "", session_
     rev = await _write(doc, "size", key, size=size)
     return {"ok": True, "key": key, "size": size, "prev": prev, "item": _item_view(hit),
             "id": doc["id"], "revision": rev}
+
+
+try:
+    from Vera.vera.canvas import item_core as _ic
+except ImportError:                                   # pragma: no cover
+    from vera.canvas import item_core as _ic
+
+
+@capability(
+    "canvas.item.set", memory="off",
+    http_method="POST", http_path="/canvas/item/set", http_tags=["canvas"],
+    description="Change how one session-canvas item is shown - its face, rect, view, size, lock, fold, group or state - "
+                "in one write and one canvas.updated event that names the fields. The item record is the same on every "
+                "surface (the desk, a dashboard, the chat): face 'pill'|'tile'|'window'|'full'; place {fx, fy (0-1 of the "
+                "surface), w, h (px), by 'auto'|'person', locked, layer 'among'|'behind'|'front', z}, merged over the "
+                "item's place; view (list, cards, table, graph, chart, chips, fields, code, structure, both, tree, flat, validate, drawn); size 'xs'|'s'|'m'|'l'|'xl'; "
+                "group {id?, front?, at?, sep?} (id: joined to that item; sep: taken out of its group; at: ms its tab was "
+                "last brought to the front) or {} for the surface's own grouping; back 'pill'|'tile'|'window' (what a full "
+                "item returns to) and dock 'tile'|'pill' (what a window gives when sent back), '' clears either; "
+                "state 'now'|'pinned'|'parked'|'hidden'. Inputs: key (str!), id or "
+                "session_id, and any of those fields. Output: {ok, key, changed, prev (to undo), item, revision}; a call "
+                "that changes nothing writes nothing.",
+)
+async def cap_canvas_item_set(key: str = "", id: str = "", session_id: str = "", face: str = None, place: Any = None,
+                              view: str = None, size: str = None, locked: Any = None, folded: Any = None,
+                              group: Any = None, state: str = None, back: str = None, dock: str = None, trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}"}
+    hit = _find_key(doc, key)
+    if not hit:
+        return {"ok": False, "error": f"unknown key: {key}"}
+    fields = {"face": face, "place": _as_obj(place), "view": view, "size": size, "locked": locked,
+              "folded": folded, "group": _as_obj(group), "state": state, "back": back, "dock": dock}
+    changed, prev, probs = _ic.apply_set(hit, fields)
+    if probs:
+        return {"ok": False, "error": "; ".join(probs), "key": key}
+    if not changed:
+        return {"ok": True, "key": key, "changed": {}, "prev": {}, "item": _ic.normalise(hit),
+                "id": doc["id"], "revision": int(doc.get("revision") or 0)}
+    _record(doc, "item", key, fields=",".join(sorted(changed)))
+    await _save(doc)
+    await _emit(doc["id"], "item", id=doc["id"], revision=doc.get("revision"), key=key, fields=changed)
+    return {"ok": True, "key": key, "changed": changed, "prev": prev, "item": _ic.normalise(hit),
+            "id": doc["id"], "revision": int(doc.get("revision") or 0)}
+
+
+@capability(
+    "canvas.items", memory="off", silent=True,
+    http_method="GET", http_path="/canvas/items", http_tags=["canvas"],
+    description="The session canvas's items as item records - the one shape every surface reads: key, kind, content, "
+                "source, anchors, state, face, back, dock, size, place, locked, view, group, folded, ts, score. Inputs: id or "
+                "session_id, state (optional filter), if_rev (int: returns {ok, unchanged:true} when the canvas is still "
+                "at that revision). Output: {ok, id, revision, items}. Read-only.",
+)
+async def cap_canvas_items(id: str = "", session_id: str = "", state: str = "", if_rev: Any = None, trace_id=None):
+    doc = await _target(id, session_id, create=False)
+    if not doc:
+        return {"ok": False, "error": f"unknown canvas: {id or session_id}", "items": []}
+    rev = int(doc.get("revision") or 0)
+    try:
+        if if_rev not in (None, "") and int(if_rev) == rev:
+            return {"ok": True, "id": doc["id"], "revision": rev, "unchanged": True}
+    except (TypeError, ValueError):
+        pass
+    items = [_ic.normalise(b) for b in doc.get("blocks", []) if isinstance(b, dict) and b.get("key")]
+    if state:
+        items = [i for i in items if i["state"] == state]
+    return {"ok": True, "id": doc["id"], "revision": rev, "items": items}
 
 
 @capability(
@@ -799,8 +1056,120 @@ def _rel_strings(v: Any, out: List[str], depth: int = 0) -> None:
             _rel_strings(x, out, depth + 1)
 
 
+_REL_SPLIT = re.compile(r"[:/._-]+")
+"""NAMES AND THEIR SYMBOLS, FROM LIVE DATA (owner 2026-10-11: a turn about "bitcoin" scored the BTC-USD chart 0.12 - the
+chart says BTC, the turn says bitcoin; and "you hardcoded aliases for tickers - bad idea create a proper converter using
+live data you dont have to maintain"). Two sources, nothing written by hand:
+- the tracked market universe (markets.baseline.list, markets.overview, markets.watchlist.list): each asset's symbol and
+  name make one group (BTC-USD + "Bitcoin USD" -> {btc, bitcoin}); built in the background, refreshed hourly;
+- an entity of the turn the universe does not know is asked of the market search once (markets.lookup, 1.2 s at most)
+  and the answer kept (an empty answer too, for an hour).
+Quote currencies and company words (usd, inc, etf, ...) are never a link. Relevance never waits on the network for more
+than that one bounded lookup; with the markets subsystem absent every map is empty and scoring is as before."""
+_ALIAS_TTL = 3600.0
+_ALIAS_GENERIC = {"usd", "eur", "gbp", "jpy", "usdt", "usdc", "inc", "corp", "corporation", "ltd", "plc", "co", "the", "and",
+                  "etf", "fund", "trust", "class", "index", "group", "holdings", "company", "shares", "share", "common",
+                  "stock", "spdr", "ishares", "vanguard", "invesco", "yahoo", "binance", "coinbase", "kraken", "spot", "perp"}
+_ALIAS: Dict[str, Any] = {"at": 0.0, "of": {}, "task": None}
+_ALIAS_LOOK: Dict[str, Any] = {}   # entity -> (time, set of words)
+
+
+def _alias_group(symbol: str, name: str) -> set:
+    """One asset's words: its symbol's parts and its name's words, less quote currencies and company words."""
+    sym = {p for p in re.split(r"[^a-z0-9]+", str(symbol or "").lower()) if len(p) >= 2 and not p.isdigit()}
+    nam = {w for w in re.split(r"[^a-z0-9&]+", str(name or "").lower()) if len(w) >= 3 and not w.isdigit()}
+    return (sym | nam) - _ALIAS_GENERIC
+
+
+async def _alias_call(name: str, timeout: float, **kw) -> Dict[str, Any]:
+    e = CAPABILITY_REGISTRY.get(name) or {}
+    fn = isinstance(e, dict) and (e.get("func") or e.get("raw"))
+    if not fn:
+        return {}
+    try:
+        params = inspect.signature(e.get("raw") or fn).parameters
+        if not any(p.kind == p.VAR_KEYWORD for p in params.values()):
+            kw = {k: v for k, v in kw.items() if k in params}
+    except (TypeError, ValueError):
+        pass
+    try:
+        r = await asyncio.wait_for(fn(**kw), timeout=timeout)
+        return r if isinstance(r, dict) else {}
+    except Exception:
+        return {}
+
+
+def _alias_assets(r: Dict[str, Any]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for k in ("assets", "results", "watchlist", "positions", "quotes"):
+        out += [x for x in (r.get(k) or []) if isinstance(x, dict)]
+    for g in r.get("groups") or []:
+        if isinstance(g, dict):
+            out += [x for x in (g.get("assets") or []) if isinstance(x, dict)]
+    return out
+
+
+async def _alias_build() -> None:
+    of: Dict[str, set] = {}
+    for cap in ("markets.baseline.list", "markets.overview", "markets.watchlist.list"):
+        for a in _alias_assets(await _alias_call(cap, 20.0)):
+            grp = _alias_group(a.get("symbol") or a.get("key") or "", a.get("name") or "")
+            if len(grp) < 2:
+                continue
+            for w in grp:
+                of.setdefault(w, set()).update(grp)
+    _ALIAS["of"] = of
+    _ALIAS["at"] = time.time()
+
+
+def _alias_refresh_soon() -> None:
+    """Rebuild the universe map in the background when it is stale; never awaited by a turn."""
+    t = _ALIAS.get("task")
+    if time.time() - float(_ALIAS.get("at") or 0) < _ALIAS_TTL or (t is not None and not t.done()):
+        return
+    try:
+        _ALIAS["task"] = asyncio.get_event_loop().create_task(_alias_build())
+    except Exception:
+        pass
+
+
+async def _rel_alias_map(entities: List[str]) -> Dict[str, set]:
+    """word -> its group, for this turn: the universe map, plus a bounded live lookup of each entity it does not know."""
+    _alias_refresh_soon()
+    amap: Dict[str, set] = dict(_ALIAS.get("of") or {})
+    for e in [str(x).strip().lower() for x in entities or []][:4]:
+        if len(e) < 3 or e in amap or e in _ALIAS_GENERIC:
+            continue
+        hit = _ALIAS_LOOK.get(e)
+        if not hit or time.time() - hit[0] > _ALIAS_TTL:
+            grp: set = set()
+            # the first result whose NAME has the entity as a whole word (not "pineapple" for "apple"), and only its
+            # symbol is linked - not every word of its name
+            for a in _alias_assets(await _alias_call("markets.lookup", 1.2, query=e, limit=3))[:3]:
+                if e in set(re.split(r"[^a-z0-9&]+", str(a.get("name") or "").lower())):
+                    grp = {p for p in re.split(r"[^a-z0-9]+", str(a.get("symbol") or "").lower()) if len(p) >= 2 and not p.isdigit()} - _ALIAS_GENERIC
+                    break
+            hit = (time.time(), grp)
+            _ALIAS_LOOK[e] = hit
+        if hit[1]:
+            for w in hit[1]:
+                amap.setdefault(w, set()).update(hit[1] | {e})
+            amap.setdefault(e, set()).update(hit[1])
+    return amap
+
+
+def _rel_expand(words: set, amap: Optional[Dict[str, set]] = None) -> set:
+    """Words plus their live aliases (a name's symbols, a symbol's name)."""
+    out = set(words)
+    for w in words:
+        out |= (amap or {}).get(w, set())
+    return out
+
+
 def _rel_words(s: str) -> set:
-    return set(_REL_WORD.findall(str(s or "").lower()))
+    """The words of a text: whole tokens and, for compound ones (yahoo:btc-usd, markets.chart), their parts too."""
+    ws = set(_REL_WORD.findall(str(s or "").lower()))
+    return ws | {p for w in ws for p in _REL_SPLIT.split(w) if len(p) >= 2}
 
 
 def _rel_item_text(b: Dict[str, Any]) -> str:
@@ -830,7 +1199,7 @@ def _rel_kind_of(b: Dict[str, Any]) -> set:
 
 
 def _rel_score(b: Dict[str, Any], turn: str, text: str, entities: List[str], recent: List[str],
-               hits: set, intents: Dict[str, str]) -> Dict[str, Any]:
+               hits: set, intents: Dict[str, str], amap: Optional[Dict[str, set]] = None) -> Dict[str, Any]:
     """One item's score and the signal that carried it."""
     key = str(b.get("key") or "")
     sig: Dict[str, float] = {}
@@ -842,14 +1211,15 @@ def _rel_score(b: Dict[str, Any], turn: str, text: str, entities: List[str], rec
     low = item_text.lower()
     words = _rel_words(item_text)
     ents = [e for e in (str(x).strip().lower() for x in entities or []) if len(e) >= 3]
-    if any((e in words) or (len(e) >= 4 and e in low) for e in ents):
+    ents = sorted(_rel_expand(set(ents), amap) | set(ents), key=len, reverse=True)   # an entity's live aliases count as it
+    if any((e in words) or (len(e) >= 4 and e in low) for e in ents if len(e) >= 2):
         sig["entity"] = 0.85
     kinds = _rel_kind_of(b)
     for kind, best_key in intents.items():
         aliases = set(_REL_KIND_ALIASES.get(kind, ())) | {kind}
         if kinds & aliases:
             sig["intent"] = max(sig.get("intent", 0.0), 0.7 if best_key == key else 0.5)
-    tw = _rel_words(text)
+    tw = _rel_expand(_rel_words(text), amap)
     if tw and words:
         overlap = len(tw & words) / float(max(1, min(len(tw), 12)))
         if overlap > 0:
@@ -890,6 +1260,7 @@ async def cap_canvas_session_relevance(session_id: str = "", turn: str = "", tex
     turn = str(turn or "")
     entities = _as_obj(entities) if entities is not None else []
     entities = [str(x) for x in entities] if isinstance(entities, (list, tuple)) else []
+    amap = await _rel_alias_map(entities)   # names <-> symbols from live market data (bounded; empty without markets)
     recent = _as_obj(recent) if recent is not None else []
     recent = [str(x) for x in recent] if isinstance(recent, (list, tuple)) else []
     if turn and turn not in recent:
@@ -914,7 +1285,7 @@ async def cap_canvas_session_relevance(session_id: str = "", turn: str = "", tex
     recalled: List[str] = []
     parked: List[str] = []
     for b in keyed:
-        s = _rel_score(b, turn, text, entities, recent, hits, intents)
+        s = _rel_score(b, turn, text, entities, recent, hits, intents, amap)
         key = str(b["key"])
         scores[key] = s
         live = s["score"] >= threshold or b.get("state") == "pinned"
@@ -926,12 +1297,14 @@ async def cap_canvas_session_relevance(session_id: str = "", turn: str = "", tex
         st = b.get("state")
         if live and st == "parked":
             b["state"] = "now"
+            b["face"] = "tile"                     # recalled off the shelf: a tile (S2 transition 'unpark')
             b["ts"] = now_iso()
             if turn:
                 _add_anchor(b, {"turn": turn, "role": "recalled"})
             recalled.append(key)
         elif (not live) and st == "now" and "explicit" not in s["signals"]:
             b["state"] = "parked"
+            b["face"] = "pill"                     # parked: a pill on the shelf (S2 transition 'park')
             parked.append(key)
     rev = int(doc.get("revision") or 0)
     if apply and (recalled or parked):
@@ -1108,7 +1481,11 @@ async def cap_canvas_run(cap: str = "", args: Any = None, id: str = "", session_
     if hit is not None:
         hit["type"] = "result"
         hit["content"] = content
-        hit["state"] = at if at in ITEM_STATES else "now"
+        st = at if at in ITEM_STATES else "now"
+        face = _ic.face_for_state(hit, st)       # park -> pill, back off the shelf -> tile (S2 transition)
+        hit["state"] = st
+        if face:
+            hit["face"] = face
         hit["ts"] = now_iso()
         if size in ITEM_SIZES:
             hit["size"] = size
@@ -1135,6 +1512,9 @@ async def cap_canvas_run(cap: str = "", args: Any = None, id: str = "", session_
 
 
 _ELEMENT_JS = Path(__file__).parent / "canvas_element.js"
+# the item contract (window.VeraItem): served in front of the element, which registers its bodies with it and draws each
+# item's head row and menu from it (WSU-58 S6). It loads once per page - a second copy keeps the first's registry.
+_VERA_ITEM_JS = Path(__file__).parent.parent / "ui" / "vera_item.js"
 
 
 @APP.get("/ui/elements/canvas_element.js", include_in_schema=False)
@@ -1150,6 +1530,10 @@ async def _canvas_element_js():
         js = _ELEMENT_JS.read_text(encoding="utf-8")
     except FileNotFoundError:
         js = "/* canvas_element.js missing */"
+    try:
+        js = _VERA_ITEM_JS.read_text(encoding="utf-8") + "\n" + js
+    except FileNotFoundError:
+        js = "console.warn('vera_item.js missing: the canvas draws no item heads');\n" + js
     return Response(content=js, media_type="application/javascript",
                     headers={"Cache-Control": "public, max-age=60"})
 
@@ -1165,7 +1549,7 @@ register_ui(
 </div>""",
     "",
     ui_caps=["canvas.create", "canvas.get", "canvas.list", "canvas.append",
-             "canvas.update", "canvas.move", "canvas.remove", "canvas.clear", "canvas.delete",
+             "canvas.update", "canvas.move", "canvas.remove", "canvas.removed", "canvas.restore", "canvas.clear", "canvas.delete",
              "canvas.block_types",
              "canvas.session.resolve", "canvas.add", "canvas.pin", "canvas.park", "canvas.size",
              "canvas.recall", "canvas.timeline", "canvas.session.room", "canvas.session.relevance", "canvas.ask",

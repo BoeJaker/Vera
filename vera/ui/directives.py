@@ -453,6 +453,7 @@ async def cap_ui_directive(name: str = "", args: Optional[dict] = None, session_
 
 @capability(
     "ui.directive.vocab", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "directives"}, "draw": {"columns": ["name", "surface", "policy", "undo", "event", "args", "doc"]}}},
     http_method="GET", http_path="/ui/directive/vocab", http_tags=["ui", "control"],
     description="The control plane's vocabulary: every directive with its args, surface, policy target, undo, "
                 "event and what it does; and the default policy. Output: {ok, directives:[...], policy_default}.")
@@ -549,6 +550,7 @@ async def cap_ui_directive_undo(session_id: str = "", row_id: str = "", trace_id
 
 @capability(
     "ui.policy.get", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "map": {"fields": "policy"}}},
     http_method="GET", http_path="/ui/policy", http_tags=["ui", "control"],
     description="The policy in force for a session: target pattern -> drive . ask . never (scripts: run . ask . off); "
                 "defaults, then the global overrides, then the session's. Inputs: session_id (str). Output: {ok, policy, allowed_always}.")

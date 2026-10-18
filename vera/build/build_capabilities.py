@@ -299,6 +299,7 @@ if True:  # capability registration (mirrors the guard style of the mesh modules
 
     @capability(
         "build.status", http_method="GET", http_path="/build/status",
+        contract={"presentation": {"kind": "kv", "map": {"fields": "tools"}, "title": "Builder toolchains"}},
         http_tags=["build"], memory="off", silent=True,
         description="Check the vera-builder service and list its toolchains (arduino-cli, platformio, "
                     "gcc/cmake, esptool, mpy-cross, cargo, go). Output: {ok, url, tools, ...}.",

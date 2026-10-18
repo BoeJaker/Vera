@@ -773,6 +773,7 @@ async def _oc_tool_call(capability_name: str, request: _Request):
 
 @capability(
     name="openclaw.status",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["enabled", "connected", "connecting", "pairing_required", "gateway_version", "last_connected_at", "last_error", "agent_id", "client_mode", "role", "open_stream_buffers"]}}},
     description="Get the current status of the OpenClaw gateway connection",
     http_method="GET",
     http_path="/openclaw/status",
@@ -815,6 +816,7 @@ async def openclaw_status() -> dict:
 
 @capability(
     name="openclaw.config.get",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["enabled", "agent_id", "auto_reconnect", "reconnect_interval", "run_timeout", "settle_timeout", "client_id", "client_mode", "role", "scopes"]}}},
     description="Get the current OpenClaw connection configuration",
     http_method="GET",
     http_path="/openclaw/config",
@@ -1054,6 +1056,7 @@ async def openclaw_queue_cancel(queue_id: str) -> dict:
 
 @capability(
     name="openclaw.sessions.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sessions"}, "draw": {"columns": ["key", "status", "model", "modelProvider", "totalTokens", "contextTokens", "runtimeMs", "updatedAt"]}, "empty": "No OpenClaw sessions"}},
     description="List active OpenClaw sessions",
     http_method="GET",
     http_path="/openclaw/sessions",
@@ -1264,6 +1267,7 @@ _EXTRA_CONFIG_FIELDS = {"use_vera_ollama", "vera_ollama_base", "ollama_model"}
 
 @capability(
     name="openclaw.ollama-models",
+    contract={"presentation": {"kind": "table", "form": "list", "map": {"rows": "models"}, "empty": "No models found"}},
     description="List models available on Vera's Ollama proxy cluster",
     http_method="GET",
     http_path="/openclaw/ollama-models",

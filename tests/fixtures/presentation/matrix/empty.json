@@ -1,0 +1,27 @@
+{
+ "cap": "demo.parity_by_namespace",
+ "args": {},
+ "presentation": {
+  "kind": "matrix",
+  "map": {
+   "cells": "namespaces"
+  },
+  "empty": "No namespaces audited"
+ },
+ "result": {
+  "namespaces": {
+   "fabric": [
+    1,
+    2
+   ],
+   "evolve": "n/a"
+  }
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "matrix",
+  "title": "demo.parity_by_namespace",
+  "forms": [],
+  "empty": "No namespaces audited"
+ }
+}

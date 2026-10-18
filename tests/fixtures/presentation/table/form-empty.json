@@ -1,0 +1,30 @@
+{
+ "cap": "demo.quotes",
+ "args": {},
+ "presentation": {
+  "kind": "table",
+  "form": "table",
+  "map": {
+   "rows": "quotes"
+  },
+  "draw": {
+   "columns": [
+    "symbol",
+    "last"
+   ]
+  },
+  "empty": "No watched assets"
+ },
+ "result": {
+  "quotes": [],
+  "count": 0,
+  "source": "watchlist"
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.quotes",
+  "forms": [],
+  "empty": "No watched assets"
+ }
+}

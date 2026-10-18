@@ -118,7 +118,7 @@
   function _dragGuardOn(cursor) {
     if (_dragGuardEl) return;
     _dragGuardEl = document.createElement('div');
-    _dragGuardEl.style.cssText = 'position:fixed;inset:0;z-index:2147483647;' +
+    _dragGuardEl.style.cssText = 'position:fixed;inset:0;z-index:2147483647;' +   // z-local: the drag's pointer guard, over everything for the drag only
       'cursor:' + (cursor || 'move') + ';background:transparent';
     document.body.appendChild(_dragGuardEl);
   }
@@ -168,6 +168,18 @@
   }
 
   /* ── injected CSS (once) ─────────────────────────────────────────────── */
+  /* THE WINDOWS OF A PAGE (DEEP-29 11A.4 Decision 6): a tile popped out of its grid is a window - over the page's items, under
+     its menus, drawers and sheets - in the item z band 130-149, the last one pressed on top. One stack per page, shared by
+     every grid and by the harness's floating solo views (window.VeraWindows). */
+  var WSTACK = [];
+  var ZW = (window.VeraItem && window.VeraItem.Z && window.VeraItem.Z.window) || [130, 149];   // the table's window band (VeraItem.Z.window)
+  function winRaise(el) {
+    if (!el) return; WSTACK = WSTACK.filter(function (x) { return x !== el && x.isConnected; }); WSTACK.push(el);
+    var n = WSTACK.length, span = ZW[1] - ZW[0];
+    WSTACK.forEach(function (x, i) { x.style.zIndex = String(ZW[0] + Math.max(0, Math.min(span, span - (n - 1 - i)))); });
+  }
+  function winDrop(el) { WSTACK = WSTACK.filter(function (x) { return x !== el; }); if (el) el.style.zIndex = ''; }
+  window.VeraWindows = window.VeraWindows || { raise: winRaise, drop: winDrop };
   function injectCSS() {
     if (document.getElementById('vera-dash-css')) return;
     var s = document.createElement('style');
@@ -177,7 +189,7 @@
       // <body>, outside any page that scopes .widget/.w-* CSS (e.g. dream's
       // "#sec-overview .widget"). Widgets with inline padding:0 (.w-body.flush)
       // keep it — inline style outranks this rule.
-      '.widget.floating{position:fixed;z-index:9000;resize:both;overflow:hidden;',
+      '.widget.floating{position:fixed;z-index:var(--z-window,130);resize:both;overflow:hidden;',
       'min-width:280px;min-height:180px;display:flex;flex-direction:column;',
       'border:1px solid var(--acc);border-radius:var(--radius-lg,8px);',
       'box-shadow:0 18px 60px rgba(0,0,0,.65);background:var(--bg2)}',
@@ -187,7 +199,7 @@
       '.widget.floating .w-actions{opacity:1}',
       '.w-iconbtn.vd-pop.on{color:var(--acc)}',
       '.vd-wl-overlay{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;',
-      'align-items:center;justify-content:center;z-index:9500;backdrop-filter:blur(2px)}',
+      'align-items:center;justify-content:center;z-index:9500;backdrop-filter:blur(2px)}',   // z-local: over the host pages' own chrome (900-9000); --z-sheet (300) would put it under it
       '.vd-wl-box{background:var(--bg1);border:1px solid var(--border2);',
       'border-radius:var(--radius-lg,8px);width:520px;max-width:96%;max-height:80%;',
       'display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.5)}',
@@ -226,6 +238,21 @@
       // a tile's buttons take no room until it is hovered, focused or arranged - the harness's rule, on every grid (a two-column
       // figure's title read "WORK..." beside its invisible buttons)
       '.dash-grid .widget > .w-head .w-actions{display:none}',
+      // the item's head (DEEP-29 11A.4): the tile's own buttons are listed by its more menu, never drawn in the head; the
+      // row is the same as a canvas item's, shown while the tile is hovered, focused, arranged or floating
+      '.widget > .w-head > .w-actions > .vd-dup{display:none!important}',
+      '.widget > .w-head > .vd-row{display:none;margin-left:auto;gap:1px;align-items:center;flex:0 0 auto}',
+      '.widget:is(:hover,:focus-within,.floating,.vd-full,.vd-pill) > .w-head > .vd-row,.dash-grid.editing .widget > .w-head > .vd-row{display:inline-flex}',
+      '.vd-hb{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border:0;border-radius:var(--r-sm,6px);background:transparent;color:var(--t3,var(--dim,#6b7280));cursor:pointer;padding:0}',
+      '.vd-hb:hover{color:var(--t1,var(--text,#d8dce4));background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}.vd-hb.on{color:var(--acc,#5a9e8f)}.vd-hb[data-vd-act="drop"]:hover{color:var(--err,#e06c6c)}',
+      '.vd-hb:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:1px}',
+      '.dash-grid .widget.vd-pill{grid-row:span 1!important;height:auto!important;min-height:0!important}.widget.vd-pill > :not(.w-head){display:none!important}',
+      '.widget.vd-full{position:fixed!important;z-index:var(--z-full,150);display:flex;flex-direction:column;box-shadow:0 18px 60px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent);border-color:var(--acc,#5a9e8f)}',
+      '.widget.vd-full > .w-body{flex:1 1 auto;min-height:0;max-height:none!important;overflow:auto}',
+      '.vd-pop-menu{position:fixed;z-index:var(--z-pop,230);min-width:200px;padding:4px;border-radius:9px;background:var(--bg2,#1d2128);border:1px solid var(--border2,var(--border,#3a3f48));box-shadow:0 10px 28px color-mix(in srgb,var(--bg0,#0e0f12) 60%,transparent);display:flex;flex-direction:column;gap:1px}',
+      '.vd-pop-menu .vd-pm-row{display:flex;align-items:center;gap:8px;padding:2px 6px;border-radius:6px;cursor:pointer;color:var(--fg,var(--text,#dce1e8));font-size:11.5px}',
+      '.vd-pop-menu .vd-pm-row:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 14%,transparent)}.vd-pop-menu .vd-pm-l{flex:1 1 auto;white-space:nowrap}',
+      '.vd-pop-menu .vd-pm-none{padding:6px 8px;font-size:11px;color:var(--dim,#6b7280)}',
       '.dash-grid .widget:hover > .w-head .w-actions,.dash-grid .widget:focus-within > .w-head .w-actions,.dash-grid.editing .widget > .w-head .w-actions,.dash-grid .widget.floating > .w-head .w-actions{display:inline-flex}',
       '.dash-grid.editing .vd-rec{opacity:1;color:var(--acc)}',
       '.vd-rec.sample{font-style:italic}',
@@ -255,8 +282,8 @@
       '.dash-grid.editing > .widget > .w-resize::before{border-right-color:var(--acc,#5a9e8f);border-bottom-color:var(--acc,#5a9e8f);width:10px;height:10px}',
       '.dash-grid.editing > .widget:hover > .w-resize{opacity:1}',
       '.dash-grid.editing > .widget.dragging{opacity:.94;transform:rotate(-1deg) scale(1.02);',
-      'box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 24px 50px -16px #000;z-index:6;cursor:grabbing}',
-      '.dash-grid.editing > .widget.dragging::before{content:"moving · drop on the grid";position:absolute;left:8px;bottom:6px;z-index:2;',
+      'box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 24px 50px -16px #000;z-index:6;cursor:grabbing}',   // z-local: over its grid neighbours only - --z-drag would lift it over the host page's bars
+      '.dash-grid.editing > .widget.dragging::before{content:"moving · drop on the grid";position:absolute;left:8px;bottom:6px;z-index:2;',   // z-local: inside the tile
       'font-family:var(--mono);font-size:8px;color:var(--acc,#5a9e8f);pointer-events:none}',
       '.dash-grid.editing.vd-drop-here{outline:2px dashed var(--acc,#5a9e8f);outline-offset:6px}',
       // the moving tile follows the pointer on its transform: the host page's transform transition would trail it
@@ -264,7 +291,7 @@
       // the dashed slot the lifted tile will take (the board's ghost: "drop here · 4 × 2") — fixed on the body, as the resize
       // ghost is: a box inside the grid would dirty the grid's layout on every move and the auto-scroll would pay for it
       '.vd-ghost{position:fixed;box-sizing:border-box;border-radius:var(--radius-lg,8px);border:1.5px dashed var(--acc,#5a9e8f);',
-      'background:color-mix(in srgb,var(--acc,#5a9e8f) 8%,transparent);pointer-events:none;z-index:9600}',
+      'background:color-mix(in srgb,var(--acc,#5a9e8f) 8%,transparent);pointer-events:none;z-index:9600}',   // z-local: the drop ghost over the host pages' own chrome (900-9500); --z-drag (200) would put it under it
       '.vd-ghost span{position:absolute;left:8px;top:6px;font-family:var(--mono);font-size:8.5px;color:var(--acc,#5a9e8f);white-space:nowrap}',
       // the tile that was just placed shows where it landed
       '@keyframes vdLanded{0%{box-shadow:0 0 0 2px var(--acc,#5a9e8f),0 0 24px color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent)}100%{box-shadow:none}}',
@@ -308,7 +335,7 @@
       // .widget rules under a section id.
       'html.vd-solo-mode body>*:not(.vd-solo){display:none!important}',
       'html.vd-solo-mode body>.widget.vd-solo{display:flex!important;position:fixed;inset:0;',
-      'width:auto!important;height:auto!important;flex-direction:column;z-index:9999;',
+      'width:auto!important;height:auto!important;flex-direction:column;z-index:var(--z-full,150);',   // solo: every other body child is hidden, so the band is enough
       'margin:0;border:none;border-radius:0;background:var(--bg1,#16181d)}',
       'html.vd-solo-mode .widget.vd-solo .w-head{display:flex;align-items:center;gap:6px;',
       'padding:7px 10px 6px;border-bottom:1px solid var(--border);flex-shrink:0}',
@@ -317,7 +344,7 @@
       'html.vd-solo-mode .widget.vd-solo .w-resize{display:none}',
       // Loading overlay for widget iframes while they boot (self-contained so it
       // works even on pages that don't include vera-panel.css).
-      '.vera-loading{position:absolute;inset:0;z-index:40;display:flex;align-items:center;',
+      '.vera-loading{position:absolute;inset:0;z-index:40;display:flex;align-items:center;',   // z-local: inside the tile
       'justify-content:center;gap:10px;background:color-mix(in srgb,var(--bg1,#16181d) 60%,transparent);',
       'backdrop-filter:blur(1px)}',
       '.vera-spinner{width:22px;height:22px;border-radius:50%;flex-shrink:0;',
@@ -327,7 +354,7 @@
       // Resize ghost — see onResizeDown(). A plain fixed-position preview box
       // that tracks the mouse directly; the real widget/grid are untouched
       // until mouseup, so nothing reflows (and therefore nothing jumps) mid-drag.
-      '.vd-rghost{position:fixed;z-index:9600;pointer-events:none;box-sizing:border-box;',
+      '.vd-rghost{position:fixed;z-index:9600;pointer-events:none;box-sizing:border-box;',   // z-local: as the drop ghost
       'border:2px dashed var(--acc,#5a9e8f);border-radius:var(--radius-lg,8px);',
       'background:color-mix(in srgb, var(--acc,#5a9e8f) 10%, transparent)}',
       '.vd-rghost-label{position:absolute;right:6px;bottom:5px;font-family:var(--mono);',
@@ -477,45 +504,14 @@
   }
   function ladderSizes() { return sizeLadder().map(function (s) { return s.size; }); }
   /* ── the form's sample ──
-     A record with no source, or one the element will not read on its own (a name that is not read-shaped), still
-     draws: window.VeraWidget.sample(form) when the element offers it, else enough of the form's SHAPE to draw it here.
-     The tile says "sample" in its chip. Nothing on a dashboard is ever blank. */
-  var SHAPE_OF = { counter: 'level', hero: 'level', level: 'level', meter: 'level', gauge: 'level', radial: 'level', ring: 'level', rate: 'level', bar: 'level', tank: 'level', turbine: 'level',
-    trace: 'series', sparkline: 'series', line: 'series', area: 'series', step: 'series', chart: 'series', horizon: 'series', candles: 'series',
-    bars: 'values', thermo: 'values', heat: 'values', pills: 'values', kv: 'values', column: 'values', ranked: 'values', histogram: 'values', 'meter-panel': 'values', form: 'values',
-    donut: 'parts', stack: 'parts', parts: 'parts', matrix: 'matrix',
-    log: 'events', lane: 'events', feed: 'events', timeline: 'events', pulse: 'events',
-    table: 'items', list: 'items', cards: 'items', rows: 'items', files: 'items', checklist: 'items', tree: 'items', gallery: 'items', people: 'items', node: 'items',
-    stepper: 'stages', pipeline: 'stages', stages: 'stages', program: 'stages', calendar: 'calendar', agenda: 'calendar',
-    string: 'string', terminal: 'string', announcement: 'string', ask: 'string',
-    graph: 'graph', pipes: 'graph', topology: 'graph', flow: 'graph', minigraph: 'graph', context_graph: 'graph', scatter: 'points', globe: 'points' };
-  var SAMPLE = {
-    series: [12, 18, 15, 22, 27, 24, 31, 36, 33, 41, 38, 44, 47, 43, 52, 49, 55, 58, 54, 62, 60, 66, 63, 62],
-    level: { value: 62, min: 0, max: 100, unit: '%', delta: 4 },
-    values: { ct126: 71, ct121: 54, pxstore: 42, ct130: 33 },
-    parts: { running: 26, paused: 3, stopped: 4 },
-    matrix: { ct126: { cpu: 'ok', mem: 'ok', disk: 'warn' }, ct121: { cpu: 'ok', mem: 'warn', disk: 'ok' }, ct130: { cpu: 'down', mem: 'down', disk: 'down' } },
-    events: [{ t: '2026-09-13T14:38:00', kind: 'memory', text: 'memory.select · 2 injected' }, { t: '2026-09-13T14:39:00', kind: 'err', text: 'ct130 connect timeout' },
-      { t: '2026-09-13T14:40:00', kind: 'cap', text: 'code.author wrote 2 files' }, { t: '2026-09-13T14:41:00', kind: 'loop', text: 'loop v7 · step 5 · waiting on you' }],
-    items: [{ name: 'ct126', status: 'ok', value: '18 ms' }, { name: 'ct121', status: 'ok', value: '22 ms' }, { name: 'pxstore', status: 'ok', value: '31 ms' }, { name: 'ct130', status: 'down', value: 'timeout' }],
-    stages: { stages: [{ name: 'recall', done: true }, { name: 'read', done: true }, { name: 'author', current: true }, { name: 'verify' }, { name: 'land' }] },
-    calendar: [{ when: '2026-09-13T09:00', title: 'heartbeat' }, { when: '2026-09-13T12:00', title: 'model sync' }, { when: '2026-09-14T03:00', title: 'dream cycle' }],
-    string: 'sample — the record has no readable source yet',
-    points: [{ x: 1, y: 3 }, { x: 2, y: 5 }, { x: 3, y: 4 }, { x: 4, y: 8 }, { x: 5, y: 7 }, { x: 6, y: 9 }, { x: 7, y: 8 }],
-    // the context galaxy's shape: every family of an assembled context, a record's relevance, the edges it cites
-    graph: { nodes: [{ id: 'q1', label: 'the question', family: 'context', score: 0.95 }, { id: 'm1', label: 'memory · boot path', family: 'memory', score: 0.82 },
-      { id: 'm2', label: 'memory · re-embed', family: 'memory', score: 0.61 }, { id: 'v1', label: 'vector · fabric', family: 'vector', score: 0.7 }, { id: 'v2', label: 'vector · sandbox', family: 'vector', score: 0.42, included: false },
-      { id: 'g1', label: 'graph · ct126', family: 'graph', score: 0.55 }, { id: 'c1', label: 'cap · code.read', family: 'cap', score: 0.74 }, { id: 'r1', label: 'run · loop v7', family: 'run', score: 0.48 },
-      { id: 's1', label: 'skill · fixer', family: 'skill', score: 0.66 }],
-      rels: [{ from: 'm1', to: 'q1', kind: 'cite' }, { from: 'v1', to: 'q1', kind: 'cite' }, { from: 'c1', to: 'r1', kind: 'ran' }, { from: 'g1', to: 'm1', kind: 'links' }],
-      links: [{ source: 'm1', target: 'q1' }, { source: 'v1', target: 'q1' }, { source: 'c1', target: 'r1' }, { source: 'g1', target: 'm1' }] }
-  };
+     The sample face is the widget element's own (window.VeraWidget.sample, drawn by <vera-widget> itself); the dashboard
+     keeps no copy of the forms' shapes or samples (DO-0.3 - its SHAPE_OF / SAMPLE disagreed with the element's). And a
+     tile shows it ONLY while the dashboard is being configured (edit mode, or the tile's configure sheet open): at rest a
+     tile never draws sample values as though they were read - its element (no-sample) says it is reading, that the read
+     failed, or that there is nothing to show. */
   function sampleFor(form) {
-    if (window.VeraWidget && typeof window.VeraWidget.sample === 'function') { try { var s = window.VeraWidget.sample(form); if (s != null) return s; } catch (e) { /* the shape's own below */ } }
-    var f = String(form || '').toLowerCase(), shape = '';
-    if (window.VeraWidget && typeof window.VeraWidget.forms === 'function') { var x = window.VeraWidget.forms().filter(function (y) { return y.id === f; })[0]; shape = (x && x.shape) || ''; }
-    if (!shape) shape = SHAPE_OF[f] || '';
-    return SAMPLE[shape];
+    if (window.VeraWidget && typeof window.VeraWidget.sample === 'function') { try { var s = window.VeraWidget.sample(form); if (s != null) return s; } catch (e) { /* none */ } }
+    return undefined;
   }
   // the record as the element is handed it: with the form's sample when it cannot read, marked sample
   function withSample(rec) {
@@ -524,9 +520,8 @@
     var readable = src ? (window.VeraWidget && typeof window.VeraWidget.readable === 'function' ? window.VeraWidget.readable(src) : true) : false;
     if (readable) return rec;
     var o = {}; Object.keys(rec).forEach(function (k) { o[k] = rec[k]; }); o.sample = true;
-    // an element with a sample of its own draws its sample face itself (marked, with the Read button for a source
-    // that waits for a click) — it is only handed the shape's sample as data when it has none
-    if (!(window.VeraWidget && typeof window.VeraWidget.sample === 'function')) { var s = sampleFor(rec.form); if (s !== undefined) o.data = s; }
+    // the element draws its sample face itself (marked, with the Read button for a source that waits for a click) - while
+    // the dashboard is configured; at rest it says the source is not read (DO-0.3: no sample data is handed over here)
     return o;
   }
   function panelRecord(panelId, wid, label) {
@@ -668,7 +663,11 @@
     /* the span picks the size, read against the grid's OWN width: a grid narrower than a page (a dashboard in a side pane -
        Cap Hub's glance, 330 px) scales the span first, so a full-width tile there draws at M, not XL with its side lists
        (2026-09-28); a page-wide grid (1200 px and up) keeps its spans as they are */
-    function effSpan(sp) { var gw = grid.clientWidth || 0, k = gw ? Math.min(1, gw / 1200) : 1; return [Math.max(1, Math.round((+sp[0] || 1) * k)), sp[1]]; }
+    /* a span is in the 12-column grid's 100 px columns; a narrower grid scales it down. Measured against the grid's OWN
+       columns: under 1100 px the grid is already 6 (or 2) columns, and scaling by width/1200 shrank the span a second time -
+       a section's nested grid at 388 px drew its 4-wide tiles as xs chips (WSU-43). Twelve columns: unchanged. */
+    function effSpan(sp) { var gw = grid.clientWidth || 0, n = 0; try { n = (getComputedStyle(grid).gridTemplateColumns || '').split(' ').filter(Boolean).length; } catch (e) {}
+      var k = gw ? Math.min(1, gw / ((n || GRID.cols) * 100)) : 1; return [Math.max(1, Math.round((+sp[0] || 1) * k)), sp[1]]; }
     function syncSize(w) {
       // an XL composite (a composite with a list among its parts - VeraWidget.compositeXL) is never shorter than its floor:
       // its lists need the room, and scroll inside it beyond that
@@ -1132,7 +1131,14 @@
        scenes, composites and panels keep the height their author gave them - they are drawn to fill what they get.
        A height YOU set (the resize corner) is never touched; neither is one a layout saved before this, where it
        differs from the file's. ── */
-    var FIT_CAT = { level: 'level', series: 'series', values: 'values', parts: 'parts', events: 'events', items: 'items', stages: 'stages' };
+    /* WHICH TILES FOLLOW THEIR CONTENT'S HEIGHT, by form: the dashboard's own layout rule (it was read off SHAPE_OF, a second
+       copy of the widget's shapes that DO-0.3 removed - these are exactly the forms and categories that table gave) */
+    var FIT_OF = { counter: 'level', hero: 'level', level: 'level', meter: 'level', gauge: 'level', radial: 'level', ring: 'level', rate: 'level', bar: 'level', tank: 'level', turbine: 'level',
+      trace: 'series', sparkline: 'series', line: 'series', area: 'series', step: 'series', chart: 'series', horizon: 'series', candles: 'series',
+      bars: 'values', thermo: 'values', heat: 'values', pills: 'values', kv: 'values', column: 'values', ranked: 'values', histogram: 'values', 'meter-panel': 'values', form: 'values',
+      donut: 'parts', stack: 'parts', parts: 'parts', log: 'events', lane: 'events', feed: 'events', timeline: 'events', pulse: 'events',
+      table: 'items', list: 'items', cards: 'items', rows: 'items', files: 'items', checklist: 'items', tree: 'items', gallery: 'items', people: 'items', node: 'items',
+      stepper: 'stages', pipeline: 'stages', stages: 'stages', program: 'stages' };
     function fitCategory(form) {
       var f = String(form || '').toLowerCase();
       if (/^(section|panel|composite|element|vgraph|graph|map|globe|topology|pipes|context_graph|cellmap|matrix|heat|calendar|month|schedule|calnav|iso)$/.test(f) || /@iso$|iso/.test(f)) return '';
@@ -1142,7 +1148,7 @@
       if (f === 'status') return 'status';
       if (/^(ranked|bars|kv)$/.test(f)) return 'rowsv';   // (thermo and temps stand their readings side by side: their author's height)
       if (/^(thermo|temps|gauge|column|histogram|pulse)$/.test(f)) return '';
-      return FIT_CAT[SHAPE_OF[f]] || '';
+      return FIT_OF[f] || '';
     }
     function itemsOf(w) {
       var el = w.querySelector(':scope > .w-body > vera-widget') || w.querySelector('vera-widget'); if (!el) return null;
@@ -1293,7 +1299,7 @@
       state.editing = !state.editing;
       grid.classList.toggle('editing', state.editing);
       if (state.editing) gridVars();
-      widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); });
+      widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); sampleGate(w); recordChip(w); });
       var b = $(opts.editBtn);
       if (b) {
         b.textContent = state.editing ? '✓ Done' : '⚙ Configure';
@@ -1396,6 +1402,8 @@
       w.style.width = Math.max(300, r.width) + 'px';
       w.style.height = Math.max(200, r.height) + 'px';
       document.body.appendChild(w);   // escape the tab panel so the float survives tab switches
+      window.VeraWindows.raise(w);
+      if (!w._vdRaise) { w._vdRaise = function () { if (w.classList.contains('floating')) window.VeraWindows.raise(w); }; w.addEventListener('mousedown', w._vdRaise, true); }
       var pb = w.querySelector('.vd-pop'); if (pb) { pb.classList.add('on'); pb.title = 'Dock back into the grid'; }
       w.querySelector('.w-head').addEventListener('mousedown', floatStart);
       // The header's own × button is every widget's normal "hide from the
@@ -1423,7 +1431,7 @@
     }
     function dock(w) {
       w.querySelector('.w-head').removeEventListener('mousedown', floatStart);
-      w.classList.remove('floating');
+      w.classList.remove('floating'); window.VeraWindows.drop(w);
       w.style.left = w.style.top = w.style.width = w.style.height = '';
       var ph = w._vdPh || grid.querySelector('[data-vd-ph="' + w.dataset.wid + '"]');
       if (ph && ph.parentNode) { ph.parentNode.insertBefore(w, ph); ph.remove(); }
@@ -1464,6 +1472,69 @@
       w.addEventListener('dragend', onDragEnd);
       ensureChrome(w);
       addPopButtons(w);
+      itemHead(w);
+    }
+
+    /* THE TILE'S HEAD IS THE ITEM'S (DEEP-29 11A.4 Decision 4; owner decision D1 2026-10-16): the tile's own buttons -
+       refresh, configure, deep dive, open, pop out, whatever the page wrote - stay in its head, where they are useful (owner,
+       2026-10-16: "controls relevant to whatever is in it ... i dont want everything to be chucked into the ⋯ menu"); then
+       the item row: pill (it folds to its head line), max (it fills the dashboard's view; Esc or max again restores), drop
+       (hide; on a floating tile, dock). The page's own hide button is the drop control's twin and is not drawn. A section
+       divider keeps drop only. */
+    var FKEY = SKEY + '.faces';
+    function faces() { try { return JSON.parse(localStorage.getItem(FKEY) || '{}') || {}; } catch (e) { return {}; } }
+    function faceSet(wid, f) { var m = faces(); if (f) m[wid] = f; else delete m[wid]; try { localStorage.setItem(FKEY, JSON.stringify(m)); } catch (e) { /* this page only */ } }
+    var ICON = { pill: '<rect x="2.5" y="9.5" width="11" height="4" rx="2"/><path d="M8 2.5v4.5M5.8 5l2.2 2.2L10.2 5"/>',
+      max: '<path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3"/>', restore: '<path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/>',
+      more: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
+      drop: '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>' };
+    var svg = function (k) { return '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">' + ICON[k] + '</svg>'; };
+    function isHideBtn(b) { return b.hasAttribute('data-vd-hide') || /dashHideWidget|hide\(/.test(b.getAttribute('onclick') || '') || (b.textContent || '').trim() === '\u00d7'; }
+    function itemHead(w) {
+      var head = w.querySelector(':scope > .w-head'); if (!head || head.querySelector(':scope > .vd-row')) return;
+      var sec = w.classList.contains('w-section');
+      var hb = function (a, ic, t) { return '<button type="button" class="vd-hb" data-vd-act="' + a + '" title="' + esc(t) + '">' + svg(ic) + '</button>'; };
+      /* the row is the canvas head's (VeraItem.controls, WSU-58 S6, owner O4: one implementation): a tile has no lock and no
+         more menu - its own buttons stay in its head - and a section divider keeps drop only; the look is the dashboard's */
+      var HB = { pill: function () { return hb('pill', 'pill', 'Fold it to its head line - it stays folded until you open it'); },
+        max: function () { return hb('max', 'max', 'Fill the dashboard with it (Esc restores)'); },
+        drop: function () { return hb('drop', 'drop', 'Hide it from the dashboard'); } };
+      var VI = window.VeraItem;
+      var row = VI && typeof VI.controls === 'function' ? VI.controls('widget', { views: [], lock: false, more: false, pill: !sec, max: !sec })
+        : (sec ? ['drop'] : ['pill', 'max', 'drop']);   /* a page that loads this file on its own (not through its route) */
+      head.insertAdjacentHTML('beforeend', '<span class="vd-row" data-w="dashboard.item.controls">'
+        + row.map(function (id) { return HB[id] ? HB[id]() : ''; }).join('') + '</span>');
+      var act0 = head.querySelector(':scope > .w-actions'); if (act0) Array.prototype.forEach.call(act0.querySelectorAll('button'), function (x) { if (isHideBtn(x)) x.classList.add('vd-dup'); });
+      head.querySelector(':scope > .vd-row').addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('[data-vd-act]'); if (!b) return; e.stopPropagation(); e.preventDefault();
+        var a = b.getAttribute('data-vd-act');
+        if (a === 'pill') return pillToggle(w);
+        if (a === 'max') return fullToggle(w);
+        if (a === 'drop') { if (w.classList.contains('floating')) return dock(w); if (w.classList.contains('vd-full')) fullToggle(w); return hide(w.dataset.wid); }
+      });
+      if (faces()[w.dataset.wid] === 'pill' && !sec) pillToggle(w, true);
+    }
+    function pillToggle(w, on) {
+      on = on == null ? !w.classList.contains('vd-pill') : !!on;
+      if (on && w.classList.contains('vd-full')) fullToggle(w);
+      w.classList.toggle('vd-pill', on); faceSet(w.dataset.wid, on ? 'pill' : '');
+      var b = w.querySelector(':scope > .w-head .vd-hb[data-vd-act="pill"]'); if (b) { b.classList.toggle('on', on); b.title = on ? 'Open it again' : 'Fold it to its head line - it stays folded until you open it'; }
+      if (!on) fitSoon();
+    }
+    var _fullKey = null;
+    function fullToggle(w) {
+      var on = !w.classList.contains('vd-full');
+      if (on) { var sc = _scrollParent(grid) || document.documentElement; var r = (sc === document.documentElement || sc === document.body) ? { left: 0, top: 0, width: innerWidth, height: innerHeight } : sc.getBoundingClientRect();
+        var g = grid.getBoundingClientRect(); var top = Math.max(r.top, g.top > 0 ? Math.min(g.top, r.top + 40) : r.top);
+        /* a page drawn with a zoom (the harness): the screen rect is divided back into the page's own pixels */
+        var z = (w.getBoundingClientRect().width / (w.offsetWidth || 1)) || 1, L = Math.max(0, r.left), T = Math.max(0, top), RR = Math.min(innerWidth, r.left + r.width), B = Math.min(innerHeight, r.top + r.height);
+        w._vdFullWas = w.style.cssText; w.style.left = Math.round(L / z + 6) + 'px'; w.style.top = Math.round(T / z + 6) + 'px';
+        w.style.width = Math.round((RR - L) / z - 12) + 'px'; w.style.height = Math.round((B - T) / z - 12) + 'px';
+        if (w.classList.contains('vd-pill')) pillToggle(w, false);
+        w.classList.add('vd-full'); _fullKey = function (e) { if (e.key === 'Escape' && w.classList.contains('vd-full')) { e.preventDefault(); fullToggle(w); } }; document.addEventListener('keydown', _fullKey); }
+      else { w.classList.remove('vd-full'); w.style.cssText = w._vdFullWas || ''; if (_fullKey) document.removeEventListener('keydown', _fullKey); _fullKey = null; }
+      var b = w.querySelector(':scope > .w-head .vd-hb[data-vd-act="max"]'); if (b) { b.innerHTML = svg(on ? 'restore' : 'max'); b.classList.toggle('on', on); b.title = on ? 'Restore it (Esc)' : 'Fill the dashboard with it (Esc restores)'; }
+      try { w.querySelectorAll('vera-widget').forEach(function (x) { if (typeof x.render === 'function') x.render(); }); } catch (e) { /* its own resize */ }
     }
     // The frame is the record's: a grip to move it, a hide button, the resize handle (the one ol-bgqueue lacked)
     // and the chip that says form · source. Only what is missing is added; a page's own head is left as written.
@@ -1494,11 +1565,11 @@
       var probs = w.dataset.problems ? w.dataset.problems.split('\n').filter(Boolean) : [];
       // what the body's element says of its face (data-state, carried here by widget:rendered): the head says "reading…",
       // "sample" or "read failed" so the body never needs a tag over its content
-      var ws = w.dataset.wstate || '', sampled = !!w.dataset.sample || ws === 'sample';
-      var sw = sampled ? 'sample' : (ws === 'reading' ? 'reading…' : (ws === 'failed' ? 'read failed' : ''));   // first, so a narrow head's ellipsis never hides it
+      var cfg = state.editing || !!w.dataset.configuring, ws = w.dataset.wstate || '', sampled = cfg && (!!w.dataset.sample || ws === 'sample');   // the sample: only while configuring (DO-0.3)
+      var sw = sampled ? 'sample' : (ws === 'reading' ? 'reading…' : (ws === 'failed' ? 'read failed' : (!cfg && w.dataset.sample ? 'not read' : '')));   // first, so a narrow head's ellipsis never hides it
       chip.textContent = (sw ? sw + ' · ' : '') + text + (w.dataset.checking ? ' · checking…' : '') + (probs.length ? ' · ' + probs.length + ' problem' + (probs.length === 1 ? '' : 's') : '');
       chip.classList.toggle('sample', sampled); chip.classList.toggle('reading', ws === 'reading'); chip.classList.toggle('failed', ws === 'failed'); chip.classList.toggle('checking', !!w.dataset.checking); chip.classList.toggle('bad', !!probs.length);
-      chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? ' · drawn from the form\'s sample: the source cannot be read' : '')
+      chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? (cfg ? ' · drawn from the form\'s sample: the source cannot be read' : ' · the source is not read on its own') : '')
         + (w.dataset.checking ? ' · widget.validate is checking this record' : '') + (probs.length ? '\nwidget.validate: ' + probs.join(' · ') : '');
       ensureCfg(w); ensureOpen(w, r); ensureDive(w);
       if (r.form) w.dataset.form = r.form;
@@ -1554,6 +1625,12 @@
        page's markup is retired under the drawing — moved into a hidden holder, ids intact, so the page's updaters go
        on writing into it — and the element draws the record at the size the span picks; a record that returns to
        the page body brings the markup back. */
+    /* THE SAMPLE ONLY WHILE CONFIGURING (DO-0.3): a tile's element carries no-sample unless the dashboard is in edit mode
+       or this tile's configure sheet is open */
+    function sampleGate(w, el) {
+      el = el || (w && w.querySelector(':scope > .w-body vera-widget')); if (!el) return;
+      if (state.editing || (w && w.dataset.configuring)) el.removeAttribute('no-sample'); else if (!el.hasAttribute('no-sample')) el.setAttribute('no-sample', '');
+    }
     function drawTile(w, rec) {
       if (!w || !rec || typeof rec !== 'object') return;
       var body = w.querySelector(':scope > .w-body'); if (!body) return;
@@ -1562,7 +1639,7 @@
       var el = body.querySelector(':scope > vera-widget');
       if (w.dataset.record) {                       // a record tile: the element is the body
         if (rec.form === 'context_graph') ensureContextGraph();
-        if (el) el.setAttribute('record', JSON.stringify(shown));
+        if (el) { sampleGate(w, el); el.setAttribute('record', JSON.stringify(shown)); }
         return;
       }
       var holder = body.querySelector(':scope > .w-page');
@@ -1581,7 +1658,7 @@
       }
       if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); el.setAttribute('dive-on-click', ''); el.setAttribute('item-drawer', ''); body.appendChild(el); }   // a click on the face: the data drawer (item-drawer), ⤢ the deep dive   // the tile's own head carries the title (the board's tile is one head)
       var sp = effSpan(spanOf(w)); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
-      el.setAttribute('record', JSON.stringify(shown));
+      sampleGate(w, el); el.setAttribute('record', JSON.stringify(shown));
       w.dataset.converted = '1';
     }
 
@@ -1609,6 +1686,11 @@
     }
     function configure(wid, anchor) {
       var rec = recordOf(wid), w = byIdAnywhere(wid); if (!rec || !w) return Promise.resolve(null);
+      w.dataset.configuring = '1'; sampleGate(w);   // its sample face while its sheet is open (DO-0.3)
+      var settled = function (x) { delete w.dataset.configuring; sampleGate(w); recordChip(w); return x; };
+      return configureOpen(wid, anchor, rec, w).then(settled, function (e) { settled(null); throw e; });
+    }
+    function configureOpen(wid, anchor, rec, w) {
       var was = withId(rec, wid);
       var back = function () { drawTile(w, was); recordChip(w); return null; };
       if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {
@@ -1620,7 +1702,7 @@
         } catch (e) { p = Promise.reject(e); }
         return Promise.resolve(p).then(function (r) { return (r && typeof r === 'object') ? applyRecord(wid, r) : back(); }, back);
       }
-      return openSheet(wid, was);
+      return Promise.resolve(openSheet(wid, was));
     }
     /* Save: the record goes back into the layout — a user tile's in place, a page or file tile's as its edit — and
        the tile follows it: the title (when the head's title is plain text — a page head with its own spans inside is
@@ -1768,6 +1850,7 @@
       var sp0 = effSpan(spanOf(widget));   /* read against the grid's own width */
       el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
       var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';   // no readable source: the form's sample, said so
+      if (!state.editing) el.setAttribute('no-sample', '');   // the sample face only while configuring (DO-0.3)
       el.setAttribute('record', JSON.stringify(shown));
       widget.querySelector('.w-body').appendChild(el);
       widget.querySelector('[data-vd-hide]').onclick = function () { hide(wid); };

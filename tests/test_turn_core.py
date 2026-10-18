@@ -97,3 +97,23 @@ def test_salient_and_the_canvas_item():
 def test_a_coin_said_by_name_is_its_ticker():
     names = {(e["type"], e["text"]) for e in tc.merge("How is bitcoin doing, and Ethereum?", [])}
     assert ("TICKER", "BTC") in names and ("TICKER", "ETH") in names
+
+
+def test_to_look_is_deterministic_most_named_first_and_skips_dates_money_and_links():
+    ents = [
+        {"text": "Microsoft", "type": "ORG", "count": 3, "score": 0.9},
+        {"text": "3 January 2024", "type": "DATE", "count": 5, "score": 0.99},
+        {"text": "$42,000", "type": "MONEY", "count": 4, "score": 0.99},
+        {"text": "Apple", "type": "ORG", "count": 3, "score": 0.95},
+        {"text": "London", "type": "GPE", "count": 1, "score": 0.99},
+        {"text": "apple", "type": "PRODUCT", "count": 1, "score": 0.5},
+        {"text": "AI", "type": "ORG", "count": 9, "score": 0.9},
+    ]
+    picks = [e["text"] for e in tc.to_look(ents, 3)]
+    # most named, then confidence, then the name; a two-letter name and the "when / how much" kinds are not fetched
+    assert picks == ["Apple", "Microsoft", "London"]
+    # the same entities in any order give the same names
+    assert [e["text"] for e in tc.to_look(list(reversed(ents)), 3)] == picks
+    # each name once, whatever type it was also tagged as
+    assert [e["text"].lower() for e in tc.to_look(ents, 10)].count("apple") == 1
+    assert tc.to_look(ents, 0) == []

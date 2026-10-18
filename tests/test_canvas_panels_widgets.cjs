@@ -35,17 +35,21 @@ const mod = require(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element
   /* the page beside the chat still opens - this ADDS the canvas, it does not move the panel off the screen the
      user asked for it on */
   t('the page beside the chat still opens', /const ok=await panelOpen\(String\(a\.id\|\|''\), who\);/.test(chat));
-  t('and the canvas only hears about it when the open succeeded', /if\(ok\) try\{ _cvLandPanel/.test(chat));
+  t('and the canvas only hears about it when the open succeeded', /if\(ok(?:&&!_deskPanelOn\(\))?\) try\{ _cvLandPanel/.test(chat));   /* on the desk the panel layer takes it instead */
 }
 
 // ── the panel item is driven over the bridge, which it already was ─────────────────────────────────────────────
 {
   t('the canvas draws a panel', typeof mod.BLOCK.panel === 'function');
-  const h = mod.BLOCK.panel({ panel: 'calendar-panel', title: 'Calendar' }, 'l', 'panel:calendar-panel', null);
-  t('live in its frame', /data-live="frame"/.test(h) && /calendar-panel/.test(h));
-  t('with query and dispatch over the bridge', /data-act="pquery"/.test(h) && /data-act="pdispatch"/.test(h));
+  /* with its page (the chat or the canvas's own resolver gives it: WSU-67, /ui/panels/<id> is not a route) */
+  const h = mod.BLOCK.panel({ panel: 'calendar-panel', title: 'Calendar', src: '/cal/panel' }, 'l', 'panel:calendar-panel', null);
+  t('live in its frame', /data-live="frame"/.test(h) && /calendar-panel/.test(h) && /data-src="\/cal\/panel"/.test(h));
+  /* WSU-58 S3: declared for the item's head like every kind's actions (the menu lists what does not fit) */
+  const pe = { _pq: {}, _pdOpen: {} }; mod.BLOCK.panel({ panel: 'calendar-panel', src: '/cal/panel' }, 'l', 'panel:c', pe);
+  const pacts = ((pe._decl || {})['panel:c'] || {}).acts || []; const pa = pacts.map((a) => a.act);
+  t('with query and dispatch over the bridge', pa.includes('pquery') && pa.includes('pdispatch'));
   t('a console to drive it by hand', /data-f="action"/.test(h) && /data-f="payload"/.test(h));
-  t('and a way out to the standalone page', /data-act="pstand"/.test(h));
+  t('and a way out to the standalone page', pa.includes('pstand'));
   t('the bridge is the capability, not a private channel', /panel\.dispatch/.test(cv) && /panel\.query/.test(cv));
 }
 

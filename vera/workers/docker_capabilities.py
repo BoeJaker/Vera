@@ -282,6 +282,7 @@ def _socket_from_url(url: str) -> str:
 
 @capability(
     "docker.hosts.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "hosts"}, "draw": {"columns": ["id", "label", "kind", "default", "socket", "url"]}}},
     http_method="GET", http_path="/workers/docker/hosts", http_tags=["docker"],
     memory="off", silent=True,
     description="List registered Docker hosts (local / tcp / ssh). "
@@ -560,7 +561,7 @@ async def _parse_engine_json(body: bytes, default):
     memory="off",
     description="List containers on a host (Engine /containers/json). "
                 "Input: host_id (str), all (bool=true), slim (bool=false - only Id/Names/Image/State/Status/Created/project per "
-                "container: a dashboard's reading, not the full Engine record). Output: {containers: [...], count}.",
+                "container: a dashboard's reading, not the full Engine record). Output: {containers: [...], count}.", contract={"presentation": {'kind': 'table', 'form': 'containers', 'map': {'rows': 'containers', 'name': 'Names', 'status': 'State', 'host': 'host_id'}}}
 )
 async def cap_docker_ps(host_id: str = "", all: bool = True, slim: bool = False, trace_id=None) -> Dict:
     rec = _get_host(host_id)
@@ -569,12 +570,19 @@ async def cap_docker_ps(host_id: str = "", all: bool = True, slim: bool = False,
     status, body, _ = await _engine_request(rec, "GET", f"/containers/json?all={'true' if all else 'false'}")
     if status != 200:
         return {"error": _engine_error(status, body), "containers": []}
-    rows = await _parse_engine_json(body, [])
-    if not isinstance(rows, list):
-        rows = []
-    if slim:
-        rows = [_docker_ps_slim(r) for r in rows if isinstance(r, dict)]
+    rows = _docker_ps_rows(await _parse_engine_json(body, []), rec["id"], slim)
     return {"host_id": rec["id"], "containers": rows, "count": len(rows)}
+
+
+def _docker_ps_rows(rows, host_id: str, slim: bool = False) -> List[Dict]:
+    """The Engine's container list as docker.ps answers it: each row (slim or full) carries the host it runs on, so a
+    row read on its own - an app part joined to nodes.list's docker_host_id, a merged list - still says which machine."""
+    if not isinstance(rows, list):
+        return []
+    rows = [r for r in rows if isinstance(r, dict)]
+    if slim:
+        rows = [_docker_ps_slim(r) for r in rows]
+    return [dict(r, host_id=host_id) for r in rows]
 
 
 def _docker_ps_slim(r: Dict) -> Dict:
@@ -738,14 +746,24 @@ except Exception as e:
                 "even while its rank fluctuates in/out of the visible top-N). "
                 "Output: {hosts:{host_id:{containers:[{id,name,image,cpu_pct,"
                 "mem_mb,mem_limit_mb,history:[{t,cpu_pct,mem_mb}]}], "
-                "total_running, updated_at, error}}}.",
+                "total_running, updated_at, error}}, top:[{host,id,name,image,"
+                "cpu_pct,mem_mb,mem_limit_mb}] (every host's, busiest first, "
+                f"at most {DOCKER_STATS_TOP_N})}}.",
+    contract={"presentation": {"kind": "table", "form": "ranked", "map": {"values": "top", "name": "name", "value": "cpu_pct"},
+                               "title": "Busiest containers · CPU %", "empty": "no running container sampled"}},
 )
 async def cap_docker_stats_top(trace_id=None) -> Dict:
-    return {"hosts": _DOCKER_STATS_CACHE}
+    # the busiest across every host as one list (DO-0.3: what the desk ranks); the trend stays under hosts
+    top = [dict({k: v for k, v in c.items() if k != "history"}, host=hid)
+           for hid, h in list(_DOCKER_STATS_CACHE.items()) for c in ((h or {}).get("containers") or [])
+           if isinstance(c, dict)]
+    top.sort(key=lambda c: -(c.get("cpu_pct") or 0))
+    return {"hosts": _DOCKER_STATS_CACHE, "top": top[:DOCKER_STATS_TOP_N]}
 
 
 @capability(
     "docker.drift",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "drifted"}, "title": "Drifted"}, {"kind": "table", "map": {"rows": "unknown"}, "title": "Unknown"}, {"kind": "table", "map": {"rows": "skipped"}, "title": "Skipped"}]}},
     http_method="GET", http_path="/workers/docker/drift", http_tags=["docker"],
     memory="off",
     description="Which RUNNING containers are no longer on the image their tag now points "
@@ -779,6 +797,7 @@ async def cap_docker_drift(host_id: str = "", trace_id=None) -> Dict:
 
 @capability(
     "docker.images",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "images"}, "draw": {"columns": ["RepoTags", "Size", "Created", "Containers", "Id"]}}},
     http_method="POST", http_path="/workers/docker/images", http_tags=["docker"],
     memory="off",
     description="List images on a host (Engine /images/json). "
@@ -1540,6 +1559,7 @@ def _stack_catalog() -> Dict[str, Dict]:
 
 @capability(
     "docker.stack.catalog",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "services"}, "draw": {"columns": ["label", "id", "container_name", "image", "ports", "note"]}}},
     http_method="GET", http_path="/workers/docker/stack/catalog", http_tags=["docker"],
     memory="off", silent=True,
     description="Catalog of Vera's backing services (mirrors docker-compose.yml): "
@@ -1558,6 +1578,7 @@ async def cap_docker_stack_catalog(trace_id=None) -> Dict:
 
 @capability(
     "docker.stack.status",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "services"}, "draw": {"columns": ["label", "running", "exists", "status", "container_name", "image", "ports"]}}},
     http_method="GET", http_path="/workers/docker/stack/status", http_tags=["docker"],
     memory="off", silent=True,
     description="State of each Vera stack service on a Docker host (by container "

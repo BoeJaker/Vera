@@ -1,0 +1,30 @@
+{
+ "cap": "demo.log",
+ "args": {},
+ "presentation": {
+  "kind": "log",
+  "map": {
+   "events": "entries",
+   "t": "ts",
+   "text": "msg",
+   "level": "lvl"
+  }
+ },
+ "result": {
+  "entries": [
+   {
+    "ts": "2026-10-12T10:00:00",
+    "msg": "started",
+    "lvl": "info"
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "log",
+  "title": "demo.log",
+  "forms": [
+   "log"
+  ]
+ }
+}
