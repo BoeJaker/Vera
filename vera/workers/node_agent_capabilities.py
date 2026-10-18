@@ -153,7 +153,8 @@ async def _collect_runners(node_filter: str = "") -> Dict[str, Any]:
 
 @capability(
     "nodes.agent.status", memory="off", silent=True,
-    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["node", "node_id", "cores", "load", "mem_available_mb", "mem_total_mb", "runners", "can_control"]}, "empty": "No node runs the Vera node agent"}},
+    # the node agents' facts live in the Workers panel's activity pane (each node's load, memory, GPU, runners - and what it runs now)
+    contract={"presentation": {"kind": "table", "form": "element", "map": {"rows": "nodes"}, "draw": {"tag": "vera-node-activity"}, "title": "Node activity", "empty": "No node runs the Vera node agent"}},
     http_method="GET", http_path="/nodes/agent/status", http_tags=["nodes", "obs"],
     description="Host facts from every compute node running the Vera node agent "
                 "— cores, load, memory, runner count, and every GPU under `gpus` "

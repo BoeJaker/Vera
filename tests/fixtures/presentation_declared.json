@@ -4014,25 +4014,25 @@
   },
   "title": "Names \u00b7 {task}"
  },
+ "nodes.activity": {
+  "draw": {
+   "tag": "vera-node-activity"
+  },
+  "form": "element",
+  "kind": "table",
+  "title": "Node activity"
+ },
  "nodes.agent.status": {
   "draw": {
-   "columns": [
-    "node",
-    "node_id",
-    "cores",
-    "load",
-    "mem_available_mb",
-    "mem_total_mb",
-    "runners",
-    "can_control"
-   ]
+   "tag": "vera-node-activity"
   },
   "empty": "No node runs the Vera node agent",
-  "form": "table",
+  "form": "element",
   "kind": "table",
   "map": {
    "rows": "nodes"
-  }
+  },
+  "title": "Node activity"
  },
  "nodes.backend.overview": {
   "draw": {
@@ -4163,21 +4163,14 @@
  },
  "nodes.workers.list": {
   "draw": {
-   "columns": [
-    "nodename",
-    "host",
-    "has_gpu",
-    "in_sync",
-    "classes",
-    "failures",
-    "last_error"
-   ]
+   "tag": "vera-node-workers"
   },
-  "form": "table",
+  "form": "element",
   "kind": "table",
   "map": {
    "rows": "nodes"
-  }
+  },
+  "title": "Node workers"
  },
  "notes.list": {
   "draw": {
@@ -4440,22 +4433,17 @@
  },
  "ollama.warm.status": {
   "draw": {
-   "columns": [
-    "node",
-    "class",
-    "slots",
-    "resident",
-    "planned",
-    "embed",
-    "busy",
-    "acting"
-   ]
+   "attrs": {
+    "section": "warm"
+   },
+   "tag": "vera-node-models"
   },
-  "form": "table",
+  "form": "element",
   "kind": "table",
   "map": {
    "rows": "nodes"
-  }
+  },
+  "title": "Warm models"
  },
  "openclaw.config.get": {
   "form": "kv",

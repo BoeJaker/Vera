@@ -1634,7 +1634,8 @@ async def cap_nodes_workers_dispatch(stage: Optional[int] = None,
 
 @capability(
     "nodes.workers.list",
-    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["nodename", "host", "has_gpu", "in_sync", "classes", "failures", "last_error"]}}},
+    # the Workers panel's own element on the desk (Wave 1: panel-derived): the widget `element` form mounts it, and it reads itself
+    contract={"presentation": {"kind": "table", "form": "element", "map": {"rows": "nodes"}, "draw": {"tag": "vera-node-workers"}, "title": "Node workers"}},
     http_method="GET", http_path="/nodes/workers", http_tags=["nodes", "provision"],
     memory="off", silent=True,
     description="Everything the Workers UI shows about node workers: the task classes "
