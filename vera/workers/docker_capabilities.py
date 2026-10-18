@@ -504,6 +504,19 @@ async def _engine_request(rec: dict, method: str, api_path: str,
             "application/json")
 
 
+# the busiest-containers element (the main dashboard's tile, shared with the desk)
+_DOCKER_TOP_EL = Path(__file__).resolve().parent / "docker_top_element.js"
+
+
+@APP.get("/ui/elements/docker_top.js", include_in_schema=False)
+async def _docker_top_js():
+    try:
+        body = _DOCKER_TOP_EL.read_text(encoding="utf-8")
+    except OSError:
+        body = "console.error('docker_top_element.js not found')"
+    return Response(body, media_type="application/javascript")
+
+
 @APP.api_route("/workers/docker/engine/{host_id}/{api_path:path}",
                methods=["GET", "POST", "DELETE"], include_in_schema=False)
 async def docker_engine_proxy(host_id: str, api_path: str, request: Request):
@@ -749,7 +762,10 @@ except Exception as e:
                 "total_running, updated_at, error}}, top:[{host,id,name,image,"
                 "cpu_pct,mem_mb,mem_limit_mb}] (every host's, busiest first, "
                 f"at most {DOCKER_STATS_TOP_N})}}.",
-    contract={"presentation": {"kind": "table", "form": "ranked", "map": {"values": "top", "name": "name", "value": "cpu_pct"},
+    # the main dashboard's "Busiest containers" (cpu / memory trend per container) on the desk - <vera-docker-top>, seeded with the
+    # answer (Wave 1: panel-derived); the table stays a view of it
+    contract={"presentation": {"kind": "table", "form": "element", "map": {"values": "top", "name": "name", "value": "cpu_pct"},
+                               "draw": {"tag": "vera-docker-top"}, "views": ["table"],
                                "title": "Busiest containers · CPU %", "empty": "no running container sampled"}},
 )
 async def cap_docker_stats_top(trace_id=None) -> Dict:

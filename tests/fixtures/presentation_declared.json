@@ -1289,15 +1289,21 @@
   }
  },
  "docker.stats.top": {
+  "draw": {
+   "tag": "vera-docker-top"
+  },
   "empty": "no running container sampled",
-  "form": "ranked",
+  "form": "element",
   "kind": "table",
   "map": {
    "name": "name",
    "value": "cpu_pct",
    "values": "top"
   },
-  "title": "Busiest containers \u00b7 CPU %"
+  "title": "Busiest containers \u00b7 CPU %",
+  "views": [
+   "table"
+  ]
  },
  "dream.background.status": {
   "kind": "kv",

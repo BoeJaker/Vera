@@ -1,0 +1,331 @@
+{
+ "answers": [
+  {
+   "hosts": {
+    "h1": {
+     "containers": [
+      {
+       "id": "a1",
+       "name": "vera",
+       "image": "vera:latest",
+       "cpu_pct": 72.5,
+       "mem_mb": 2048.4,
+       "history": [
+        {
+         "cpu_pct": 60,
+         "mem_mb": 2000
+        },
+        {
+         "cpu_pct": 80,
+         "mem_mb": 2050
+        },
+        {
+         "cpu_pct": 72.5,
+         "mem_mb": 2048
+        }
+       ]
+      },
+      {
+       "id": "b2",
+       "name": "<redis>",
+       "image": "redis:7",
+       "cpu_pct": 3,
+       "mem_mb": 120,
+       "history": [
+        {
+         "cpu_pct": 3,
+         "mem_mb": 120
+        }
+       ]
+      }
+     ]
+    },
+    "h2": {
+     "containers": [
+      {
+       "id": "c3",
+       "name": "ollama",
+       "cpu_pct": 95,
+       "mem_mb": null,
+       "history": [
+        {
+         "cpu_pct": 90,
+         "mem_mb": null
+        },
+        {
+         "cpu_pct": null,
+         "mem_mb": 10
+        },
+        {
+         "cpu_pct": 95,
+         "mem_mb": 12
+        }
+       ]
+      },
+      {
+       "id": "d4",
+       "cpu_pct": null,
+       "history": []
+      }
+     ]
+    }
+   }
+  },
+  {
+   "hosts": {}
+  },
+  {
+   "hosts": {
+    "h": {
+     "containers": [
+      {
+       "id": "x0",
+       "name": "c0",
+       "cpu_pct": 0,
+       "mem_mb": 0,
+       "history": [
+        {
+         "cpu_pct": 0,
+         "mem_mb": 0
+        },
+        {
+         "cpu_pct": 0,
+         "mem_mb": 0
+        }
+       ]
+      },
+      {
+       "id": "x1",
+       "name": "c1",
+       "cpu_pct": 7,
+       "mem_mb": 100,
+       "history": [
+        {
+         "cpu_pct": 1,
+         "mem_mb": 1
+        },
+        {
+         "cpu_pct": 2,
+         "mem_mb": 3
+        }
+       ]
+      },
+      {
+       "id": "x2",
+       "name": "c2",
+       "cpu_pct": 14,
+       "mem_mb": 200,
+       "history": [
+        {
+         "cpu_pct": 2,
+         "mem_mb": 2
+        },
+        {
+         "cpu_pct": 4,
+         "mem_mb": 6
+        }
+       ]
+      },
+      {
+       "id": "x3",
+       "name": "c3",
+       "cpu_pct": 21,
+       "mem_mb": 300,
+       "history": [
+        {
+         "cpu_pct": 3,
+         "mem_mb": 3
+        },
+        {
+         "cpu_pct": 6,
+         "mem_mb": 9
+        }
+       ]
+      },
+      {
+       "id": "x4",
+       "name": "c4",
+       "cpu_pct": 28,
+       "mem_mb": 400,
+       "history": [
+        {
+         "cpu_pct": 4,
+         "mem_mb": 4
+        },
+        {
+         "cpu_pct": 8,
+         "mem_mb": 12
+        }
+       ]
+      },
+      {
+       "id": "x5",
+       "name": "c5",
+       "cpu_pct": 35,
+       "mem_mb": 500,
+       "history": [
+        {
+         "cpu_pct": 5,
+         "mem_mb": 5
+        },
+        {
+         "cpu_pct": 10,
+         "mem_mb": 15
+        }
+       ]
+      },
+      {
+       "id": "x6",
+       "name": "c6",
+       "cpu_pct": 42,
+       "mem_mb": 600,
+       "history": [
+        {
+         "cpu_pct": 6,
+         "mem_mb": 6
+        },
+        {
+         "cpu_pct": 12,
+         "mem_mb": 18
+        }
+       ]
+      },
+      {
+       "id": "x7",
+       "name": "c7",
+       "cpu_pct": 49,
+       "mem_mb": 700,
+       "history": [
+        {
+         "cpu_pct": 7,
+         "mem_mb": 7
+        },
+        {
+         "cpu_pct": 14,
+         "mem_mb": 21
+        }
+       ]
+      },
+      {
+       "id": "x8",
+       "name": "c8",
+       "cpu_pct": 56,
+       "mem_mb": 800,
+       "history": [
+        {
+         "cpu_pct": 8,
+         "mem_mb": 8
+        },
+        {
+         "cpu_pct": 16,
+         "mem_mb": 24
+        }
+       ]
+      },
+      {
+       "id": "x9",
+       "name": "c9",
+       "cpu_pct": 63,
+       "mem_mb": 900,
+       "history": [
+        {
+         "cpu_pct": 9,
+         "mem_mb": 9
+        },
+        {
+         "cpu_pct": 18,
+         "mem_mb": 27
+        }
+       ]
+      },
+      {
+       "id": "x10",
+       "name": "c10",
+       "cpu_pct": 70,
+       "mem_mb": 1000,
+       "history": [
+        {
+         "cpu_pct": 10,
+         "mem_mb": 10
+        },
+        {
+         "cpu_pct": 20,
+         "mem_mb": 30
+        }
+       ]
+      },
+      {
+       "id": "x11",
+       "name": "c11",
+       "cpu_pct": 77,
+       "mem_mb": 1100,
+       "history": [
+        {
+         "cpu_pct": 11,
+         "mem_mb": 11
+        },
+        {
+         "cpu_pct": 22,
+         "mem_mb": 33
+        }
+       ]
+      },
+      {
+       "id": "x12",
+       "name": "c12",
+       "cpu_pct": 84,
+       "mem_mb": 1200,
+       "history": [
+        {
+         "cpu_pct": 12,
+         "mem_mb": 12
+        },
+        {
+         "cpu_pct": 24,
+         "mem_mb": 36
+        }
+       ]
+      },
+      {
+       "id": "x13",
+       "name": "c13",
+       "cpu_pct": 91,
+       "mem_mb": 1300,
+       "history": [
+        {
+         "cpu_pct": 13,
+         "mem_mb": 13
+        },
+        {
+         "cpu_pct": 26,
+         "mem_mb": 39
+        }
+       ]
+      },
+      {
+       "id": "x14",
+       "name": "c14",
+       "cpu_pct": 98,
+       "mem_mb": 1400,
+       "history": [
+        {
+         "cpu_pct": 14,
+         "mem_mb": 14
+        },
+        {
+         "cpu_pct": 28,
+         "mem_mb": 42
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ ],
+ "html": [
+  "<div style=\"font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px\">Busiest containers — cpu / mem trend, last ~10min</div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">ollama</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 M36.0,0.0\" fill=\"none\" stroke=\"#c75a5a\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M18.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\"></span>\n        <span style=\"width:34px;text-align:right;color:var(--err);font-family:var(--mono)\">95%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"vera:latest\">vera</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L18.0,0.0 L36.0,5.3\" fill=\"none\" stroke=\"#c9a45a\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L18.0,0.0 L36.0,0.6\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">2048MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--warn);font-family:var(--mono)\">72.5%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"redis:7\">&lt;redis&gt;</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\"></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\"></svg></span>\n        <span class=\"meta\">120MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--ok);font-family:var(--mono)\">3%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">d4</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\"></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\"></svg></span>\n        <span class=\"meta\"></span>\n        <span style=\"width:34px;text-align:right;color:var(--dim2);font-family:var(--mono)\">—</span>\n      </div>",
+  "<span style=\"color:var(--dim2);font-size:9.5px\">no container stats yet</span>",
+  "<div style=\"font-size:8.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px\">Busiest containers — cpu / mem trend, last ~10min</div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c14</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#c75a5a\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">1400MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--err);font-family:var(--mono)\">98%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c13</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#c75a5a\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">1300MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--err);font-family:var(--mono)\">91%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c12</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#c9a45a\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">1200MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--warn);font-family:var(--mono)\">84%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c11</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#c9a45a\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">1100MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--warn);font-family:var(--mono)\">77%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c10</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#c9a45a\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">1000MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--warn);font-family:var(--mono)\">70%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c9</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#c9a45a\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">900MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--warn);font-family:var(--mono)\">63%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c8</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#5a9e8f\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">800MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--ok);font-family:var(--mono)\">56%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c7</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#5a9e8f\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">700MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--ok);font-family:var(--mono)\">49%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c6</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#5a9e8f\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">600MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--ok);font-family:var(--mono)\">42%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c5</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#5a9e8f\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">500MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--ok);font-family:var(--mono)\">35%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c4</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#5a9e8f\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">400MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--ok);font-family:var(--mono)\">28%</span>\n      </div><div class=\"sm-row\" style=\"padding:3px 0;gap:8px\">\n        <span class=\"nm\" title=\"\">c3</span>\n        <span title=\"cpu% trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#5a9e8f\" stroke-width=\"1.2\"/></svg></span>\n        <span title=\"memory (MB) trend\"><svg width=\"36\" height=\"14\" style=\"display:block\"><path d=\"M0.0,14.0 L36.0,0.0\" fill=\"none\" stroke=\"#8fb87a\" stroke-width=\"1.2\"/></svg></span>\n        <span class=\"meta\">300MB</span>\n        <span style=\"width:34px;text-align:right;color:var(--ok);font-family:var(--mono)\">21%</span>\n      </div>"
+ ]
+}
