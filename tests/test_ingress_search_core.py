@@ -63,3 +63,9 @@ def test_gap_fill_cap_crawls_without_the_llm_and_marks_the_gap():
     assert "discover_crawl_urls" in seg and "reconcile=False" in seg and 'purpose="gap_fill"' in seg
     assert "fill_plan" in seg and "budget" in seg
     assert "f.purpose = 'gap_fill'" in src
+
+
+def test_the_gap_fill_may_run_from_the_schedule():
+    from vera.evolve import schedule_core as SC
+    assert any("fabric.map.gaps.fill".startswith(p) for p in SC.CAP_ALLOW_PREFIXES)
+    assert not any("fabric.map.search".startswith(p) for p in SC.CAP_ALLOW_PREFIXES)

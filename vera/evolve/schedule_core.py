@@ -116,7 +116,10 @@ CAP_ALLOW_PREFIXES = ("decide.", "obs.", "evolve.suite.", "chat.corpus.", "world
                       "evolve.background.window",
                       # four-minds 18 Oct 2026 (owner: every test on the Loop Lab schedule, no in-code timers): the
                       # precedent index and the claims harvest (decide.*, caps.shortlist.* are allowed above)
-                      "plan.precedent.index", "output.claims.harvest")
+                      "plan.precedent.index", "output.claims.harvest",
+                      # web-ingress WI-14b (owner 18 Oct 2026: "add a gap fill time slot"): the nightly crawl of the
+                      # questions info.seek had nothing on - one web.search + a depth-1 crawl per gap, no GPU or LLM
+                      "fabric.map.gaps.fill")
 
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
