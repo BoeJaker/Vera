@@ -31,15 +31,20 @@ def declared_in_source(root: str = ROOT) -> dict:
             except SyntaxError:
                 continue
             for node in ast.walk(tree):
-                if not isinstance(node, ast.Call) or getattr(node.func, "id", None) != "capability" or not node.args:
+                if not isinstance(node, ast.Call) or getattr(node.func, "id", None) != "capability":
                     continue
-                if not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
+                # the name is the first argument, or `name=` (vllm, openclaw)
+                if node.args:
+                    first = node.args[0]
+                else:
+                    first = next((kw.value for kw in node.keywords if kw.arg == "name"), None)
+                if not isinstance(first, ast.Constant) or not isinstance(first.value, str):
                     continue
                 for kw in node.keywords:
                     if kw.arg == "contract" and isinstance(kw.value, ast.Dict):
                         for k, v in zip(kw.value.keys, kw.value.values):
                             if isinstance(k, ast.Constant) and k.value == "presentation":
-                                out[node.args[0].value] = ast.literal_eval(v)
+                                out[first.value] = ast.literal_eval(v)
     return dict(sorted(out.items()))
 
 

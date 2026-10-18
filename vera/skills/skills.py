@@ -977,6 +977,7 @@ def _render_skill(skill: dict, variables: dict) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @capability("skills.list", memory="off",
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "skills"}, "draw": {"columns": ["name", "type", "description", "tags", "enabled", "updated"]}, "empty": "No skills"}},
             http_method="GET", http_path="/skills", http_tags=["skills"],
             description="List all registered skills. Filter by tag or type.")
 async def skills_list(tag: str = "", type: str = "", enabled_only: bool = False, trace_id=None):

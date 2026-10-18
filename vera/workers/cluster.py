@@ -1017,6 +1017,7 @@ async def _ollama_proxy_get_v1(path: str, req: Request):
 
 @capability(
     "cluster.mimic.status", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["routing", "current_target", "paused", "online_nodes", "active", "queue_depth", "queue_max", "max_concurrency", "queue_timeout"]}}},
     http_method="GET", http_path="/cluster/mimic/status", http_tags=["cluster"],
     description="Live status of the Ollama mimic proxy: routing mode, the node a "
                 "request would route to right now, online nodes, paused state, "

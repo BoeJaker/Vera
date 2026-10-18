@@ -91,6 +91,7 @@ GPU_INFER_URL = cfg.GPU_INFER_URL
 
 @capability(
     "gpu.health",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["status", "gpu", "cuda", "whisper", "stable_diffusion", "sd_device", "tts", "tts_engine", "sample_rate"]}}},
     http_method="GET", http_path="/gpu/health", http_tags=["gpu", "obs"],
     memory="off",
     description="Health status of the GPU inference server. "

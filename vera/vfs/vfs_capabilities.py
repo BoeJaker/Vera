@@ -174,6 +174,7 @@ async def _ssh(script: str, timeout: int = 120) -> Dict[str, Any]:
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "vfs.health",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "services"}, "title": "Services up"}, {"kind": "metric", "map": {"value": "estate_mounts"}, "title": "Estate mounts"}]}},
     http_method="POST", http_path="/vfs/health", http_tags=["vfs"],
     memory="off", silent=True,
     description="Cheap liveness probe for the Vera File Fabric (VFS-02): are "
@@ -206,6 +207,7 @@ async def cap_health(trace_id=None) -> Dict:
 
 @capability(
     "vfs.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "services"}, "title": "Services"}, {"kind": "table", "form": "table", "map": {"rows": "shares"}, "draw": {"columns": ["name", "path", "drive_letter", "read_only", "admin_only"]}, "title": "Shares", "empty": "No shares"}, {"kind": "kv", "map": {"fields": "estate"}, "title": "Estate tree"}]}},
     http_method="POST", http_path="/vfs/status", http_tags=["vfs"],
     memory="off",
     description="Full status of the Vera File Fabric (VFS-02) in one call: "
@@ -326,6 +328,7 @@ def _share_catalogue(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 @capability(
     "vfs.shares",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "shares"}, "draw": {"columns": ["name", "path", "drive_letter", "unc", "nfs", "read_only", "admin_only"]}, "empty": "No shares"}},
     http_method="POST", http_path="/vfs/shares", http_tags=["vfs"],
     memory="off", silent=True,
     description="The Vera File Fabric share catalogue with ready-to-paste client "
@@ -390,6 +393,7 @@ async def cap_estate_sync(trace_id=None) -> Dict:
 
 @capability(
     "vfs.estate.list",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "entries"}, "draw": {"columns": ["name", "source", "kind"]}, "title": "Exposed", "empty": "No exposed"}, {"kind": "table", "form": "table", "map": {"rows": "skipped"}, "draw": {"columns": ["name", "reason"]}, "title": "Skipped", "empty": "No skipped"}]}},
     http_method="POST", http_path="/vfs/estate/list", http_tags=["vfs"],
     memory="off", silent=True,
     description="What the VFS-02 estate tree currently exposes: one entry per "
@@ -508,6 +512,7 @@ async def cap_peer_add(name: str = "", trace_id=None) -> Dict:
 
 @capability(
     "vfs.peer.list",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "door"}, "title": "Door"}, {"kind": "table", "map": {"rows": "peers"}, "title": "File devices", "empty": "No file devices"}]}},
     http_method="POST", http_path="/vfs/peer/list", http_tags=["vfs"],
     memory="off", silent=True,
     description="Devices with file access over netctl's WireGuard door, with their tunnel "

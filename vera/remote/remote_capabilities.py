@@ -153,6 +153,7 @@ async def _get_conn(conn_id: str) -> Optional[Dict]:
 
 @capability(
     "conn.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "connections"}, "draw": {"columns": ["label", "kind", "container", "docker_host_id", "ssh_host_id", "vmid", "updated"]}, "empty": "No saved connections"}},
     http_method="GET", http_path="/remote/conn/list", http_tags=["remote"],
     memory="off", silent=True,
     description="List saved remote connections (docker containers / ssh hosts / "

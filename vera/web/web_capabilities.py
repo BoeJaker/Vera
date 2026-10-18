@@ -226,6 +226,7 @@ def _note_searxng(body: Optional[Dict[str, Any]], error: str = "") -> None:
 
 @capability(
     "web.engines.health",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["state", "message", "reachable", "unresponsive", "empty_streak", "last_count", "ok_at", "checked_at"]}}},
     http_method="GET", http_path="/web/engines/health",
     http_tags=["web"], memory="off", silent=True,
     description="Is web search getting real results? What the last SearXNG answers looked like: state "

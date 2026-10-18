@@ -1,4 +1,40 @@
 {
+ "agent.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "model",
+    "tool_mode",
+    "voice",
+    "memory_enabled",
+    "archived",
+    "updated_at"
+   ]
+  },
+  "empty": "No agents",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "agents"
+  }
+ },
+ "agent.models": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "gpu",
+    "models"
+   ]
+  },
+  "empty": "No Ollama instance is online",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "instances"
+  }
+ },
  "agentbridge.catalog": {
   "draw": {
    "columns": [
@@ -105,11 +141,116 @@
    "rows": "candidates"
   }
  },
+ "automations.overview": {
+  "draw": {
+   "columns": [
+    "label",
+    "stat",
+    "detail",
+    "severity"
+   ]
+  },
+  "empty": "No automation sources",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sections"
+  }
+ },
  "autonomous.status": {
   "kind": "kv",
   "map": {
    "fields": "$"
   }
+ },
+ "background.cap.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "state",
+      "title",
+      "waiting_for_s"
+     ]
+    },
+    "empty": "No queued",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "queued"
+    },
+    "title": "Queued"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "state",
+      "elapsed_s",
+      "started"
+     ]
+    },
+    "empty": "No finished",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "finished"
+    },
+    "title": "Finished"
+   }
+  ]
+ },
+ "background.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "title",
+      "kind",
+      "state",
+      "waiting_for_s",
+      "attempts",
+      "stranded"
+     ]
+    },
+    "empty": "No waiting",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "queue.waiting"
+    },
+    "title": "Waiting"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "queue.running"
+    },
+    "title": "Running"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "priority",
+      "interval_s",
+      "runs",
+      "defers",
+      "last_defer"
+     ]
+    },
+    "empty": "No producers",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "jobs"
+    },
+    "title": "Producers"
+   }
+  ]
  },
  "backup.status": {
   "draw": {
@@ -250,6 +391,13 @@
  "board.items": {
   "form": "ci-board",
   "kind": "status"
+ },
+ "build.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "tools"
+  },
+  "title": "Builder toolchains"
  },
  "business.catalog.products": {
   "draw": {
@@ -640,6 +788,45 @@
    }
   }
  },
+ "capacity.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "node",
+      "has_gpu",
+      "gated",
+      "capacity",
+      "held",
+      "free"
+     ]
+    },
+    "empty": "No ollama nodes",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "ollama.nodes"
+    },
+    "title": "Ollama nodes"
+   },
+   {
+    "empty": "No Claude seats",
+    "kind": "table",
+    "map": {
+     "rows": "seats"
+    },
+    "title": "Claude seats"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "summary"
+    },
+    "title": "Seats"
+   }
+  ]
+ },
  "catalog.browse.index": {
   "kind": "composite",
   "parts": [
@@ -714,6 +901,53 @@
   "form": "census-live",
   "kind": "status"
  },
+ "certs.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "parts",
+    "map": {
+     "parts": "counts"
+    },
+    "title": "By state"
+   },
+   {
+    "draw": {
+     "columns": [
+      "severity",
+      "subject",
+      "message"
+     ]
+    },
+    "empty": "No findings",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "findings"
+    },
+    "title": "Findings"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "where",
+      "issuer_kind",
+      "days_left",
+      "state",
+      "source"
+     ]
+    },
+    "empty": "No certificates",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "certs"
+    },
+    "title": "Certificates"
+   }
+  ]
+ },
  "ci.board": {
   "form": "ci-board",
   "kind": "status"
@@ -754,6 +988,23 @@
   "form": "run-track",
   "kind": "progress"
  },
+ "cluster.mimic.status": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "routing",
+    "current_target",
+    "paused",
+    "online_nodes",
+    "active",
+    "queue_depth",
+    "queue_max",
+    "max_concurrency",
+    "queue_timeout"
+   ]
+  }
+ },
  "code.diff": {
   "form": "diff",
   "kind": "diff"
@@ -778,6 +1029,91 @@
   "kind": "table",
   "map": {
    "rows": "domains"
+  }
+ },
+ "compute.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "host",
+      "status",
+      "compute_slots",
+      "compute_running",
+      "current_task"
+     ]
+    },
+    "empty": "No workers",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "workers"
+    },
+    "title": "Workers"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "would_run",
+      "why",
+      "next_node"
+     ]
+    },
+    "empty": "No functions",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "functions"
+    },
+    "title": "Functions"
+   },
+   {
+    "draw": {
+     "columns": [
+      "fn",
+      "label",
+      "state",
+      "node",
+      "started",
+      "attempt"
+     ]
+    },
+    "empty": "No recent jobs",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "jobs"
+    },
+    "title": "Recent jobs"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
+ "conn.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "container",
+    "docker_host_id",
+    "ssh_host_id",
+    "vmid",
+    "updated"
+   ]
+  },
+  "empty": "No saved connections",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "connections"
   }
  },
  "dag.store_list": {
@@ -2132,6 +2468,41 @@
    }
   ]
  },
+ "goals.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "dream_count",
+    "last_dream_at",
+    "loop_status",
+    "created_at"
+   ]
+  },
+  "empty": "No long-term goals",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "goals"
+  }
+ },
+ "gpu.health": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "status",
+    "gpu",
+    "cuda",
+    "whisper",
+    "stable_diffusion",
+    "sd_device",
+    "tts",
+    "tts_engine",
+    "sample_rate"
+   ]
+  }
+ },
  "ha.config.get": {
   "form": "kv",
   "kind": "kv",
@@ -2803,6 +3174,53 @@
    "rows": "rows"
   }
  },
+ "jobs.history": {
+  "draw": {
+   "columns": [
+    "capability",
+    "status",
+    "elapsed_s",
+    "worker_id",
+    "delivery_count",
+    "updated_at",
+    "error"
+   ]
+  },
+  "empty": "No jobs recorded",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
+ "jobs.stats": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "stats"
+    },
+    "title": "Counters"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "pending",
+      "idle"
+     ]
+    },
+    "empty": "No stream consumers",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "stream.consumers"
+    },
+    "title": "Stream consumers"
+   }
+  ]
+ },
  "loop.ci.board": {
   "form": "ci-board",
   "kind": "status"
@@ -2818,6 +3236,23 @@
  "loop.ci.race": {
   "form": "race-green",
   "kind": "status"
+ },
+ "loops.program.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "horizon_days",
+    "created",
+    "owner_ref"
+   ]
+  },
+  "empty": "No loop programs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "programs"
+  }
  },
  "markets.alerts.list": {
   "kind": "log",
@@ -3323,6 +3758,32 @@
    "rows": "sprites"
   }
  },
+ "metrics.stack.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "components"
+  },
+  "title": "Metrics stack"
+ },
+ "minds.switch.list": {
+  "draw": {
+   "columns": [
+    "id",
+    "default",
+    "modes",
+    "surface",
+    "package",
+    "owner",
+    "census"
+   ]
+  },
+  "empty": "No switches",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "switches"
+  }
+ },
  "ml.catalogue": {
   "draw": {
    "columns": [
@@ -3410,6 +3871,36 @@
   "map": {
    "rows": "jobs"
   }
+ },
+ "model.inventory": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "counts"
+    },
+    "title": "Counts"
+   },
+   {
+    "draw": {
+     "columns": [
+      "task",
+      "model",
+      "format",
+      "status",
+      "blockers"
+     ]
+    },
+    "empty": "No unresolved candidates",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "candidates"
+    },
+    "title": "Unresolved candidates"
+   }
+  ]
  },
  "n8n.config.get": {
   "kind": "kv",
@@ -3639,6 +4130,23 @@
   "kind": "table",
   "map": {
    "rows": "nodes"
+  }
+ },
+ "notes.list": {
+  "draw": {
+   "columns": [
+    "scope",
+    "ref_id",
+    "updated_by",
+    "chars",
+    "updated_at"
+   ]
+  },
+  "empty": "No notes",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "notes"
   }
  },
  "obs.cluster": {
@@ -3902,6 +4410,71 @@
    "rows": "nodes"
   }
  },
+ "openclaw.config.get": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "enabled",
+    "agent_id",
+    "auto_reconnect",
+    "reconnect_interval",
+    "run_timeout",
+    "settle_timeout",
+    "client_id",
+    "client_mode",
+    "role",
+    "scopes"
+   ]
+  }
+ },
+ "openclaw.ollama-models": {
+  "empty": "No models found",
+  "form": "list",
+  "kind": "table",
+  "map": {
+   "rows": "models"
+  }
+ },
+ "openclaw.sessions.list": {
+  "draw": {
+   "columns": [
+    "key",
+    "status",
+    "model",
+    "modelProvider",
+    "totalTokens",
+    "contextTokens",
+    "runtimeMs",
+    "updatedAt"
+   ]
+  },
+  "empty": "No OpenClaw sessions",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sessions"
+  }
+ },
+ "openclaw.status": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "enabled",
+    "connected",
+    "connecting",
+    "pairing_required",
+    "gateway_version",
+    "last_connected_at",
+    "last_error",
+    "agent_id",
+    "client_mode",
+    "role",
+    "open_stream_buffers"
+   ]
+  }
+ },
  "operator.connect.list": {
   "draw": {
    "columns": [
@@ -3986,6 +4559,52 @@
    "value": "stalled_ms",
    "values": "events"
   }
+ },
+ "podcast.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "style",
+    "duration_s",
+    "format",
+    "size_bytes",
+    "created"
+   ]
+  },
+  "empty": "No episodes yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "episodes"
+  }
+ },
+ "podcast.settings.get": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Defaults"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "voice",
+      "persona"
+     ]
+    },
+    "empty": "No speakers",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "speakers"
+    },
+    "title": "Speakers"
+   }
+  ]
  },
  "print.config.get": {
   "kind": "kv",
@@ -4077,6 +4696,43 @@
   "kind": "table",
   "map": {
    "rows": "projects"
+  }
+ },
+ "prov.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "openbao"
+    },
+    "title": "OpenBao"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "stepca"
+    },
+    "title": "step-ca"
+   }
+  ]
+ },
+ "providers.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "enabled",
+    "default_model",
+    "has_key",
+    "base_url"
+   ]
+  },
+  "empty": "No providers configured",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "providers"
   }
  },
  "provision.components": {
@@ -4444,6 +5100,58 @@
    "fields": "$"
   }
  },
+ "redis.info": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Server"
+   },
+   {
+    "kind": "parts",
+    "map": {
+     "parts": "dbs"
+    },
+    "title": "Keys by database"
+   }
+  ]
+ },
+ "redis.keys": {
+  "draw": {
+   "columns": [
+    "key",
+    "type",
+    "len",
+    "ttl"
+   ]
+  },
+  "empty": "No keys match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "keys"
+  }
+ },
+ "registry.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "summary",
+    "tags",
+    "updated_at"
+   ]
+  },
+  "empty": "No registry entries match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "entries"
+  }
+ },
  "research.agents.status": {
   "draw": {
    "columns": [
@@ -4644,11 +5352,92 @@
    "rows": "sandboxes"
   }
  },
+ "skills.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "type",
+    "description",
+    "tags",
+    "enabled",
+    "updated"
+   ]
+  },
+  "empty": "No skills",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "skills"
+  }
+ },
  "smolagents.status": {
   "kind": "kv",
   "map": {
    "fields": "$"
   }
+ },
+ "specialist.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "summary"
+    },
+    "title": "Summary"
+   },
+   {
+    "draw": {
+     "columns": [
+      "node_id",
+      "state",
+      "version",
+      "threads"
+     ]
+    },
+    "empty": "No nLP nodes",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "nlp.nodes"
+    },
+    "title": "NLP nodes"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "status",
+      "has_gpu",
+      "services",
+      "in_use"
+     ]
+    },
+    "empty": "No media nodes",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "media.nodes"
+    },
+    "title": "Media nodes"
+   },
+   {
+    "draw": {
+     "columns": [
+      "task",
+      "model",
+      "kind"
+     ]
+    },
+    "empty": "No nLP models",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "nlp.registry"
+    },
+    "title": "NLP models"
+   }
+  ]
  },
  "spritegen.capabilities": {
   "kind": "composite",
@@ -4879,6 +5668,281 @@
   "kind": "table",
   "map": {
    "rows": "themes"
+  }
+ },
+ "vfs.estate.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "source",
+      "kind"
+     ]
+    },
+    "empty": "No exposed",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "entries"
+    },
+    "title": "Exposed"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "reason"
+     ]
+    },
+    "empty": "No skipped",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "skipped"
+    },
+    "title": "Skipped"
+   }
+  ]
+ },
+ "vfs.health": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "services"
+    },
+    "title": "Services up"
+   },
+   {
+    "kind": "metric",
+    "map": {
+     "value": "estate_mounts"
+    },
+    "title": "Estate mounts"
+   }
+  ]
+ },
+ "vfs.peer.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "door"
+    },
+    "title": "Door"
+   },
+   {
+    "empty": "No file devices",
+    "kind": "table",
+    "map": {
+     "rows": "peers"
+    },
+    "title": "File devices"
+   }
+  ]
+ },
+ "vfs.shares": {
+  "draw": {
+   "columns": [
+    "name",
+    "path",
+    "drive_letter",
+    "unc",
+    "nfs",
+    "read_only",
+    "admin_only"
+   ]
+  },
+  "empty": "No shares",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "shares"
+  }
+ },
+ "vfs.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "services"
+    },
+    "title": "Services"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "path",
+      "drive_letter",
+      "read_only",
+      "admin_only"
+     ]
+    },
+    "empty": "No shares",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "shares"
+    },
+    "title": "Shares"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "estate"
+    },
+    "title": "Estate tree"
+   }
+  ]
+ },
+ "vllm.models": {
+  "empty": "No vLLM instance is online",
+  "form": "list",
+  "kind": "table",
+  "map": {
+   "rows": "all"
+  },
+  "title": "Models served"
+ },
+ "vllm.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "label",
+      "status",
+      "has_gpu",
+      "latency_ms",
+      "in_use",
+      "errors",
+      "tokens_per_second"
+     ]
+    },
+    "empty": "No instances",
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "instances"
+    },
+    "title": "Instances"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "global_config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
+ "web.api.drivers": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "blurb",
+    "domains"
+   ]
+  },
+  "empty": "No API drivers",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "drivers"
+  }
+ },
+ "web.engines.health": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "state",
+    "message",
+    "reachable",
+    "unresponsive",
+    "empty_streak",
+    "last_count",
+    "ok_at",
+    "checked_at"
+   ]
+  }
+ },
+ "widget.forms": {
+  "draw": {
+   "columns": [
+    "name",
+    "id",
+    "shape",
+    "boards",
+    "sizes",
+    "options",
+    "motion"
+   ]
+  },
+  "empty": "No forms match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "forms"
+  }
+ },
+ "widget.layouts": {
+  "draw": {
+   "columns": [
+    "key",
+    "dashboard",
+    "widgets",
+    "records"
+   ]
+  },
+  "empty": "No layouts",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "layouts"
+  }
+ },
+ "widget.sources": {
+  "draw": {
+   "columns": [
+    "cap",
+    "shape",
+    "domain",
+    "tier",
+    "refresh_min",
+    "desc"
+   ]
+  },
+  "empty": "No sources match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sources"
+  }
+ },
+ "widget.template.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "form",
+    "id",
+    "instances",
+    "version"
+   ]
+  },
+  "empty": "No widget templates",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "templates"
   }
  },
  "workshop.agent_loop.trace": {

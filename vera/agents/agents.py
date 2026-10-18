@@ -5790,6 +5790,7 @@ async def agent_patch(agent_id: str = "", name: str = "", fields: Optional[Dict[
 
 @capability(
     "agent.list", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "agents"}, "draw": {"columns": ["name", "label", "model", "tool_mode", "voice", "memory_enabled", "archived", "updated_at"]}, "empty": "No agents"}},
     http_method="GET", http_path="/agents/list", http_tags=["agents"],
     description="List all registered agents.",
 )
@@ -5982,6 +5983,7 @@ async def agent_chat_voice(
 
 @capability(
     "agent.models", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "instances"}, "draw": {"columns": ["name", "label", "gpu", "models"]}, "empty": "No Ollama instance is online"}},
     http_method="GET", http_path="/agents/models", http_tags=["agents"],
     description="List all models available across all Ollama instances.",
 )

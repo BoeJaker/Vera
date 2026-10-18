@@ -678,6 +678,7 @@ except Exception as e:  # pragma: no cover
 #  CAPABILITIES
 # ═════════════════════════════════════════════════════════════════════════════
 @capability("web.api.drivers", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "drivers"}, "draw": {"columns": ["label", "kind", "blurb", "domains"]}, "empty": "No API drivers"}},
             http_method="GET", http_path="/web/api/drivers", http_tags=["web", "api"],
             description="List the available platform-API driver templates and the "
                         "config/secret fields each one needs, for building the "

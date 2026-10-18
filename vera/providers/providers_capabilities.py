@@ -274,6 +274,7 @@ async def _live_models(rec: dict, key: str) -> List[str]:
 #  Capabilities
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("providers.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "providers"}, "draw": {"columns": ["label", "kind", "enabled", "default_model", "has_key", "base_url"]}, "empty": "No providers configured"}},
             http_method="GET", http_path="/providers/list", http_tags=["providers"],
             description="List configured external LLM providers (Anthropic, "
                         "OpenAI, custom). Secrets are redacted to has_key/env_key "

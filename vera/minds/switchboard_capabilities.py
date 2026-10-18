@@ -41,6 +41,7 @@ async def read_global() -> Dict[str, Any]:
 
 @capability(
     "minds.switch.list", http_method="GET", http_path="/minds/switches",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "switches"}, "draw": {"columns": ["id", "default", "modes", "surface", "package", "owner", "census"]}, "empty": "No switches"}},
     http_tags=["minds"], memory="off", silent=True,
     description="Every registered switch (four-minds switchboard): id, modes (first is the "
                 "default), surface, roadmap package, owner, whether a census arm may set it. "

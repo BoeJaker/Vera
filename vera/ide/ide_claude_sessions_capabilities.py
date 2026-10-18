@@ -1377,6 +1377,7 @@ async def _idle_queue_tick():
 
 
 @capability("background.status", memory="off", silent=True,
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "queue.waiting"}, "draw": {"columns": ["title", "kind", "state", "waiting_for_s", "attempts", "stranded"]}, "title": "Waiting", "empty": "No waiting"}, {"kind": "kv", "map": {"fields": "queue.running"}, "title": "Running"}, {"kind": "table", "form": "table", "map": {"rows": "jobs"}, "draw": {"columns": ["name", "priority", "interval_s", "runs", "defers", "last_defer"]}, "title": "Producers", "empty": "No producers"}]}},
             http_method="GET", http_path="/background/status",
             http_tags=["obs"],
             description="The awaiting-idle queue: jobs waiting for the box to "

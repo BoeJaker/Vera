@@ -698,6 +698,7 @@ async def _sweep_stuck_running():
 
 @capability(
     "jobs.history",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "jobs"}, "draw": {"columns": ["capability", "status", "elapsed_s", "worker_id", "delivery_count", "updated_at", "error"]}, "empty": "No jobs recorded"}},
     http_method="GET", http_path="/jobs/history",
     http_tags=["jobs", "monitoring"],
     memory="off", silent=True,
@@ -764,6 +765,7 @@ async def jobs_history(
 
 @capability(
     "jobs.stats",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "stats"}, "title": "Counters"}, {"kind": "table", "form": "table", "map": {"rows": "stream.consumers"}, "draw": {"columns": ["name", "pending", "idle"]}, "title": "Stream consumers", "empty": "No stream consumers"}]}},
     http_method="GET", http_path="/jobs/stats",
     http_tags=["jobs", "monitoring"],
     memory="off", silent=True,

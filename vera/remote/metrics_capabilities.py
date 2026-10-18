@@ -318,6 +318,7 @@ _STACK = {
 
 @capability(
     "metrics.stack.status",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "components"}, "title": "Metrics stack"}},
     http_method="POST", http_path="/remote/metrics/stack/status", http_tags=["remote", "metrics"],
     memory="off",
     description="Detect whether cAdvisor / node-exporter / Prometheus are running "
