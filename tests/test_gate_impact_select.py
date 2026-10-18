@@ -90,3 +90,22 @@ def test_tests_that_scan_the_whole_tree_always_run():
     picked, _ = tr.impact_select(files, ["vera/evolve/evolve_panel.html"], texts, IDX, max_share=1.0)
     assert {"test_inference_is_gated.py", "test_decorators.py", "test_globbed.py"} <= set(picked)
     assert "test_unrelated.py" not in picked
+
+
+
+def test_a_test_that_lists_the_tree_through_git_always_runs():
+    # 19 Oct 2026: tests/test_modules_compile.py lists every module with `git ls-files`; it names no module, so the
+    # selection must keep it whatever changes (it is what catches a module that parses but does not compile)
+    txt = 'out = subprocess.run(["git", "ls-files", "-z", "--", "vera"], cwd=ROOT)'
+    files = ["tests/test_modules_compile.py", "tests/test_other.py"]
+    picked, why = tr.impact_select(files, ["vera/evolve/schedule_capabilities.py"],
+                                  {"tests/test_modules_compile.py": txt, "tests/test_other.py": "x = 1"}, {})
+    assert "tests/test_modules_compile.py" in picked
+
+
+def test_a_very_wide_change_runs_the_full_tier():
+    # vera-c7, 19 Oct 2026: a convergence merge (hundreds of files) is never impact-selected
+    files = ["tests/test_a.py", "tests/test_b.py"]
+    changed = ["vera/m%d.py" % i for i in range(tr.IMPACT_MAX_CHANGED + 1)]
+    picked, why = tr.impact_select(files, changed, {}, {})
+    assert picked == files and "full tier" in why and "files" in why

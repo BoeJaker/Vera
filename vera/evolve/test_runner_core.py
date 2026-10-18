@@ -588,9 +588,14 @@ IMPACT_FULL = ("vera/capability_orchestration.py", "tests/conftest.py", "conftes
 #: a test that scans the whole tree (every capability, every module) never names the module it guards, so it is
 #: always run - vera-d2's review, 18 Oct 2026: test_inference_is_gated, test_emit_event_arity,
 #: test_capability_decorator_binding ... would otherwise let an ungated LLM call anywhere pass its adopt gate
-_TREE_SCAN_RE = re.compile(r"\bos\.walk\(|\.rglob\(|\bglob\.i?glob\(|\.glob\(\s*[\"'][^\"']*\*\*")
+_TREE_SCAN_RE = re.compile(r"\bos\.walk\(|\.rglob\(|\bglob\.i?glob\(|\.glob\(\s*[\"'][^\"']*\*\*"
+                            # 19 Oct 2026: a test that lists the tree through git (the compile-every-module test that
+                            # would have caught the convergence's repeated contract= keyword) scans it just the same
+                            r"|[\"']ls-files[\"']|\bgit ls-files\b")
 #: above this share of all files, the selection is not worth it: run the full tier
 IMPACT_MAX_SHARE = 0.6
+#: a change this wide (a convergence merge: 405 files, 19 Oct 2026) runs the full tier whatever it touches - vera-c7
+IMPACT_MAX_CHANGED = 60
 #: how many steps out from a changed module its importers count
 IMPACT_DEPTH = 3
 #: modules nearly everything imports (for the decorator, the registry): reaching one does not spread further - a
@@ -660,6 +665,8 @@ def impact_select(test_files: Sequence[str], changed: Sequence[str], test_text: 
     or when the selection is most of the suite anyway."""
     files = list(test_files or [])
     ch = [c.replace("\\", "/") for c in (changed or [])]
+    if len(ch) > IMPACT_MAX_CHANGED:
+        return files, "full tier: the change touches %d files (more than %d - a merge of branches)" % (len(ch), IMPACT_MAX_CHANGED)
     full = [c for c in ch if any(c == f or c.startswith(f) for f in IMPACT_FULL)]
     if full:
         return files, "full tier: the change touches %s" % ", ".join(sorted(set(full))[:3])
