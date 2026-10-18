@@ -1274,3 +1274,21 @@ async def cap_background_window(minutes: int = 90, kinds: str = "", trace_id=Non
     return {"ok": True, "ran": ran, "remaining": left, "kinds": sorted(seen),
             "minutes": round((time.time() - t0) / 60, 1), "reason": reason,
             "summary": "ran %d background job(s), %d left (%s)" % (ran, left, reason)}
+
+
+
+@capability("evolve.schedule.stop_run", memory="off",
+            http_method="POST", http_path="/evolve/schedule/stop_run", http_tags=["evolve", "schedule"],
+            description="Stop (yield) one scheduled run that is still going - any kind but census (a census yields with "
+                        "census.control.set). A background window stops starting jobs and gives the queue back. "
+                        "Input: run_id (str!). Output: {ok, run_id}.")
+async def cap_schedule_stop_run(run_id: str = "", trace_id=None) -> Dict[str, Any]:
+    ent = _RUN_TASKS.get((run_id or "").strip())
+    if not ent:
+        return {"ok": False, "error": "run %r is not running in this process" % run_id}
+    task, sid = ent
+    if task.done():
+        return {"ok": False, "error": "run %r has already ended" % run_id}
+    task.cancel()
+    await emit_event({"type": "evolve.schedule.stopped", "schedule_id": sid, "run_id": run_id})
+    return {"ok": True, "run_id": run_id, "schedule_id": sid}

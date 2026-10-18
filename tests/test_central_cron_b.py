@@ -94,3 +94,17 @@ def test_new_calendar_layers():
     assert core.layer_of({"source": "agents-work"}) == "agents"
     assert core.layer_of({"source": "host-cron"}) == "host"
     assert "agents" in core.LAYERS and "host" in core.LAYERS
+
+
+
+def test_background_window_shows_as_its_own_kind():
+    """Owner 18 Oct 2026: it must be clear from the UI what each slot is doing."""
+    t = {"name": "evolve.background.window", "arguments": {"minutes": 90}}
+    assert core.display_kind("cap", t) == "background" and core.display_kind("cap", {"name": "obs.x"}) == "cap"
+    rec = core.normalize({"kind": "cap", "title": "Background work", "target": t, "timezone": "UTC",
+                          "days": list(range(7)), "start": "03:30", "end": "05:00"})
+    ev = core.project_events([rec], datetime(2026, 10, 19, tzinfo=UTC), datetime(2026, 10, 20, tzinfo=UTC))
+    assert ev and ev[0]["kind"] == "background" and ev[0]["color"] == core.COLORS["background"]
+    run = core.history_events([{"id": "r1", "kind": "cap", "target": t, "started_at": "2026-10-19T03:30:00+00:00"}],
+                              datetime(2026, 10, 19, tzinfo=UTC), datetime(2026, 10, 20, tzinfo=UTC))
+    assert run[0]["kind"] == "background" and run[0]["run_id"] == "r1" and run[0]["running"] is True
