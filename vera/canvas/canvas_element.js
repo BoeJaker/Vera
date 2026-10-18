@@ -773,6 +773,10 @@
     const reg = await PANEL_REG; const p = reg.find((x) => x && (x.id === id || x.label === id)) || null;
     const m = p && String(p.html || '').match(/<iframe[^>]+src="([^"]+)"/i);
     let src = m ? m[1] : (PANEL_ALIASES[id] || '');
+    /* AN INJECT PANEL HAS NO PAGE OF ITS OWN (WSU-104: Speech -> Text, Cap List, System Log, Job Stream, ... opened on the desk as
+       "<name>_panel.html not found" - /ui/panels/<id> answers OK with that page, so the guess stuck): the server hosts it on its
+       own at /ui/panel/window?id= (the page the app's "Open panel" pops out), which the desk can frame */
+    if (!src && p && /^inject/.test(String(p.mode || ''))) src = '/ui/panel/window?id=' + encodeURIComponent(p.id || id);
     if (!src && await ok('/ui/panels/' + encodeURIComponent(id))) src = '/ui/panels/' + encodeURIComponent(id);
     if (!src) { const g = [id.replace(/-/g, '_') + '_panel.html', id.replace(/-panel$/, '').replace(/-/g, '_') + '_panel.html', id.replace(/-/g, '_') + '.html', id + '.html'];
       for (const f of g.filter((x, i) => g.indexOf(x) === i)) { if (await ok('/ui/panels/file/' + f)) { src = '/ui/panels/file/' + f; break; } } }

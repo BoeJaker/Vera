@@ -19,7 +19,7 @@ t('args as key=value', JSON.stringify(ctx.f('symbol=BTC-USD days=30')) === '{"sy
 t('quoted values', ctx.f('title="Q4 review" where=office').title === 'Q4 review');
 t('or JSON', ctx.f('{"symbol":"ETH-USD"}').symbol === 'ETH-USD' && JSON.stringify(ctx.f('')) === '{}');
 // the dispatcher, the stream, the prompt, /app
-t('the reply dispatcher collects and runs it', H.includes("matches.push({idx:m.index,end:m.index+m[0].length,type:'app',groups:[m[1],m[2]||'']});") && H.includes("}else if(match.type==='app'){") && H.includes('_cvOpenApp(appId, appArgs).catch(()=>{});'));
+t('the reply dispatcher collects and runs it', H.includes("matches.push({idx:m.index,end:m.index+m[0].length,type:'app',groups:[m[1],m[2]||'']});") && H.includes("}else if(match.type==='app'){") && H.includes("_cvOpenApp(appId, appArgs).then(r=>placeholder.classList.add(r===false?'error':'done')).catch(()=>placeholder.classList.add('error'));"));
 t('while streaming it is a badge, not markup', H.includes("t=t.replace(new RegExp(APP_PLACEHOLDER_RE.source,'gi'),(_,n)=>stash(_streamBadge('panel','app: '+n)));"));
 t('the directive test knows app:', H.includes('/\\[\\[(?:cap:|dag:|panel:|app:|loop\\b|'));
 t('the prompt says it can and lists the apps', H.includes('${_cvAppsPromptLine()}') && H.includes('open an APP on the desk'));
