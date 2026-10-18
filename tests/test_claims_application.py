@@ -103,3 +103,31 @@ def test_headings_self_reference_advice_and_plan_steps_are_not_claims(s):
 def test_statements_about_the_world_stay_claims(s):
     assert CL.is_claim(s)
     assert CL.claims(s) == [s]
+
+
+# -- picker round 2 (18 Oct pass 2: 15 of 104 still not claims; these 5 are the run's own steps and source lists) ----
+@pytest.mark.parametrize("s", [
+    "Based on the execution of prose.author in Step 2, here are the changes for EU AI Act high-risk obligations since "
+    "August 2026:",
+    "Data synthesized from live research including the WebGPU GitHub Wiki , Abratabia (browser feature database), and "
+    "official release notes for Chrome 113+, Firefox 145+, Safari 26, and Edge 113+.",
+    "web.research : Live aggregation of browser engine release notes and API status reports confirming stabilization "
+    "timelines for Chrome, Firefox, Safari, and Edge as of Q4 2026.",
+    "1. meow-sci/brutal-browser-poc : Confirmed Chrome v155 (Oct 06) and Firefox v158 (Oct 13) status with WebGPU "
+    "enabled by default.",
+    "2. gpuweb/gpuweb Wiki Implementation Status (Edited Oct 2, 2026): Verified engine-level readiness across Chromium, "
+    "Gecko, and WebKit engines for stable deployment.",
+])
+def test_the_runs_own_steps_and_source_lists_are_not_claims(s):
+    assert not CL.is_claim(s)
+
+
+@pytest.mark.parametrize("s", [
+    "Chrome & Edge : Stable support has been available since version 113.",
+    "As of October 2026, the Bank of England's Bank Rate stands at 3.75% .",
+    "Firefox : Stable builds for Windows and macOS have included WebGPU since versions 141 and 145, respectively.",
+    "Valkey aims to be \"Redis-compatible\" but with an Apache 2.0 / BSD-style license that allows unrestricted use of "
+    "new features.",
+])
+def test_real_claims_from_pass_2_are_still_claims(s):
+    assert CL.is_claim(s)
