@@ -9987,6 +9987,18 @@ async def obs_redis(keys: bool = True, trace_id=None):
                 "uptime_days":info.get("uptime_in_days"),"keys":stats}
     except Exception as e: return {"error":str(e)}
 
+
+def _redact_redis_url(url):
+    """The Redis URL for a diagnostic answer: user and host kept, the password never (security/redis_auth_core.py)."""
+    try:
+        from Vera.vera.security import redis_auth_core as _rac
+    except Exception:
+        from vera.security import redis_auth_core as _rac
+    try:
+        return _rac.redact_url(str(url or ""))
+    except Exception:
+        return "redis://***"
+
 @capability("obs.diagnostics", memory="off", silent=True,
             http_method="GET", http_path="/diagnostics", http_tags=["obs"],
             description="Full connection diagnostics — Redis reachability, bind config, "
@@ -9995,7 +10007,7 @@ async def obs_diagnostics(trace_id=None):
     import socket
     diag: dict = {
         "host":        socket.gethostname(),
-        "redis_url":   REDIS_URL,
+        "redis_url":   _redact_redis_url(REDIS_URL),   # never the password: the API has no auth (18 Oct leak)
         "redis_connected": bool(REDIS),
         "worker_count_local": len(WORKER_REGISTRY),
         "caps": len(CAPABILITY_REGISTRY),
