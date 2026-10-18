@@ -32,7 +32,7 @@ t('pill folds to the head line and is kept; max fills the view in page pixels an
 });
 t('a popped-out tile is a window: the item band 130-149, the last pressed on top, one stack with the harness solo views', () => {
   const H = fs.readFileSync(path.join(__dirname, '..', 'vera', 'capability_orchestration.html'), 'utf8');
-  assert(S.includes("x.style.zIndex = String(130 + Math.max(0, Math.min(19, 19 - (n - 1 - i))));") && S.includes('window.VeraWindows = window.VeraWindows || { raise: winRaise, drop: winDrop };'));
+  assert(S.includes("var ZW = (window.VeraItem && window.VeraItem.Z && window.VeraItem.Z.window) || [130, 149];") && S.includes("x.style.zIndex = String(ZW[0] + Math.max(0, Math.min(span, span - (n - 1 - i))));") && S.includes('window.VeraWindows = window.VeraWindows || { raise: winRaise, drop: winDrop };'));
   assert(S.includes("'.widget.floating{position:fixed;z-index:var(--z-window,130);") && !/z-index:9000/.test(S));
   assert(H.includes('.widget.floating{position:fixed;z-index:var(--z-window,130);') && H.includes("window.VeraWindows.raise(el); el.addEventListener('mousedown'") && !/z-index:9000/.test(H));
 });

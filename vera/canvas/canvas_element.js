@@ -35,9 +35,11 @@
      item's menu are read from it (WSU-58 S6). */
   const VI = root.VeraItem || (typeof module !== 'undefined' && typeof require === 'function' ? require('../ui/vera_item.js') : null);
   /* the item z bands (DEEP-29 11A.4 Decision 6): the same table as VeraItem.Z (/ui/vera-item.js) and vera-item.css, held to
-     it by tests/test_canvas_z_bands.cjs. A desk item's z-index is only ever one of these. */
+     it by tests/test_canvas_z_bands.cjs. A desk item's z-index is only ever one of these. The stylesheet below writes
+     var(--z-<band>,<n>) for an item-level z; a small literal (0-8) is the held column's own chrome or a card's insides,
+     under every band, and carries a "z-local" comment on its line (the test fails on any other raw number). */
   const ZB = { back: 1, layerBehind: 2, tile: [10, 110], pill: 115, tileFocus: 120, window: [130, 149], full: 150,
-               layerFront: 155, flash: 180, drag: 200, pop: 230, menu: 240, chat: 250, sheet: 300 };
+               layerFront: 155, flash: 180, drag: 200, pop: 230, menu: 240, chat: 250, sheet: 300, toast: 400 };
   const zOf = (band, n) => { const b = ZB[band]; if (b === undefined) return ZB.tile[0];
     return Array.isArray(b) ? Math.min(b[1], b[0] + Math.max(0, Math.round(n || 0))) : b; };
   /* A BODY DRAWS NO HEAD (DEEP-29 11A.4 Decision 4). It declares, as it is drawn, what its head used to hold - a line about
@@ -1946,7 +1948,7 @@
   .err{color:var(--err,#f7768e);padding:10px}
   /* ── the SESSION projection (the Canvas board's column): the add bar at the top, pinned above, the NOW band,
         the items level with their turns, parked as a chip line at the bottom ── */
-  .addbar{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:5px;flex-wrap:wrap;
+  .addbar{position:sticky;top:0;z-index:6;/* z-local: the held column's sticky bar, under every item band; the desk raises it to --z-menu */display:flex;align-items:center;gap:5px;flex-wrap:wrap;
     padding:6px 0 6px;margin-bottom:2px;background:var(--bg1,#15181d);border-bottom:1px solid var(--border,#2a2f37)}
   /* THE ADD BAR'S MENUS OVER THE DESK (owner, 2026-10-10: "the canvas panel menu appears behind the desk elements and the
      note and terminal menus are see through"): a desk card stacks at 10-200 and the graph drawn over it with it, and the
@@ -2013,7 +2015,7 @@
      oscillation at every item edge. Now each is an overlay - the header over the top, the rail over the foot - that fades
      in when you are on the item; an item's height never changes because you pointed at it. */
   /* (an item is already position:relative - absolute on the stage - so the overlays anchor to it either way) */
-  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
+  :host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold) > .it-hd{position:absolute;left:0;right:0;top:0;z-index:4;/* z-local: a card's own head */opacity:0;pointer-events:none;transition:opacity .15s;background:var(--bg1,#1f1d1a);border-radius:var(--r,8px) var(--r,8px) 0 0}
   :host([data-tier="hover"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > .it-hd,:host([data-tier="zen"]) .it:not(.compact):not(.overfold):is(:hover,.hov,:focus-within) > .it-hd{opacity:1;pointer-events:auto}
   /* ...in bands of their own (owner, 2026-10-04: "the top and bottom bar appear over the top of the element instead of
      above and below - sometimes it can block entire parts of the elements"): an overlay at the item's edge covered its
@@ -2069,7 +2071,7 @@
   .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-fview > .vo-deck{flex:1 1 auto}   /* block: its centred 16:9 stage keeps its width */
   .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-stage{max-height:none}   /* a slide keeps 16:9 - it grows with the width */
   .it:is(.sized,.openin,.maxed) > .it-bd > .vc-filewrap .vo-grid-w{flex:1 1 auto;max-height:none}
-  .it.hovopen{z-index:5;box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
+  .it.hovopen{z-index:var(--z-pop,230);box-shadow:0 0 0 1.5px var(--acc,#5a9e8f),0 12px 30px -10px rgba(0,0,0,.6)}
   /* the preview of a folded item: over the column, its own scroll past a screenful, no slide (it does not move) */
   .stage .it.peek{z-index:var(--z-pop,230);max-height:min(70vh,640px);overflow:auto;transition:none;background:var(--bg1,#16181d);scrollbar-width:thin}
   .stage .it.peek .it-bd{max-height:none}
@@ -2084,7 +2086,7 @@
   .it.sized .rz{opacity:.45}
   .it.resizing{transition:none!important;user-select:none}
   /* the resize handle — a corner grip that shows on hover; a drop saves the item's size */
-  .rz{position:absolute;right:3px;bottom:3px;width:14px;height:14px;z-index:5;cursor:nwse-resize;opacity:0;
+  .rz{position:absolute;right:3px;bottom:3px;width:14px;height:14px;z-index:5;/* z-local: a card's own grip - a band would lift it over the held column's sticky bars */cursor:nwse-resize;opacity:0;
     border-radius:0 0 5px 0;transition:opacity .18s;
     background:linear-gradient(135deg,transparent 52%,var(--dim,#6b7480) 52%,var(--dim,#6b7480) 60%,transparent 60%,
       transparent 74%,var(--dim,#6b7480) 74%,var(--dim,#6b7480) 82%,transparent 82%)}
@@ -2260,7 +2262,7 @@
   /* the keyboard's focus ring: on the item, and on a control of its row */
   .it:focus{outline:none}
   .it:focus-visible,.hda > .hb:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:1px}
-  .it:not(.desk-chip):not(.ghost) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
+  .it:not(.desk-chip):not(.ghost) > .hda{display:flex;position:absolute;top:4px;right:6px;z-index:6;/* z-local: a card's own head row - a band would lift it over the held column's sticky bars */gap:1px;align-items:center;opacity:.55;transition:opacity .15s}
   /* the item's own actions in its head (owner 2026-10-16): small labelled buttons after the title; a narrow card keeps the
      most used (data-pri), the rest are in its more menu */
   .it-hd > .it-acts{display:inline-flex;flex:0 1 auto;min-width:0;gap:2px;align-items:center;margin-left:6px;overflow:hidden}
@@ -2278,6 +2280,8 @@
   /* the records browser: a record already read is quieter; the keys' cursor is a bar at its edge */
   .vc-rbx-row.seen .vc-rbx-t,.vc-rbx-tbl tr.seen .vc-rbx-t{color:var(--dim2,#8a92a0);font-weight:400}
   .vc-rbx-row.cur,.vc-rbx-tbl tr.cur td:first-child{box-shadow:inset 2px 0 0 var(--acc,#5a9e8f)}
+  /* a card carried over another: the one it would join (LV-11) */
+  :host([align="desk"]) .stage .it.join-target{outline:2px dashed var(--acc,#5a9e8f);outline-offset:-3px;box-shadow:0 0 0 4px color-mix(in srgb,var(--acc,#5a9e8f) 18%,transparent)}
   /* the board of small items (LV-10): a frame the desk places as one block; its items sit in its cells */
   :host([align="desk"]) .stage > .desk-board{position:absolute;border:1px solid color-mix(in srgb,var(--border,#2a2f37) 80%,transparent);border-radius:10px;background:color-mix(in srgb,var(--bg1,#15181d) 70%,transparent);pointer-events:none}
   :host([align="desk"]) .stage > .desk-board > .bh{font-size:10.5px;letter-spacing:.02em;color:var(--dim2,#8a92a0);padding:4px 10px;height:22px;box-sizing:border-box}
@@ -2415,7 +2419,7 @@
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .stage .it{background:color-mix(in srgb, var(--bg1,#15181d) 90%, transparent)!important;border-radius:8px}
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .back:hover{opacity:.9}
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .head,
-  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body{position:relative;z-index:1}
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body{position:relative;z-index:1}   /* z-local: the body over its own back plane (0) */
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body,
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .stage,
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .band{background:transparent;pointer-events:none}
@@ -2433,17 +2437,17 @@
   :host([stage]) .body{position:relative;padding-top:0}
   :host([stage]) .band.pinned{padding-top:6px}
   /* the NOW bar stays in view under the add bar while the stage scrolls with the transcript */
-  :host([stage]) .band.now>.band-h{position:sticky;top:34px;z-index:5;background:var(--bg1,#15181d);margin:0;padding:3px 0}
-  :host([stage]) .band.parked{position:sticky;bottom:0;z-index:5;background:var(--bg1,#15181d)}
+  :host([stage]) .band.now>.band-h{position:sticky;top:34px;z-index:5;/* z-local: held column chrome */background:var(--bg1,#15181d);margin:0;padding:3px 0}
+  :host([stage]) .band.parked{position:sticky;bottom:0;z-index:5;/* z-local: held column chrome */background:var(--bg1,#15181d)}
   .band.hid{padding:4px 0;position:relative}
   .hidbtn{font:inherit;font-size:9px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim,#6b7480);background:none;border:1px solid var(--border,#2a2f37);border-radius:9px;padding:1px 8px;cursor:pointer}
   .hidbtn:hover{color:var(--fg,#dce1e8)}
   .hidpop[hidden]{display:none}
   :host([chrome="none"]) .addbar{display:none!important}   /* the host draws these controls elsewhere (WSU-72) */
   .hidpop .chip.rmv{cursor:pointer;border:0;font:inherit}
-  .vc-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:400;display:flex;gap:12px;align-items:center;padding:8px 10px 8px 14px;border-radius:10px;background:var(--bg2,#1c2026);border:1px solid var(--border2,rgba(255,255,255,.14));color:var(--text,#d8dce4);font:12.5px var(--ui,system-ui,sans-serif);box-shadow:0 6px 22px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
+  .vc-toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:var(--z-toast,400);display:flex;gap:12px;align-items:center;padding:8px 10px 8px 14px;border-radius:10px;background:var(--bg2,#1c2026);border:1px solid var(--border2,rgba(255,255,255,.14));color:var(--text,#d8dce4);font:12.5px var(--ui,system-ui,sans-serif);box-shadow:0 6px 22px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
   .vc-toast button{border:1px solid var(--accent,#5a9e8f);background:transparent;color:var(--accent,#5a9e8f);border-radius:6px;padding:3px 10px;font:600 12px var(--ui,system-ui,sans-serif);cursor:pointer}
-  .hidpop{position:absolute;right:0;top:24px;z-index:6;background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);border-radius:8px;padding:6px 8px;display:flex;flex-wrap:wrap;gap:4px;max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+  .hidpop{position:absolute;right:0;top:24px;z-index:6;/* z-local: held column chrome - --z-pop would lift it over a maxed card */background:var(--bg2,#1c2026);border:1px solid var(--border,#2a2f37);border-radius:8px;padding:6px 8px;display:flex;flex-wrap:wrap;gap:4px;max-width:260px;box-shadow:0 4px 14px rgba(0,0,0,.35)}
   .it .sc{font-family:ui-monospace,Consolas,monospace;font-size:8.5px;color:var(--dim,#6b7480);flex:0 0 auto}
   .it-hd{display:flex;align-items:center;gap:6px;padding:5px 8px 4px;cursor:pointer;flex:0 0 auto;min-height:18px}
   .it-hd .ic{width:15px;height:15px;border-radius:4px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
@@ -2594,7 +2598,7 @@
   .vc-rr-body{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
   .vc-rr-p{display:none;min-width:0;min-height:0;overflow:auto;max-height:60vh}
   .vc-rr-p.on{display:block}
-  .vc-latest{position:sticky;bottom:8px;float:right;margin:-34px 8px 0 0;z-index:3;padding:4px 10px;border-radius:999px;border:1px solid var(--accent,#5a9e8f);background:var(--bg1,#16181d);color:var(--accent,#5a9e8f);font:600 11px var(--ui,system-ui,sans-serif);cursor:pointer;box-shadow:0 2px 10px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
+  .vc-latest{position:sticky;bottom:8px;float:right;margin:-34px 8px 0 0;z-index:3;/* z-local: held column chrome */padding:4px 10px;border-radius:999px;border:1px solid var(--accent,#5a9e8f);background:var(--bg1,#16181d);color:var(--accent,#5a9e8f);font:600 11px var(--ui,system-ui,sans-serif);cursor:pointer;box-shadow:0 2px 10px color-mix(in srgb,var(--bg0,#0e0f12) 70%,transparent)}
   .vc-latest:hover{background:color-mix(in srgb,var(--accent,#5a9e8f) 14%,var(--bg1,#16181d))}
   .vc-rr-p > .vc-rbx{max-height:none}
   .vc-rr-doc{font-size:13px;line-height:1.6}
@@ -2900,7 +2904,7 @@
   /* the live items (A16): a terminal, a notebook cell, a whole panel — the board's item head, the live slot */
   .body{position:relative}
   #items{position:relative;min-height:1px}
-  #live{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:4}
+  #live{position:absolute;left:0;top:0;width:0;height:0;overflow:visible;z-index:4}   /* z-local: the held column's live layer, over its unbanded cards; the desk sets it auto */
   /* the live layer draws the thing itself — no ground of its own. A terminal and a rendered page bring their own
      (they are surfaces); a widget, a diagram and a graph are marks on the canvas, and a black plate behind them is
      the tile this canvas is getting rid of. */
@@ -2942,7 +2946,7 @@
   .vc-tl-br{position:absolute;top:2px;height:19px;border:1px solid var(--acc,#5a9e8f);border-radius:3px;background:color-mix(in srgb,var(--acc,#5a9e8f) 16%,transparent);pointer-events:none;box-sizing:border-box}
   .vc-tl-dot.out{opacity:.2}
   .vc-tl-dot.cur{background:var(--acc,#5a9e8f);opacity:1;transform:scale(1.45)}
-  .vc-tl-sc{position:absolute;top:-5px;width:10px;height:8px;margin-left:-5px;padding:0;border:0;border-radius:2px 2px 5px 5px;background:var(--dim,#6b7480);cursor:ew-resize;z-index:1}
+  .vc-tl-sc{position:absolute;top:-5px;width:10px;height:8px;margin-left:-5px;padding:0;border:0;border-radius:2px 2px 5px 5px;background:var(--dim,#6b7480);cursor:ew-resize;z-index:1}   /* z-local: inside a card */
   .vc-tl-sc::after{content:"";position:absolute;left:4px;top:8px;width:2px;height:15px;background:inherit;opacity:.6;pointer-events:none}
   .vc-tl-sc.on{background:var(--acc,#5a9e8f)}
   .vc-tl-sc:focus-visible{outline:2px solid var(--acc,#5a9e8f);outline-offset:2px}
@@ -3000,11 +3004,11 @@
   mark.vc-mdhit{background:color-mix(in srgb,var(--acc3,#c9955a) 35%,transparent);color:inherit;border-radius:2px}mark.vc-mdhit.cur{background:color-mix(in srgb,var(--acc3,#c9955a) 75%,transparent);outline:1px solid var(--acc3,#c9955a)}
   /* the table bar (DU-E-table) */
   .vc-tbarwrap{display:flex;flex-direction:column;min-height:0}
-  .vc-tbar{display:flex;align-items:center;gap:6px;padding:0 0 4px;position:sticky;left:0;top:0;z-index:2;background:var(--s1,var(--bg1,#15181d))}
+  .vc-tbar{display:flex;align-items:center;gap:6px;padding:0 0 4px;position:sticky;left:0;top:0;z-index:2;/* z-local: inside a card */background:var(--s1,var(--bg1,#15181d))}
   .vc-tq{flex:1 1 auto;min-width:60px;font:11px system-ui,sans-serif;padding:2px 6px;border:1px solid var(--line,#2a2f36);border-radius:5px;background:transparent;color:inherit}
   .vc-tn{font:10px system-ui,sans-serif;color:var(--dim,#6b7480);white-space:nowrap}.vc-tbar .ib{font-size:10px;padding:1px 6px}.vc-tbar .ib.on{color:var(--acc,#5a9e8f)}
   .vc-tcols{display:flex;flex-wrap:wrap;gap:4px 10px;padding:2px 0 6px;font:10.5px system-ui,sans-serif}.vc-tcols label{display:flex;align-items:center;gap:3px;cursor:pointer}
-  .vc-tbarwrap .vc-table thead th{position:sticky;top:0;z-index:1;background:var(--s1,var(--bg1,#15181d))}
+  .vc-tbarwrap .vc-table thead th{position:sticky;top:0;z-index:1;/* z-local: inside a card */background:var(--s1,var(--bg1,#15181d))}
   .vc-tsort{all:unset;cursor:pointer;font-weight:600}.vc-tsort:hover,.vc-tsort.on{color:var(--acc,#5a9e8f)}
   .vc-tbarwrap mark{background:color-mix(in srgb,var(--acc3,#c9955a) 40%,transparent);color:inherit;border-radius:2px}
   /* the JSON lens (DU-E-json) */
@@ -3039,7 +3043,7 @@
   /* MAXIMISED: the item takes the canvas and stays there, fixed, until it is restored */
   .mx{font-size:10px;color:var(--dim,#6b7480);flex:0 0 auto;cursor:pointer;padding:0 2px}
   .it:is(:hover,.hov) .it-hd .mx{color:var(--fg,#dce1e8)}.mx.on{color:var(--acc,#5a9e8f)!important}
-  .it.maxed{z-index:8!important;display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15181d))!important;box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px var(--acc,#5a9e8f)!important;transition:none!important;border-radius:8px}
+  .it.maxed{z-index:var(--z-full,150)!important;display:flex;flex-direction:column;background:var(--s1,var(--bg1,#15181d))!important;box-shadow:0 12px 40px rgba(0,0,0,.45),0 0 0 1px var(--acc,#5a9e8f)!important;transition:none!important;border-radius:8px}
   .it.maxed > .it-bd{max-height:none!important;flex:1 1 auto;display:flex;flex-direction:column;min-height:0;overflow:auto}
   .it.maxed > .it-bd > *{flex:1 1 auto;min-height:0}
   .it.maxed .vc-codewrap,.it.maxed .vc-diag,.it.maxed .vc-wid,.it.maxed .vc-xp,.it.maxed .vc-term,.it.maxed .vc-panel,.it.maxed .vc-res{display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
@@ -3076,9 +3080,9 @@
   .it.sized .vc-live.vc-preview{height:auto}
   .vc-nbout{margin-top:6px;border-left:2px solid var(--ac,var(--acc,#5a9e8f))}
   .vc-pq{margin-top:6px;max-height:160px}
-  .vc-addfloat{position:fixed;z-index:420;width:0;height:0}   /* the add popup with no bar to hang from (WSU-76) */
+  .vc-addfloat{position:fixed;z-index:420;width:0;height:0}   /* the add popup with no bar to hang from (WSU-76); z-local: one step over --z-toast (400), as it was */
   .vc-addfloat > .addpop{top:0;margin-top:0}
-  .addpop{position:absolute;left:0;top:100%;z-index:6;margin-top:4px;min-width:260px;max-width:min(92%,420px);padding:8px;border-radius:var(--ui-radius,8px);background:var(--s1,var(--bg1,#15181d));box-shadow:var(--elev,0 8px 24px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,#2a2f37));display:flex;flex-direction:column;gap:2px}
+  .addpop{position:absolute;left:0;top:100%;z-index:6;/* z-local: inside the add bar / the add float */margin-top:4px;min-width:260px;max-width:min(92%,420px);padding:8px;border-radius:var(--ui-radius,8px);background:var(--s1,var(--bg1,#15181d));box-shadow:var(--elev,0 8px 24px -12px rgba(0,0,0,.6)),0 0 0 1px var(--bd,var(--border,#2a2f37));display:flex;flex-direction:column;gap:2px}
   .addpop .pp{display:flex;flex-direction:column;align-items:flex-start;gap:1px;padding:6px 8px;border:0;border-radius:var(--r-sm,6px);background:transparent;color:var(--t1,var(--fg,#dce1e8));font:inherit;font-size:11px;text-align:left;cursor:pointer}
   .addpop .pp:hover{background:var(--s2,var(--bg2,#1c2026))}
   .addpop .pp span{font-family:var(--f-mono,ui-monospace,monospace);font-size:9.5px;color:var(--t3,var(--dim,#6b7480))}
@@ -3134,7 +3138,7 @@
   :host(:not([data-tier="full"])) .it :is(.vc-rr-n,.vc-rr-ft,.vc-act-n){display:none}
   :host(:not([data-tier="full"])) .it:not(:hover):not(.hov):not(:focus-within):not(.maxed) .vc-ev-chips{display:none}
   :host(:not([data-tier="full"])) .it .vc-rbx{position:relative}
-  :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-tools{position:absolute;left:0;right:0;top:0;z-index:5;margin:0;padding:4px 6px;border-radius:8px;
+  :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-tools{position:absolute;left:0;right:0;top:0;z-index:5;/* z-local: inside a card */margin:0;padding:4px 6px;border-radius:8px;
     background:var(--bg2,#1d2128);box-shadow:0 6px 18px rgba(0,0,0,.35);opacity:0;pointer-events:none;transition:opacity .15s}
   :host(:not([data-tier="full"])) .it:is(:hover,.hov,:focus-within,.maxed) .vc-rbx > .vc-rbx-tools{opacity:1;pointer-events:auto}
   /* over the list, it takes no room: a small card (which drops its tool row in the flow, see deskcard) has it too */
@@ -3175,7 +3179,7 @@
   /* the names and sites are a menu (the names · sites button and its widgets), not rows of pills, unless the full chrome */
   :host(:not([data-tier="full"])) .it .vc-rbx > .vc-rbx-facets{display:none!important}
   .vc-rbx-nbtn{white-space:nowrap}.vc-rbx-nbtn.set{color:var(--acc,#5a9e8f);border-color:color-mix(in srgb,var(--acc,#5a9e8f) 50%,transparent)}
-  .vc-rbx-names{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:2px 0 8px;padding:8px 10px;border:1px solid var(--border,#2a2f37);border-radius:9px;background:var(--bg2,#1d2128);position:relative;z-index:6}
+  .vc-rbx-names{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:2px 0 8px;padding:8px 10px;border:1px solid var(--border,#2a2f37);border-radius:9px;background:var(--bg2,#1d2128);position:relative;z-index:6}   /* z-local: inside a card */
   .vc-rbx-names h5{margin:0 0 4px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dim,#8b93a1)}
   .vc-rbx-names vera-widget{display:block;cursor:pointer}
   .it.reading .vc-rr-tabs,.it.reading .vc-rr-q{display:none}
@@ -3933,7 +3937,7 @@
            hold, its topics' layouts and what was settling belong to the canvas left - an item of the same key here (the enrichments every
            session has) was taken as already placed and slid across from where it sat on the other desk. Here every card is new: unseen
            until it is still. */
-        this._placed = null; this._lastPlan = null; this._hold = null; this._topicMem = null; this._topicMemK = null; this._newSeen = null; this._expanded = null; this._hist = null; this._slotWant = null;
+        this._placed = null; this._lastPlan = null; this._hold = null; this._topicMem = null; this._topicMemK = null; this._newSeen = null; this._expanded = null; this._hist = null; this._slotWant = null; this._joinA = null; this._sepA = null;
         this.refresh();
       }
       if (name === 'columns' && this._doc) this.render(this._doc);
@@ -4471,13 +4475,16 @@
         const cc = this._contentOf(c.dataset.key || '') || {}; const fm = String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, '');
         return CHART.test(fm) ? 'charts' : GRAPH.test(fm) ? 'graphs' : /^(reading|news|feed|headlines|articles|sources)$/.test(fm) ? 'reading' : 'widgets'; };   /* news and web read together */
       const slotsU = this._slotUnion;   /* the slots arrangement: who shares a slot (see _placeDesk), nothing else */
-      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && (slotsU || famOf(c)) && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
+      const joins = this._joinGet(), joinedTo = new Set(Object.values(joins));
+      const elig = cards.filter((c) => { const k = c.dataset.key || ''; return k && (slotsU || famOf(c) || joins[k] || joinedTo.has(k)) && !sep[k] && !locks[k] && !(this._max && this._max === k) && !(this._rz && this._rz.el === c); });
       const T0 = this._topic; const inTopic = (c) => !!(T0 && T0.keys && (T0.keys.has(c.dataset.key || '') || c.classList.contains('pinned')));
       /* joined by family when they share a turn or a subject - or, ACROSS TURNS, when both are in the conversation's context
          now (WSU-84: "be able to group over turns if they share context") */
       const par = new Map(elig.map((c) => [c, c]));
       const find = (c) => { while (par.get(c) !== c) { par.set(c, par.get(par.get(c))); c = par.get(c); } return c; };
       const by = {};
+      /* cards the person dropped on one another share a card, whatever they are (LV-11) */
+      { const byJ = new Map(elig.map((c) => [c.dataset.key || '', c])); Object.keys(joins).forEach((k) => { const a = byJ.get(k), b2 = byJ.get(joins[k]); if (a && b2) par.set(find(a), find(b2)); }); }
       if (slotsU) { const byK = new Map(elig.map((c) => [c.dataset.key || '', c])); elig.forEach((c) => { const f0 = slotsU[c.dataset.key || '']; if (f0 && byK.has(f0)) par.set(find(c), find(byK.get(f0))); });
         /* ...and, as in the other arrangements, similar items share a card - but only of ONE aspect (owner 2026-10-17: "i dont see any automatic
            composites happening in slot mode"; "composites of elements that have different aspects are being made"): the same kind and the same
@@ -4645,6 +4652,9 @@
     _cmpGet() { if (this._cmpA) return this._cmpA; try { this._cmpA = JSON.parse(localStorage.getItem('vera:canvas:deskfront:' + this.canvasId) || '{}') || {}; } catch (e) { this._cmpA = {}; } return this._cmpA; }
     _cmpSet(m) { this._cmpA = m; const ks = Object.keys(m); if (ks.length > 400) ks.sort((a, b) => m[a] - m[b]).slice(0, ks.length - 400).forEach((k) => delete m[k]);
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
+    /* JOINED BY THE PERSON (LV-11, WSU-97): a card dropped on another - {member key: the card it was dropped on}, per canvas, in this browser */
+    _joinGet() { if (this._joinA) return this._joinA; try { this._joinA = JSON.parse(localStorage.getItem('vera:canvas:deskjoin:' + this.canvasId) || '{}') || {}; } catch (e) { this._joinA = {}; } return this._joinA; }
+    _joinSet(key, to) { const m = this._joinGet(); if (to) m[key] = to; else delete m[key]; try { localStorage.setItem('vera:canvas:deskjoin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } }
     _sepGet() { if (this._sepA) return this._sepA; try { this._sepA = JSON.parse(localStorage.getItem('vera:canvas:desksep:' + this.canvasId) || '{}') || {}; } catch (e) { this._sepA = {}; } return this._sepA; }
     _sepSet(key, on) { const m = this._sepGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:desksep:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
     _placeDesk(st, cards) {
@@ -4955,6 +4965,18 @@
          element is dropped on it ... shrinking shouldnt be the first method to get out of the way of a dropped element"): the nearest clear
          room for a card - at its own size first, smaller only when there is none (down to about 40 %, never under 220 x 120) */
       let stripFn = null;
+      /* NOTHING BECOMES A PILL BECAUSE THE PERSON MOVED SOMETHING (owner 2026-10-17: "elements should not become pills because the user moves an
+         element"): while a card is carried or sized, and for 2.5 s after it is let go, a card with no room is not sent to the pills - it takes
+         the least size (160 x 100) where it covers least */
+      const handNow = !!(this._dg || this._rz || Date.now() - (this._handAt || 0) < 2500);
+      /* ...and the card the hand just let go never makes way for the others: it is where the person put it */
+      const handKey = handNow ? (this._dg ? this._dg.key : this._rz ? this._rz.key : this._handKey) : null;
+      const leastOver = (v, rest) => { const w = Math.min(v.w, 160), h = Math.min(v.h, 100); let best = null;
+        for (let y = h / 2 + 4; y <= H - h / 2 - 4; y += 16) for (let x = w / 2 + 4; x <= W - w / 2 - 4; x += 16) {
+          if (R && R.r > R.l && x + w / 2 > R.l && x - w / 2 < R.r && y + h / 2 > R.t && y - h / 2 < R.b) continue;
+          const ov = rest.reduce((a, o) => a + Math.max(0, Math.min(x + w / 2, o.x + o.w / 2) - Math.max(x - w / 2, o.x - o.w / 2)) * Math.max(0, Math.min(y + h / 2, o.y + o.h / 2) - Math.max(y - h / 2, o.y - o.h / 2)), 0);
+          const d = Math.hypot(x - v.x, y - v.y); if (!best || ov < best.ov || (ov === best.ov && d < best.d)) best = { x, y, w, h, ov, d }; }
+        return best; };
       const roomFor = (v, rest, ks, tx, ty) => { const g = 8; const X = tx == null ? v.x : tx, Y = ty == null ? v.y : ty;
         const clear = (x, y, w, h) => x - w / 2 >= 4 && x + w / 2 <= W - 4 && y - h / 2 >= 4 && y + h / 2 <= H - 4
           && !(R && R.r > R.l && x + w / 2 > R.l - g && x - w / 2 < R.r + g && y + h / 2 > R.t - g && y - h / 2 < R.b + g)
@@ -4987,7 +5009,8 @@
       const iconStrip = W < 760;
       const CHW = iconStrip ? 34 : 150, CHH = 34, SGAP = 6, perCol = Math.max(1, Math.floor((H - SGAP) / (CHH + SGAP)));
       /* the person's pill wins over a size they gave it (a resized card sent to the pills stayed open: own was never a pill) */
-      const pillish = (it) => { if (it.board) return false; if (it.pilled && !it.isLock && !it.sizing) return true; if (it.fixed || it.sizing || it.own) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
+      /* a card the person put somewhere is a pill only if they pilled it or put it on the strip - never for its distance from the chat */
+      const pillish = (it) => { if (it.board) return false; if (it.pilled && !it.isLock && !it.sizing) return true; if (it.fixed || it.sizing || it.own || it.stay) return false; if (it.held) return /^(chip|icon)$/.test(it.face0 || '');
         const f = D.sizeAt(R, it.x, it.y, it.so, desk).face; return f === 'chip' || f === 'icon'; };
       const pills = plan.filter(pillish);
       const cols = pills.length ? Math.min(Math.max(1, Math.floor((W * 0.45) / (CHW + SGAP))), Math.ceil(pills.length / perCol)) : 0;
@@ -5086,7 +5109,7 @@
           const open = plan.filter((it) => !it.strip && !it.win && !wins.has(it) && it.h > 40); const victims = new Set();
           for (let i = 0; i < open.length; i++) for (let j = i + 1; j < open.length; j++) { const p = open[i], q = open[j]; if (meet(p, q) < 400) continue;
             const exK = this._expanded && this._expanded.key;   /* the card expanded by a double click never makes way (LV-8) */
-            const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && x.id !== exK && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q); else if (can.length === 1 && [p, q].every((x) => x.fixed)) victims.add(can[0]); }
+            const can = [p, q].filter((x) => x.fixed && !x.isLock && !x.sizing && x.id !== exK && x.id !== handKey && !victims.has(x)); if (can.length === 2) victims.add(touched(p) <= touched(q) ? p : q); else if (can.length === 1 && [p, q].every((x) => x.fixed)) victims.add(can[0]); }
           if (!victims.size) break;
           /* the one making way: the nearest clear room at its own size; none, the largest clear room it fits (down to about 40%,
              never under a usable 220 x 120); none at all, a pill. Never left on another card. */
@@ -5102,6 +5125,7 @@
             /* moved for this pass only, never written: saved, a move the desk made was recorded as the person's (place.by
                'person', or a pill) and the card was fixed there for good; the hold (and its replay) keeps it where it went */
             if (best) Object.assign(v, { x: best.x, y: best.y, w: best.w, h: best.h, keepSize: true });
+            else if (handNow) { const lo = leastOver(v, rest); if (lo) Object.assign(v, { x: lo.x, y: lo.y, w: lo.w, h: lo.h, keepSize: true }); }
             else { toStrip(v, pills.length); pills.push(v); v.held = false; } });
         } }
       /* NO ROOM AT ALL: two cards the desk placed (neither sized nor put there by the person) still overlap after every card
@@ -5109,7 +5133,7 @@
          pill strip; a locked card or one the person placed never does. */
       { const kept = (it) => it.strip || it.win || it.isLock || it.stay || it.sizing || it.own || (it.fixed && !it.isLock);
         const ov2 = (a, b) => Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2) > 20 && Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2) > 20;
-        for (let round = 0; round < 4 && stripBox; round++) {
+        for (let round = 0; round < 4 && stripBox && !handNow; round++) {
           const solid = plan.filter((it) => !it.strip && !it.win && it.h > 40); let victim = null;
           for (let i = 0; i < solid.length && !victim; i++) for (let j = i + 1; j < solid.length && !victim; j++) {
             if (!ov2(solid[i], solid[j])) continue;
@@ -5151,13 +5175,15 @@
          touch before the newer; never the card under the hand, a locked one or the expanded one - to the nearest room at its size, then
          smaller, then the pills */
       if (!replay) { const exK = this._expanded && this._expanded.key, act0 = this._actAt || {};
-        const firmV = (x) => (x.sizing || x.isLock || x.id === exK) ? 3 : (x.fixed || x.stay) ? 2 : x.own ? 1 : 0;
+        const firmV = (x) => (x.sizing || x.isLock || x.id === exK || x.id === handKey) ? 3 : (x.fixed || x.stay) ? 2 : x.own ? 1 : 0;
         const ov = (a, b) => Math.max(0, Math.min(a.x + a.w / 2, b.x + b.w / 2) - Math.max(a.x - a.w / 2, b.x - b.w / 2)) * Math.max(0, Math.min(a.y + a.h / 2, b.y + b.h / 2) - Math.max(a.y - a.h / 2, b.y - b.h / 2));
         for (let round = 0; round < 4; round++) { const open = plan.filter((it) => !it.strip && !it.win && it.h > 40); let moved = 0;
           for (let i = 0; i < open.length; i++) for (let j = i + 1; j < open.length; j++) { const p0 = open[i], q0 = open[j]; if (p0.strip || q0.strip || ov(p0, q0) < 400) continue;
             const v = firmV(p0) !== firmV(q0) ? (firmV(p0) < firmV(q0) ? p0 : q0) : ((act0[p0.id] || 0) <= (act0[q0.id] || 0) ? p0 : q0); if (firmV(v) >= 3) continue;
             const best = roomFor(v, plan.filter((o) => o !== v && !o.win && (o.strip || o.h > 40)), [1, 0.85, 0.7, 0.55, 0.42]);
-            if (best) Object.assign(v, { x: best.x, y: best.y, w: best.w, h: best.h, keepSize: true }); else if (stripFn) stripFn(v); else continue; moved++; }
+            if (best) Object.assign(v, { x: best.x, y: best.y, w: best.w, h: best.h, keepSize: true });
+            else if (handNow) { const lo = leastOver(v, plan.filter((o) => o !== v && !o.win && (o.strip || o.h > 40))); if (!lo) continue; Object.assign(v, { x: lo.x, y: lo.y, w: lo.w, h: lo.h, keepSize: true }); }
+            else if (stripFn) stripFn(v); else continue; moved++; }
           if (!moved) break; } }
       /* ONLY WHAT MUST MAKE WAY MOVES (owner 2026-10-17: "after re-sizing an element the other elements jump around to different
          positions allot"; "it should be more difficult to disturb the other elements in the UI if resizing or moving"). Measured:
@@ -5253,7 +5279,7 @@
          height, its least height, a pill's face) - two cards could end up over each other after the last check. The drawn rectangles are
          checked: of two open cards that meet, the less firm moves to the nearest room at its drawn size (the board counts as one block). */
       if (!replay) { const byK = new Map(plan.map((it) => [it.id, it])); const exK = this._expanded && this._expanded.key, act0 = this._actAt || {};
-        const firm = (o) => { const it = byK.get(o.key) || {}; return (o.key === '__board' || it.sizing || it.isLock || o.key === exK) ? 3 : (it.fixed || it.stay) ? 2 : it.own ? 1 : 0; };
+        const firm = (o) => { const it = byK.get(o.key) || {}; return (o.key === '__board' || it.sizing || it.isLock || o.key === exK || o.key === handKey) ? 3 : (it.fixed || it.stay) ? 2 : it.own ? 1 : 0; };
         const solid = () => out.filter((o) => !o.behind && !o.board && !o.win && !/^(chip|icon|layer-)/.test(o.face || '') && o.h > 40);
         const meet = (a2, b2) => Math.max(0, Math.min(a2.x + a2.w, b2.x + b2.w) - Math.max(a2.x, b2.x)) * Math.max(0, Math.min(a2.y + a2.h, b2.y + b2.h) - Math.max(a2.y, b2.y));
         for (let round = 0; round < 4; round++) { const S0 = solid(); let fixed = 0;
@@ -5265,6 +5291,7 @@
               const rest = out.filter((o) => o !== c0 && !o.behind && !o.board && !o.win && !/^layer-/.test(o.face || '')).map((o) => ({ x: o.x + o.w / 2, y: o.y + o.h / 2, w: o.w, h: o.h }));
               best = roomFor({ x: c0.x + c0.w / 2, y: c0.y + c0.h / 2, w: c0.w, h: c0.h }, rest, [1, 0.85, 0.7, 0.55, 0.42]); if (best) { v = c0; break; } }
             /* no room for either at all: the less firm goes to the pill strip (below the pills there) - never left on top of the other */
+            if (!best && handNow) continue;   /* the hand acts: no pill (the least size was tried above) */
             if (!best) { const pv = firm(v0) < 3 ? v0 : null; const pel = pv && [...st.querySelectorAll(':scope > .it[data-key]')].find((x) => x.dataset.key === pv.key); if (!pel) continue;
               const z0 = this._stripZone || { l: W - 160, r: W }; const lowest = out.filter((o) => /^(chip|icon)$/.test(o.face || '') && o.x >= z0.l - 4).reduce((m, o) => Math.max(m, o.y + o.h), 0);
               Object.assign(pv, { x: Math.round((z0.l + z0.r) / 2 - 75), y: lowest + 6, w: 150, h: 34, face: 'chip' });
@@ -6158,7 +6185,7 @@
         const far = d.sr ? Math.max(d.sr.top - ev.clientY, ev.clientY - d.sr.bottom, d.sr.left - ev.clientX, ev.clientX - d.sr.right) : Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0);
         if (!d.out && far > 28) { d.out = true; d.tab.classList.add('tab-out'); } });
       tdoc.addEventListener('mouseup', (ev) => { const d = this._tabDrag; this._tabDrag = null; if (!d) return; d.tab.classList.remove('tab-out'); if (!d.out) return;
-        this._tabDragAt = Date.now(); const stg = this.shadowRoot.getElementById('stage'); this._histPush('cmpsep', d.key); this._sepSet(d.key, true);
+        this._tabDragAt = Date.now(); const stg = this.shadowRoot.getElementById('stage'); this._histPush('cmpsep', d.key); this._joinSet(d.key, null); this._sepSet(d.key, true);
         if (stg) { const b = stg.getBoundingClientRect(), Z = stg.offsetWidth ? (b.width / stg.offsetWidth) || 1 : 1, W0 = stg.clientWidth || 1, H0 = stg.clientHeight || 1;
           const x = (ev.clientX - b.left) / Z, y = (ev.clientY - b.top) / Z; if (x > 0 && y > 0 && x < W0 && y < H0) this._deskPosSet(d.key, { fx: +(x / W0).toFixed(4), fy: +(y / H0).toFixed(4) }); }
         (this._actAt = this._actAt || {})[d.key] = Date.now(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); });
@@ -6233,11 +6260,20 @@
            first pills would go) it is a pill at once. */
         const Z0 = this._stripZone; const onStrip = !!(Z0 && px >= Z0.l - 10 && px <= Z0.r + 10);
         if (onStrip && bare.face !== 'chip' && bare.face !== 'icon') bare = Object.assign({}, bare, { face: 'chip', w: 150, h: 34, t: 0 });
-        if (bare.face === 'chip' || bare.face === 'icon') own = null;
+        /* ...and nowhere else (owner 2026-10-17: "elements should not become pills because the user moves an element"): carried away from the
+           chat a card took a pill's face by its distance alone; off the strip it keeps a card's face at its own size */
+        if (!onStrip && (bare.face === 'chip' || bare.face === 'icon')) own = own || { w: Math.max(260, d.w0), h: Math.max(160, d.h0), face: 'card' };
+        else if (bare.face === 'chip' || bare.face === 'icon') own = null;
         const s = own ? { w: own.w, h: own.h, face: own.face || 'max', t: 1 } : ((bare.face === 'chip' || bare.face === 'icon') ? bare : D.sizeAt(g.R, px, py, so, g.desk)), w = Math.min(g.W - 16, s.w), h = Math.min(g.H - 8, s.h);
         const ox = (d.cx0 - d.sx) / d.w0, oy = (d.cy0 - d.sy) / d.h0;
         const cx = Math.max(10, Math.min(g.W - 10, px + ox * w)), cy = Math.max(10, Math.min(g.H - 10, py + oy * h));
         d.cx = cx; d.cy = cy; d.own = own;
+        /* DROPPED ON ANOTHER CARD IT JOINS IT (LV-11; owner 2026-10-17: "id like to be able to re-combine composite elements by dragging and dropping
+           them on one another"): the pointer well inside another open card (not near its edges) marks it the target */
+        { let tgt = null; if (!onStrip) [...this.shadowRoot.querySelectorAll('.stage .it[data-key]')].forEach((o) => { if (tgt || o === d.el || !o.getClientRects().length || o.classList.contains('cmp-behind') || /chip|icon/.test(o.dataset.deskFace || '') || o.classList.contains('desk-new')) return;
+            const ol = parseFloat(o.style.left) || 0, ot = parseFloat(o.style.top) || 0, ow = o.offsetWidth, oh = o.offsetHeight, mx = Math.min(60, ow * 0.18), my = Math.min(50, oh * 0.18);
+            if (px > ol + mx && px < ol + ow - mx && py > ot + my && py < ot + oh - my) tgt = o; });
+          if (d.joinEl && d.joinEl !== tgt) d.joinEl.classList.remove('join-target'); d.joinEl = tgt; d.joinTo = tgt ? tgt.dataset.key : null; if (tgt) tgt.classList.add('join-target'); }
         /* the face changes with a margin: a card held near a boundary (chip | card | full) flipped its contents back and
            forth as the hand trembled - the flicker while moving (owner, 2026-10-08). The size still follows smoothly. */
         const TH = { chip: 0.25, card: 0.6 }, M = 0.05, cur = d.el.dataset.deskFace || s.face;
@@ -6251,7 +6287,7 @@
         d.el.style.left = Math.round(cx - w / 2) + 'px'; d.el.style.top = Math.round(cy - h / 2) + 'px';
         d.el.style.setProperty('width', w + 'px', 'important'); d.el.style.setProperty('height', h + 'px', 'important');
         try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(500); });
-      doc.addEventListener('mouseup', () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null;
+      doc.addEventListener('mouseup', () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null; this._handAt = Date.now(); this._handKey = d.key;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
         /* what was just carried is the last touched: on top (the press gave it focus; the drag held it at the drag's z) */
@@ -6261,6 +6297,13 @@
            pills put near the furthest point should kinda stick to it so they align on whatever side is furthest from chat"):
            let go on the desk, it stays there (and a card minimised to a pill is a pill no more); let go where a card is a
            pill, it joins the border's column of pills - no exact spot is kept, so it lines up with them */
+        if (d.joinEl) d.joinEl.classList.remove('join-target');
+        if (d.joinTo && d.joinTo !== d.key) { const to = d.joinTo;
+          this._histPush('cmpjoin-drop', d.key); this._sepSet(d.key, false); this._sepSet(to, false); this._joinSet(d.key, to); this._deskPosSet(d.key, null);
+          if (this._pillGet()[d.key]) this._pillSet(d.key, false);
+          const m = this._cmpGet(); m[to] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[to] = Date.now();
+          if (this._hold && this._hold.rects) { delete this._hold.rects[d.key]; if (this._hold.base) delete this._hold.base[d.key]; }
+          (this._actAt = this._actAt || {})[to] = Date.now(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
         const asChip = /^(chip|icon)$/.test(d.el.dataset.deskFace || '');
         const g = this._deskGeo;
         if (g && d.cx != null) {
@@ -6300,7 +6343,7 @@
           if (now - (this._rzPlacedAt || 0) >= 90) { this._rzPlacedAt = now; try { this._placeNow(); } catch (e) { /* optional */ } }
           clearTimeout(this._rzPlaceT); this._rzPlaceT = setTimeout(() => { if (this._rz === r) { this._rzPlacedAt = Date.now(); try { this._placeNow(); } catch (e) { /* optional */ } } }, 100); }
         else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
-      doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; r.el.classList.remove('resizing'); this._rzT = Date.now();
+      doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; this._handAt = Date.now(); this._handKey = r.key; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
         /* a window let go after a resize is decided again: made small enough to fit, it is a card on the desk again (owner
            2026-10-16: "you cant shrink it again so that it goes back to default mode"); still no room, a window at the new size */
@@ -6516,7 +6559,7 @@
       /* already open by the hover (a person points before they click): a click that makes it a window still marks it one -
          it returned here before, so the "window" was the hover peek kept open, nothing more (review 2026-10-15 U7) */
       if (it._cpw && it._cpw.open) { const win = !!(this._wins && this._wins.has(it.dataset.key)); it.classList.toggle('desk-win', win);
-        if (win && this._focusKey !== it.dataset.key) { it.style.zIndex = String(it._cpw.z || 10); this._liveZ([it]); } return true; }
+        if (win && this._focusKey !== it.dataset.key) { it.style.zIndex = String(zOf('window', (this._winOrder || []).length)); this._liveZ([it]); } return true; }
       /* the title widening ran first: undone, the card opens in its place */
       if (it._cpw) { const w0 = it._cpw; it._cpw = null; it.classList.remove('chip-peek'); it.style.setProperty('width', w0.w, 'important'); it.style.left = w0.l; it.style.zIndex = w0.z; if (w0.icon) it.classList.add('desk-icon'); }
       if (!it.classList.contains('desk-chip')) return false;
@@ -6534,7 +6577,10 @@
       if (win) { const others = [...(st ? st.querySelectorAll('.it.desk-win') : [])].filter((x) => x !== it).map((x) => [parseFloat(x.style.left) || 0, parseFloat(x.style.top) || 0]);
         for (let n = 0; n < 8 && others.some(([x, y]) => Math.abs(x - left) < 20 && Math.abs(y - top) < 20); n++) { left = Math.max(4, Math.min(W - 4 - w, left - 28)); top = Math.max(4, Math.min(H - 4 - h, top + 28)); } }
       it.classList.toggle('desk-win', win);
-      it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = win && this._focusKey !== it.dataset.key ? String(s.z || 10) : String(zOf('pop'));
+      /* AN OPENED PILL IS A WINDOW, AND RESTS WITH THE WINDOWS (owner 2026-10-17: "sometimes an opened pill can open under the other elements"): it
+         rested at its pill's z (115), under a card just pressed (120), the windows (130-149) and a card filling the desk (150) */
+      const zWin = String(zOf('window', (this._winOrder || []).length));
+      it.style.left = left + 'px'; it.style.top = top + 'px'; it.style.zIndex = win && this._focusKey !== it.dataset.key ? zWin : String(zOf('pop'));
       try { this._liveLayout(); } catch (e) { /* optional */ }
       return true;
     }
@@ -6752,7 +6798,7 @@
       if (prev && prev !== it) { prev.classList.remove('desk-focus'); if (prev.dataset.zRest != null) { prev.style.zIndex = prev.dataset.zRest; delete prev.dataset.zRest; } }
       this._focusKey = key;
       if (it && this.deskAlign() && !it.classList.contains('desk-dragging')) {
-        if (it.dataset.zRest == null) it.dataset.zRest = (it._cpw && it._cpw.open && this._wins && this._wins.has(key)) ? String(it._cpw.z || 10) : (it.style.zIndex || '');
+        if (it.dataset.zRest == null) it.dataset.zRest = (it._cpw && it._cpw.open && this._wins && this._wins.has(key)) ? String(zOf('window', 0)) : (it.style.zIndex || '');
         /* a window comes to the front of the windows (the last focused highest); a tile above the other tiles only */
         const win = it.classList.contains('desk-win');
         if (win) { const o = this._winOrder = (this._winOrder || []).filter((k) => k !== key); o.push(key); }
@@ -7043,8 +7089,15 @@
       /* a composite card's tab: that member to the front, in the same place; taking one out, or back in (see _deskGroups) */
       if ((act === 'cmptab' || act === 'cmpsep') && this._tabDragAt && Date.now() - this._tabDragAt < 400) return;   /* the release of a tab carried out (LV-6) */
       if (act === 'cmptab' || act === 'cmpsep' || act === 'cmpjoin') {
+        /* A TAB PICKED ON A CARD OPENED FROM ITS PILL STAYS OPEN (owner 2026-10-17: "often if i change tab on a composite it turns into a pill?"):
+           a pill opened by a click or the pointer is open only on the page (its card, _pillCard / a window); the redraw for the new tab drew
+           the combined card again as the pill it is - closed. The new front tab is opened the same way after the redraw. */
+        if (act === 'cmptab') { const fr = btn.closest && btn.closest('.it[data-key]'); const opened = fr && (fr.classList.contains('pill-open') || fr.classList.contains('chip-peek') || (this._wins && this._wins.has(fr.dataset.key)));
+          if (opened) { const wasWin = this._wins && this._wins.has(fr.dataset.key); if (wasWin) this._wins.delete(fr.dataset.key);
+            requestAnimationFrame(() => requestAnimationFrame(() => { const stg = this.shadowRoot.getElementById('stage'); const n = stg && [...stg.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
+              if (n && n.classList.contains('desk-chip')) { if (wasWin) this._winOpen(n); else this._pillCard(n); } })); } }
         if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
-        else { if (act === 'cmpsep') this._histPush('cmpsep', key); else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
+        else { if (act === 'cmpsep') { this._histPush('cmpsep', key); this._joinSet(key, null); } else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
       /* a command that ran (DU-E-session): run again - asked first, in place; then the same capability with the same
@@ -7819,7 +7872,9 @@
       const redraw = () => { if (this._doc) this.render(this._doc); };
       st.body = st.body || {}; st.open = st.open || {};
       if (act === 'page') { st.page = arg === 'prev' ? Math.max(0, (st.page | 0) - 1) : arg === 'next' ? (st.page | 0) + 1 : (+arg || 0); return redraw(); }
-      if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0; return redraw(); }
+      if (act === 'sort' || act === 'view') { st[act] = arg; st.page = 0;
+        if (act === 'view') viewSet(this, key, arg);   /* the card's own view buttons write it like the head's View menu (WSU-58 S1) */
+        return redraw(); }
       if (act === 'dom') { st.dom = st.dom === arg ? '' : arg; st.page = 0; return redraw(); }
       /* the names · sites menu: a filter in force is cleared by its button; otherwise the button opens or closes the menu */
       if (act === 'names') { if (st.ent || st.dom) { st.ent = ''; st.dom = ''; st.page = 0; } else st.namesOpen = !st.namesOpen; return redraw(); }
@@ -8389,7 +8444,10 @@
     }
     _panelAdd(id, label) {
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
-      const args = { kind: 'panel', key, content: Object.assign({ panel: id, title: label || id }, this.deskAlign() && this.getAttribute('panel-layer') === 'desk' ? { layer: 'behind' } : {}), at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
+      /* A PANEL ADDED TO THE DESK IS A CARD YOU CAN USE (owner 2026-10-17: "ui panels loaded to the canvas are not interactive - nothing on them is
+         clickable or usable at all"): with panel-layer "desk" it was put BEHIND every other card - measured, only 16 of 63 points of it could be
+         reached and a click in its middle landed on a card over it. It is placed among the cards now; behind / in front stay its own controls. */
+      const args = { kind: 'panel', key, content: { panel: id, title: label || id }, at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
       this._open.add(key);
       // the item first, then the host is asked for the panel's page (its registered page, alias or route) — the
       // update it answers with needs the item to exist

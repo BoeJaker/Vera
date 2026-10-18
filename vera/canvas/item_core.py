@@ -196,3 +196,153 @@ def apply_set(block: Dict[str, Any], fields: Dict[str, Any]) -> Tuple[Dict[str, 
             changed[k] = v
             block[k] = v
     return changed, prev, []
+
+
+# ── how an item changes face (DEEP-29 11A.4 Decision 3; WSU-58 S2) ──────────────────────────────────────────────────
+# One rule for every kind, read off what the desk does today (vera/canvas/canvas_element.js) and held to it by
+# tests/test_item_faces.py, tests/test_item_faces.cjs (the element itself, every BLOCK kind, on a stub DOM) and the
+# shared cases in tests/fixtures/item_face_cases.json. The JS mirror is VeraItem.transition.
+#
+# The face state of an item:
+#   face    pill | tile | window | full
+#   state   now | pinned | parked | hidden        (parked = a pill on the shelf; hidden = not drawn)
+#   locked  the person locked it: the layout moves it no more, and it is not dragged, resized, pilled or unpilled
+#   back    for a full item, the face Esc / restore returns to (pill | tile | window)
+#   dock    for a window (or a full item that came from one), what sending it back gives: 'tile' for a window the
+#           desk made when a resize had no room (window mode), 'pill' for a pill opened as a window (WSU-55)
+#   pilled  the PERSON made it a pill (its pill control); a pill the layout made (far from the chat, the topic moved
+#           past it) is not pilled, and a click opens it as a window rather than back into the layout
+#
+# Owner O2 (2026-10-17): a window STAYS until it is sent back (its dock control, Esc, the pill control, a drag to the
+# pills, or a resize that lets it fit) - blur and focus never change a face.
+
+FACE_EVENTS = ("pill", "unpill", "open", "max", "restore", "send_back", "drag", "resize_end",
+               "lock", "unlock", "park", "unpark", "pin", "unpin", "focus", "blur")
+LAYOUT_EVENTS = ("no_room", "to_border", "from_border")
+EVENTS = FACE_EVENTS + LAYOUT_EVENTS
+_BACK = ("pill", "tile", "window")
+_DOCK = ("tile", "pill")
+
+
+def face_state(item: Dict[str, Any]) -> Dict[str, Any]:
+    """The face state of an item record (or a stored block): the six fields transition() reads and returns."""
+    it = item if isinstance(item, dict) else {}
+    state = it.get("state") if it.get("state") in STATES else "now"
+    face = face_of(it)
+    if state == "parked":
+        face = "pill"
+    place = it.get("place") if isinstance(it.get("place"), dict) else {}
+    locked = bool(it.get("locked") or place.get("locked"))
+    back = it.get("back") if it.get("back") in _BACK else ""
+    dock = it.get("dock") if it.get("dock") in _DOCK else ""
+    if face == "full":
+        back = back or "tile"
+    else:
+        back = ""
+    if not (face == "window" or (face == "full" and back == "window")):
+        dock = ""
+    else:
+        dock = dock or "tile"
+    if "pilled" in it:
+        pilled = bool(it.get("pilled"))
+    else:
+        pilled = (face == "pill" or (face == "full" and back == "pill")) and state != "parked"
+    return {"face": face, "state": state, "locked": locked, "back": back, "dock": dock, "pilled": pilled}
+
+
+def _event(ev: Any) -> Dict[str, Any]:
+    if isinstance(ev, dict):
+        return {"type": str(ev.get("type") or ev.get("event") or ""), "to": str(ev.get("to") or "desk"),
+                "arrange": str(ev.get("arrange") or "")}
+    return {"type": str(ev or ""), "to": "desk", "arrange": ""}
+
+
+def _send_back(s: Dict[str, Any]) -> None:
+    """full -> the face it came from; a window -> what it docks to."""
+    if s["face"] == "full":
+        s["face"], s["back"] = s["back"] or "tile", ""
+        if s["face"] != "window":
+            s["dock"] = ""
+    elif s["face"] == "window":
+        s["face"], s["dock"] = s["dock"] or "tile", ""
+
+
+def transition(item: Dict[str, Any], event: Any) -> Dict[str, Any]:
+    """The face state an item has after an event. Pure: the item is not changed. An event that does not apply (a locked
+    item asked to move, a parked one to fill the desk, a blur) gives the face state back as it was.
+    event: one of EVENTS, or {type, to: 'desk'|'pills' (drag), arrange: 'slots' (open)}."""
+    s = face_state(item)
+    e = _event(event)
+    t = e["type"]
+    if s["state"] in ("parked", "hidden"):
+        # on the shelf (or not drawn): it comes back, or it is pinned back; nothing else reaches it
+        if t == "unpark" or (t == "pin" and s["state"] == "parked"):
+            s.update(state="pinned" if t == "pin" else "now", face="tile", back="", dock="", pilled=False)
+        return s
+    if t == "lock":
+        s["locked"] = True
+    elif t == "unlock":
+        s["locked"] = False
+    elif t == "pin":
+        s["state"] = "pinned"
+    elif t == "unpin":
+        if s["state"] == "pinned":
+            s["state"] = "now"
+    elif t == "park":
+        s.update(state="parked", face="pill", back="", dock="", pilled=False)
+    elif t == "unpark":
+        pass
+    elif t == "max":
+        if s["face"] == "full":
+            _send_back(s)
+        else:
+            s["back"], s["face"] = s["face"], "full"
+    elif t in ("restore", "send_back"):
+        if s["face"] == "window" or (t == "restore" and s["face"] == "full"):
+            _send_back(s)
+    elif t in ("focus", "blur"):
+        pass                                     # O2: a window stays until it is sent back
+    elif s["locked"]:
+        pass                                     # locked: no pill / unpill / open / drag / resize, nothing from the layout
+    elif t == "pill":
+        if s["face"] == "full" and s["back"] == "window" and s["dock"] == "pill":
+            s.update(back="pill", dock="")
+        elif s["face"] == "full":
+            s.update(back="pill", dock="", pilled=True)
+        elif s["face"] == "window" and s["dock"] == "pill":
+            s.update(face="pill", dock="")       # a pill opened as a window closes back to the layout's pill
+        else:
+            s.update(face="pill", dock="", pilled=True)
+    elif t == "unpill":
+        if s["face"] == "pill":
+            s.update(face="tile", pilled=False)
+        elif s["face"] == "full" and s["back"] == "pill":
+            s.update(back="tile", pilled=False)
+    elif t == "open":
+        if s["face"] == "pill":
+            if s["pilled"] or e["arrange"] == "slots":
+                s.update(face="tile", pilled=False)
+            else:
+                s.update(face="window", dock="pill")
+    elif t == "drag":
+        if s["face"] == "full":
+            _send_back(s)                        # carried out of full: it goes where it is let go
+        if e["to"] == "pills":
+            s.update(face="pill", dock="")
+        elif s["face"] == "pill":
+            s.update(face="tile", pilled=False)
+        elif s["face"] == "window" and s["dock"] == "pill":
+            s.update(face="tile", dock="")
+    elif t == "resize_end":
+        if s["face"] == "window" and s["dock"] == "tile":
+            s.update(face="tile", dock="")       # decided again by the layout (no_room makes it a window again)
+    elif t == "no_room":
+        if s["face"] == "tile":
+            s.update(face="window", dock="tile")
+    elif t == "to_border":
+        if s["face"] == "tile":
+            s.update(face="pill", pilled=False)
+    elif t == "from_border":
+        if s["face"] == "pill" and not s["pilled"]:
+            s["face"] = "tile"
+    return s
