@@ -30,9 +30,21 @@ def test_rank_uses_the_text_rank_first_then_the_map():
     assert len(sc.rank(pages, rows, limit=1)) == 1
 
 
-def test_gap_rows():
-    g = sc.gap_rows([{"query": "lab space cambridge", "n": 3, "last": NOW, "callers": ["info.seek"]}])
-    assert g == [{"query": "lab space cambridge", "times": 3, "last": NOW.isoformat(), "callers": ["info.seek"]}]
+def test_gap_rows_and_which_are_open():
+    g = sc.gap_rows([{"query": "lab space cambridge", "n": 3, "last": NOW, "callers": ["info.seek"]},
+                     {"query": "filled", "n": 1, "last": NOW - timedelta(hours=2), "filled": NOW},
+                     {"query": "asked again", "n": 2, "last": NOW, "filled": NOW - timedelta(days=1)}])
+    assert g[0] == {"query": "lab space cambridge", "times": 3, "last": NOW.isoformat(), "callers": ["info.seek"],
+                    "filled": "", "open": True}
+    assert [x["open"] for x in g] == [True, False, True]
+
+
+def test_fill_plan():
+    gaps = [{"query": "Lab space  Cambridge", "open": True}, {"query": "lab space cambridge", "open": True},
+            {"query": "done already", "open": False}, {"query": "zubrowka", "open": True},
+            {"query": "coumarin limits vodka", "open": True}, {"query": "third one here", "open": True}]
+    assert sc.fill_plan(gaps) == ["Lab space Cambridge", "coumarin limits vodka", "third one here"]
+    assert sc.fill_plan(gaps, max_gaps=1) == ["Lab space Cambridge"] and sc.fill_plan([]) == []
 
 
 def test_info_seek_records_gaps_and_the_caps_exist():
@@ -41,3 +53,13 @@ def test_info_seek_records_gaps_and_the_caps_exist():
     caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
     assert '@capability("fabric.map.search"' in caps and '@capability("fabric.map.gaps"' in caps
     assert "purpose = 'gap'" in caps and 'purpose="gap"' in caps
+
+
+def test_gap_fill_cap_crawls_without_the_llm_and_marks_the_gap():
+    import ast
+    src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_map_gaps_fill")
+    seg = ast.get_source_segment(src, fn)
+    assert "discover_crawl_urls" in seg and "reconcile=False" in seg and 'purpose="gap_fill"' in seg
+    assert "fill_plan" in seg and "budget" in seg
+    assert "f.purpose = 'gap_fill'" in src

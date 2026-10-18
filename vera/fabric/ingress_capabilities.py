@@ -629,10 +629,62 @@ async def cap_map_gaps(days: int = 7, limit: int = 50, trace_id=None):
         return {"error": "the web map's store is not connected", "gaps": []}
     try:
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT query, count(*) AS n, max(ts) AS last, array_agg(DISTINCT caller) AS callers FROM web_queries "
-                "WHERE purpose = 'gap' AND ts > NOW() - make_interval(days => $1) GROUP BY query ORDER BY n DESC, last DESC "
-                "LIMIT $2", max(1, min(int(days or 7), 90)), max(1, min(int(limit or 50), 500)))
+            rows = await conn.fetch(GAPS_SQL, max(1, min(int(days or 7), 90)), max(1, min(int(limit or 50), 500)))
     except Exception as e:  # noqa: BLE001
         return {"error": str(e)[:160], "gaps": []}
     return {"gaps": sc.gap_rows([dict(r) for r in rows])}
+
+
+GAPS_SQL = ("SELECT g.query, count(*) AS n, max(g.ts) AS last, array_agg(DISTINCT g.caller) AS callers, "
+            "(SELECT max(f.ts) FROM web_queries f WHERE f.purpose = 'gap_fill' AND f.query = g.query) AS filled "
+            "FROM web_queries g WHERE g.purpose = 'gap' AND g.ts > NOW() - make_interval(days => $1) "
+            "GROUP BY g.query ORDER BY n DESC, last DESC LIMIT $2")
+GAP_DATASET = "web.gaps"
+
+
+def _discovery_mod():
+    return sys.modules.get("Vera.vera.fabric.discovery") or sys.modules.get("discovery")
+
+
+@capability("fabric.map.gaps.fill", http_method="POST", http_path="/fabric/map/gaps/fill",
+            http_tags=["fabric", "ingress"], memory="off", silent=True,
+            description="Go and read what Vera was asked about and had nothing on: for each open gap (fabric.map.gaps, "
+                        "most asked first) one web search, then a shallow crawl of its top results into the page index "
+                        "(dataset web.gaps; entities by the NLP tier, no LLM), and the gap is marked filled. Stops at "
+                        "`minutes`. Meant as the target of a scheduled Loop Lab window. Input: minutes (int, default "
+                        "45), max_gaps (int, default 10), days (int, default 7), search_limit (int, default 4), "
+                        "pages_per_result (int, default 2). Output: {ok, filled:[{query, urls, pages}], skipped, "
+                        "minutes, reason}.")
+async def cap_map_gaps_fill(minutes: int = 45, max_gaps: int = 10, days: int = 7, search_limit: int = 4,
+                            pages_per_result: int = 2, trace_id=None):
+    disc = _discovery_mod()
+    if disc is None or not hasattr(disc, "discover_crawl_urls"):
+        return {"ok": False, "error": "the discovery module is not loaded"}
+    g = await cap_map_gaps(days=days, limit=200)
+    if g.get("error"):
+        return {"ok": False, "error": g["error"]}
+    plan = sc.fill_plan(g.get("gaps") or [], max_gaps=max_gaps)
+    budget = max(5, min(int(minutes or 45), 240)) * 60
+    t0 = time.monotonic()
+    filled: List[Dict[str, Any]] = []
+    reason = "all open gaps crawled" if plan else "no open gaps"
+    for q in plan:
+        if time.monotonic() - t0 >= budget:
+            reason = "time is up"
+            break
+        s = await _call("web.search", query=q, limit=max(1, min(int(search_limit or 4), 10)), discover="off")
+        urls = [r.get("url") for r in (s or {}).get("results") or [] if r.get("url")]
+        pages = 0
+        if urls:
+            try:
+                ppr = max(1, min(int(pages_per_result or 2), 5))
+                cr = await disc.discover_crawl_urls(urls, dataset_id=GAP_DATASET, topic=q, max_depth=1, breadth=ppr,
+                                                    max_pages=len(urls) * (ppr + 1), same_domain=False,
+                                                    reconcile=False, tags="web,discovery,gap")
+                pages = int((cr or {}).get("pages_fetched") or 0)
+            except Exception as e:  # noqa: BLE001
+                log.warning("gap fill crawl [%s]: %s", q[:60], e)
+        record_query(q, engine="crawl", caller="fabric.map.gaps.fill", result_urls=urls, purpose="gap_fill")
+        filled.append({"query": q, "urls": len(urls), "pages": pages})
+    return {"ok": True, "filled": filled, "skipped": max(0, len(plan) - len(filled)),
+            "minutes": round((time.monotonic() - t0) / 60, 1), "reason": reason}

@@ -66,10 +66,34 @@ def rank(pages: Iterable[Mapping[str, Any]], url_rows: Mapping[str, Mapping[str,
 
 
 def gap_rows(rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
-    """web_queries 'gap' rows grouped: a question the index could not answer, how often, and when last."""
+    """web_queries 'gap' rows grouped: a question the index could not answer, how often, when last, and whether a
+    gap crawl has filled it since it was last asked (open = never filled, or asked again after the fill)."""
     out = []
     for r in rows or ():
         last = _ts(r.get("last"))
+        filled = _ts(r.get("filled"))
         out.append({"query": str(r.get("query") or ""), "times": int(r.get("n") or 0),
-                    "last": last.isoformat() if last else "", "callers": list(r.get("callers") or [])})
+                    "last": last.isoformat() if last else "", "callers": list(r.get("callers") or []),
+                    "filled": filled.isoformat() if filled else "",
+                    "open": filled is None or (last is not None and filled < last)})
+    return out
+
+
+FILL_MIN_WORDS = 2
+
+
+def fill_plan(gaps: Iterable[Mapping[str, Any]], *, max_gaps: int = 10) -> List[str]:
+    """The gaps a fill run crawls, most asked first: open ones only, one per normalised question, none of one word
+    (a lone word is a lookup, not a subject to crawl)."""
+    out: List[str] = []
+    seen = set()
+    for g in gaps or ():
+        q = " ".join(str(g.get("query") or "").split())
+        k = q.lower()
+        if not g.get("open", True) or not q or k in seen or len(q.split()) < FILL_MIN_WORDS:
+            continue
+        seen.add(k)
+        out.append(q)
+        if len(out) >= max(1, int(max_gaps or 10)):
+            break
     return out
