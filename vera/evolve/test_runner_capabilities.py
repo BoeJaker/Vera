@@ -255,6 +255,60 @@ async def _host_release(token: str) -> None:
         pass
 
 
+async def _q_join(token: str, t0: float) -> None:
+    r = _orch.REDIS
+    if r is None:
+        return
+    try:
+        await r.zadd(core.GATE_QUEUE_KEY, {token: t0}, nx=True)
+    except Exception as e:                                   # pragma: no cover
+        log.debug("gate queue join: %s", e)
+
+
+async def _q_beat(token: str, waiting: int) -> None:
+    r = _orch.REDIS
+    if r is None:
+        return
+    try:
+        await r.hset(core.GATE_QUEUE_PENDING, token, int(waiting))
+        await r.set(core.GATE_QUEUE_ALIVE + token, "1", ex=core.GATE_QUEUE_ALIVE_S)
+    except Exception as e:                                   # pragma: no cover
+        log.debug("gate queue beat: %s", e)
+
+
+async def _q_leave(token: str) -> None:
+    r = _orch.REDIS
+    if r is None:
+        return
+    try:
+        await r.zrem(core.GATE_QUEUE_KEY, token)
+        await r.hdel(core.GATE_QUEUE_PENDING, token)
+        await r.delete(core.GATE_QUEUE_ALIVE + token)
+    except Exception as e:                                   # pragma: no cover
+        log.debug("gate queue leave: %s", e)
+
+
+async def _q_order() -> Optional[List[Any]]:
+    """The waiting gates, oldest first - None when there is no Redis (then every gate goes, as before)."""
+    r = _orch.REDIS
+    if r is None:
+        return None
+    try:
+        joined = {_s(k): float(v) for k, v in (await r.zrange(core.GATE_QUEUE_KEY, 0, -1, withscores=True) or [])}
+        pend = {_s(k): int(_s(v) or 0) for k, v in (await r.hgetall(core.GATE_QUEUE_PENDING) or {}).items()}
+        toks = list(joined)
+        flags = await r.mget([core.GATE_QUEUE_ALIVE + t for t in toks]) if toks else []
+        alive = [t for t, f in zip(toks, flags) if f]
+        dead = [t for t in toks if t not in alive and time.time() - joined[t] > core.GATE_QUEUE_ALIVE_S]
+        if dead:                                             # a gate that died without leaving
+            await r.zrem(core.GATE_QUEUE_KEY, *dead)
+            await r.hdel(core.GATE_QUEUE_PENDING, *dead)
+        return core.queue_order(joined, pend, alive)
+    except Exception as e:                                   # pragma: no cover
+        log.debug("gate queue read: %s", e)
+        return None
+
+
 async def _node_slots(max_nodes: int, avoid: List[str] = ()) -> List[str]:
     """Nodes that could take a gate shard right now (one shard per node), leaving out `avoid`."""
     plan = getattr(_orch, "NODE_PLAN", None)
@@ -416,11 +470,25 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
 
     await note(f"{len(files)} test files in {len(chunks)} chunks over the host and the nodes "
                f"as they free up")
+    await _q_join(token, t0)                 # P0-5: one fair queue for every gate
+    last_pos = None
     try:
         while pending or running:
-            # the host's container, when this gate can take its lease
+            await _q_beat(token, len(pending))
+            order = await _q_order()
+            if order is None:                # no Redis: every gate goes, as before
+                pos_host = pos_node = 0
+                nwait = 1
+            else:
+                holder = _s(await _orch.REDIS.get(core.HOST_RUNNER_LEASE))
+                pos_host, _ = core.queue_position(order, token, exclude=[holder] if holder else [])
+                pos_node, nwait = core.queue_position(order, token)
+            if pending and not running and nwait > 1 and pos_node != last_pos:
+                last_pos = pos_node
+                await note(f"waiting for a runner - place {pos_node + 1} of {nwait} in the gate queue")
+            # the host's container, when this gate can take its lease and it is this gate's turn
             idx = next((i for i, c in enumerate(pending)), None)
-            if idx is not None and not host_held and await _host_lease(token):
+            if idx is not None and not host_held and pos_host == 0 and await _host_lease(token):
                 host_held = True
                 c = pending[idx]
                 del pending[idx]
@@ -434,6 +502,7 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
                 n = min(cfg["max_nodes"], len(ready))
                 slots = ((await _node_slots(n, avoid_now)) if avoid_now else (await _node_slots(n))) \
                     if ready else []
+                slots = slots[:core.node_share(pos_node, len(slots))]   # P0-5: in turn
                 for _ in slots:
                     c = next((x for x in pending if not x["host_only"]), None)
                     if c is None:
@@ -474,6 +543,7 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
                 report.append({"runner": res["runner"], "files": len(c["files"]),
                                "seconds": res["seconds"], "summary": res["parsed"]["summary"]})
     finally:
+        await _q_leave(token)
         for task in running:
             task.cancel()
         if host_held:
@@ -541,7 +611,11 @@ async def cap_test_pool_status(trace_id=None) -> Dict:
     plan = getattr(_orch, "NODE_PLAN", None)
     p = await plan("pytest.shard") if plan else {"nodes": [], "why": "compute module not loaded"}
     holder = _s(await r.get(core.HOST_RUNNER_LEASE)) if r is not None else ""
-    return {"ok": True, "config": cfg, "host_runner": holder or "free",
+    order = await _q_order() or []
+    now = time.time()
+    queue = [{"gate": t, "place": i + 1, "chunks_waiting": n, "waiting_s": round(now - ts)}
+             for i, (t, ts, n) in enumerate(order)]
+    return {"ok": True, "config": cfg, "host_runner": holder or "free", "queue": queue,
             "nodes_now": p.get("nodes", []), "why": p.get("why", ""),
             "testenv": await cap_nodes_testenv_status(),
             "durations_recorded": len(await _durations())}
