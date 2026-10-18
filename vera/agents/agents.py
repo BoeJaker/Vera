@@ -107,7 +107,7 @@ async def _switch_mode(feature_id: str, minds: Any = None, default: str = "off",
     """The effective switchboard mode of one switch for this request (call > global > default). A request's minds
     that do not validate, or a switchboard that cannot be read, leave the switch at its default - never on.
 
-    `cache` (the turn's request body) holds the resolved set, so a turn reads the switchboard ONCE however many
+    `cache` (a dict local to the turn) holds the resolved set, so a turn reads the switchboard ONCE however many
     switches it asks about (D10-1, backbone 18 Oct: it was one minds.effective call, i.e. one Redis read, per
     switch per turn)."""
     try:
@@ -2045,13 +2045,14 @@ async def agent_chat_stream_endpoint(request: Request):
     _web_auto = False
     _mem_deep = False
     _web_rules = _mem_rules = False
+    _sw: dict = {}          # this turn's resolved switchboard (D10-1): read once, kept out of the request body
     _bare_q = str(body.get("canvas_text") or message or "")[:2000]
     if _bare_q.strip():
         # the same rules decide memory (CU-T.5, behind context.needs_memory): a turn that refers back gets a deep,
         # all-sessions memory search before the model, waited on at most 1.5 s (owner, 2026-10-04)
         _web_rules = (not _web_enabled
-                      and await _switch_mode("context.needs_web", body.get("minds"), cache=body) == "rules")
-        _mem_rules = await _switch_mode("context.needs_memory", body.get("minds"), cache=body) == "rules"
+                      and await _switch_mode("context.needs_web", body.get("minds"), cache=_sw) == "rules")
+        _mem_rules = await _switch_mode("context.needs_memory", body.get("minds"), cache=_sw) == "rules"
         if _web_rules or _mem_rules:
             try:
                 _needs = _turn_needs.needs(_bare_q)
@@ -2117,7 +2118,7 @@ async def agent_chat_stream_endpoint(request: Request):
     # NEVER awaited before the model - its phase frame says when it landed, so the turn record shows how often a frame
     # is ready before the first token (what its consumers - the chat shortlist, the canvas curator - can rely on)
     _frame_task = None
-    if _bare_q.strip() and await _switch_mode("sense.chat_pre", body.get("minds"), cache=body) == "on":
+    if _bare_q.strip() and await _switch_mode("sense.chat_pre", body.get("minds"), cache=_sw) == "on":
         _sf = CAPABILITY_REGISTRY.get("sense.frame") or {}
         _sf_fn = _sf.get("raw") or _sf.get("func")
         if _sf_fn:
@@ -2126,7 +2127,7 @@ async def agent_chat_stream_endpoint(request: Request):
     # user's words beside the page's own list - started with the turn, never awaited before the model, recorded after
     _sl_task = None
     if _bare_q.strip() and await _switch_mode("tools.shortlist.chat", body.get("minds"), default="legacy",
-                                              cache=body) in ("shadow", "on"):
+                                              cache=_sw) in ("shadow", "on"):
         _sl = CAPABILITY_REGISTRY.get("caps.shortlist") or {}
         _sl_fn = _sl.get("raw") or _sl.get("func")
         if _sl_fn:
