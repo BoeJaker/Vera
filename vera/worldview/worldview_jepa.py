@@ -6688,6 +6688,72 @@ async def cap_worldview_stream_stop(trace_id=None) -> Dict:
     return {"stopped": True, "was_running": was_running, "stats": _STREAM_STATS}
 
 
+#: FM-W.3: the datasets the catch-up encodes by default; the schedule entry names its own (arguments.datasets)
+CATCHUP_DATASETS_DEFAULT = ["web.worldview_seeds"]
+CATCHUP_PAGE = 1000          # ids per Chroma page; every where-filtered call scans the collection, so pages are capped
+CATCHUP_MAX_PAGES = 20
+
+
+@capability(
+    "worldview.catchup",
+    http_method="POST", http_path="/worldview/catchup",
+    http_tags=["worldview", "stream"], memory="off",
+    description="Encode the embedded, not-yet-indexed records of an allow-list of datasets into the worldview "
+                "(four-minds FM-W.3): for each dataset, list its record ids in Chroma (paged, capped), keep the ones "
+                "the worldview has not assigned, encode them through the stream encoder, save the model when any "
+                "were added. The event stream alone missed them: ingested records are embedded later or never. "
+                "Input: datasets (list[str], default web.worldview_seeds - the schedule entry lists the allow-list), "
+                "max_records (int, default 2000). Output: {ok, datasets: {id: {listed, new, encoded}}, encoded}.",
+)
+async def cap_worldview_catchup(datasets: List[str] = None, max_records: int = 2000, trace_id=None) -> Dict:
+    if not MODEL.ready or MODEL.train_steps.get("gnn", 0) == 0:
+        return {"ok": False, "error": "worldview not trained"}
+    fab = _get_fabric()
+    chroma = getattr(fab, "FABRIC_CHROMA", None) if fab else None
+    col = getattr(chroma, "_col", None) if chroma and getattr(chroma, "available", False) else None
+    if col is None:
+        return {"ok": False, "error": "chroma unavailable"}
+    names = [d for d in (datasets or CATCHUP_DATASETS_DEFAULT) if d]
+    budget = max(1, int(max_records or 2000))
+    loop = asyncio.get_running_loop()
+
+    def _list(ds: str) -> List[str]:
+        ids: List[str] = []
+        for page in range(CATCHUP_MAX_PAGES):
+            try:
+                res = col.get(where={"dataset_id": {"$eq": ds}}, include=[], limit=CATCHUP_PAGE,
+                              offset=page * CATCHUP_PAGE)
+            except Exception as e:
+                log.debug("worldview catchup list %s: %s", ds, e)
+                break
+            got = res.get("ids") or []
+            ids.extend(got)
+            if len(got) < CATCHUP_PAGE:
+                break
+        return ids
+
+    out: Dict[str, Dict[str, int]] = {}
+    total = 0
+    for ds in names:
+        listed = await loop.run_in_executor(None, _list, ds)
+        new = _SC.unindexed(listed, MODEL.record_concepts.keys())[:max(0, budget - total)]
+        enc = 0
+        for chunk in _SC.chunks(new, _STREAM_STATS.get("batch_size", 64)):
+            enc += await _stream_encode_new_records(ds, limit=len(chunk), record_ids=chunk)
+        out[ds] = {"listed": len(listed), "new": len(new), "encoded": enc}
+        total += enc
+        if total >= budget:
+            break
+    if total:
+        _STREAM_STATS["records_encoded"] += total
+        _STREAM_STATS["records_indexed"] += total
+        try:
+            await asyncio.to_thread(MODEL.save)
+        except Exception as e:
+            log.warning("worldview catchup save: %s", e)
+    return {"ok": True, "datasets": out, "encoded": total}
+
+
 @capability(
     "worldview.stream.status",
     http_method="GET", http_path="/worldview/stream/status",

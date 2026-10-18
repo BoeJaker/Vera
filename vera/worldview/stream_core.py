@@ -52,3 +52,19 @@ def retry_ids(pending: Dict[str, int], not_embedded: Iterable[str], requested: I
     while len(book) > RETRY_CAP:
         book.pop(next(iter(book)))
     return book
+
+
+def unindexed(ids: Sequence[str], existing: Iterable[str]) -> List[str]:
+    """The ids not in the worldview yet, in order, without repeats (FM-W.3 catch-up)."""
+    have = set(existing)
+    out, seen = [], set()
+    for rid in ids:
+        if rid and rid not in have and rid not in seen:
+            seen.add(rid)
+            out.append(rid)
+    return out
+
+
+def chunks(ids: Sequence[str], size: int) -> List[List[str]]:
+    size = max(1, int(size or 1))
+    return [list(ids[i:i + size]) for i in range(0, len(ids), size)]
