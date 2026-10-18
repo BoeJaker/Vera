@@ -106,9 +106,38 @@ DDL: Tuple[str, ...] = (
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty REAL",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty_kind TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS canonical_hash TEXT",
+    # WI-8: topic maps, keyed on the intel topic id
+    """CREATE TABLE IF NOT EXISTS web_topic (
+        topic_key   TEXT PRIMARY KEY,
+        name        TEXT,
+        intel_topic_id TEXT,
+        dataset_ids TEXT[] NOT NULL DEFAULT '{}',
+        kb_ids      TEXT[] NOT NULL DEFAULT '{}',
+        worldview_concepts TEXT[] NOT NULL DEFAULT '{}',
+        seeds       TEXT[] NOT NULL DEFAULT '{}',
+        queries     TEXT[] NOT NULL DEFAULT '{}',
+        entities    TEXT[] NOT NULL DEFAULT '{}',
+        created     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_run    TIMESTAMPTZ,
+        saturation  TEXT,
+        novel_yield REAL)""",
+    """CREATE TABLE IF NOT EXISTS web_topic_members (
+        topic_key  TEXT NOT NULL,
+        url_key    TEXT NOT NULL,
+        role       TEXT NOT NULL DEFAULT 'page',
+        kind       TEXT,
+        relevance  REAL,
+        novelty    REAL,
+        first_seen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_seen  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        source     TEXT,
+        PRIMARY KEY (topic_key, url_key))""",
+    "CREATE INDEX IF NOT EXISTS web_topic_members_url ON web_topic_members(url_key)",
 )
 
-MAP_TABLES = ("web_hosts", "web_urls", "web_fetches", "web_links", "web_content", "web_queries")
+MAP_TABLES = ("web_hosts", "web_urls", "web_fetches", "web_links", "web_content", "web_queries", "web_topic",
+              "web_topic_members")
 
 #: Upserts, in the order the writer runs them. $n placeholders (asyncpg).
 UPSERT_HOST = """INSERT INTO web_hosts (host, fetches, errors, bytes) VALUES ($1, 1, $2, $3)
@@ -251,3 +280,30 @@ def budget_state(sizes: Dict[str, int], budget_gb: float) -> Dict[str, Any]:
     return {"bytes": total, "budget_gb": budget_gb, "share": round(share, 3),
             "state": "over" if share >= 1.0 else ("warn" if share >= 0.8 else "ok"),
             "tables": {k: int(v or 0) for k, v in sizes.items()}}
+
+# ── topic maps (WI-8) ─────────────────────────────────────────────────────────
+UPSERT_TOPIC = """INSERT INTO web_topic (topic_key, name, intel_topic_id, seeds, queries, entities)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (topic_key) DO UPDATE SET name = COALESCE(EXCLUDED.name, web_topic.name),
+    intel_topic_id = COALESCE(EXCLUDED.intel_topic_id, web_topic.intel_topic_id),
+    seeds = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(web_topic.seeds || EXCLUDED.seeds) AS x)),
+    queries = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(web_topic.queries || EXCLUDED.queries) AS x)),
+    entities = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(web_topic.entities || EXCLUDED.entities) AS x)),
+    updated = NOW()"""
+LINK_TOPIC = {
+    "dataset": "UPDATE web_topic SET dataset_ids = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(dataset_ids || $2::text[]) AS x)), updated = NOW() WHERE topic_key = $1",
+    "kb": "UPDATE web_topic SET kb_ids = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(kb_ids || $2::text[]) AS x)), updated = NOW() WHERE topic_key = $1",
+    "concept": "UPDATE web_topic SET worldview_concepts = (SELECT ARRAY(SELECT DISTINCT x FROM unnest(worldview_concepts || $2::text[]) AS x)), updated = NOW() WHERE topic_key = $1",
+}
+UPSERT_MEMBER = """INSERT INTO web_topic_members (topic_key, url_key, role, kind, relevance, novelty, source)
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    ON CONFLICT (topic_key, url_key) DO UPDATE SET last_seen = NOW(),
+    role = CASE WHEN EXCLUDED.role IN ('seed', 'authority', 'hub') THEN EXCLUDED.role ELSE web_topic_members.role END,
+    kind = COALESCE(EXCLUDED.kind, web_topic_members.kind),
+    relevance = COALESCE(EXCLUDED.relevance, web_topic_members.relevance),
+    novelty = COALESCE(EXCLUDED.novelty, web_topic_members.novelty)"""
+SELECT_TOPIC = "SELECT * FROM web_topic WHERE topic_key = $1"
+SELECT_MEMBERS = ("SELECT m.url_key, m.role, COALESCE(m.kind, u.kind) AS kind, m.relevance, COALESCE(m.novelty, u.novelty) AS novelty, "
+                  "m.last_seen, (m.last_seen > NOW() - INTERVAL '7 days') AS recent FROM web_topic_members m "
+                  "LEFT JOIN web_urls u ON u.url_key = m.url_key WHERE m.topic_key = $1 ORDER BY m.last_seen DESC LIMIT $2")
+SELECT_HOST_YIELDS = "SELECT host, novel_yield FROM web_hosts WHERE host = ANY($1)"
