@@ -137,3 +137,28 @@ def test_the_crawl_reads_files_only_behind_its_switch_and_before_the_old_fallbac
     assert {"_read_file_doc", "_file_child_urls", "_ingress_read_files_on"} <= fns
     from vera.minds import switchboard_core as SB
     assert SB.REGISTRY["discovery.read_files"].default == "off"
+
+
+def test_no_crawl_function_uses_a_module_alias_it_also_assigns_locally():
+    """18 Oct: _process assigns a local `_pc` (path counters), so `_pc.crawl_record` inside it was an
+    UnboundLocalError that the crawl worker swallowed - files were never read on prod. Any module alias a function
+    reads as `alias.attr` must not also be assigned in that function."""
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    aliases = {a.asname for n in tree.body if isinstance(n, ast.Try) for b in n.body if isinstance(b, ast.ImportFrom)
+               for a in b.names if a.asname}
+    aliases |= {a.asname for n in tree.body if isinstance(n, ast.ImportFrom) for a in n.names if a.asname}
+    bad = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        own = [n for n in ast.walk(fn) if not (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n is not fn)]
+        assigned = {t.id for n in ast.walk(fn) if isinstance(n, (ast.Assign, ast.AugAssign, ast.AnnAssign))
+                    for t in (n.targets if isinstance(n, ast.Assign) else [n.target]) if isinstance(t, ast.Name)}
+        used_as_module = {n.value.id for n in ast.walk(fn) if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)}
+        for a in aliases & assigned & used_as_module:
+            bad.append((fn.name, a))
+    assert ("_process", "_pc") not in bad or "_ipc.crawl_record(" in src
+    block = src[src.index("and _ingress_read_files_on():"):src.index("# Non-HTML, non-data file")]
+    assert "_ipc.crawl_record(" in block and "_pc.crawl_record(" not in block.replace("_ipc.crawl_record(", "")
