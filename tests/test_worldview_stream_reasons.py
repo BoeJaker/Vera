@@ -62,3 +62,37 @@ def test_the_catchup_capability():
     assert "_stream_encode_new_records(ds, limit=len(chunk), record_ids=chunk)" in body
     assert "range(CATCHUP_MAX_PAGES)" in body and "run_in_executor(None, _list, ds)" in body
     assert "asyncio.to_thread(MODEL.save)" in body
+
+
+
+def test_the_stream_fetch_never_asks_a_numpy_array_for_its_truth_value():
+    # 18 Oct: `res.get("embeddings") or []` raised on chromadb's numpy array; the except hid it, nothing was encoded
+    src = open(os.path.join(ROOT, "vera", "worldview", "worldview_jepa.py"), encoding="utf-8").read()
+    body = src[src.index("async def _stream_encode_new_records("):src.index("async def _stream_dynamics_update(")]
+    assert 'res.get("embeddings") or []' not in body
+    assert "list(embs) if embs is not None else []" in body
+    assert 'sk["fetch_error"] = sk.get("fetch_error", 0) + 1' in body and 'log.warning("worldview stream fetch' in body
+
+
+def test_a_numpy_like_array_survives_the_fetch_shape():
+    class Arr(list):                       # a list whose truth value raises, like a numpy array
+        def __bool__(self):
+            raise ValueError("The truth value of an array with more than one element is ambiguous")
+    embs = Arr([[0.1] * 768, [0.2] * 768])
+    got = list(embs) if embs is not None else []
+    assert len(got) == 2
+    with pytest.raises(ValueError):
+        _ = embs or []
+
+
+
+def test_the_event_worker_encodes_only_allow_listed_datasets():
+    src = open(os.path.join(ROOT, "vera", "worldview", "worldview_jepa.py"), encoding="utf-8").read()
+    assert '"datasets":          ["web.worldview_seeds"],' in src
+    worker = src[src.index("async def _wv_stream_worker("):src.index('"worldview.stream.start"')]
+    i = worker.index('dataset_id = ev.get("dataset_id", "")')
+    block = worker[i:i + 700]
+    assert "if allowed and dataset_id not in allowed:" in block and '"dataset_not_allowed"' in block
+    assert block.index("await redis.xack(stream, group, msg_id)") < block.index("continue")
+    start = src[src.index("async def cap_worldview_stream_start("):src.index('"worldview.stream.stop"')]
+    assert 'datasets:          List[str] = None,' in start and '_STREAM_STATS["datasets"] = [d for d in datasets if d]' in start
