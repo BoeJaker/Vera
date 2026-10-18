@@ -203,6 +203,12 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "web.searxng.heal.status; 'on' = also restart the container on the dead-network signature (every engine times "
        "out, or SearXNG unreachable - not on CAPTCHA / rate limits), at most once per 30 min and 4 a day, and tell the "
        "owner on Telegram when two restarts in a row did not bring it back.", owner="web-ingress"),
+    _f("discovery.novelty_frontier", ("off", "on"), "discovery", "WI-8b / FM-7.5",
+       "The crawl frontier and novelty: 'off' (default) = links ranked by topic, git paths, domain richness and topic "
+       "authority, as before; 'on' = plus each host's novel yield from the web map (hosts whose pages keep coming "
+       "back known go down, hosts that keep yielding new content go up, about +-0.15), and the top 2 links queued per "
+       "page are recorded as discovery.collect_worth decisions with what their score was made of.",
+       owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),

@@ -2169,6 +2169,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     # WI-4: the second-order pass (entities, LLM tags) runs after the crawl, on the idle queue, when the switch
     # discovery.defer_enrichment is on and the caller did not ask for it inline (want_tiers includes "t3")
     _defer_t3 = (_ingress_defer_on() and "t3" not in set(config.get("want_tiers") or ()))
+    _host_yield: Dict[str, Optional[float]] = {}          # WI-8b: novel yield per host, read once per crawl
     _deferred_t3: List[Dict] = []
     min_relevance = float(config.get("min_relevance", 0.0) or 0.0)
     topic        = config.get("topic", "") or ""
@@ -2931,6 +2932,13 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
             #    crawler dives deeper into good domains ("swallow"). ───────────
             scored_links = []
             seen_norm = set()
+            _nf = _ingress_switch("discovery.novelty_frontier") == "on"
+            if _nf:       # WI-8b: the hosts' novel yield, one read per page for hosts this crawl has not asked about yet
+                _ask = sorted({urlparse(_normalize_url(l.get("url", ""))).netloc for l in page_links} - set(_host_yield))
+                if _ask:
+                    _host_yield.update({h: None for h in _ask})
+                    _host_yield.update(await _ingress_host_yields(_ask))
+            _parts: Dict[str, Dict[str, float]] = {}
             for ln in page_links:
                 lu = _normalize_url(ln.get("url", ""))
                 if not lu or lu in visited or lu in seen_norm:
@@ -2950,6 +2958,11 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                     lrn = _domain_auth_get(lhost, _tkey)
                     if lrn and lrn.get("score", 0) >= 0.6:
                         sc += 0.25 * lrn["score"]   # known-good source for this topic
+                if _nf:
+                    _adj = _ipc_nov().frontier_adjust(_host_yield.get(lhost))
+                    _parts[lu] = {"before_novelty": sc, "novelty": _adj,
+                                  "host_yield": _host_yield.get(lhost) if _host_yield.get(lhost) is not None else -1.0}
+                    sc += _adj
                 scored_links.append((sc, lu, lhost))
             # Boost links under detected structured-area prefixes
             for i, (sc, lu, lhost) in enumerate(scored_links):
@@ -2958,6 +2971,9 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                 if path_clusters.get(_lu_prefix, {}).get("boosted"):
                     scored_links[i] = (sc + 0.4, lu, lhost)
             scored_links.sort(key=lambda x: x[0], reverse=True)
+            if _nf:       # the frontier's top picks as discovery.collect_worth decisions (vera-62, FM-7.5)
+                for _rank, (_sc, _lu, _lh) in enumerate(scored_links[:2]):
+                    _record_collect(crawl_id, _lu, True, score=_sc, parts=_parts.get(_lu), rank=_rank, depth=depth + 1)
             queued_norm = {_normalize_url(q[2]) for q in queue}
             added = 0
             _enq_cap = max_links_pp if max_links_pp else 10 ** 9
@@ -3304,6 +3320,52 @@ def _ingress_dedupe_on() -> bool:
         return bool(m and m.dedupe_on())
     except Exception:  # noqa: BLE001
         return False
+
+
+def _ingress_switch(feature_id: str) -> str:
+    m = _ingress_mod()
+    try:
+        return m.switch(feature_id) if m is not None else "off"
+    except Exception:  # noqa: BLE001
+        return "off"
+
+
+async def _ingress_host_yields(hosts):
+    m = _ingress_mod()
+    if m is None:
+        return {}
+    try:
+        return await m.host_yields(list(hosts))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _ipc_nov():
+    try:
+        from Vera.vera.fabric import ingress_novelty_core as _nc
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_novelty_core as _nc
+    return _nc
+
+
+def _record_collect(crawl_id: str, url: str, collect: bool, *, score=None, parts=None, rank: int = 0,
+                    depth: int = 0) -> None:
+    """One discovery.collect_worth decision on the ledger (background, best effort; never alters the crawl)."""
+    try:
+        try:
+            from Vera.vera.fabric import discovery_ledger_core as _DL
+            from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _REG
+        except Exception:                    # worktree / app-free import
+            from vera.fabric import discovery_ledger_core as _DL  # type: ignore
+            _REG = {}
+        d = _DL.collect_decision(url, collect, crawl_id=crawl_id, score=score, parts=parts, rank=rank, depth=depth)
+        fn = (_REG.get("decide.record") or {}).get("raw") or (_REG.get("decide.record") or {}).get("func")
+        if fn:
+            task = asyncio.get_running_loop().create_task(fn(row=d))
+            _PAGE_LEDGER_TASKS.add(task)
+            task.add_done_callback(_PAGE_LEDGER_TASKS.discard)
+    except Exception as e:                   # pragma: no cover
+        log.debug("collect decision not recorded: %s", e)
 
 
 def _ingress_read_files_on() -> bool:
