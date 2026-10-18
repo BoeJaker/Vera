@@ -219,3 +219,25 @@ def test_the_crawl_uses_novelty_only_behind_its_switch():
     assert block.index("if _nf:") < block.index("frontier_adjust")
     from vera.minds import switchboard_core as SB
     assert SB.REGISTRY["discovery.novelty_frontier"].default == "off"
+
+
+
+def test_semantic_novelty_is_one_minus_the_closest_other_record():
+    assert nc.semantic([("me", 1.0), ("a", 0.97), ("b", 0.6)], ["me"]) == (0.03, "a")
+    assert nc.semantic([("me", 1.0)], ["me"]) == (None, "")
+    assert nc.semantic([("a", 0.2)], []) == (0.8, "a") and nc.semantic([], []) == (None, "")
+    assert nc.semantic_known(0.03) and nc.semantic_known(0.05) and not nc.semantic_known(0.2)
+    assert not nc.semantic_known(None)
+
+
+def test_semantic_shadow_is_wired_off_the_path_and_acts_on_nothing():
+    import ast
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(caps)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "semantic_note")
+    seg = ast.get_source_segment(caps, fn)
+    assert '"shadow"' in seg and "store.search(emb" in seg and "dataset_id" not in seg.split("store.search")[1].split(")")[0]
+    assert "UPDATE_URL_SEMANTIC" in seg and "_embed" not in seg                      # no second embedding
+    disc = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    assert "ensure_future(_sem_m.semantic_note(page_url, ds_id, rid))" in disc
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["ingress.semantic_novelty"].default == "off"

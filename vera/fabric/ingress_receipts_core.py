@@ -106,6 +106,9 @@ DDL: Tuple[str, ...] = (
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty REAL",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty_kind TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS canonical_hash TEXT",
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_novelty REAL",
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_twin TEXT",
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_at TIMESTAMPTZ",
     # WI-8: topic maps, keyed on the intel topic id
     """CREATE TABLE IF NOT EXISTS web_topic (
         topic_key   TEXT PRIMARY KEY,
@@ -184,6 +187,8 @@ LOOKUP_BANDS = ("SELECT content_hash, simhash FROM web_content WHERE b0 = ANY($1
 # the other, the UPDATE failed, and (in one transaction with the receipts) took the whole batch with it (18 Oct)
 UPDATE_URL_NOVELTY = ("UPDATE web_urls SET novelty = $2::real, novelty_kind = $3::text, canonical_hash = $4::text "
                       "WHERE url_key = $1::text")
+UPDATE_URL_SEMANTIC = ("UPDATE web_urls SET semantic_novelty = $2::real, semantic_twin = $3::text, semantic_at = NOW() "
+                       "WHERE url_key = $1::text")
 UPDATE_HOST_YIELD = ("UPDATE web_hosts SET novel_yield = CASE WHEN novel_yield IS NULL THEN $2::real "
                      "ELSE novel_yield * 0.9 + $2::real * 0.1 END WHERE host = $1::text")
 
