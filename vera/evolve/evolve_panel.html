@@ -1109,8 +1109,12 @@ const SCH_LAYERS=[
   {k:'board',label:'Board items',col:'#a78bfa',tip:'work scheduled for board items - its windows and runs'},
   {k:'calendar',label:'Calendar',col:'#4a9eff',tip:'Vera\u2019s own calendar - the Comms panel\u2019s: local, ics, CalDAV, Google'},
   {k:'agents',label:'Agents',col:'#e0a458',tip:'Claude sessions - their registered timers and the work scheduled for them (agents.work)'}];
-let _schOn=new Set(SCH_LAYERS.map(L=>L.k)), _schCounts={}, _schBoardItems=[], _schProfiles=[];
-try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
+// Owner 18 Oct 2026: "the schedule ui is hard to read there is so much stuff on it" - every layer on at once
+// stacked ~200 events in one week. Default: what ran and the sessions' work; the rest is one click away.
+const SCH_DEFAULT_LAYERS=['runs','agents'];
+let _schOn=new Set(SCH_DEFAULT_LAYERS), _schCounts={}, _schBoardItems=[], _schProfiles=[];
+try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers.v2')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
+let _schShowOff=false; try{_schShowOff=localStorage.getItem('loop-lab.sch.showoff')==='1'}catch(_){}
 let _schCache={schedules:[],next:{},state:{},config:{}};
 async function loadSchedule(){
   const [d,bi]=await Promise.all([api('/evolve/schedule/list'),api('/board/items')]); if(!d)return;
@@ -1131,10 +1135,16 @@ function schWhen(s){
 }
 function schBoardTitle(id){const it=_schBoardItems.find(x=>x.id===id);return it?(it.title||id):id}
 function schBoardTag(id){return id?'<span class="sch-bl" onclick="event.stopPropagation();openBoardItem(\''+esc(id)+'\')" title="the board item this work is for - open it">▣ '+esc(String(schBoardTitle(id)).slice(0,40))+'</span>':''}
+function schIsSpent(s){return !!(s.once_at&&s.last_started_at&&String(s.last_started_at)>=String(s.once_at).slice(0,16))}
+function schShowOff(on){_schShowOff=!!on;try{localStorage.setItem('loop-lab.sch.showoff',_schShowOff?'1':'0')}catch(_){}schList()}
 function schList(){
-  const L=_schCache.schedules||[];
-  if(!L.length){$('sch-list').innerHTML='<span class="hint">no schedules yet — click an empty calendar slot, or + schedule</span>';return}
-  $('sch-list').innerHTML=L.map(s=>{
+  const all=_schCache.schedules||[];
+  if(!all.length){$('sch-list').innerHTML='<span class="hint">no schedules yet — click an empty calendar slot, or + schedule</span>';return}
+  const live=all.filter(s=>s.enabled&&!schIsSpent(s)), rest=all.filter(s=>!(s.enabled&&!schIsSpent(s)));
+  const L=_schShowOff?live.concat(rest):live;
+  const toggle='<div class="hint" style="margin:2px 0 6px">'+live.length+' active'
+    +(rest.length?' · <a style="cursor:pointer" onclick="schShowOff('+(_schShowOff?'false':'true')+')">'+(_schShowOff?'hide':'show')+' '+rest.length+' switched off or finished</a>':'')+'</div>';
+  $('sch-list').innerHTML=toggle+L.map(s=>{
     const nx=(_schCache.next||{})[s.id];
     return '<div class="sch-row"><span class="sch-dot" style="background:'+(SCH_KIND_COL[s.kind]||'#999')+'"></span>'
       +'<div style="flex:1;min-width:0"><div class="t" style="'+(s.enabled?'':'opacity:.5;text-decoration:line-through')+'">'+esc(s.title)+'</div>'
@@ -1334,7 +1344,7 @@ function schMode(){
   const g=$('sch-gran'); const gran=g?(g.checked?'goals':'runs'):schGran();
   const res=_schOn.has('results'), sch=_schOn.has('windows')||_schOn.has('runs')||_schOn.has('board');
   const mode=res?(sch?'both':'results'):'windows';
-  try{localStorage.setItem('loop-lab.sch.layers',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
+  try{localStorage.setItem('loop-lab.sch.layers.v2',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
   const src='/evolve/schedule/events?mode='+mode+'&granularity='+gran+(_schOn.has('calendar')?'&include_calendar=1':'');
   if(cal.getAttribute('src')!==src)cal.setAttribute('src',src);
   cal.filter=ev=>_schOn.has(schLayerOf(ev));
@@ -1385,6 +1395,11 @@ document.addEventListener('DOMContentLoaded',()=>{
       if(tok!==calTok)return;
       evs=evs.concat(((d&&d.events)||[]).filter(x=>x&&x.source!=='loop-lab'&&x.source!=='loop-lab-run').map(x=>Object.assign({},x,{read_only:true,layer:'calendar'})));
     }
+    // a switched-off schedule draws no window bands (it cannot run there)
+    const _off=new Set((_schCache.schedules||[]).filter(s=>!s.enabled).map(s=>s.id));
+    evs=evs.filter(ev=>!(ev.source==='loop-lab'&&_off.has(ev.schedule_id)));
+    // a run a guard turned away (skipped: busy box, outside its own window) did nothing - not drawn
+    evs=evs.filter(ev=>!(ev.source==='loop-lab-run'&&/^skipped/.test(String(ev.result||''))));
     _schCounts={};
     evs.forEach(ev=>{const L=schLayerOf(ev);ev.layer=L;_schCounts[L]=(_schCounts[L]||0)+1;
       if(ev.source==='loop-lab')ev.display='background';else if(ev.source==='results')ev.display='solid'});
