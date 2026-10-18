@@ -63,7 +63,7 @@ def display_kind(kind: Any, target: Any) -> str:
 
 # The calendar's layers: what an event is, so a viewer can switch each on and off. A board item's schedule is its own
 # layer - the work a board item asked for, whatever kind it is.
-LAYERS = ("windows", "runs", "results", "board", "calendar", "agents", "host")
+LAYERS = ("windows", "runs", "results", "board", "calendar", "agents", "host", "releases")
 
 
 def layer_of(ev: Dict[str, Any]) -> str:
@@ -71,7 +71,9 @@ def layer_of(ev: Dict[str, Any]) -> str:
     if src == "results":
         return "results"
     if src == "agents-work":
-        return "agents"                       # B1: Claude sessions' triggers and requests
+        return "agents"
+    if src == "releases":
+        return "releases"                     # promotions to bleeding-edge and releases to prod (18 Oct 2026)                       # B1: Claude sessions' triggers and requests
     if src in ("host-cron", "host-timer", "in-process"):
         return "host"
     if src in ("loop-lab", "loop-lab-run"):
