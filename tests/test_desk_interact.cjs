@@ -9,7 +9,7 @@ const H = fs.readFileSync(path.join(root, 'vera', 'chat', 'chat_panel.html'), 'u
 let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
 
 /* U4 - the hold */
-t('U4: a hold starts when the person moves or sizes a card', C.includes('    _holdStart(key) {') && C.includes("this._holdStart(it.dataset.key); this._rzPlacedAt = 0;") && C.includes('this._holdStart(d.key); }'));
+t('U4: a hold starts when the person moves or sizes a card', C.includes('    _holdStart(key) {') && C.includes("this._holdStart(it.dataset.key); this._rzPlacedAt = 0;") && C.includes('this._holdStart(d.key); this._ptrHold(ev); }'));
 t('U4: the hold ends when the desk is dealt afresh (its size, mode or fill change) - not when the topic changes or an item goes', C.includes("if (this._hold.sb ? this._hold.sb !== sigBase : this._hold.sig !== sig) { if (this._hold.sb && this._hold.sb !== sigBase) this._hold = null;")
   && C.includes("(this._hold.keys || []).forEach((k) => { if (!now.has(k) && this._hold.rects) delete this._hold.rects[k]; });") && !/T \? \(T\.order \|\| \[\]\)\.join\(','\) : ''\]\.join\('#'\)/.test(C));
 /* owner 2026-10-16: "the layout still tends to jump about a lot when there is no need to" - the desk rests held, and a topic change
@@ -55,7 +55,7 @@ t('under the hold each card goes back to where it was whenever that is clear; on
 t('the desk proposal goes to the first place along the top (then the bottom) clear of every open card, placed again each pass',
   C.includes('_proposePlace(st) {') && C.includes("for (const y of [6, Math.max(6, H - h - 6)])") && C.includes('st.appendChild(el); this._proposePlace(st);') && C.includes('this._propose(st, mode, info, T, W); this._proposePlace(st);'));/* owner 2026-10-17 (LV-6): "it should be easier to split a part of a composite element out to its own element" */
 t('a tab has a take-out control, and a tab carried 28 px off its strip is taken out and put where it is let go (no use of the setup doc before it is declared)',
-  C.includes('<span class="cmp-out" data-act="cmpsep" data-layer-key="${esc(c.dataset.key)}"') && C.includes('if (!d.out && far > 28) { d.out = true;') && C.includes("tdoc.addEventListener('mouseup', (ev) => { const d = this._tabDrag;")
+  C.includes('<span class="cmp-out" data-act="cmpsep" data-layer-key="${esc(c.dataset.key)}"') && C.includes('if (!d.out && far > 28) { d.out = true;') && C.includes("const tabUp = (ev) => { const d = this._tabDrag; this._tabDrag = null;") && C.includes("tdoc.addEventListener(t, (ev) => { if (ptrOf(this._tabDrag, ev)) tabUp(ev); })")
   && C.includes("if ((act === 'cmptab' || act === 'cmpsep') && this._tabDragAt && Date.now() - this._tabDragAt < 400) return;") && !/\n      doc\.addEventListener\('mousemove', \(ev\) => \{ const d = this\._tabDrag;/.test(C));/* owner 2026-10-17: "sending something to the pill section affects/changes the layout of open element - this should not be possible" */
 t('a card sent to the pills goes there whatever size it was given or held at, and the desk is held first so nothing else moves',
   C.includes('const pillish = (it) => { if (it.board) return false; if (it.pilled && !it.isLock && !it.sizing) return true;') && C.includes('const hr = seed && !userAt(key) && !pilledKey ? (seed[key]') && C.includes(', pilled: pilledKey };')

@@ -722,9 +722,12 @@
     'model-routing': '/ui/panels/model-routing', 'chat2': '/chat_panel' };
   const PANEL_SRC = {}; let PANEL_REG = null;
   /* the widest a widget card of a short-content form is on the desk (WSU-69): lists, checklists, fields, notices and
-     single figures wrap short; wider was an empty band. Charts, tables, maps, graphs and calendars are not capped. */
-  const DESK_FORM_MAXW = { checklist: 420, list: 440, links: 440, notices: 460, people: 460, kv: 520, pills: 480, string: 460, announcement: 460,
-    counter: 380, hero: 400, ring: 360, radial: 360, dial: 360, gauge: 420, meter: 420, level: 380, glance: 460, numbers: 520, status: 480, stepper: 640, files: 520 };
+     single figures wrap short; wider was an empty band. Charts, tables, maps, graphs and calendars are not capped. The number is
+     the widget catalogue's maxW for the form (WSU-58 S8, DEEP-29 11A.4 Decision 5.3: VeraWidget.forms, the same as the python
+     catalogue's widget_record.DESK_MAXW); 0 = no cap. Read once the catalogue is on the page (every host loads it first). */
+  let FORM_MAXW = null;
+  const formMaxW = (f) => { if (!FORM_MAXW) { const W = root.VeraWidget; if (!W || typeof W.forms !== 'function') return 0; const m = {};
+    try { W.forms().forEach((x) => { if (x && x.maxW > 0) m[x.id] = x.maxW; }); } catch (e) { return 0; } FORM_MAXW = m; } return FORM_MAXW[f] || 0; };
   /* EVERY ELEMENT HAS A PREFERRED ASPECT (DESK-ARRANGEMENT 7.1 principle 1, LV-1; owner 2026-10-17: "each widget and element could
      have an 'aspect' preference - these could be portrait (tall), landscape 'wide', and squarish, plus maybe another one for smaller
      tiles like widgets and small charts"). Read in order (see _aspectOf): what the item declares (aspect on the item, its content,
@@ -1766,7 +1769,30 @@
      card, the smallest size it is usable at, the actions it can declare (label and title as drawn, lead: first in the head,
      replaces: the kit action it stands for, kit: one of the shared kit's own, in the order the head ranks them). What is live
      - its line (sub), which actions show now, on / off, a label that flips - it still declares as it is drawn (declare,
-     kitDeclare). fit and minSize are declared for the layout (S8) and not read yet. */
+     kitDeclare). fit and minSize are declared for the layout and not read yet; natural (S8) is read by the desk's fit. */
+  /* ONE NATURAL SIZE PER BODY (WSU-58 S8, DEEP-29 11A.4 Decision 5.2): what a card would be for what it holds, at a width. The
+     container measures (the page is its own) and the body says the size: natural(width, m) -> { h, w, minH, drawn } (what it can
+     say from the measures m holds), registered per kind with VeraItem.registerBody beside fit and minSize. The numbers are the ones
+     _deskFit, _widgetFit, _previewH and _diagramGrew worked out themselves before (tests/test_body_natural.cjs holds them equal).
+       page, chrome          a drawn page's own height (the page says it: _previewH) and the card round its frame  -> h
+       used, side, head      how far right the content reaches, the card's sides, what its head needs (WSU-69)   -> w
+       low, chrome           how far down the content reaches, the card round its body                          -> h
+       more, cardH           how much more a widget's face needs than its box (WSU-70), the card's height        -> minH
+       img {w, h}, cap, chrome   a picture's own size, its caption, the card round its body                     -> h
+       draw                  a drawing that answers naturalHeight(width) (the diagram)                        -> h, drawn
+       face                  a face that answers naturalWidth() (the widget; 0: as wide as you like)          -> w */
+  const NAT = {
+    page: (W, m) => (m.page > 0 ? { h: Math.max(96, Math.round(m.chrome + m.page + 4)) } : null),
+    text: (W, m) => (m.used != null ? { w: Math.max(240, m.head, m.used + m.side + 36) } : null),
+    content: (W, m) => (m.low != null ? { h: Math.max(96, Math.round(m.chrome + m.low + 14)) } : null),
+    more: (W, m) => (m.more != null ? (m.more > 6 ? { minH: m.cardH + m.more + 8 } : {}) : null),
+    img: (W, m) => (m.img ? { h: Math.max(96, Math.round(m.chrome + m.img.h * Math.min(1.5, (W - 8) / m.img.w) + (m.cap || 0) + 12)) } : null),
+    draw: (W, m) => { if (!m.draw) return null; const n = m.draw.naturalHeight(W); return n ? { h: Math.max(60, Math.round(n)), drawn: Math.round(n) } : {}; },
+    face: (W, m) => { if (!m.face) return null; let n = 0; try { n = m.face.naturalWidth() || 0; } catch (e) { n = 0; } return { w: n > 0 ? Math.round(n) : 0 }; },
+  };
+  const natOf = (...parts) => (W, m) => { m = m || {}; for (const p of parts) { const r = NAT[p](W, m); if (r) return r; } return null; };
+  const NATURAL = { _: natOf('page', 'text', 'content'), image: natOf('img', 'page', 'text', 'content'),
+    diagram: natOf('draw', 'page', 'text', 'content'), widget: natOf('face', 'more', 'page', 'text', 'content') };
   const KIT_ACTS = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'].map((v) => ({ id: 'vo:' + v, kit: true }));
   const CPREV = { id: 'cprev', label: 'Preview', title: 'Draw it here - a sandboxed frame, no network' };
   const LINK = { id: 'link', label: 'Open in a tab ↗', title: 'a link of its own: open, or download' };
@@ -1794,7 +1820,7 @@
     kv: { views: ['fields', 'graph'] },
     widget: { fit: 'content' },
   };
-  if (VI) Object.keys(BLOCK).filter((k) => k[0] !== '_').forEach((k) => VI.registerBody(k, BODY_SPEC[k] || {}));
+  if (VI) Object.keys(BLOCK).filter((k) => k[0] !== '_').forEach((k) => VI.registerBody(k, Object.assign({ natural: NATURAL[k] || NATURAL._ }, BODY_SPEC[k] || {})));
   /* a declared action with what its kind registered for it filled in (what it declares now wins) */
   const actOf = (kind, a) => { if (!a || !a.act || !VI) return a; const s = VI.action(kind, a.act); if (!s) return a; const o = Object.assign({}, s, a); delete o.id; return o; };
   const declActs = (kind, d) => ((d && d.acts) || []).map((a) => actOf(kind, a));
@@ -2242,6 +2268,9 @@
   :host([align="desk"]:not([desk-narrow])) .stage .it:not(.desk-chip):not([data-desk-face^="layer-"]) > .rz{display:block}
   /* a card is moved by its header on the desk; while it moves it follows the pointer exactly and rides above the rest */
   :host([align="desk"]:not([desk-narrow])) .stage .it:not([data-desk-face^="layer-"]) > .it-hd{cursor:grab}
+  /* POINTER EVENTS (WSU-58 S8, B12): a finger or a pen on a desk card's head, its grip or a tab carries it, as the mouse does -
+     the browser does not take the gesture for a scroll or a zoom first */
+  :host([align="desk"]) .stage .it > .it-hd,:host([align="desk"]) .stage .it > .rz,:host([align="desk"]) .stage .cmp-tab{touch-action:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging{transition:width .12s,height .12s!important;cursor:grabbing;box-shadow:0 18px 40px rgba(0,0,0,.5);outline:1px solid var(--acc,#5a9e8f)}
   :host([align="desk"]:not([desk-narrow])) .stage .it.desk-dragging *{cursor:grabbing!important;user-select:none}
   /* while it moves, a card shows what it is, not its controls: the footer rail and the grip popped in under the pointer */
@@ -4658,6 +4687,12 @@
        take the room they are given and scroll - are measured: how far down their content reaches. A card with room to
        spare is given that height (never under 96 px) and does not grow past it; one whose content outgrows it is let go
        again. A change re-places the desk, at most four times in a row. */
+    /* THE POINTER IS HELD WHILE SOMETHING IS CARRIED (WSU-58 S8, B12): a card, a grip or a tab carried by a pointer (mouse, finger,
+       pen) keeps its moves and its release though the hand leaves the page or its frame. Held by the element itself, so a redraw
+       of the card under the hand does not let it go. A synthetic mouse event (probes, tests) has no pointer: nothing is held. */
+    _ptrHold(ev) { if (!ev || ev.pointerId == null || typeof this.setPointerCapture !== 'function') return; try { this.setPointerCapture(ev.pointerId); } catch (e) { /* that pointer is no longer down */ } }
+    /* what a body says it would be at a width (WSU-58 S8): its registered natural (VeraItem.body), else this file's own */
+    _natural(kind, width, m) { const b = VI && typeof VI.body === 'function' ? VI.body(kind) : null; const f = (b && b.natural) || NATURAL[kind] || NATURAL._; return f(width, m) || {}; }
     _deskFit() {
       const sr = this.shadowRoot; this._fitRanAt = Date.now(); if (!sr || this.getAttribute('desk-fit') === 'off') return;
       /* a diagram is measured too: its drawing has its own shape, and its slot is as tall as the drawing (_diagramGrew) */
@@ -4670,25 +4705,26 @@
         /* an image fills its card up to half again its own size: a small picture blown up to the desk is not "as much room as
            design allows" (a 200 px logo drawn 650 px tall) */
         if (c.dataset.type === 'image') { const im = c.querySelector('.vc-fig img'), bd0 = c.querySelector(':scope > .it-bd');
-          if (im && im.naturalWidth > 0 && im.naturalHeight > 0 && bd0) { const s = Math.min(1.5, (bd0.clientWidth - 8) / im.naturalWidth);
-            const cap = c.querySelector('.vc-fig figcaption'); const want = Math.max(96, Math.round(c.offsetHeight - bd0.clientHeight + im.naturalHeight * s + (cap ? cap.offsetHeight + 6 : 0) + 12));
+          if (im && im.naturalWidth > 0 && im.naturalHeight > 0 && bd0) {
+            const cap = c.querySelector('.vc-fig figcaption'); const want = this._natural('image', bd0.clientWidth, { img: { w: im.naturalWidth, h: im.naturalHeight }, cap: cap ? cap.offsetHeight + 6 : 0, chrome: c.offsetHeight - bd0.clientHeight }).h;
             if (want < c.offsetHeight - 8 && (nat[key] == null || Math.abs(nat[key] - want) > 16)) { nat[key] = want; changed = true; } }
           return; }
         /* A WIDGET IS NEVER SHORTER THAN ITS FACE (WSU-70, owner 2026-10-11: "some elements are not tall enough like metric
            value change"): a widget fills its card, so it was never measured - and a card the desk made short clipped the
            figure's lower lines (its change, its trace). The widget's own body says how much more it needs; the card gets
            that as its least height (kept in _minH), and only grows, never shrinks below it, while that widget is there. */
-        /* only the short-content forms (DESK_FORM_MAXW): a table, a log or a long list scrolls in its card by design */
+        /* only the short-content forms (the catalogue's maxW, formMaxW): a table, a log or a long list scrolls in its card by design */
         const wfm = c.dataset.type === 'widget' ? (() => { const cc = this._contentOf(key) || {}; return String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, ''); })() : '';
-        if (wfm && DESK_FORM_MAXW[wfm] && wfm !== 'files' && wfm !== 'list') { const lv = this._live && this._live[key], wi = lv && lv.firstChild;
+        if (wfm && formMaxW(wfm) && wfm !== 'files' && wfm !== 'list') { const lv = this._live && this._live[key], wi = lv && lv.firstChild;
           const rt = wi && wi.shadowRoot && wi.shadowRoot.querySelector('.vw-body, .vw-root');
-          if (rt && rt.clientHeight > 0) { const more = rt.scrollHeight - rt.clientHeight; const mh = this._minH || (this._minH = {});
-            if (more > 6) { const want = c.offsetHeight + more + 8; if (!mh[key] || want > mh[key] + 4) { mh[key] = want; changed = true; } } } }
+          if (rt && rt.clientHeight > 0) { const mh = this._minH || (this._minH = {});
+            const want = this._natural('widget', c.offsetWidth, { more: rt.scrollHeight - rt.clientHeight, cardH: c.offsetHeight }).minH;
+            if (want) { if (!mh[key] || want > mh[key] + 4) { mh[key] = want; changed = true; } } } }
         /* a drawn page (an html item, code shown as its preview) is as tall as the page says it is (_previewH, WSU-44): a short
            page gives the card back its spare room; a long one lets it grow and scrolls inside */
         const pv = c.querySelector('.vc-preview'), ph = this._pvH && this._pvH[key];
         if (pv && ph > 0 && pv.clientHeight) {
-          const want = Math.max(96, Math.round(c.offsetHeight - pv.clientHeight + ph + 4));
+          const want = this._natural(c.dataset.type, pv.clientWidth, { page: ph, chrome: c.offsetHeight - pv.clientHeight }).h;
           if (want < c.offsetHeight - 8) { if (nat[key] == null || Math.abs(nat[key] - want) > 16) { nat[key] = want; changed = true; } }
           else if (nat[key] != null && want > nat[key] + 16) { delete nat[key]; changed = true; }
           return; }
@@ -4714,7 +4750,7 @@
                  the room it was given, not what it needs */
               let tw = 0; if (tt) { const rg = document.createRange(); rg.selectNodeContents(tt); tw = Math.ceil([...rg.getClientRects()].reduce((s, q) => s + q.width, 0)); if (tt.scrollWidth > tt.clientWidth) tw = Math.max(tw, tt.scrollWidth); }
               const head = tt ? Math.min(600, tw + ctl + pad + 16) : 0;
-              const want = Math.max(240, head, used + (c.offsetWidth - bdw.clientWidth) + 36); if (want < c.offsetWidth - 24 && (nw[key] == null || Math.abs(nw[key] - want) > 16)) { nw[key] = want; changed = true; } } } }
+              const want = this._natural(c.dataset.type, bdw.clientWidth, { used, side: c.offsetWidth - bdw.clientWidth, head }).w; if (want < c.offsetWidth - 24 && (nw[key] == null || Math.abs(nw[key] - want) > 16)) { nw[key] = want; changed = true; } } } }
         const bd = c.querySelector(':scope > .it-bd'); if (!bd || !bd.clientHeight) return;
         const B = bd.getBoundingClientRect(); let low = B.top;
         /* how far the content reaches: its leaves (text runs, images, controls), not the boxes that stretch to fill */
@@ -4722,7 +4758,7 @@
           const q = e.getBoundingClientRect(); if (q.height && q.width) low = Math.max(low, q.bottom); });
         const Z = c.offsetHeight ? (c.getBoundingClientRect().height / c.offsetHeight) || 1 : 1;
         const over = bd.scrollHeight > bd.clientHeight + 4;
-        const want = Math.max(96, Math.round(c.offsetHeight - bd.clientHeight + (low - B.top) / Z + 14));
+        const want = this._natural(c.dataset.type, bd.clientWidth, { low: (low - B.top) / Z, chrome: c.offsetHeight - bd.clientHeight }).h;
         /* fitted a little short (the body's own padding, a last line's descent): the overflow is added, not the fit dropped -
            dropping it let the card grow back and be measured again, round and round */
         if (over && nat[key] != null) { const more = bd.scrollHeight - bd.clientHeight;
@@ -5032,7 +5068,7 @@
            checklist"): lists, checklists, fields and single figures wrap short too; charts, tables and maps keep the room */
         const wf = c.dataset.type === 'widget' ? (() => { const cc = this._contentOf(key) || {}; return String(cc.form || cc.widget || (cc.record && cc.record.form) || (cc.draw && cc.draw.form) || '').replace(/@iso$/, ''); })() : '';
         const nw0 = (dive ? 460 : 0) || ({ entities: 460, note: 420, kv: 560, activity: 480, source: 560, loop: 560, session: 640 })[c.dataset.type || '']
-          || DESK_FORM_MAXW[wf];
+          || formMaxW(wf);
         /* ...and a text-like card no wider than its content measured (_deskFit, WSU-69) */
         const nwm = user || kind === 'chart' || kind === 'table' ? null : (this._natW || {})[key]; const nw = kind === 'chart' || kind === 'table' ? null : nwm ? Math.min(nw0 || Infinity, nwm) : (user ? null : nw0);
         /* ...and never shorter than its own face needs (WSU-70): a widget clipped in its card is measured (_deskFit) */
@@ -6282,8 +6318,13 @@
       body.addEventListener('mouseover', (ev) => hovTo(hovAt(ev)));
       body.addEventListener('mouseleave', () => hovTo(null));
       // the corner grip: a drag sizes the item; the drop saves it as the item's size (s · m · l · xl)
-      body.addEventListener('mousedown', (ev) => { const g = ev.target.closest && ev.target.closest('.rz'); if (!g) return; const it = g.closest('.it[data-key]'); if (!it) return;
-        ev.preventDefault(); ev.stopPropagation();
+      /* POINTER EVENTS (WSU-58 S8, B12; DEEP-29 11A.4 Decision 4.7): the grip, a card's head and a tab are pressed, carried and let
+         go by pointerdown / pointermove / pointerup (+ pointercancel), so a finger or a pen sizes and carries them as the mouse does;
+         the pointer is held (_ptrHold) while it carries. Every threshold and rule below is the mouse's as it was. A real mouse also
+         sends mouse events after its pointer events: they only stop the text selection (and, on the grip, the press reaching the
+         page) as before. A SYNTHETIC mouse event (isTrusted false: the probes and tests that dispatch MouseEvent) has no pointer
+         event before it, so it is forwarded to the same press, move and release. */
+      const rzPress = (ev) => { const g = ev.target.closest && ev.target.closest('.rz'); if (!g) return false; const it = g.closest('.it[data-key]'); if (!it) return false;
         // its height and width as they are NOW - read before 'sized' (which lets a drawing take the room) changes them
         const h0 = it.offsetHeight, w0 = it.offsetWidth; it.classList.add('sized', 'resizing');
         /* BOTH AXES. The grip's cursor has always said nwse-resize, but only clientY was ever read: the height
@@ -6299,21 +6340,33 @@
         /* on the desk the card you are sizing rides over the rest (owner, 2026-10-10: grown by its corner, "other panels
            can move partially behind it"): it and its graph are on top, with their ground, until it is let go */
         if (this.deskAlign() && root.VeraDesk) { this._holdStart(it.dataset.key); this._rzPlacedAt = 0;
-          it.style.zIndex = String(zOf('drag')); try { this._liveLayout(); } catch (e) { /* optional */ } } });
+          it.style.zIndex = String(zOf('drag')); try { this._liveLayout(); } catch (e) { /* optional */ } } return true; };
+      body.addEventListener('pointerdown', (ev) => { if (ev.isPrimary === false) return; if (rzPress(ev)) { this._rz.pid = ev.pointerId; this._ptrHold(ev); } });
+      body.addEventListener('mousedown', (ev) => { const g = ev.target.closest && ev.target.closest('.rz'); if (!g || !g.closest('.it[data-key]')) return;
+        ev.preventDefault(); ev.stopPropagation(); if (!ev.isTrusted) rzPress(ev); });
+      /* the pointer that pressed is the one that carries (a second finger is not the hand) */
+      const ptrOf = (st, ev) => !!st && (st.pid == null || ev.pointerId === st.pid);
       /* A TAB CARRIED OUT OF ITS CARD IS A CARD OF ITS OWN (DESK-ARRANGEMENT 7 principle 7, LV-6; owner 2026-10-17: "it should be easier to
          split a part of a composite element out to its own element"): a tab pressed and carried more than 28 px off its strip is taken
          out (its separate mark, as the menu's "take it out") and put where it is let go; a smaller move is still a click on the tab */
-      body.addEventListener('mousedown', (ev) => { const tab = ev.button === 0 && ev.target.closest && ev.target.closest('.cmp-tab[data-layer-key]'); if (!tab || ev.target.closest('.cmp-out') || !this.deskAlign()) return;
-        const strip = tab.parentElement; this._tabDrag = { key: tab.dataset.layerKey, tab, x0: ev.clientX, y0: ev.clientY, sr: strip ? strip.getBoundingClientRect() : null, out: false }; });
+      const tabPress = (ev) => { const tab = ev.button === 0 && ev.target.closest && ev.target.closest('.cmp-tab[data-layer-key]'); if (!tab || ev.target.closest('.cmp-out') || !this.deskAlign()) return;
+        const strip = tab.parentElement; this._tabDrag = { key: tab.dataset.layerKey, tab, x0: ev.clientX, y0: ev.clientY, sr: strip ? strip.getBoundingClientRect() : null, out: false, pid: ev.pointerId }; };
+      body.addEventListener('pointerdown', (ev) => { if (ev.isPrimary !== false) tabPress(ev); });
+      body.addEventListener('mousedown', (ev) => { if (!ev.isTrusted) tabPress(ev); });
       const tdoc = this.ownerDocument || document;   /* (the setup's own `doc` is declared further down) */
-      tdoc.addEventListener('mousemove', (ev) => { const d = this._tabDrag; if (!d) return;
+      const tabMove = (ev) => { const d = this._tabDrag; if (!d) return;
         const far = d.sr ? Math.max(d.sr.top - ev.clientY, ev.clientY - d.sr.bottom, d.sr.left - ev.clientX, ev.clientX - d.sr.right) : Math.hypot(ev.clientX - d.x0, ev.clientY - d.y0);
-        if (!d.out && far > 28) { d.out = true; d.tab.classList.add('tab-out'); } });
-      tdoc.addEventListener('mouseup', (ev) => { const d = this._tabDrag; this._tabDrag = null; if (!d) return; d.tab.classList.remove('tab-out'); if (!d.out) return;
+        /* carried out, the pointer is held (a press that stays a click on the tab is never held: its click is the tab's) */
+        if (!d.out && far > 28) { d.out = true; d.tab.classList.add('tab-out'); this._ptrHold(ev); } };
+      tdoc.addEventListener('pointermove', (ev) => { if (ptrOf(this._tabDrag, ev)) tabMove(ev); });
+      tdoc.addEventListener('mousemove', (ev) => { if (!ev.isTrusted) tabMove(ev); });
+      const tabUp = (ev) => { const d = this._tabDrag; this._tabDrag = null; if (!d) return; d.tab.classList.remove('tab-out'); if (!d.out) return;
         this._tabDragAt = Date.now(); const stg = this.shadowRoot.getElementById('stage'); this._histPush('cmpsep', d.key); this._joinSet(d.key, null); this._sepSet(d.key, true);
         if (stg) { const b = stg.getBoundingClientRect(), Z = stg.offsetWidth ? (b.width / stg.offsetWidth) || 1 : 1, W0 = stg.clientWidth || 1, H0 = stg.clientHeight || 1;
           const x = (ev.clientX - b.left) / Z, y = (ev.clientY - b.top) / Z; if (x > 0 && y > 0 && x < W0 && y < H0) this._deskPosSet(d.key, { fx: +(x / W0).toFixed(4), fy: +(y / H0).toFixed(4) }); }
-        (this._actAt = this._actAt || {})[d.key] = Date.now(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); });
+        (this._actAt = this._actAt || {})[d.key] = Date.now(); this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); };
+      ['pointerup', 'pointercancel'].forEach((t) => tdoc.addEventListener(t, (ev) => { if (ptrOf(this._tabDrag, ev)) tabUp(ev); }));
+      tdoc.addEventListener('mouseup', (ev) => { if (!ev.isTrusted) tabUp(ev); });
       /* MOVING A CARD ON THE DESK (owner-approved desk, 2026-10-06: "as you drag them in they become big enough to glance
          at"). Its header is the handle; past 4 px it follows the pointer, sized live by its distance from the chat and
          stacked on top; let go, it stays there (a share of the desk, per canvas). A double click on the header gives it
@@ -6324,17 +6377,19 @@
         /* a card filling the room (maximised, or reading) is a handle too: carried, it goes back to the desk (see below) */
         if (it && it.dataset.deskFace === 'layer-front' && this._max === it.dataset.key) return it;
         if (!it || it.dataset.deskFace === 'layer-behind' || it.dataset.deskFace === 'layer-front' || it.classList.contains('desk-locked')) return null; return it; };
-      body.addEventListener('mousedown', (ev) => { const it = deskHandle(ev); if (!it) return;
+      const dgPress = (ev) => { const it = deskHandle(ev); if (!it) return;
         const st = this.shadowRoot.getElementById('stage'); if (!st) return;
-        ev.preventDefault();   /* a card carried by its header does not select the text it passes over */
         /* FROM FULL BACK TO THE DESK BY CARRYING IT (owner, 2026-10-11: "id like to be able to move items from fully expanded
            back to the desk by moving them"): a press on a filling card's header waits for the hand to move; then the card
            is restored and picked up under the hand, and goes where it is let go */
-        if (it.dataset.deskFace === 'layer-front') { this._dgMax = { key: it.dataset.key, x0: ev.clientX, y0: ev.clientY }; return; }
+        if (it.dataset.deskFace === 'layer-front') { this._dgMax = { key: it.dataset.key, x0: ev.clientX, y0: ev.clientY, pid: ev.pointerId }; return; }
         const S0 = st.getBoundingClientRect(), Z = st.offsetWidth ? (S0.width / st.offsetWidth) || 1 : 1;
         this._dg = { el: it, key: it.dataset.key, x0: ev.clientX, y0: ev.clientY, Z,
           sx: (ev.clientX - S0.left) / Z, sy: (ev.clientY - S0.top) / Z, w0: it.offsetWidth || 1, h0: it.offsetHeight || 1,
-          cx0: (parseFloat(it.style.left) || 0) + it.offsetWidth / 2, cy0: (parseFloat(it.style.top) || 0) + it.offsetHeight / 2, moved: false }; });
+          cx0: (parseFloat(it.style.left) || 0) + it.offsetWidth / 2, cy0: (parseFloat(it.style.top) || 0) + it.offsetHeight / 2, moved: false, pid: ev.pointerId }; };
+      body.addEventListener('pointerdown', (ev) => { if (ev.isPrimary !== false) dgPress(ev); });
+      /* a card carried by its header does not select the text it passes over */
+      body.addEventListener('mousedown', (ev) => { if (!deskHandle(ev) || !this.shadowRoot.getElementById('stage')) return; ev.preventDefault(); if (!ev.isTrusted) dgPress(ev); });
       /* A DOUBLE CLICK ON A CARD'S HEAD EXPANDS IT (DESK-ARRANGEMENT 7 principle 9, LV-8; owner 2026-10-17: "if i double click a top-bar of an
          element can it auto expand to take up the available space and push the other elements around it - then if i double click the top
          of another can the last enlarged one give way to it and let the new one expand into that same space"). See _expandToggle. Back to
@@ -6343,7 +6398,7 @@
       /* a click that ends a drag is not a click on what was under it */
       body.addEventListener('click', (ev) => { if (Date.now() - (this._dgEnd || 0) < 250) { ev.stopPropagation(); ev.preventDefault(); } }, true);
       const doc = this.ownerDocument || document;
-      doc.addEventListener('mousemove', (ev) => {
+      const dgMove = (ev) => {
         const m = this._dgMax;
         if (m) { if (Math.abs(ev.clientX - m.x0) + Math.abs(ev.clientY - m.y0) < 8) return; this._dgMax = null;
           if (this._autoMax === m.key) this._autoMax = null; if (this._max === m.key) this._toggleMax(m.key);
@@ -6351,7 +6406,7 @@
           const S = st.getBoundingClientRect(), Z = st.offsetWidth ? (S.width / st.offsetWidth) || 1 : 1;
           /* the card's header under the hand: its centre is half its height below the pointer */
           const px = (ev.clientX - S.left) / Z, py = (ev.clientY - S.top) / Z;
-          this._dg = { el, key: m.key, x0: ev.clientX, y0: ev.clientY, Z, sx: px, sy: py, w0: el.offsetWidth || 1, h0: el.offsetHeight || 1, cx0: px, cy0: py + Math.max(20, el.offsetHeight / 2 - 16), moved: false };
+          this._dg = { el, key: m.key, x0: ev.clientX, y0: ev.clientY, Z, sx: px, sy: py, w0: el.offsetWidth || 1, h0: el.offsetHeight || 1, cx0: px, cy0: py + Math.max(20, el.offsetHeight / 2 - 16), moved: false, pid: m.pid };
           return; }
         const d = this._dg; if (!d) return;
         const dx = (ev.clientX - d.x0) / d.Z, dy = (ev.clientY - d.y0) / d.Z;
@@ -6362,7 +6417,7 @@
           /* a pill opened as a window (_winOpen) and carried: it goes on as a card at the window's size, which the desk
              tiles where it is let go, or keeps a window there if there is no room (window mode, _placeDesk) */
           if (this._wins && this._wins.delete(d.key)) { d.winOwn = { w: d.w0, h: d.h0, face: 'card' }; d.el.classList.remove('desk-win'); }
-          this._holdStart(d.key); }
+          this._holdStart(d.key); this._ptrHold(ev); }
         ev.preventDefault();
         const g = this._deskGeo, D = root.VeraDesk; if (!g || !D) return;
         /* BY THE HAND, NOT THE CARD'S MIDDLE (review 2026-10-15 U3): what a carried card is - a pill, a card, full - and its
@@ -6411,8 +6466,10 @@
         if (face !== cur || !d.el.dataset.deskFace) { d.el.classList.toggle('desk-chip', face === 'chip'); d.el.classList.remove('desk-icon'); d.el.dataset.deskFace = face; }
         d.el.style.left = Math.round(cx - w / 2) + 'px'; d.el.style.top = Math.round(cy - h / 2) + 'px';
         d.el.style.setProperty('width', w + 'px', 'important'); d.el.style.setProperty('height', h + 'px', 'important');
-        try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(500); });
-      doc.addEventListener('mouseup', () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null; this._handAt = Date.now(); this._handKey = d.key;
+        try { this._liveLayout(); } catch (e) { /* optional */ } this._liveFollow(500); };
+      doc.addEventListener('pointermove', (ev) => { if (ptrOf(this._dgMax || this._dg, ev)) dgMove(ev); });
+      doc.addEventListener('mousemove', (ev) => { if (!ev.isTrusted) dgMove(ev); });
+      const dgUp = () => { this._dgMax = null; const d = this._dg; if (!d) return; this._dg = null; this._handAt = Date.now(); this._handKey = d.key;
         if (!d.moved) return;
         this._dgEnd = Date.now(); d.el.classList.remove('desk-dragging');
         /* what was just carried is the last touched: on top (the press gave it focus; the drag held it at the drag's z) */
@@ -6452,8 +6509,10 @@
             if (this._pillGet()[d.key]) this._pillSet(d.key, false); }
         }
         (this._actAt = this._actAt || {})[d.key] = Date.now();   /* the last touched becomes the window if two meet */
-        this._placeNow(); });
-      doc.addEventListener('mousemove', (ev) => { const r = this._rz; if (!r) return;
+        this._placeNow(); };
+      ['pointerup', 'pointercancel'].forEach((t) => doc.addEventListener(t, (ev) => { if (ptrOf(this._dgMax || this._dg, ev)) dgUp(); }));
+      doc.addEventListener('mouseup', (ev) => { if (!ev.isTrusted) dgUp(); });
+      const rzMove = (ev) => { const r = this._rz; if (!r) return;
         const h = Math.max(40, r.h0 + (ev.clientY - r.y0) / (r.Z || 1)); r.h = h; r.el.style.height = h + 'px';
         const w = Math.max(120, r.w0 + (ev.clientX - r.x0) / (r.Z || 1)); r.w = w; r.el.style.width = w + 'px';
         r.el.classList.add('openin');
@@ -6467,8 +6526,10 @@
           const now = Date.now();
           if (now - (this._rzPlacedAt || 0) >= 90) { this._rzPlacedAt = now; try { this._placeNow(); } catch (e) { /* optional */ } }
           clearTimeout(this._rzPlaceT); this._rzPlaceT = setTimeout(() => { if (this._rz === r) { this._rzPlacedAt = Date.now(); try { this._placeNow(); } catch (e) { /* optional */ } } }, 100); }
-        else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); });
-      doc.addEventListener('mouseup', () => { const r = this._rz; if (!r) return; this._rz = null; this._handAt = Date.now(); this._handKey = r.key; r.el.classList.remove('resizing'); this._rzT = Date.now();
+        else if (!r.raf) r.raf = requestAnimationFrame(() => { r.raf = 0; if (this.hasAttribute('stage')) this._placeNow(); }); };
+      doc.addEventListener('pointermove', (ev) => { if (ptrOf(this._rz, ev)) rzMove(ev); });
+      doc.addEventListener('mousemove', (ev) => { if (!ev.isTrusted) rzMove(ev); });
+      const rzUp = () => { const r = this._rz; if (!r) return; this._rz = null; this._handAt = Date.now(); this._handKey = r.key; r.el.classList.remove('resizing'); this._rzT = Date.now();
         const key = r.key; this._px[key] = r.h; this._pw[key] = r.w; this._open.add(key);
         /* a window let go after a resize is decided again: made small enough to fit, it is a card on the desk again (owner
            2026-10-16: "you cant shrink it again so that it goes back to default mode"); still no room, a window at the new size */
@@ -6504,7 +6565,9 @@
         /* placed now, at the size let go: a change of size class is saved through the server, and waiting for its refresh
            left the desk as it was mid-drag (on the desk it is placed in any case) */
         if (this.deskAlign() && this.hasAttribute('stage')) { clearTimeout(this._rzPlaceT); this._rzLetGo = key; try { this._placeNow(); } catch (e) { /* optional */ } finally { this._rzLetGo = null; } }
-        if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage') && !this.deskAlign()) this._placeNow(); });
+        if (size !== r.el.dataset.size) this._setSize(key, size); else if (this.hasAttribute('stage') && !this.deskAlign()) this._placeNow(); };
+      ['pointerup', 'pointercancel'].forEach((t) => doc.addEventListener(t, (ev) => { if (ptrOf(this._rz, ev)) rzUp(); }));
+      doc.addEventListener('mouseup', (ev) => { if (!ev.isTrusted) rzUp(); });
       // a picker's search box: the rows that do not carry the words are hidden, a group with none left with them
       /* THE CALENDAR'S EVENTS CARRIED AND ADDED (DU-E-calendar). A press on an event (its dot in the grid, its row in the
          list) that moves past 4 px carries it: the event dims and the day under the pointer lights, in place, no redraw;
@@ -7916,9 +7979,9 @@
        the live layer follows, and the stage places again — the item grew */
     _diagramGrew(key, inner) {
       const body = this.shadowRoot.getElementById('body'); const h = body && body.querySelector('#items .vc-live[data-key="' + String(key).replace(/"/g, '\\"') + '"]'); if (!h || !inner || typeof inner.naturalHeight !== 'function') return;
-      const w = h.getBoundingClientRect().width || 300; const nat = inner.naturalHeight(w); if (!nat) return;
-      const dh = Math.max(60, Math.round(nat)) + 'px'; if (h.style.getPropertyValue('--dh') === dh) return;
-      h.style.setProperty('--dh', dh); h.dataset.natural = String(Math.round(nat));
+      const w = h.getBoundingClientRect().width || 300; const nat = this._natural('diagram', w, { draw: inner }); if (!nat.h) return;
+      const dh = nat.h + 'px'; if (h.style.getPropertyValue('--dh') === dh) return;
+      h.style.setProperty('--dh', dh); h.dataset.natural = String(nat.drawn);
       requestAnimationFrame(() => { this._liveLayout(); if (this.hasAttribute('stage')) this._placeNow(); });
     }
     /* ── the widget's face has a width of its own: the CARD takes it ──────────────────────────────────────────
@@ -7931,9 +7994,9 @@
       const body = this.shadowRoot.getElementById('body');
       const h = body && body.querySelector('#items .vc-live[data-key="' + String(key).replace(/"/g, '\\"') + '"]');
       if (!h || !inner || typeof inner.naturalWidth !== 'function') return;
-      let nw = 0; try { nw = inner.naturalWidth() || 0; } catch (e) { nw = 0; }
+      const nw = this._natural('widget', 0, { face: inner }).w || 0;   /* (any width: a face has its own) */
       const was = h.dataset.natw || '';
-      const now = nw > 0 ? String(Math.round(nw)) : '';
+      const now = nw > 0 ? String(nw) : '';
       if (was === now) return;
       if (now) h.dataset.natw = now; else delete h.dataset.natw;
       if (this.hasAttribute('stage')) requestAnimationFrame(() => { if (this.hasAttribute('stage')) this._placeNow(); });
@@ -8719,7 +8782,7 @@
     }
   }
 
-  const api = { divesOf, modelDivesOf, diveText, diveStrip, MODEL_DIVES, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
+  const api = { NATURAL, NAT, divesOf, modelDivesOf, diveText, diveStrip, MODEL_DIVES, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

@@ -2991,7 +2991,13 @@
      structured graph is the Explode contract. They are marked here so the lists people and models pick from can
      leave them out; offered as a menu choice, one gets picked for an ordinary chart and draws its empty state. */
   const DERIVED = new Set(['structgraph']);
-  function forms() { return Object.keys(DRAWN).map((id) => ({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, derived: DERIVED.has(id), iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
+  /* THE WIDEST A CARD OF THE FORM IS ON THE DESK, in px (WSU-69; WSU-58 S8, DEEP-29 11A.4 Decision 5.3 - it was the canvas element's
+     DESK_FORM_MAXW, now the catalogue's maxW per form): lists, checklists, fields, notices and single figures wrap short; wider was an
+     empty band. Charts, tables, maps, graphs and calendars have none. The python catalogue (widget_record.DESK_MAXW) holds the same. */
+  const FORM_MAXW = { checklist: 420, list: 440, links: 440, notices: 460, people: 460, kv: 520, pills: 480, string: 460, announcement: 460,
+    counter: 380, hero: 400, ring: 360, radial: 360, dial: 360, gauge: 420, meter: 420, level: 380, glance: 460, numbers: 520, status: 480, stepper: 640, files: 520 };
+  const withMaxW = (f) => (FORM_MAXW[f.id] ? Object.assign(f, { maxW: FORM_MAXW[f.id] }) : f);
+  function forms() { return Object.keys(DRAWN).map((id) => withMaxW({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, derived: DERIVED.has(id), iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
   const ISO_ONLY = new Set(['dial', 'tank', 'stacks', 'conveyor', 'city', 'shelf', 'stack', 'sweep', 'meter-panel', 'pipes', 'library', 'pages', 'approvals', 'wiki', 'notices', 'devices', 'notebook', 'hosts', 'containers', 'models', 'datasets', 'sandboxes', 'activity', 'frame', 'racks']);
 
   /* ══ THE IMAGE STUDIO'S FORMS (owner, 2026-09-27: "can we have a widget for displaying sprites and characters and images
