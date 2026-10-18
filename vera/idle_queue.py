@@ -224,6 +224,30 @@ def stranded(jobs: Optional[Iterable[Dict[str, Any]]],
             and str(j.get("id")) not in live]
 
 
+def duplicates(jobs: Optional[Iterable[Dict[str, Any]]]) -> List[str]:
+    """Ids of WAITING jobs that repeat the dedupe key of an older live job - the copies to drop.
+
+    `submit` refuses a key that is already waiting or running, yet on 18 Oct 2026 prod held twelve waiting
+    "agent knowledge re-index" jobs under one key (`embed:agent_rag`, enqueued hourly over 157 h) and the
+    backlog window ran each one (~146 s apiece). Two ways past the check: a failed read of the store looks
+    like an empty queue, and two processes on the same hourly timer can both check before either writes.
+    So the runner also collapses copies: per key it keeps the running job, else the oldest waiting one
+    (its place in the line), and drops the newer waiting copies. Jobs without a key are never touched.
+    """
+    live = [j for j in (jobs or []) if isinstance(j, dict) and j.get("dedupe_key")
+            and j.get("state") in (WAITING, RUNNING)]
+    live.sort(key=lambda j: (0 if j.get("state") == RUNNING else 1, j.get("enqueued_at") or 0))
+    seen, out = set(), []
+    for j in live:
+        k = j["dedupe_key"]
+        if k in seen:
+            if j.get("state") == WAITING:
+                out.append(str(j.get("id")))
+        else:
+            seen.add(k)
+    return out
+
+
 def requeue_stranded(job: Optional[Dict[str, Any]], now: Any = 0) -> Dict[str, Any]:
     """A stranded job, back on the queue.
 

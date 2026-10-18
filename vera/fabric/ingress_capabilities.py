@@ -93,6 +93,7 @@ async def _refresh() -> None:
     try:
         eff = await _call("minds.effective")
         modes = (eff or {}).get("modes") or {}
+        _SW["modes"] = dict(modes)
         m = str(modes.get(SWITCH) or "off")
         _SW["mode"] = m if m in ("off", "meta", "on") else "off"
         _SW["throttle"] = "on" if str(modes.get(SWITCH_THROTTLE) or "off") == "on" else "off"
@@ -172,6 +173,13 @@ def dedupe_on() -> bool:
 def defer_on() -> bool:
     mode()
     return _SW["defer"] == "on"
+
+
+def switch(feature_id: str, default: str = "off") -> str:
+    """Any switch's mode from the cached global read (refreshed every SWITCH_TTL_S): for callers on a hot path that
+    must not call minds.effective themselves."""
+    mode()
+    return str((_SW.get("modes") or {}).get(feature_id) or default)
 
 
 def read_files_on() -> bool:

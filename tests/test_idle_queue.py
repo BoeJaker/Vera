@@ -391,3 +391,17 @@ def test_a_narration_waiting_is_offered_the_box_before_a_loop_program():
             {"id": "n", "kind": Q.KIND_NARRATOR, "state": Q.WAITING,
              "enqueued_at": 5, "priority": Q.KIND_PRIORITY[Q.KIND_NARRATOR]}]
     assert Q.next_job(jobs, "")["id"] == "n"
+
+
+def test_duplicates_keeps_the_running_or_oldest_copy_of_a_key():
+    """18 Oct 2026: twelve waiting "agent knowledge re-index" jobs under one dedupe key."""
+    jobs = [{"id": "a", "state": Q.WAITING, "dedupe_key": "embed:agent_rag", "enqueued_at": 30},
+            {"id": "b", "state": Q.WAITING, "dedupe_key": "embed:agent_rag", "enqueued_at": 10},
+            {"id": "c", "state": Q.WAITING, "dedupe_key": "embed:agent_rag", "enqueued_at": 20},
+            {"id": "r", "state": Q.RUNNING, "dedupe_key": "embed:fabric:x", "enqueued_at": 50},
+            {"id": "w", "state": Q.WAITING, "dedupe_key": "embed:fabric:x", "enqueued_at": 5},
+            {"id": "y", "state": Q.WAITING, "dedupe_key": "embed:fabric:y", "enqueued_at": 5},
+            {"id": "n1", "state": Q.WAITING, "enqueued_at": 1}, {"id": "n2", "state": Q.WAITING, "enqueued_at": 2},
+            {"id": "d", "state": Q.DONE, "dedupe_key": "embed:fabric:y", "enqueued_at": 1}]
+    assert sorted(Q.duplicates(jobs)) == ["a", "c", "w"]     # b is the oldest; r runs; no key, no touch
+    assert Q.duplicates([]) == [] and Q.duplicates(None) == []

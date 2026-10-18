@@ -209,6 +209,10 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "back known go down, hosts that keep yielding new content go up, about +-0.15), and the top 2 links queued per "
        "page are recorded as discovery.collect_worth decisions with what their score was made of.",
        owner="web-ingress"),
+    _f("web.search.prefetch", ("off", "on"), "web", "WI-13",
+       "After a web.search, read its top 3 results into the reader cache in the background, one at a time (a URL "
+       "already cached costs nothing): the fetch or read that usually follows a search is then instant. 'off' "
+       "(default) = no prefetch.", owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),
