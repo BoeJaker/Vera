@@ -1368,18 +1368,24 @@
  },
  "dream.history": {
   "draw": {
+   "attrs": {
+    "auto": "30",
+    "scope": "dream"
+   },
    "columns": [
     "label",
     "title",
     "started_at",
     "signal"
-   ]
+   ],
+   "tag": "vera-activity-timeline"
   },
-  "form": "table",
+  "form": "element",
   "kind": "table",
   "map": {
    "rows": "history"
-  }
+  },
+  "title": "Dream cycles"
  },
  "dream.journal.list": {
   "draw": {

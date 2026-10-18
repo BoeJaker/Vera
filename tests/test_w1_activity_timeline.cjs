@@ -14,4 +14,6 @@ const mk = (data, args) => new Function('rec', src + '; return fillAttr;')({ dat
 t('{field} is the answer field; a plain value stays; a missing field leaves the attribute out', mk({ scope: 'project:x' })('{scope}') === 'project:x' && mk({ scope: 'all' })('15') === '15' && mk({})('{scope}') === '' && mk([1])('{scope}') === '');
 t("...else the call's argument of that name (intel.timeline.get's topic_id); the answer's field wins", mk({ days: [] }, { topic_id: 't7' })('{topic_id}') === 't7' && mk({ scope: 'a' }, { scope: 'b' })('{scope}') === 'a' && mk({}, {})('{days}') === '');
 t('an answer field that is a list or a record is not an attribute: the argument is (intel.timeline.get days)', mk({ days: [{ date: 'x' }] }, { days: 30 })('{days}') === '30' && mk({ days: { a: 1 } }, {})('{days}') === '');
+const DH = JSON.parse(R('tests/fixtures/presentation_declared.json'))['dream.history'] || {};
+t('dream.history opens as the Activity timeline on its dream scope (the table a view)', DH.form === 'element' && DH.draw && DH.draw.tag === 'vera-activity-timeline' && DH.draw.attrs && DH.draw.attrs.scope === 'dream');
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);
