@@ -568,8 +568,9 @@ def queue_position(order: Sequence[Tuple[str, float, int]], token: str, exclude:
 
 
 def node_share(position: int, free_slots: int) -> int:
-    """How many of the free node slots this gate takes now: the oldest takes all it can use; each next gate one, while
-    slots remain - so a gate never starves behind the head, and the head is never starved by the rest."""
+    """How many of the free node slots this gate takes now: the oldest asks for all it can use; each next gate asks for
+    one. Gates read the free slots independently in the same round, so the asks can add up to more than are free -
+    node admission (run_on_node reserves in the same step as its pick) is what caps them (vera-d2's review)."""
     if free_slots <= 0:
         return 0
     if position == 0:
@@ -584,6 +585,10 @@ def node_share(position: int, free_slots: int) -> int:
 #: a change to any of these runs the full tier
 IMPACT_FULL = ("vera/capability_orchestration.py", "tests/conftest.py", "conftest.py", "requirements", "pytest.ini",
                "setup.cfg", "pyproject.toml", "vera/__init__.py", "tests/__init__.py")
+#: a test that scans the whole tree (every capability, every module) never names the module it guards, so it is
+#: always run - vera-d2's review, 18 Oct 2026: test_inference_is_gated, test_emit_event_arity,
+#: test_capability_decorator_binding ... would otherwise let an ungated LLM call anywhere pass its adopt gate
+_TREE_SCAN_RE = re.compile(r"\bos\.walk\(|\.rglob\(|\bglob\.i?glob\(|\.glob\(\s*[\"'][^\"']*\*\*")
 #: above this share of all files, the selection is not worth it: run the full tier
 IMPACT_MAX_SHARE = 0.6
 #: how many steps out from a changed module its importers count
@@ -668,7 +673,7 @@ def impact_select(test_files: Sequence[str], changed: Sequence[str], test_text: 
             picked.append(f)
             continue
         txt = test_text.get(f) or ""
-        if rx is not None and rx.search(txt):
+        if (rx is not None and rx.search(txt)) or _TREE_SCAN_RE.search(txt):
             picked.append(f)
     if not picked:
         return files, "full tier: no test names the change (safe default)"

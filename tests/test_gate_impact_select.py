@@ -79,3 +79,14 @@ def test_a_hub_that_looks_a_module_up_does_not_spread_its_change_everywhere():
                               "vera/census/census_capabilities.py": "", "vera/x/user.py": "import capability_orchestration"})
     names = tr.affected_names(["vera/census/census_capabilities.py"], idx)
     assert "capability_orchestration" not in names and "user" not in names
+
+
+def test_tests_that_scan_the_whole_tree_always_run():
+    # vera-d2's review: these guard every module but name none
+    texts = dict(TESTS, **{"test_inference_is_gated.py": "for d, _, fs in os.walk(ROOT / 'vera'):\n    pass\n",
+                          "test_decorators.py": "for p in (ROOT / 'vera').rglob('*.py'):\n    pass\n",
+                          "test_globbed.py": "import glob\nfiles = glob.glob('vera/**/*.py', recursive=True)\n"})
+    files = sorted(texts)
+    picked, _ = tr.impact_select(files, ["vera/evolve/evolve_panel.html"], texts, IDX, max_share=1.0)
+    assert {"test_inference_is_gated.py", "test_decorators.py", "test_globbed.py"} <= set(picked)
+    assert "test_unrelated.py" not in picked
