@@ -179,6 +179,20 @@ HOST_BOUND_CAPS.update({
     "memory.dual_write.rollback_rehearse": _MEMORY_REVISION_STATE,
 })
 
+#: The switchboard validates against the switch REGISTRY in the code that runs it. A node worker runs the code it was
+#: last deployed with, so a switch added in a release is unknown there until the next worker deploy: on 18 Oct 2026
+#: minds.switch.set answered "unknown ids: discovery.read_files" from a worker and minds.effective listed the switch
+#: as ignored, so the ingress module's 15 s switch read flipped a just-released feature on and off by whichever
+#: process answered. The global layer is in Redis either way; the registry must be the host's.
+_SWITCH_REGISTRY = "validates against the host's switch registry (a worker's code may predate a new switch)"
+HOST_BOUND_CAPS.update({
+    "minds.switch.list": _SWITCH_REGISTRY,
+    "minds.switch.get": _SWITCH_REGISTRY,
+    "minds.switch.set": _SWITCH_REGISTRY,
+    "minds.validate": _SWITCH_REGISTRY,
+    "minds.effective": _SWITCH_REGISTRY,
+})
+
 #: The memory performance log (four-minds FM-7.9) reads this process's timing windows and git provenance: on a
 #: worker memory.perf.versions reported no running sha (17 Oct 2026), and compare's default head would have been "".
 _PERF_STATE = "reads the host process's timing windows and provenance"
