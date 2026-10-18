@@ -82,3 +82,12 @@ def test_tap_writes_only_when_on(monkeypatch):
     assert seen == []
     asyncio.run(go(True))
     assert len(seen) == 1 and seen[0][0] == SC.STREAM and seen[0][1]["answer"] == "research"
+
+
+
+def test_the_capture_switch_is_refreshed_in_every_process():
+    # 18 Oct: as a singleton the refresh ran in the scheduler leader only and the serving processes never captured
+    src = open(os.path.join(ROOT, "vera", "minds", "site_tap.py"), encoding="utf-8").read()
+    line = next(l for l in src.splitlines() if l.startswith("schedule(_refresh_mode"))
+    assert "singleton=True" not in line
+    assert '_orch.start_at_import(_refresh_mode, "decide_site_capture_mode_first")' in src
