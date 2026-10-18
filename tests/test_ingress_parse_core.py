@@ -117,3 +117,23 @@ def test_a_deferred_crawl_runs_one_entity_pass_and_switches_stay_fresh():
     assert "post_entities=False" in disc[i:i + 400]
     ing_caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
     assert 'schedule(_refresh_tick, SWITCH_TTL_S, name="ingress.switches"' in ing_caps and "singleton=False" in ing_caps
+
+
+
+def test_media_files_become_t3_jobs_behind_a_switch():
+    j = pc.t3_media_job("web.gaps", "f_1", "https://m.example/chart.png", "describe", "image", title="chart.png")
+    assert j["kind"] == pc.T3_MEDIA_KIND and j["dedupe_key"] == "discovery.t3media:https://m.example/chart.png"
+    assert j["payload"] == {"dataset_id": "web.gaps", "rid": "f_1", "url": "https://m.example/chart.png", "op": "describe",
+                            "reader": "image"}
+    assert pc.media_text("describe", {"text": "A  bar chart of rents"}) == "Image: A bar chart of rents"
+    assert pc.media_text("transcribe", {"text": "hello"}) == "Transcript: hello"
+    assert pc.media_text("describe", {"error": "no model"}) == "" and pc.media_text("describe", {}) == ""
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    i = src.index('_ingress_switch("discovery.media_t3") == "on"')
+    assert "_submit_t3_media(" in src[i:i + 400]
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_t3_media_handler")
+    seg = ast.get_source_segment(src, fn)
+    assert "should_continue" in seg and "MEDIA_MAX_BYTES" in seg and "hooked_client" in seg
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["discovery.media_t3"].default == "off"
