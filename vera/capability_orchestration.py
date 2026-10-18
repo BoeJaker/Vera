@@ -12660,6 +12660,9 @@ async def lifespan(app: FastAPI):
         # The prod release, gated on the census (merge + restart only when no
         # census goal is in flight, or forced).
         os.path.join(_here, "evolve/release_capabilities.py"),
+        # Models and Performance in Loop Lab (owner, 18 Oct 2026): reads bench/, ollama, minds/, census/ and the
+        # releases view above, so it comes after all of them.
+        os.path.join(_here, "evolve/models_perf_capabilities.py"),
         # One task through time: reads the census archive AND the suite's run
         # records, so it must come after both census/ and evolve/ above.
         os.path.join(_here, "evolve/task_history_capabilities.py"),
