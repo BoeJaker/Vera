@@ -2477,6 +2477,11 @@
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .band-h > *,
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .chips > *,
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body .addbar,
+  /* WSU-100 - THE LIVE LAYER TAKES THE POINTER TOO (owner 2026-10-18, Chrome, the pointer monitor: every press on a panel page, the markets
+     chart, a node graph or a widget landed on its card's .vc-live slot underneath, with the arrow cursor - "none of those clicks did
+     anything"). With the graph layer behind the desk the body is pointer-events:none and only the cards were given it back; the live
+     elements (#live .lv) sit in that body beside the cards, not in them, so they inherited none and the pointer went through them. */
+  :host([align="desk"]:not([desk-narrow])[back="behind"]) .body #live > .lv,
   :host([align="desk"]:not([desk-narrow])[back="behind"]) .body :is(button,a,input,select,textarea){pointer-events:auto}
   .stage .it.capped{overflow:hidden}
   .stage .it.capped .it-bd{max-height:none;overflow:auto}
