@@ -510,6 +510,11 @@ html.vpb-nav-hosted body{padding-left:0}
     <div id="olv-tl-host"><div class="hint">loading the timeline&hellip;</div></div>
     <vera-drill class="olv-drill" id="olv-drill" url></vera-drill>
   </div>
+  <!-- P-SUMMON (looplab-control W1, owner 18 Oct: "the user could type in what widget htey want i.e. board and it could
+       enter the dash ... if they cleear the search it goes"): the dashboard system's own summon box, on an empty tray -->
+  <div class="card" id="olv-summon">
+    <vera-dashboard layout="looplab-summon" storage="looplab-overview-summon" summon="Summon a widget… (board, commit graph, census, models)" title="Summon" no-popout></vera-dashboard>
+  </div>
 </div>
 
 <div class="sec" id="sec-compare" style="display:none">
@@ -1310,6 +1315,7 @@ async function loadComparePage(){
   try{await Promise.all([_olvScript(),_olvLib('vera-compare.js',()=>window.VeraCompare&&customElements.get('vera-compare'))])}
   catch(e){const c=$('cmp');if(c)c.innerHTML='<div class="hint">compare did not load: '+esc(e.message)+'</div>';return}
   if(_olvOn==null)_olvLoad();OLV_LANES.forEach(L=>VeraTimeline.registerLane(_olvSpec(L)));_olvKit();   // pinned lane ids resolve
+  const cmp=$('cmp');if(cmp&&!cmp._dropToast){cmp._dropToast=true;cmp.addEventListener('compare:dropped',e=>toast(e.detail.pins.length?'pinned '+e.detail.pins.length+' lane(s)':e.detail.why))}
 }
 /* pin to Compare (K4): a pin carries its lane RECORD, so Compare re-reads it from its own source after a reload */
 async function olvPin(kind,laneId,item){
