@@ -83,3 +83,16 @@ def test_a_numpy_like_array_survives_the_fetch_shape():
     assert len(got) == 2
     with pytest.raises(ValueError):
         _ = embs or []
+
+
+
+def test_the_event_worker_encodes_only_allow_listed_datasets():
+    src = open(os.path.join(ROOT, "vera", "worldview", "worldview_jepa.py"), encoding="utf-8").read()
+    assert '"datasets":          ["web.worldview_seeds"],' in src
+    worker = src[src.index("async def _wv_stream_worker("):src.index('"worldview.stream.start"')]
+    i = worker.index('dataset_id = ev.get("dataset_id", "")')
+    block = worker[i:i + 700]
+    assert "if allowed and dataset_id not in allowed:" in block and '"dataset_not_allowed"' in block
+    assert block.index("await redis.xack(stream, group, msg_id)") < block.index("continue")
+    start = src[src.index("async def cap_worldview_stream_start("):src.index('"worldview.stream.stop"')]
+    assert 'datasets:          List[str] = None,' in start and '_STREAM_STATS["datasets"] = [d for d in datasets if d]' in start

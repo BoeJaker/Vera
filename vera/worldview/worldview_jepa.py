@@ -6242,7 +6242,11 @@ _STREAM_STATS: Dict[str, Any] = {
     # the ids waiting for their embedding (deferred embedding writes the vector after the event)
     "fabric_events":     {},
     "skipped":           {"already_indexed": 0, "not_embedded": 0, "dim_mismatch": 0, "model_not_ready": 0,
-                          "chroma_unavailable": 0, "nothing_fetched": 0, "fetch_error": 0},
+                          "chroma_unavailable": 0, "nothing_fetched": 0, "fetch_error": 0,
+                          "dataset_not_allowed": 0},
+    # FM-8.3: the worldview is a curated corpus - the worker encodes only these datasets' events (no self-telemetry);
+    # worldview.stream.start(datasets=[...]) sets them. Same default as worldview.catchup.
+    "datasets":          ["web.worldview_seeds"],
     "retry_pending":     0,
     "retried_encoded":   0,
 }
@@ -6567,6 +6571,12 @@ async def _wv_stream_worker():
                                 fe = _STREAM_STATS.setdefault("fabric_events", {})
                                 fe[etype] = fe.get(etype, 0) + 1
                                 dataset_id = ev.get("dataset_id", "")
+                                allowed = _STREAM_STATS.get("datasets") or []
+                                if allowed and dataset_id not in allowed:
+                                    skd = _STREAM_STATS.setdefault("skipped", {})
+                                    skd["dataset_not_allowed"] = skd.get("dataset_not_allowed", 0) + 1
+                                    await redis.xack(stream, group, msg_id)
+                                    continue
                                 # Accept event even without explicit count —
                                 # many fabric events don't carry one
                                 record_ids = ev.get("record_ids") or ev.get("ids") or []
@@ -6644,6 +6654,7 @@ async def cap_worldview_stream_start(
     event_filters:     List[str] = None,
     dynamics_interval: int = 60,
     batch_size:        int = 64,
+    datasets:          List[str] = None,
     trace_id=None,
 ) -> Dict:
     global _STREAM_ENABLED, _STREAM_TASK
@@ -6655,6 +6666,8 @@ async def cap_worldview_stream_start(
 
     if event_filters:
         _STREAM_STATS["event_filters"] = event_filters
+    if datasets:
+        _STREAM_STATS["datasets"] = [d for d in datasets if d]
     _STREAM_STATS["dynamics_interval"] = max(10, dynamics_interval)
     _STREAM_STATS["batch_size"] = max(1, min(500, batch_size))
 
