@@ -129,6 +129,58 @@ def reserved_now(res: Optional[Dict[str, Any]], metrics_at: float, scope: str = 
     return cpu, float(res.get("mem_gb", 0.0))
 
 
+#: Work a NODE takes for itself (P0d, 18 Oct 2026): a class-stream task (ingress.fetch.batch on vera:tasks:cls:crawl)
+#: is read by whichever idle worker gets it, so the host cannot reserve for it. The worker writes its own reservation
+#: into a hash per node - field = task id, value = extra_entry(...) - and HDELs it when the task ends. A field past
+#: its `until` is ignored and pruned, so a killed worker cannot hold capacity. Agreed with vera-6e (web-ingress).
+KEY_EXTRA_RES = "vera:node_compute:extra_res:"
+
+
+def extra_entry(cap: str, timeout_s: float, now: float) -> str:
+    """The hash value a worker writes while it runs `cap`: its NEEDS size, until now + the task's timeout."""
+    need = NEEDS.get(cap, {"cpu": 1.0, "mem_gb": 1.0})
+    return json.dumps({"cpu": float(need["cpu"]), "mem_gb": float(need["mem_gb"]),
+                       "until": float(now) + max(1.0, float(timeout_s or 0)), "cap": str(cap)})
+
+
+def extra_from(fields: Optional[Dict[Any, Any]], now: float) -> Tuple[Dict[str, Any], List[str]]:
+    """(sum of a node's live self-reservations {cpu, mem_gb, n, caps}, the ids of fields past their `until` or
+    unreadable - the caller HDELs them)."""
+    out = {"cpu": 0.0, "mem_gb": 0.0, "n": 0, "caps": []}
+    dead: List[str] = []
+    for k, v in (fields or {}).items():
+        k = k.decode() if isinstance(k, bytes) else str(k)
+        try:
+            e = json.loads(v.decode() if isinstance(v, bytes) else v)
+            until, cpu, mem = float(e.get("until") or 0), float(e.get("cpu") or 0), float(e.get("mem_gb") or 0)
+        except (TypeError, ValueError, AttributeError):
+            dead.append(k)
+            continue
+        if until <= now:
+            dead.append(k)
+            continue
+        out["cpu"] += max(0.0, cpu)
+        out["mem_gb"] += max(0.0, mem)
+        out["n"] += 1
+        cap = str(e.get("cap") or "")
+        if cap and cap not in out["caps"]:
+            out["caps"].append(cap)
+    return out, dead
+
+
+def with_extra(reserved: Optional[Dict[str, Dict[str, Any]]], extra: Optional[Dict[str, Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
+    """`reserved` per host_id with each node's self-reservations alongside (extra_cpu / extra_mem_gb / extra_n /
+    extra_caps), for admit(). The host's own entries are not changed."""
+    out = {h: dict(v) for h, v in (reserved or {}).items()}
+    for h, x in (extra or {}).items():
+        if not x or not x.get("n"):
+            continue
+        row = out.setdefault(h, {"cpu": 0.0, "mem_gb": 0.0, "jobs": 0.0, "sent": []})
+        row.update(extra_cpu=float(x["cpu"]), extra_mem_gb=float(x["mem_gb"]), extra_n=int(x["n"]),
+                   extra_caps=list(x.get("caps") or []))
+    return out
+
+
 #: Node metrics older than this are not trusted for admission.
 METRICS_STALE_S = 60
 
@@ -370,17 +422,22 @@ def admit(fn: str, w: Dict[str, Any], cfg: Dict[str, Any],
     r_cpu = float(cfg.get("reserve_cpu", 2.0))
     r_mem = float(cfg.get("reserve_mem_gb", 8.0))
     rc, rm = reserved_now(res, _f(w, "metrics_at"), cap.get("scope", "host"))
-    cpu_left = cap["cpu_free"] - r_cpu - rc
-    mem_left = cap["mem_free_gb"] - r_mem - rm
+    # what the node reserved for itself (P0d): on top, for the task's whole run - at 0.25 cores a crawl batch's own
+    # CPU may show in a pinned node's average too, a small double count accepted rather than special-cased
+    xc, xm, xn = float(res.get("extra_cpu") or 0.0), float(res.get("extra_mem_gb") or 0.0), int(res.get("extra_n") or 0)
+    cpu_left = cap["cpu_free"] - r_cpu - rc - xc
+    mem_left = cap["mem_free_gb"] - r_mem - rm - xm
+    own = (f", {'/'.join(res.get('extra_caps') or []) or 'node'} {xn} task(s) holding {xc:.2f} cores / {xm:.2f} GB"
+           if xn else "")
     # P0-8: a refusal names everything it counted - the reading, its kind, and what this host has in flight there
     src = "own cores, 60 s avg" if cap.get("scope") == "pinned" else "host reading"
     inflight = f", {rc:.0f} held by {int(res.get('jobs', 0) or 0)} job(s) sent here" if rc else ""
     if cpu_left < need["cpu"]:
-        return False, (f"CPU: {cap['cpu_free']:.1f} of {cap['cores']:.0f} cores free ({src}){inflight}; "
+        return False, (f"CPU: {cap['cpu_free']:.1f} of {cap['cores']:.0f} cores free ({src}){inflight}{own}; "
                        f"needs {need['cpu']:.1f} + {r_cpu:.0f} kept spare"), 0.0
     if mem_left < need["mem_gb"]:
         held = f", {rm:.0f} GB held by jobs sent here" if rm else ""
-        return False, (f"memory: {cap['mem_free_gb']:.0f} GB free{held}; needs "
+        return False, (f"memory: {cap['mem_free_gb']:.0f} GB free{held}{own}; needs "
                        f"{need['mem_gb']:.0f} + {r_mem:.0f} GB kept spare"), 0.0
     score = min(cpu_left / need["cpu"], mem_left / need["mem_gb"])
     return True, f"{cap['cpu_free']:.1f} cores, {cap['mem_free_gb']:.0f} GB free", score

@@ -204,10 +204,31 @@ def _avoided(pick: Dict[str, Any], avoid) -> bool:
     return bool(want & {str(pick.get(k) or "").strip().lower() for k in ("host", "host_id")} - {""})
 
 
+async def _extra_reserved(workers: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Each node's self-reservations (core.KEY_EXTRA_RES, P0d), expired fields pruned. Best effort: with no Redis, or
+    a failed read, admission is what it was before."""
+    r = _orch.REDIS
+    out: Dict[str, Dict[str, Any]] = {}
+    if r is None:
+        return out
+    now = time.time()
+    for hid in {str(w.get("host_id") or "") for w in workers or []} - {""}:
+        try:
+            x, dead = core.extra_from(await r.hgetall(core.KEY_EXTRA_RES + hid), now)
+            if dead:
+                await r.hdel(core.KEY_EXTRA_RES + hid, *dead)
+            if x["n"]:
+                out[hid] = x
+        except Exception as e:                              # pragma: no cover - best effort
+            log.debug("extra reservations %s: %s", hid, e)
+    return out
+
+
 async def node_plan(fn: str, exclude=()) -> Dict[str, Any]:
-    """Where `fn` would run right now (see core.plan)."""
+    """Where `fn` would run right now (see core.plan), counting what each node reserved for itself (P0d)."""
     cfg = await _config()
-    return core.plan(fn, await _workers(), cfg, reserved=_RESERVED, now=time.time(),
+    ws = await _workers()
+    return core.plan(fn, ws, cfg, reserved=core.with_extra(_RESERVED, await _extra_reserved(ws)), now=time.time(),
                      exclude=exclude)
 
 
@@ -619,13 +640,14 @@ async def cap_compute_status(trace_id=None) -> Dict:
             pass
     funcs = {}
     now = time.time()
+    res_all = core.with_extra(_RESERVED, await _extra_reserved(ws))
     for name, (_m, _a, libs) in core.FUNCTIONS.items():
         where, why = core.decide(name, ws, host_fallback=cfg["host_fallback"],
                                  is_sandbox=_orch.is_dev_sandbox())
         row = {"needs": list(libs), "resources": core.NEEDS.get(name, {}),
                "would_run": where, "why": why}
         if where == "node":
-            p = core.plan(name, ws, cfg, reserved=_RESERVED, now=now)
+            p = core.plan(name, ws, cfg, reserved=res_all, now=now)
             row["room_now"] = p["pick"] is not None
             row["next_node"] = (p["pick"] or {}).get("host", "")
             row["nodes"] = p["nodes"]
@@ -637,7 +659,7 @@ async def cap_compute_status(trace_id=None) -> Dict:
                          "status": w.get("status"),
                          "libs": json.loads(w["libs"]) if w.get("libs") else {},
                          "capacity": core.capacity(w),
-                         "reserved": {k: v for k, v in _RESERVED.get(w.get("host_id") or "", {}).items()
+                         "reserved": {k: v for k, v in res_all.get(w.get("host_id") or "", {}).items()
                                       if k != "sent"},
                          "compute_slots": w.get("compute_slots") or "",
                          "compute_running": w.get("compute_running") or "",
