@@ -3419,6 +3419,29 @@
    "rows": "monitors"
   }
  },
+ "markets.news.digest": {
+  "empty": "no headlines found",
+  "kind": "records",
+  "map": {
+   "domain": "source",
+   "rows": "items",
+   "snippet": "snippet",
+   "title": "title",
+   "url": "url"
+  },
+  "title": "News"
+ },
+ "markets.news.feed": {
+  "empty": "no headlines found",
+  "kind": "records",
+  "map": {
+   "rows": "headlines",
+   "snippet": "snippet",
+   "title": "title",
+   "url": "url"
+  },
+  "title": "Headlines"
+ },
  "markets.overview": {
   "empty": "no tracked assets in the overview yet",
   "form": "treemap",
