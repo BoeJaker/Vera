@@ -2171,7 +2171,8 @@
     "auth",
     "tags",
     "updated_at"
-   ]
+   ],
+   "ref": "host:{id}"
   },
   "empty": "No SSH hosts stored",
   "form": "table",
