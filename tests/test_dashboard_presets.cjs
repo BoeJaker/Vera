@@ -12,7 +12,7 @@ const EV = fs.readFileSync(path.join(R, 'vera', 'evolve', 'evolve_capabilities.p
 
 // ── the widget keeps its face ──
 t('a read that failed keeps the last reading, else the sample face — never an empty tile', WE.includes("this._read = this._data !== undefined; this.render(); return; }") && WE.includes("if (!got && this._data === undefined) { this._err = ''; this._empty = true; this._read = false; this.render(); return; }"));
-t('the caption says why: the read was empty, the sample stays', WE.includes("else if (this._empty && !have) why = esc(rec.source) + ' · read empty · sample';") && WE.includes("this._empty = false;"));
+t('the caption says why: the read was empty (and the sample stays only where a host shows it - DO-0.3)', WE.includes("else if (this._empty && !have) why = esc(rec.source) + ' · read empty' + (noSample ? '' : ' · sample');") && WE.includes("this._empty = false;"));
 t('the seven-segment counter never wraps onto a second line: the digits shrink with the tile', /\.vb-seg7\{[^}]*flex-wrap:nowrap/.test(WE) && /\.vb-seg7 span\{[^}]*font-size:clamp\(13px, min\(68cqh, 15cqw\), 34px\)/.test(WE) && /\.vb-hero b\{[^}]*font-size:clamp\(16px, min\(60cqh, 12cqw\), 30px\)/.test(WE));
 
 // ── the read-through hook (the policy itself is tested in tests/test_sandbox_read_through.py) ──

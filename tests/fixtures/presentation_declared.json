@@ -1269,6 +1269,17 @@
    "rows": "services"
   }
  },
+ "docker.stats.top": {
+  "empty": "no running container sampled",
+  "form": "ranked",
+  "kind": "table",
+  "map": {
+   "name": "name",
+   "value": "cpu_pct",
+   "values": "top"
+  },
+  "title": "Busiest containers \u00b7 CPU %"
+ },
  "dream.background.status": {
   "kind": "kv",
   "map": {
@@ -1890,6 +1901,14 @@
    "v": "cpu_pct"
   },
   "title": "Sandbox CPU %"
+ },
+ "evolve.sandbox.status": {
+  "kind": "status",
+  "map": {
+   "checks": "checks",
+   "verdict": "verdict"
+  },
+  "title": "Dev sandbox"
  },
  "evolve.schedule.events": {
   "kind": "calendar",
@@ -3307,11 +3326,16 @@
   }
  },
  "markets.chart": {
+  "empty": "no stored bars for {symbol}",
   "form": "candles",
   "kind": "series",
   "map": {
    "bars": "bars"
-  }
+  },
+  "title": "{symbol} \u00b7 {timeframe}",
+  "views": [
+   "table"
+  ]
  },
  "markets.evolve.status": {
   "kind": "composite",
@@ -3976,6 +4000,14 @@
   "map": {
    "rows": "campaigns"
   }
+ },
+ "nlp.ner": {
+  "empty": "no names found",
+  "kind": "entities",
+  "map": {
+   "entities": "entities"
+  },
+  "title": "Names \u00b7 {task}"
  },
  "nodes.agent.status": {
   "draw": {

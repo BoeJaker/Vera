@@ -12,9 +12,8 @@ function fnText(name) {
   for (let k = j; k < VD.length; k++) { if (VD[k] === '{') d++; else if (VD[k] === '}') { d--; if (!d) return VD.slice(i, k + 1); } }
   throw new Error('unbalanced ' + name);
 }
-const shapeOf = lift(/var SHAPE_OF = \{[^;]*\};/);
-const fitCat = lift(/var FIT_CAT = \{[^;]*\};/);
-const api = new Function(shapeOf + '\n' + fitCat + '\n' + fnText('fitCategory') + '\n' + fnText('sparseFlow') + '\n' + fnText('flow') + '\n' + fnText('arrange') +
+const fitOf = lift(/var FIT_OF = \{[^;]*\};/);   // the dashboard's own fit table (DO-0.3: no SHAPE_OF copy of the widget's shapes)
+const api = new Function(fitOf + '\n' + fnText('fitCategory') + '\n' + fnText('sparseFlow') + '\n' + fnText('flow') + '\n' + fnText('arrange') +
   '\nvar GRID = { cols: 12 };\nreturn { fitCategory: fitCategory, sparseFlow: sparseFlow, arrange: arrange };')();
 
 // ── which tiles follow their content ──

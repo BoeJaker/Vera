@@ -19,7 +19,7 @@ const bad = (h) => /wempty|vw-nodata|data-sample/.test(h);
 // ── the result forms ──
 const NEW = ['json', 'diff', 'code', 'progress', 'status', 'media', 'error', 'markdown'];
 const drawn = new Set(W.forms().map((f) => f.id));
-t('the result forms are drawn forms: ' + NEW.join(' · '), NEW.every((f) => drawn.has(f)) && JSON.stringify(W.capForms()) === JSON.stringify(['kv', 'table', 'list', 'json', 'log', 'terminal', 'diff', 'code', 'progress', 'hero', 'trace', 'area', 'column', 'status', 'files', 'media', 'error', 'markdown']));
+t('the result forms are drawn forms: ' + NEW.join(' · '), NEW.every((f) => drawn.has(f)) && JSON.stringify(W.capForms()) === JSON.stringify(['kv', 'table', 'list', 'json', 'log', 'terminal', 'diff', 'code', 'progress', 'hero', 'trace', 'area', 'column', 'status', 'files', 'media', 'error', 'markdown', 'reading']));
 t('every result form has a sample face that draws (the pickers show it before anything is read)', NEW.every((f) => { const h = W.draw(f, undefined, 'm'); return /data-sample="1"/.test(h) && !/wempty/.test(h); }), NEW.filter((f) => /wempty/.test(W.draw(f, undefined, 'm'))).join(' '));
 const J = W.draw('json', { a: { b: [1, 2] }, s: 'x', n: null }, 'l', { sample: false });
 t('json: a tree that folds (the first level open), leaves coloured by kind', /<details open><summary>/.test(J) && /class="jnum">1</.test(J) && /class="js">"x"</.test(J) && /class="jn">null</.test(J));

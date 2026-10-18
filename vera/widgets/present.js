@@ -49,7 +49,7 @@
     timeline: { element: 'widget', form: 'gantt', content: ['spans'], views: ['gantt', 'stepper', 'table'] },
     matrix: { element: 'widget', form: 'heat', content: ['cells'], views: ['heat', 'matrix', 'table'] },
     parts: { element: 'widget', form: 'donut', content: ['parts'], views: ['donut', 'treemap', 'waffle', 'table'] },
-    entities: { element: 'entities', form: 'json', content: ['groups', 'entities'], views: ['chips', 'list', 'graph'] },
+    entities: { element: 'entities', form: 'pills', content: ['groups', 'entities'], views: ['chips', 'list', 'graph'] },
     receipt: { element: 'receipt', form: '', content: [], views: [] },
     job: { element: 'job', form: '', content: ['job_id'], views: [] },
     composite: { element: 'composite', form: '', content: [], views: [] },
@@ -221,6 +221,40 @@
     Object.keys(units).forEach((f) => { const u = units[f], v = pick(r, f); if (typeof u === 'string' && u && typeof v === 'number' && isFinite(v)) r = optSet(r, optPath(f), optFmt(v, u)); });
     return r;
   }
+  /* ENTITIES (DO-0.3): the names an answer holds, one row each {name, type, count, group} - the desk's entities element
+     regroups them (chips · list · graph), a widget draws them as pills. Read from {groups: [{group, entities: [...]}]} (what
+     turn.understand gives) or a flat list [{text | word | name, type | entity | entity_group | label, count?}] (nlp.ner's
+     own); the same name of the same type named twice is one row, counted. The server mirror reads them field for field. */
+  function entitiesOf(groups, ents) {
+    const out = [], seen = new Map();
+    const put = (e, grp) => { if (!isObj(e)) return;
+      const t0 = !nil(e.text) ? e.text : !nil(e.word) ? e.word : e.name; if (nil(t0) || typeof t0 === 'object' || typeof t0 === 'boolean') return;
+      const name = String(t0).trim(); if (!name) return;
+      const ty = !nil(e.type) ? e.type : !nil(e.entity) ? e.entity : !nil(e.entity_group) ? e.entity_group : e.label;
+      const type = (nil(ty) || typeof ty === 'object' || typeof ty === 'boolean') ? '' : String(ty);
+      const n = keyedNum(e.count), k = name + '\u0000' + type;
+      if (seen.has(k)) { seen.get(k).count += (n === null ? 1 : n); return; }
+      const r = { name, type, count: n === null ? 1 : n, group: grp === null ? (type || 'other') : grp }; seen.set(k, r); out.push(r); };
+    if (Array.isArray(groups)) groups.forEach((g) => { if (!isObj(g) || !Array.isArray(g.entities)) return;
+      const gn = !nil(g.group) && typeof g.group !== 'object' ? String(g.group) : (!nil(g.name) && typeof g.name !== 'object' ? String(g.name) : null);
+      g.entities.forEach((e) => put(e, gn)); });
+    else if (Array.isArray(ents)) ents.forEach((e) => put(e, null));
+    return out;
+  }
+  /* NO SAMPLE FACE ON THE DESK (DO-0.3): a declared form handed an answer with nothing in it drew the form's SAMPLE (or its
+     empty face) as though it were the answer. The content a form-word map locates (its first container key below) that is
+     there but empty, an answer that is empty, or an answer that is only an error, is the declaration's empty line instead
+     (the error's own words when it is one) - for every form, not only the row forms. The server mirror says the same. */
+  const FORM_CONTENT = ['rows', 'series', 'values', 'events', 'stages', 'parts', 'bars', 'cells', 'days', 'points', 'nodes', 'text'];
+  const ERR_KEYS = ['error', 'ok', 'detail', 'hint', 'message'];
+  const errOf = (c) => (isObj(c) && typeof c.error === 'string' && c.error.trim() && c.ok !== true) ? c.error.trim() : '';
+  function formEmpty(c, m, P, o) {
+    const line = (err) => ({ records: [], empty: err || (P.empty ? fill(P.empty, o.args) : 'nothing to show') });
+    if (empty(c)) return line('');
+    const err = errOf(c), ck = FORM_CONTENT.find((k) => typeof m[k] === 'string' && m[k]);
+    if (ck) { const v = pick(c, m[ck]); if (v === undefined) return err ? line(err) : null; return empty(v) ? line(err) : null; }
+    return (err && Object.keys(c).every((k) => ERR_KEYS.includes(k))) ? line(err) : null;
+  }
   /* the options a declaration's draw holds, or null - none of them: nothing changes */
   const optsOf = (P) => (isObj(P.draw) && OPT_KEYS.some((k) => !nil(P.draw[k])) ? P.draw : null);
   function arrange(rows, d, grouped) {
@@ -264,6 +298,7 @@
       /* a row form with no rows drew its SAMPLE rows ("sample · no source"), which read as real data: the declaration's
          empty line instead (a composite's part drops out, as a plain table part with no rows does) */
       if (rowKind && OPT_ROW_FORMS.includes(P.form) && empty(pick(c, m.rows || ''))) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' };
+      { const fe = formEmpty(c, m, P, o); if (fe) return fe; }   /* any form: nothing in the answer, or only its error (DO-0.3) */
       if (opts && rowKind && OPT_ROW_FORMS.includes(P.form)) {   /* DA-01e (3): the options read here, the rest of draw is the form's */
         const g = P.kind === 'table' && typeof opts.group_by === 'string' && opts.group_by.trim() ? opts.group_by.trim() : '';
         const dr = {}; Object.keys(opts).forEach((k) => { if (!OPT_KEYS.includes(k)) dr[k] = opts[k]; });
@@ -287,7 +322,8 @@
         rec('reading', opts ? arrange(rows, opts, false) : rows); break; }
       case 'document': rec('markdown', String(at('body'))); break;
       case 'status': rec('status', Object.assign({ status: at('verdict') }, m.checks ? { checks: asRows(at('checks')) } : {})); break;
-      case 'metric': rec(m.max ? 'ring' : 'hero', c, { map: { value: m.value, max: m.max, unit: m.unit, trend: m.trend } }); break;
+      /* the trend is the series too, so the metric's trace view draws it (DO-0.3: the trace view never had a series) */
+      case 'metric': rec(m.max ? 'ring' : 'hero', c, { map: Object.assign({ value: m.value, max: m.max, unit: m.unit, trend: m.trend }, m.trend ? { series: m.trend } : {}) }); break;
       case 'series':
         if (m.keyed === true) { const ks = keyedSeries(at('points'), m.t, m.v);
           if (!Object.keys(ks).length) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' };
@@ -312,7 +348,8 @@
       case 'timeline': { const sp = timelineSpans(asRows(at('spans')), m); if (!sp.length) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' }; rec('gantt', sp); break; }
       case 'matrix': { const mx = matrixOf(at('cells'), m); if (!mx) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' }; rec(mx.form, mx.rows); break; }
       case 'parts': { const ps = partsOf(at('parts'), m); if (!ps.length) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' }; rec('donut', ps); break; }
-      case 'entities': rec('json', m.groups ? { groups: at('groups') } : { entities: at('entities') }); break;
+      case 'entities': { const es = entitiesOf(m.groups ? at('groups') : undefined, m.groups ? undefined : at('entities'));
+        if (!es.length) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' }; rec('pills', es); break; }
       default: break;
     }
     return { records: out.slice(0, Math.max(1, +o.max || 3)) };

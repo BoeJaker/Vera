@@ -1,0 +1,20 @@
+{
+ "cap": "demo.ci",
+ "args": {},
+ "presentation": {
+  "kind": "status",
+  "form": "status-matrix",
+  "status": "declared"
+ },
+ "result": {
+  "ok": false,
+  "error": "ci view unavailable"
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "status",
+  "title": "demo.ci",
+  "forms": [],
+  "empty": "ci view unavailable"
+ }
+}

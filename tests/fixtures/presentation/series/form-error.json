@@ -1,0 +1,30 @@
+{
+ "cap": "markets.chart",
+ "args": {
+  "symbol": "AAPL"
+ },
+ "presentation": {
+  "kind": "series",
+  "form": "candles",
+  "map": {
+   "bars": "bars"
+  },
+  "views": [
+   "table"
+  ],
+  "title": "{symbol} · {timeframe}",
+  "empty": "no stored bars for {symbol}",
+  "status": "declared"
+ },
+ "result": {
+  "error": "AAPL is not tracked - add it to the watchlist to chart it",
+  "tracked": []
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "series",
+  "title": "AAPL",
+  "forms": [],
+  "empty": "AAPL is not tracked - add it to the watchlist to chart it"
+ }
+}
