@@ -66,10 +66,10 @@ def test_status_joins_entries_runs_and_headlines_worst_first():
 
 def test_the_page_the_route_and_the_loop_lab_section():
     mon = open(os.path.join(ROOT, "vera", "minds", "tests_monitor.py"), encoding="utf-8").read()
-    assert '@APP.get("/decide/tests", include_in_schema=False)' in mon and '"decide.tests.status"' in mon
-    page = open(os.path.join(ROOT, "vera", "minds", "tests_panel.html"), encoding="utf-8").read()
-    assert "name:'decide.tests.status'" in page and "setInterval(load,60000)" in page
-    assert "<button" not in page.split("<main")[1]              # display only: no controls on the page
+    assert '"decide.tests.status"' in mon
+    # the stop-gap page retired 18 Oct (Loop Lab S2 draws the tests); its route and file are gone
+    assert '@APP.get("/decide/tests"' not in mon
+    assert not os.path.exists(os.path.join(ROOT, "vera", "minds", "tests_panel.html"))
     ll = open(os.path.join(ROOT, "vera", "evolve", "evolve_panel.html"), encoding="utf-8").read()
     assert 'data-sec="tests" onclick="nav(\'tests\')"' in ll and 'id="sec-tests"' in ll
     # the Loop Lab draws the tests itself now (looplab-control §9.4 S2, the four-minds handover); the page reads
