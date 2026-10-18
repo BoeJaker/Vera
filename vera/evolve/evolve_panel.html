@@ -201,6 +201,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="ship" onclick="nav('ship')" title="Every branch &mdash; its pipeline, review, sandbox and tests &mdash; in one table, the commit graph, race lanes, authorship and gate strip below it"><span class="ic">&#8599;</span>Ship</button>
   <button class="btn" data-sec="agents" onclick="nav('agents')" title="Every agent session &mdash; Claude Code, Codex, a Vera loop, an edit-queue agent &mdash; with its board items, pipelines and sandboxes; the board by lane, notes and seats fold up under it"><span class="ic">&#9737;</span>Agents</button>
   <button class="btn" data-sec="mission" onclick="nav('mission')" title="Every event &mdash; actions, errors, gates &mdash; in one table, with what is live and what needs a person above it; the run-once and improve-live theatres fold up under it"><span class="ic">&#9673;</span>Mission control</button>
+  <button class="btn" data-sec="releases" onclick="nav('releases')" title="What is being gated, promoted to bleeding-edge and released to prod - each pipeline's stages and tests, the release in flight, and what every release carried"><span class="ic">&#9650;</span>Releases</button>
   <button class="btn" data-sec="schedule" onclick="nav('schedule')" title="A calendar of Loop Lab work &mdash; censuses, suites, tasks, pipeline steps, board items &mdash; started by the scheduler only when the box is free"><span class="ic">🗓</span>Schedule</button>
   <button class="btn" data-sec="settings" data-vera-settings="#sec-settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
@@ -597,6 +598,7 @@ html.vpb-nav-hosted body{padding-left:0}
       <label class="hint"><input type="checkbox" id="ship-merged" onchange="shipOnChange()"> hide merged</label>
       <span class="hint" id="ship-count"></span>
     </div>
+    <div id="release-status" class="hint" style="padding:4px 0" title="the release in flight, the census it waits on, the last release, node sync"></div>
     <div id="ship-table"><div class="empty">Loading&hellip;</div></div>
     <div class="hint" style="margin-top:6px">In <b>branches</b> a row is a branch: its latest pipeline, gate and decision, its sandbox, its last test run. <b>&#9656;</b> expands it &mdash; a pipeline awaiting a decision shows as its review card (diff, verdict, promote / rollback), the sandbox with every control and its container's log, the test story; an id opens the record. <b>stage</b> is one word: live &rarr; awaiting a decision &rarr; red &rarr; merged / idle; the trunk (main, then the edges) leads. In <b>pipelines</b> a row is one pipeline run, newest first. The commit graph, the branch race, the authorship map, the gate strip and the coverage matrix are below.</div>
   </div>
@@ -707,6 +709,29 @@ html.vpb-nav-hosted body{padding-left:0}
      beside a loop). The calendar is <vera-calendar> (reusable; /ui/elements/calendar.js);
      the windows are read-only projections, the runs the scheduler started sit beside
      them. Click an empty slot to make a schedule there; click a window to edit it. -->
+<!-- == RELEASES: gating, promotions, releases (owner 18 Oct 2026: "better vis over the gating and releases -
+     releases and promotions ... have a section of the ui"). Read: evolve.releases.view. Controls in the header and
+     the pipeline drill (openPipe); the live strip carries the release in flight. == -->
+<div class="sec" id="sec-releases" style="display:none">
+  <div class="card">
+    <div class="card-h">
+      <span class="card-t">RELEASES</span>
+      <span class="hint">what is being gated, promoted to bleeding-edge and released to prod</span>
+      <span style="flex:1"></span>
+      <select id="rel-days" onchange="loadReleases()" title="how far back"><option value="2">2 days</option><option value="7" selected>7 days</option><option value="14">14 days</option></select>
+      <button class="btn sm" onclick="loadReleases()">↻</button>
+      <button class="btn sm ok-btn" onclick="relReleaseNow()" title="release bleeding-edge to prod (asks for confirmation; waits for a census goal)">Release to prod…</button>
+    </div>
+    <div id="rel-live"></div>
+    <div id="rel-tiles" class="rel-tiles"></div>
+    <div id="rel-board" class="rel-board"><span class="hint">loading…</span></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Release history</span><span class="hint">every release, what it waited for, what it carried</span></div>
+    <div id="rel-hist" class="hint">loading…</div>
+  </div>
+</div>
+
 <div class="sec" id="sec-schedule" style="display:none">
   <div class="card sch-card">
     <div class="card-h">
@@ -723,13 +748,14 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="sch-layers" id="sch-layers"></div>
     <div class="sch-body">
       <div class="sch-main">
-        <vera-calendar id="sch-cal" fill src="/evolve/schedule/events?mode=both&amp;granularity=runs" view="week" hour-start="4" hour-end="23" poll="60000"></vera-calendar>
+        <vera-calendar id="sch-cal" fill src="/evolve/schedule/events?mode=both&amp;granularity=runs" view="week" hour-start="0" hour-end="24" poll="60000"></vera-calendar>
       </div>
       <aside class="sch-side">
-        <div class="sch-tabs"><button data-t="list" class="on" onclick="schTab('list')">Schedules</button><button data-t="board" onclick="schTab('board')" title="Board items - schedule work for one, see what is scheduled for each">Board</button><button data-t="runs" onclick="schTab('runs')">Runs</button></div>
+        <div class="sch-tabs"><button data-t="list" class="on" onclick="schTab('list')">Schedules</button><button data-t="board" onclick="schTab('board')" title="Board items - schedule work for one, see what is scheduled for each">Board</button><button data-t="runs" onclick="schTab('runs')">Runs</button><button data-t="all" onclick="schTab('all')" title="Everything scheduled on the box: Loop Lab schedules, Claude sessions' timers and the work scheduled for them, Vera's own periodic jobs, the host crontab and systemd timers">All</button></div>
         <div class="sch-pane" data-p="list"><div id="sch-list" class="hint">loading…</div></div>
-        <div class="sch-pane" data-p="board" hidden><input id="sch-bq" placeholder="filter board items…" oninput="schBoard()" style="width:100%;margin-bottom:6px"><div id="sch-board" class="hint">—</div></div>
+        <div class="sch-pane" data-p="board" hidden><input id="sch-bq" placeholder="filter board items…" oninput="schBoard()" style="width:100%;margin-bottom:6px"><div id="sch-bpane" class="hint">—</div></div>
         <div class="sch-pane" data-p="runs" hidden><div id="sch-runs" class="hint">—</div></div>
+        <div class="sch-pane" data-p="all" hidden><select id="sch-all-src" onchange="schAll()" style="width:100%;margin-bottom:6px"><option value="">every source</option><option value="loop-lab">Loop Lab schedules</option><option value="agents-work">Claude sessions (agents.work)</option><option value="in-process">Vera's periodic jobs</option><option value="host">host crontab + systemd timers</option></select><div id="sch-all" class="hint">—</div></div>
       </aside>
     </div>
   </div>
@@ -981,6 +1007,38 @@ async function autonomousRelease(){
 }
 function toast(m){const t=document.createElement('div');t.className='toast';t.textContent=m;document.body.appendChild(t);setTimeout(()=>{t.style.opacity=0;t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300)},3400)}
 function openModal(h){$('modal').innerHTML=h;$('modal-bg').classList.add('on')}
+/* askForm(title, fields, opts) -> Promise<{id: value} | null>: a small form in its OWN overlay, so it never
+   replaces the modal under it (prompt() did not either). fields: [{id, label, value, type: text|textarea|
+   select|number|check, options: [[value, label]], hint, required}]. opts.ok = the button label.
+   looplab-control C2 (17 Oct 2026): the shared panel rule is no prompt(). */
+function askForm(title,fields,opts){
+  opts=opts||{};
+  return new Promise(resolve=>{
+    let ov=document.getElementById('ask-ov');
+    if(!ov){ov=document.createElement('div');ov.id='ask-ov';ov.className='ask-ov';document.body.appendChild(ov)}
+    const fid=f=>'ask-f-'+f.id;
+    const one=f=>{
+      const lab='<label class="fld" for="'+fid(f)+'">'+esc(f.label||f.id)+'</label>';
+      if(f.type==='textarea')return lab+'<textarea id="'+fid(f)+'" rows="'+(f.rows||4)+'" style="width:100%">'+esc(f.value||'')+'</textarea>';
+      if(f.type==='select')return lab+'<select id="'+fid(f)+'" style="width:100%">'+(f.options||[]).map(o=>'<option value="'+esc(o[0])+'"'+(String(o[0])===String(f.value)?' selected':'')+'>'+esc(o[1]||o[0])+'</option>').join('')+'</select>';
+      if(f.type==='check')return '<label class="row" style="gap:6px;margin-top:6px"><input type="checkbox" id="'+fid(f)+'" style="width:auto"'+(f.value?' checked':'')+'> '+esc(f.label||f.id)+'</label>';
+      return lab+'<input id="'+fid(f)+'" type="'+(f.type==='number'?'number':'text')+'" value="'+esc(f.value==null?'':String(f.value))+'" style="width:100%">';
+    };
+    ov.innerHTML='<div class="ask-box" role="dialog" aria-modal="true"><div class="card-h"><span class="card-t">'+esc(title)+'</span></div>'
+      +(opts.text?'<div class="hint" style="white-space:pre-wrap;margin-bottom:6px">'+esc(opts.text)+'</div>':'')
+      +fields.map(f=>'<div style="margin-bottom:6px">'+one(f)+(f.hint?'<div class="hint">'+esc(f.hint)+'</div>':'')+'</div>').join('')
+      +'<div class="row" style="gap:6px;margin-top:8px"><span style="flex:1"></span><button class="btn sm" id="ask-cancel">Cancel</button><button class="btn sm primary" id="ask-ok">'+esc(opts.ok||'OK')+'</button></div></div>';
+    ov.classList.add('on');
+    const done=v=>{ov.classList.remove('on');ov.innerHTML='';document.removeEventListener('keydown',key,true);resolve(v)};
+    const read=()=>{const out={};for(const f of fields){const e=document.getElementById(fid(f));out[f.id]=f.type==='check'?!!e.checked:e.value;
+      if(f.required&&!(f.type==='check'?out[f.id]:String(out[f.id]).trim())){toast((f.label||f.id)+' is required');return null}}return out};
+    const key=ev=>{if(ev.key==='Escape'){ev.stopPropagation();done(null)}else if(ev.key==='Enter'&&ev.target.tagName!=='TEXTAREA'){ev.preventDefault();const v=read();if(v)done(v)}};
+    document.addEventListener('keydown',key,true);
+    document.getElementById('ask-cancel').onclick=()=>done(null);
+    document.getElementById('ask-ok').onclick=()=>{const v=read();if(v)done(v)};
+    const first=ov.querySelector('input,textarea,select');if(first)first.focus();
+  });
+}
 function closeModal(){$('modal-bg').classList.remove('on');try{cenAloStop()}catch(_){}}
 /* A modal must appear on the CLICK, not when its data arrives.
    Every census modal used to `await api(...)` FIRST and only then call
@@ -1027,7 +1085,7 @@ function nav(sec){
     // absorbed before it: an old deep-link or injected nav item still lands
     // on the table that holds their data.
     pipelines:()=>nav('ship'),review:()=>nav('ship'),sources:()=>nav('ship'),sandbox:()=>nav('ship'),unittests:()=>nav('ship'),logs:()=>nav('ship'),
-    schedule:loadSchedule,
+    schedule:loadSchedule,releases:loadReleases,
     settings:fillSettings}[sec];
   if(f)f();
   // The address bar says which page is open (a deep link says more).
@@ -1065,17 +1123,25 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
 // the page; what it shows is a set of LAYERS the viewer switches: the windows (faint bands - when work MAY run), the
 // runs the scheduler started, the results of every census run and suite (solid, by pass rate), the board items' work,
 // and Vera's own calendar (the Comms panel's).
-const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',loop:'Agent loop',tests:'Unit tests',cap:'Capability'};
-const SCH_KIND_COL={census:'#c9a35a',suite:'#6db87a',task:'#8fb87a',pipeline:'#7aa2f7',board:'#a78bfa',loop:'#f472b6',tests:'#38bdf8',cap:'#9aa0a6'};
+const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',loop:'Agent loop',tests:'Unit tests',cap:'Capability',claude_session:'Claude session',background:'Background work'};
+const SCH_KIND_COL={census:'#c9a35a',suite:'#6db87a',task:'#8fb87a',pipeline:'#7aa2f7',board:'#a78bfa',loop:'#f472b6',tests:'#38bdf8',cap:'#9aa0a6',claude_session:'#e0a458',background:'#2dd4bf'};
 const SCH_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const SCH_LAYERS=[
   {k:'windows',label:'Windows',col:'#c9a35a',tip:'when each schedule may run - faint bands behind the rest'},
   {k:'runs',label:'Runs',col:'#7aa2f7',tip:'what the scheduler started, and how each ended'},
   {k:'results',label:'Results',col:'#4ade80',tip:'every census run and suite over time, coloured by its pass rate'},
   {k:'board',label:'Board items',col:'#a78bfa',tip:'work scheduled for board items - its windows and runs'},
-  {k:'calendar',label:'Calendar',col:'#4a9eff',tip:'Vera\u2019s own calendar - the Comms panel\u2019s: local, ics, CalDAV, Google'}];
-let _schOn=new Set(SCH_LAYERS.map(L=>L.k)), _schCounts={}, _schBoardItems=[], _schProfiles=[];
-try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
+  {k:'calendar',label:'Calendar',col:'#4a9eff',tip:'Vera\u2019s own calendar - the Comms panel\u2019s: local, ics, CalDAV, Google'},
+  {k:'releases',label:'Releases & promotions',col:'#4ade80',tip:'promotions to bleeding-edge (◆) and releases to prod (▲)'},
+  {k:'agents',label:'Agents',col:'#e0a458',tip:'Claude sessions - their registered timers and the work scheduled for them (agents.work)'}];
+// Owner 18 Oct 2026: "the schedule ui is hard to read there is so much stuff on it" - every layer on at once
+// stacked ~200 events in one week. Default: what ran and the sessions' work; the rest is one click away.
+// windows on too (owner 18 Oct 2026: "really clear from the UI what each slot is doing") - only enabled
+// schedules draw them, and skipped runs are not drawn, which is what made the week unreadable
+const SCH_DEFAULT_LAYERS=['windows','runs','agents','releases'];
+let _schOn=new Set(SCH_DEFAULT_LAYERS), _schCounts={}, _schBoardItems=[], _schProfiles=[];
+try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers.v4')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
+let _schShowOff=false; try{_schShowOff=localStorage.getItem('loop-lab.sch.showoff')==='1'}catch(_){}
 let _schCache={schedules:[],next:{},state:{},config:{}};
 async function loadSchedule(){
   const [d,bi]=await Promise.all([api('/evolve/schedule/list'),api('/board/items')]); if(!d)return;
@@ -1083,8 +1149,9 @@ async function loadSchedule(){
   $('sch-enabled').checked=!!(d.config||{}).enabled;
   const st=d.state||{};
   $('sch-state').textContent=(st.census_running?'census in flight ('+(st.template||'')+' '+(st.census_run||'')+')':'box free')
-    +(st.loops_running?' · '+st.loops_running+' loop(s)':'')+(st.harness_blocked?' · '+st.harness_blocked:'')+' · tz '+((d.config||{}).timezone||'');
-  schList(); schRuns(); schBoard(); schMode();
+    +(st.loops_running?' · '+st.loops_running+' loop(s)':'')+(st.harness_blocked?' · '+st.harness_blocked:'')+(st.declared_busy?' · declared: '+st.declared_busy:'')+' · tz '+((d.config||{}).timezone||'')
+    +(((d.config||{}).quiet_windows||[]).length?' · quiet '+(d.config.quiet_windows||[]).map(q=>q.start+'–'+q.end).join(', '):'');
+  schList(); schRuns(); schBoard(); schMode(); schAll();
   const cal=$('sch-cal'); if(cal&&typeof cal.refresh==='function')cal.refresh();
 }
 function schWhen(s){
@@ -1095,10 +1162,16 @@ function schWhen(s){
 }
 function schBoardTitle(id){const it=_schBoardItems.find(x=>x.id===id);return it?(it.title||id):id}
 function schBoardTag(id){return id?'<span class="sch-bl" onclick="event.stopPropagation();openBoardItem(\''+esc(id)+'\')" title="the board item this work is for - open it">▣ '+esc(String(schBoardTitle(id)).slice(0,40))+'</span>':''}
+function schIsSpent(s){return !!(s.once_at&&s.last_started_at&&String(s.last_started_at)>=String(s.once_at).slice(0,16))}
+function schShowOff(on){_schShowOff=!!on;try{localStorage.setItem('loop-lab.sch.showoff',_schShowOff?'1':'0')}catch(_){}schList()}
 function schList(){
-  const L=_schCache.schedules||[];
-  if(!L.length){$('sch-list').innerHTML='<span class="hint">no schedules yet — click an empty calendar slot, or + schedule</span>';return}
-  $('sch-list').innerHTML=L.map(s=>{
+  const all=_schCache.schedules||[];
+  if(!all.length){$('sch-list').innerHTML='<span class="hint">no schedules yet — click an empty calendar slot, or + schedule</span>';return}
+  const live=all.filter(s=>s.enabled&&!schIsSpent(s)), rest=all.filter(s=>!(s.enabled&&!schIsSpent(s)));
+  const L=_schShowOff?live.concat(rest):live;
+  const toggle='<div class="hint" style="margin:2px 0 6px">'+live.length+' active'
+    +(rest.length?' · <a style="cursor:pointer" onclick="schShowOff('+(_schShowOff?'false':'true')+')">'+(_schShowOff?'hide':'show')+' '+rest.length+' switched off or finished</a>':'')+'</div>';
+  $('sch-list').innerHTML=toggle+L.map(s=>{
     const nx=(_schCache.next||{})[s.id];
     return '<div class="sch-row"><span class="sch-dot" style="background:'+(SCH_KIND_COL[s.kind]||'#999')+'"></span>'
       +'<div style="flex:1;min-width:0"><div class="t" style="'+(s.enabled?'':'opacity:.5;text-decoration:line-through')+'">'+esc(s.title)+'</div>'
@@ -1112,17 +1185,88 @@ function schList(){
       +'<button class="btn sm" onclick="schDelete(\''+s.id+'\')" title="delete">✕</button></div></div>';
   }).join('');
 }
+/* ═══ RELEASES (owner 18 Oct 2026) ═══ */
+const REL_COLS=[['adopted','Adopted','#9aa0a6'],['gating','Gating','#e0a458'],['ready','Gate passed, ready to promote','#c4b5f5'],['edge','On an edge, not on prod','#7aa2f7'],['released','Released to prod','#4ade80'],['failed','Failed','#f87171']];
+const REL_MAX=8; let _relAll={};
+// local time, short: the records are UTC
+function relT(s){if(!s)return '';const d=new Date(s);if(isNaN(d))return String(s).replace('T',' ').slice(5,16);
+  return d.toLocaleDateString(undefined,{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}
+function relMore(k){_relAll[k]=!_relAll[k];loadReleases()}
+function relStageChip(s){const c=s.ok===false?'#f87171':s.ok?'#4ade80':'#e0a458';return '<span class="rel-chip" style="--c:'+c+'" title="'+esc(s.detail||'')+'">'+esc(s.stage)+(s.ok===false?' ✗':s.ok?' ✓':' …')+'</span>'}
+function relCard(c){
+  const t=c.tests||{}; const st=(c.stages||[]).filter(s=>s.stage!=='test-pool'||s===c.stages[c.stages.length-1]);
+  return '<div class="rel-card" onclick="openPipe(\''+esc(c.id)+'\')" title="open the pipeline">'
+    +'<div class="t">'+esc(c.branch||c.id)+'</div>'
+    +'<div class="m">→ <b>'+esc(c.to||'bleeding-edge')+'</b> · '+esc(c.id)+(c.commits!=null?' · '+esc(c.commits)+' commit(s)':'')+(c.changed_files!=null?' · '+esc(c.changed_files)+' file(s)':'')+'</div>'
+    +'<div class="rel-chips">'+st.slice(-6).map(relStageChip).join('')+'</div>'
+    +(t.passed!=null?'<div class="m">tests '+t.passed+' passed'+(t.failed?' · <b style="color:#f87171">'+t.failed+' failed</b>':'')+'</div>':'')
+    +'<div class="m">'+(c.promoted_at?'promoted '+esc(relT(c.promoted_at))+(c.merge_sha?' @ '+esc(c.merge_sha.slice(0,8)):''):(c.last_at?'last step '+esc(relT(c.last_at)):''))+(c.minutes!=null?' · '+c.minutes+' min':'')+'</div></div>';
+}
+async function loadReleases(){
+  const days=(($('rel-days')||{}).value||'7');
+  const d=await api('/evolve/releases/view?days='+encodeURIComponent(days));
+  if(!d||d.error){$('rel-board').innerHTML='<div class="empty">'+esc((d&&d.error)||'releases unavailable')+'</div>';return}
+  const p=d.pending, cs=d.census||{};
+  $('rel-live').innerHTML=p?'<div class="rel-live"><b>RELEASING</b> '+esc(p.id||p.release_id||'')+' · '+esc(p.status||'')+' ('+esc(p.mode||'')+')'
+    +(p.last_why?' · '+esc(p.last_why):'')+(cs.goal?' · census goal '+esc(cs.goal):'')
+    +' <button class="btn sm" onclick="releaseCancel().then(loadReleases)">cancel</button>'+(p.status==='waiting'?' <button class="btn sm" onclick="releaseForce().then(loadReleases)">force now</button>':'')+'</div>':'';
+  const n=d.counts||{}, last=(d.releases||[])[0]||{};
+  const tile=(label,big,sub,col)=>'<button class="rel-tile" onclick="relFocus(\''+(col||'')+'\')"><span class="l">'+esc(label)+'</span><span class="b">'+esc(big)+'</span><span class="s">'+esc(sub||'')+'</span></button>';
+  $('rel-tiles').innerHTML=tile('Gating now',String(n.gating||0),(n.adopted||0)+' adopted, waiting · '+(n.ready||0)+' passed, not promoted','gating')
+    +tile('On an edge, not on prod',String(n.edge||0)+' change(s)',d.edge_ahead!=null?d.edge_ahead+' commit(s) ahead of main':'','edge')
+    +tile('Last release',last.finished_at?relT(last.finished_at):(last.status||'-'),last.id?(last.status+' · '+(last.carried||[]).length+' change(s) carried'):'','released')
+    +tile('Failed gates',String(n.failed||0),'in the last '+days+' days','failed');
+  $('rel-board').innerHTML=REL_COLS.map(([k,label,col])=>{const L=(d.columns||{})[k]||[];
+    return '<div class="rel-col" data-col="'+k+'"><div class="rel-ch" style="color:'+col+'">'+esc(label)+' · '+L.length+'</div>'
+      +(L.length?L.slice(0,_relAll[k]?200:REL_MAX).map(relCard).join(''):'<div class="hint">none</div>')
+      +(L.length>REL_MAX?'<a class="hint" style="cursor:pointer" onclick="relMore(\''+k+'\')">'+(_relAll[k]?'show fewer':'show all '+L.length)+'</a>':'')+'</div>'}).join('');
+  $('rel-hist').innerHTML=(d.releases||[]).length?'<table><thead><tr><th>release</th><th>requested → done</th><th>waited for</th><th>main @</th><th>carried</th><th>nodes</th></tr></thead><tbody>'
+    +(d.releases||[]).map((r,i)=>'<tr><td>'+esc(r.id)+' <span class="hint">'+esc(r.status)+'</span></td><td class="mono">'+esc(relT(r.requested_at))+' → '+esc(relT(r.finished_at))+(r.minutes!=null?' ('+r.minutes+' min)':'')+'</td><td>'+esc(r.waited_for||'-')+'</td><td class="mono">'+esc(r.commit)+'</td>'
+      +'<td>'+((r.carried||[]).length?'<details><summary>'+r.carried.length+' change(s)</summary>'+r.carried.map(c=>'<div class="mono" style="font-size:11.5px">'+esc(c.sha)+' '+(c.pipeline?'<a style="cursor:pointer" onclick="openPipe(\''+esc(c.pipeline)+'\')">'+esc(c.branch||c.subject)+'</a>':esc(c.subject))+'</div>').join('')+'</details>':'<span class="hint">-</span>')+'</td><td>'+esc(r.nodes||'')+'</td></tr>').join('')+'</tbody></table>'
+    :'<span class="hint">no releases on record</span>';
+}
+function relFocus(col){const el=document.querySelector('.rel-col[data-col="'+col+'"]');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'})}
+async function relReleaseNow(){
+  const f=await askForm('Release bleeding-edge to prod',[
+      {id:'go',type:'check',label:'I have the owner’s explicit go-ahead for this release',required:true},
+      {id:'mode',label:'If a census is in flight',type:'select',value:'goal',options:[['goal','yield: the goal in flight finishes, the census parks, release, resume after'],['finish','wait until the census has ended'],['force','release now (the census goal is paused and re-run)']]}],
+    {ok:'Release'});
+  if(!f)return;
+  const r=await post('/evolve/release/prod',{confirm:true,census:f.mode,force:f.mode==='force',reason:'Loop Lab Releases section'});
+  toast(r&&r.held?('release waiting ('+f.mode+'): '+(r.why||'')):r&&r.ok?'releasing':(r&&(r.error||r.refused))||'refused');loadReleases();
+}
+async function schStopRun(id){const d=await api('/evolve/schedule/stop_run',{method:'POST',body:JSON.stringify({run_id:id})});toast(d&&d.ok?'stopped':'not stopped: '+((d&&d.error)||'?'));closeModal();loadSchedule()}
 async function schRuns(){
   const d=await api('/evolve/schedule/history?limit=60'); const R=(d&&d.runs)||[];
   const col=r=>/green|done|started|resumed/.test(r.result||'')?'#4ade80':/red|error|failed|dropped/.test(r.result||'')?'#f87171':'#9aa0a6';
   $('sch-runs').innerHTML=R.length?R.map(r=>'<div class="sch-row" onclick="schOpen(\''+esc(r.schedule_id||'')+'\')" style="cursor:pointer"><span class="sch-dot" style="background:'+col(r)+'"></span><div style="flex:1;min-width:0">'
     +'<div class="t">'+esc(r.title||r.kind)+' <span style="color:'+col(r)+'">'+esc(r.result||'')+'</span></div>'
     +'<div class="m">'+esc(String(r.started_at).replace('T',' ').slice(5,16))+(r.finished_at?' → '+esc(String(r.finished_at).replace('T',' ').slice(11,16)):' · running')+(r.detail?' · '+esc(String(r.detail).slice(0,90)):'')+'</div>'
-    +(r.board_id?'<div class="m">'+schBoardTag(r.board_id)+'</div>':'')+'</div></div>').join(''):'nothing yet';
+    +(r.board_id?'<div class="m">'+schBoardTag(r.board_id)+'</div>':'')+'</div>'
+    +(!r.finished_at&&r.kind!=='census'&&r.id?'<button class="btn sm" onclick="event.stopPropagation();schStopRun(\''+esc(r.id)+'\')" title="stop (yield) this run">■</button>':'')+'</div>').join(''):'nothing yet';
 }
+// The central cron view (looplab-control B1): every scheduled thing on the box, by source. A Claude session's
+// trigger or a request for one can be cancelled here; the rest are read-only (edit them where they live).
+const SCH_SRC_LABEL={'loop-lab':'Loop Lab','agents-work':'Claude session','in-process':'Vera job','host-cron':'crontab','host-timer':'systemd'};
+async function schAll(){
+  const box=$('sch-all'); if(!box)return;
+  const src=(($('sch-all-src')||{}).value||'');
+  const d=await api('/evolve/schedule/all'+(src?'?sources='+encodeURIComponent(src):''));
+  const R=(d&&d.rows)||[];
+  if(!R.length){box.innerHTML='<span class="hint">nothing scheduled'+(src?' from this source':'')+'</span>';return}
+  box.innerHTML='<div class="hint" style="margin-bottom:4px">'+Object.entries((d&&d.counts)||{}).map(([k,n])=>esc(SCH_SRC_LABEL[k]||k)+' '+n).join(' · ')+'</div>'
+    +R.slice(0,400).map(r=>'<div class="sch-row"><span class="sch-dot" style="background:'+(r.source==='agents-work'?'#e0a458':r.source==='loop-lab'?(SCH_KIND_COL[r.kind]||'#999'):'#666')+'"></span><div style="flex:1;min-width:0">'
+      +'<div class="t"'+(r.source==='loop-lab'&&r.ref?' style="cursor:pointer" onclick="schOpen(\''+esc(r.ref)+'\')"':'')+'>'+esc(r.title||'?')+'</div>'
+      +'<div class="m">'+esc(SCH_SRC_LABEL[r.source]||r.source)+(r.owner?' · '+esc(r.owner):'')+' · '+esc(r.kind||'')
+      +(r.next_fire?' · next '+esc(String(r.next_fire).replace('T',' ').slice(0,16)):'')+(r.repeat?' · '+esc(r.repeat):'')
+      +(r.status?' · '+esc(r.status):'')+(r.last?' · last '+esc(String(r.last).slice(0,24)):'')+'</div></div>'
+      +(r.source==='agents-work'&&/armed|pending|running|claimed/.test(r.status||'')?'<button class="btn sm" onclick="schWorkCancel(\''+esc(r.ref)+'\')" title="cancel it (it stops repeating)">✕</button>':'')
+      +'</div>').join('');
+}
+async function schWorkCancel(id){const d=await api('/agents/work/cancel',{method:'POST',body:JSON.stringify({id,note:'cancelled from the Loop Lab schedule'})});toast(d&&d.ok?'cancelled':'not cancelled: '+((d&&d.error)||'?'));schAll();const cal=$('sch-cal');if(cal&&typeof cal.refresh==='function')cal.refresh()}
 // Board items beside the calendar: what is scheduled for each, and ⏰ to schedule work for one.
 function schBoard(){
-  const box=$('sch-board'); if(!box)return;
+  const box=$('sch-bpane'); if(!box)return;
   const q=(($('sch-bq')||{}).value||'').toLowerCase();
   const by={}; (_schCache.schedules||[]).forEach(s=>{if(s.board_id)(by[s.board_id]=by[s.board_id]||[]).push(s)});
   const items=_schBoardItems.filter(it=>!/^(done|dropped)$/.test(it.lane||'')&&(!q||(String(it.title||'')+' '+it.id+' '+(it.labels||[]).join(' ')).toLowerCase().includes(q)))
@@ -1157,7 +1301,9 @@ const SCH_PRESETS=[
   ['Suite',{kind:'suite',target:{tag:'nightly'},days:[5],start:'06:00',end:'12:00',repeat:'once_per_window'}],
   ['Gate a pipeline',{kind:'pipeline',target:{action:'test'},days:[0,1,2,3,4],start:'07:00',end:'08:00',repeat:'once_per_window'}],
   ['Dispatch a board item',{kind:'board',target:{executor:'deterministic',agent:'orchestrator'},days:[0,1,2,3,4],start:'09:00',end:'17:00',repeat:'once_per_window'}],
-  ['Sync errors',{kind:'cap',target:{name:'evolve.errors.sync',arguments:{}},days:[0,1,2,3,4,5,6],start:'06:00',end:'07:00',repeat:'once_per_window'}]];
+  ['Sync errors',{kind:'cap',target:{name:'evolve.errors.sync',arguments:{}},days:[0,1,2,3,4,5,6],start:'06:00',end:'07:00',repeat:'once_per_window'}],
+  ['Work for a Claude session',{kind:'claude_session',target:{session:'any',title:'',what:''},days:[1,3,5],start:'01:00',end:'03:30',repeat:'once_per_window',exclusive:false}],
+  ['Student training (nightly)',{kind:'cap',target:{name:'decide.student.nightly',arguments:{}},days:[0,1,2,3,4,5,6],start:'01:00',end:'03:30',repeat:'every',every_minutes:10}]];
 function schPreset(i){const p=JSON.parse(JSON.stringify(SCH_PRESETS[i][1]));const bid=(($('sch-board')||{}).value||'').trim();if(bid){p.board_id=bid;if(p.kind==='board')p.target.id=bid}schOpen(null,p)}
 function schKindFields(kind,t){
   t=t||{};
@@ -1169,7 +1315,11 @@ function schKindFields(kind,t){
     +[['','each goal’s own (auto) — the baseline series'],['auto','auto'],['flat','flat'],['stepwise','stepwise'],['detailed','detailed'],['broad','broad'],['broad-stepwise','broad-stepwise'],['stepwise-reviewed','stepwise-reviewed']]
       .map(([v,l])=>'<option value="'+v+'"'+((t.plan_style||'')===v?' selected':'')+'>'+l+'</option>').join('')
     +'</select></div>'
-    +'<div><label class="fld">At window end</label><select id="sch-t-awe" style="width:100%"><option value="finish">let the census in flight finish</option><option value="yield">yield (park after the goal in flight)</option><option value="drop">drop the set</option></select></div>';
+    ;
+  if(kind==='claude_session')return f('sch-t-session','Session (its name, or any)',t.session||'any','vera-fb, vera-62, any')+f('sch-t-wtitle','Title',t.title,'what to call this request')
+    +'<div style="grid-column:1/-1"><label class="fld">Brief (what the session should do)</label><textarea id="sch-t-what" rows="3" style="width:100%">'+esc(t.what||'')+'</textarea></div>'
+    +f('sch-t-items','Board items (comma separated, optional)',(t.board_items||[]).join(', '),'')
+    +'<div class="hint" style="grid-column:1/-1">The session picks this up at its own check (agents.work.pending) - Vera never starts or resumes a Claude process. A session with 3 unanswered requests gets no more until it catches up.</div>';
   if(kind==='suite')return f('sch-t-tag','Suite tag',t.tag,'e.g. nightly or census-default')+f('sch-t-profile','Profile (optional)',t.profile,'')
     +'<div><label class="row" style="gap:6px;margin-top:16px"><input type="checkbox" id="sch-t-assess" style="width:auto" '+(t.assess?'checked':'')+'> assess</label></div>';
   if(kind==='task')return f('sch-t-id','Task id',t.id,'evolve task id')
@@ -1211,13 +1361,15 @@ function schOpen(id,prefill){
     +'<div><label class="fld">Repeat inside the window</label><select id="sch-repeat" style="width:100%"><option value="continuous">back to back (start the next when the last finished)</option><option value="once_per_window">once, when the window opens</option><option value="every">every N minutes</option></select></div>'
     +'<div><label class="fld">Every (minutes)</label><input id="sch-every" type="number" min="1" value="'+esc(r.every_minutes||60)+'" style="width:100%"></div>'
     +'<div><label class="fld">Or once at (ISO, leave blank for weekly)</label><input id="sch-once" value="'+esc(r.once_at||'')+'" placeholder="2026-09-22T09:00" style="width:100%"></div>'
+    +'<div><label class="fld">At window end</label><select id="sch-t-awe" style="width:100%" title="a census can be parked (yield); any other run is stopped by yield or drop"><option value="finish">let what is running finish</option><option value="yield">yield (census: park after the goal in flight; others: stop)</option><option value="drop">drop / stop it</option></select></div>'
     +'</div><div class="row" style="margin-top:8px;gap:14px">'
-    +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-excl" style="width:auto" '+(r.exclusive!==false?'checked':'')+'> never beside a census</label>'
+    +'<label class="row" style="gap:5px" title="one exclusive run at a time, never beside a census or a declared probe"><input type="checkbox" id="sch-excl" style="width:auto" '+(r.exclusive!==false?'checked':'')+'> exclusive (never beside a census)</label>'
+    +'<label class="row" style="gap:5px" title="may start inside a quiet window, if one is set in the scheduler config (none by default)"><input type="checkbox" id="sch-quiet" style="width:auto" '+(r.quiet_ok?'checked':'')+'> may start in the quiet hour</label>'
     +'<label class="row" style="gap:5px"><input type="checkbox" id="sch-on" style="width:auto" '+(r.enabled!==false?'checked':'')+'> enabled</label>'
     +'<span style="flex:1"></span><button class="btn primary" onclick="schSave(\''+(s?s.id:'')+'\')">Save</button></div>'
     +'<div class="hint" style="margin-top:6px">A census needs the box to itself: it starts only when no census and no agent loop is running. An agent loop or a test run goes on in the background; the next one waits until it has ended. Pipelines may reach bleeding-edge, never main.</div>');
   $('sch-repeat').value=r.repeat||'continuous';
-  if(r.kind==='census'&&$('sch-t-awe'))$('sch-t-awe').value=r.at_window_end||'finish';
+  if($('sch-t-awe'))$('sch-t-awe').value=r.at_window_end||'finish';
   if(r.kind==='pipeline'&&$('sch-t-action'))$('sch-t-action').value=(r.target||{}).action||'test';
 }
 function schBoardHint(){const v=(($('sch-board')||{}).value||'').trim();const h=$('sch-board-hint');if(h)h.textContent=v?schBoardTitle(v):'';if($('sch-kind').value==='board'&&$('sch-t-id')&&!$('sch-t-id').value)$('sch-t-id').value=v}
@@ -1231,6 +1383,7 @@ function schReadTarget(kind){
   if(kind==='board')return {id:v('sch-t-id'),executor:v('sch-t-executor')||'deterministic',agent:v('sch-t-agent')||'orchestrator'};
   if(kind==='loop')return {goal:v('sch-t-goal'),profile:v('sch-t-profile')||'coding',model:v('sch-t-model')};
   if(kind==='tests')return {branch:v('sch-t-branch')||'bleeding-edge',paths:v('sch-t-paths')||'tests',markers:v('sch-t-markers'),repo:v('sch-t-repo')};
+  if(kind==='claude_session')return {session:v('sch-t-session')||'any',title:v('sch-t-wtitle'),what:v('sch-t-what'),board_items:v('sch-t-items').split(',').map(x=>x.trim()).filter(Boolean)};
   let args={};try{args=JSON.parse(v('sch-t-args')||'{}')}catch(_){toast('arguments must be JSON');throw new Error('bad json')}
   return {name:v('sch-t-name'),arguments:args};
 }
@@ -1240,8 +1393,8 @@ async function schSave(id){
     days:[...document.querySelectorAll('.sch-day:checked')].map(e=>+e.value),
     start:$('sch-start').value.trim(),end:$('sch-end').value.trim(),timezone:$('sch-tz').value.trim(),
     repeat:$('sch-repeat').value,every_minutes:+$('sch-every').value||60,once_at:$('sch-once').value.trim(),
-    exclusive:$('sch-excl').checked,enabled:$('sch-on').checked};
-  if(kind==='census'&&$('sch-t-awe'))rec.at_window_end=$('sch-t-awe').value;
+    exclusive:$('sch-excl').checked,enabled:$('sch-on').checked,quiet_ok:!!($('sch-quiet')||{}).checked};
+  if($('sch-t-awe'))rec.at_window_end=$('sch-t-awe').value;
   const d=await api('/evolve/schedule/upsert',{method:'POST',body:JSON.stringify({schedule:rec})});
   if(!d||!d.ok){toast('not saved: '+((d&&d.error)||'?'));return}
   closeModal();toast('saved · next '+(d.next?String(d.next.start).replace('T',' ').slice(0,16):'—'));loadSchedule();
@@ -1257,7 +1410,7 @@ async function schCfgSave(){const d=await api('/evolve/schedule/config/set',{met
 // The layers. What the server is asked for follows them (results only while that layer is on - it reads every suite;
 // Vera's calendar only while that one is); what is drawn is the calendar's filter over the answer, so switching a
 // layer the answer already holds redraws at once. Per goal places each goal of a census run by its elapsed time.
-function schLayerOf(ev){return ev.layer||(ev.source==='results'?'results':ev.source==='loop-lab-run'?(ev.board_id||ev.kind==='board'?'board':'runs'):ev.source==='loop-lab'?(ev.board_id||ev.kind==='board'?'board':'windows'):'calendar')}
+function schLayerOf(ev){return ev.layer||(ev.source==='releases'?'releases':ev.source==='agents-work'?'agents':ev.source==='results'?'results':ev.source==='loop-lab-run'?(ev.board_id||ev.kind==='board'?'board':'runs'):ev.source==='loop-lab'?(ev.board_id||ev.kind==='board'?'board':'windows'):'calendar')}
 function schGran(){try{return localStorage.getItem('loop-lab.sch.gran')==='goals'?'goals':'runs'}catch(_){return 'runs'}}
 function schLayersBar(){
   const b=$('sch-layers'); if(!b)return;
@@ -1270,7 +1423,7 @@ function schMode(){
   const g=$('sch-gran'); const gran=g?(g.checked?'goals':'runs'):schGran();
   const res=_schOn.has('results'), sch=_schOn.has('windows')||_schOn.has('runs')||_schOn.has('board');
   const mode=res?(sch?'both':'results'):'windows';
-  try{localStorage.setItem('loop-lab.sch.layers',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
+  try{localStorage.setItem('loop-lab.sch.layers.v4',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
   const src='/evolve/schedule/events?mode='+mode+'&granularity='+gran+(_schOn.has('calendar')?'&include_calendar=1':'');
   if(cal.getAttribute('src')!==src)cal.setAttribute('src',src);
   cal.filter=ev=>_schOn.has(schLayerOf(ev));
@@ -1290,7 +1443,7 @@ function schRunModal(ev){
   openModal('<div class="card-h"><span class="card-t">'+esc(ev.title||'run')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
     +'<div class="hint" style="margin-bottom:6px">'+esc(SCH_KIND_LABEL[ev.kind]||ev.kind||'')+' · '+esc(String(ev.start||'').replace('T',' ').slice(0,16))+' → '+esc(String(ev.end||'').replace('T',' ').slice(11,16))+(ev.result?' · <b>'+esc(ev.result)+'</b>':'')+'</div>'
     +(ev.detail?'<div style="background:var(--bg1);border-radius:6px;padding:8px;font-size:12.5px;white-space:pre-wrap;margin:6px 0">'+esc(ev.detail)+'</div>':'')
-    +'<div class="row" style="gap:6px;margin-top:8px">'+(ev.schedule_id?'<button class="btn sm" onclick="schOpen(\''+esc(ev.schedule_id)+'\')">✎ its schedule</button><button class="btn sm" onclick="closeModal();schRunNow(\''+esc(ev.schedule_id)+'\')">▶ run again</button>':'')
+    +'<div class="row" style="gap:6px;margin-top:8px">'+(ev.running&&ev.run_id&&ev.kind!=='census'?'<button class="btn sm err-btn" onclick="schStopRun(\''+esc(ev.run_id)+'\')" title="stop it now - a background window stops starting jobs and hands the queue back">■ stop (yield)</button>':'')+(ev.schedule_id?'<button class="btn sm" onclick="schOpen(\''+esc(ev.schedule_id)+'\')">✎ its schedule</button><button class="btn sm" onclick="closeModal();schRunNow(\''+esc(ev.schedule_id)+'\')">▶ run again</button>':'')
     +(ev.board_id?'<button class="btn sm" onclick="openBoardItem(\''+esc(ev.board_id)+'\')">▣ its board item</button>':'')+'</div>');
 }
 // Opened from elsewhere - the Comms calendar's Loop Lab layer leaves a hint (same origin) and asks the shell to open
@@ -1321,6 +1474,11 @@ document.addEventListener('DOMContentLoaded',()=>{
       if(tok!==calTok)return;
       evs=evs.concat(((d&&d.events)||[]).filter(x=>x&&x.source!=='loop-lab'&&x.source!=='loop-lab-run').map(x=>Object.assign({},x,{read_only:true,layer:'calendar'})));
     }
+    // a switched-off schedule draws no window bands (it cannot run there)
+    const _off=new Set((_schCache.schedules||[]).filter(s=>!s.enabled).map(s=>s.id));
+    evs=evs.filter(ev=>!(ev.source==='loop-lab'&&_off.has(ev.schedule_id)));
+    // a run a guard turned away (skipped: busy box, outside its own window) did nothing - not drawn
+    evs=evs.filter(ev=>!(ev.source==='loop-lab-run'&&/^skipped/.test(String(ev.result||''))));
     _schCounts={};
     evs.forEach(ev=>{const L=schLayerOf(ev);ev.layer=L;_schCounts[L]=(_schCounts[L]||0)+1;
       if(ev.source==='loop-lab')ev.display='background';else if(ev.source==='results')ev.display='solid'});
@@ -1331,7 +1489,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     schOpen(null,{days:[wd],start:hh+':00',end:(String(Math.min(23,d.hour+3)).padStart(2,'0'))+':00'});
   });
   cal.addEventListener('event-open',e=>{const ev=e.detail.event||{};
-    if(ev.source==='results')schResultModal(ev);
+    if(ev.source==='releases'){if(ev.pipeline_id)openPipe(ev.pipeline_id);else{nav('releases')}}
+    else if(ev.source==='results')schResultModal(ev);
     else if(ev.source==='loop-lab-run')schRunModal(ev);
     else if(ev.schedule_id)schOpen(ev.schedule_id);
     else if(schLayerOf(ev)==='calendar')toast('📅 '+(ev.title||'')+(ev.location?' · '+ev.location:'')+' — edit it in Comms › Calendar');
@@ -2257,17 +2416,18 @@ async function boardEdit(id){
   $('bn-labels').value=(it.labels||[]).join(', ');$('bn-repo').value=it.repo||'';$('bn-project').value=it.project||'';$('bn-body').value=it.body||'';
   $('bn-title').focus()}
 async function boardMove(id,lane){const r=await post('/board/item/move',{id,lane});if(r&&r.ok)agentsRefresh();else toast((r&&r.error)||'failed')}
-async function boardClaim(id){const a=prompt('claim as agent:',_boardAgent());if(!a)return;localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));agentsRefresh()}
-async function boardComment(id){const b=prompt('comment (point at file:line, not a dump):');if(!b)return;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');agentsRefresh()}
+async function boardClaim(id){const f=await askForm('Claim board item',[{id:'a',label:'Claim as agent',value:_boardAgent(),required:true}],{ok:'Claim'});if(!f)return;const a=f.a.trim();localStorage.setItem('vera_board_agent',a);const r=await post('/board/claim',{id,agent:a});toast(r&&r.ok?'claimed':(r&&r.held_by?('lost → '+r.held_by):(r&&r.error)||'failed'));agentsRefresh()}
+async function boardComment(id){const f=await askForm('Comment',[{id:'b',label:'Comment',type:'textarea',hint:'point at file:line, not a dump',required:true}],{ok:'Post'});if(!f)return;const b=f.b;const r=await post('/board/comment',{id,frm:_boardAgent(),kind:'progress',body:b});toast(r&&r.ok?'commented':(r&&r.error)||'failed');agentsRefresh()}
 async function boardDispatch(id){
-  const ex=prompt('dispatch executor: deterministic | vera | capable','deterministic');if(!ex)return;
+  const f=await askForm('Dispatch board item',[{id:'ex',label:'Executor',type:'select',value:'deterministic',options:[['deterministic','deterministic'],['vera','vera'],['capable','capable']]}],{ok:'Dispatch'});if(!f)return;const ex=f.ex;
   const r=await post('/board/dispatch',{id,executor:ex.trim(),agent:_boardAgent()});
   toast(r&&r.ok?('dispatched ('+(r.status||'running')+')'):(r&&r.error)||'failed');setTimeout(()=>agentsRefresh(),1200)}
 /* ── board item DETAIL drawer: body + meta + comment thread + inline comment + drill-down ── */
 const _CKINDS=['progress','note','help-request','reply','blocked','handoff','steer'];
 async function openBoardItem(id){
+  const _tk=openModalLoading('Board item',id);
   const r=await api('/board/item?id='+encodeURIComponent(id));const it=r&&r.item;
-  if(!it){toast('item not found');return}
+  if(!it){modalFail(_tk,'board item '+id+' not found');return}
   const c=_LANE_COLOR[it.lane]||'#666';
   let h='<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap">'
     +'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+c+'"></span>'
@@ -2323,7 +2483,7 @@ async function boardPostComment(id){
 async function openBranchSandbox(branch){
   toast('opening dev container for '+branch+'… (may take a moment)');
   const r=await post('/evolve/sandbox/up',{branch});
-  if(r&&(r.ok||r.healthy)){closeModal();nav('ship');const sb=r.sandbox||{};try{embedSandbox(branch,sb.port)}catch(e){toast('sandbox up; open it from the Sandbox tab')}}
+  if(r&&(r.ok||r.healthy)){closeModal();nav('ship');const sb=r.sandbox||{};try{embedSandbox(branch,sb.port)}catch(e){toast('sandbox up; open it from the Ship')}}
   else toast((r&&r.error)||'could not bring up the dev container')}
 async function boardShowContext(id){
   const r=await api('/board/context?id='+encodeURIComponent(id));
@@ -2375,7 +2535,7 @@ async function capRegister(){
   if(!id||!target){toast('seat_id + target required');return}
   const r=await post('/capacity/seat/register',{seat_id:id,target,label:$('cs-label').value.trim(),auth_pool:$('cs-auth').value});
   toast(r&&r.ok?'seat registered':(r&&r.error)||'failed');if(r&&r.ok){['cs-id','cs-target','cs-label'].forEach(i=>{if($(i))$(i).value=''});loadCapacity();agentsRefresh()}}
-async function capCool(id){const s=prompt('cool for how many seconds? (0 clears)','3600');if(s==null)return;const r=await post('/capacity/seat/cool',{seat_id:id,cooling_s:parseInt(s)||0});toast(r&&r.ok?'updated':(r&&r.error)||'failed');loadCapacity()}
+async function capCool(id){const f=await askForm('Cool seat',[{id:'s',label:'Cool for (seconds, 0 clears)',type:'number',value:3600}],{ok:'Set'});if(!f)return;const s=f.s;const r=await post('/capacity/seat/cool',{seat_id:id,cooling_s:parseInt(s)||0});toast(r&&r.ok?'updated':(r&&r.error)||'failed');loadCapacity()}
 async function capRemove(id){if(!confirm('Remove seat '+id+'?'))return;const r=await post('/capacity/seat/remove',{seat_id:id});toast(r&&r.ok?'removed':(r&&r.error)||'failed');loadCapacity()}
 async function loadCapacity(){
   const el=$('cap-seats');if(!el)return;
@@ -3374,7 +3534,7 @@ async function openCensusGoal(run,goal){
 /* ═══ WORK — one table: every task, or every driver run; what is live on top ═══
    Flattening slice 3 (shared-planning/loop-lab-flattening/PLAN.md §3, §6).
    Eight pages held the same facts in eight shapes — Run once, Improve · set
-   up, Improve · live (its list), Suite, Variants, Census, Tasks, Runs. This
+   up, Mission · improve (its list), Suite, Variants, Census, Tasks, Runs. This
    is ONE table with a mode toggle: `runs` is a row per DRIVER RUN (census
    run, suite, improvement session, single run — evolve.work.drivers) and
    `tasks` a row per task with its history from every driver
@@ -3609,7 +3769,7 @@ const _WORK_IMPROVE_FORM=`    <div class="card-h"><span class="card-t">Start imp
       <span class="hint">run → critic scores → editor proposes a better variant → rerun</span>
       <span style="flex:1"></span>
       <span class="hint" id="im-live-link"></span></div>
-    <div class="hint" style="margin-bottom:6px">This page CONFIGURES a session; <a href="#" onclick="event.preventDefault();nav('watch')">Improve · live</a> is the same session running. To run something once instead — a task, a suite, or a census template — use <a href="#" onclick="event.preventDefault();nav('test')">Run once</a>.</div>
+    <div class="hint" style="margin-bottom:6px">This page CONFIGURES a session; <a href="#" onclick="event.preventDefault();nav('watch')">Mission · improve</a> is the same session running. To run something once instead — a task, a suite, or a census template — use <a href="#" onclick="event.preventDefault();nav('test')">Run once</a>.</div>
     <div class="grid">
       <div><label class="fld">Improve (category)</label><select id="im-cat" style="width:100%" onchange="fillTargets('im-cat','im-profile')"></select></div>
       <div><label class="fld">Target</label><select id="im-profile" style="width:100%"></select></div>
@@ -3628,7 +3788,7 @@ const _WORK_IMPROVE_FORM=`    <div class="card-h"><span class="card-t">Start imp
     <div id="im-gen-row" style="display:none;margin-top:8px"><label class="fld">Generate goals to test</label><input id="im-gen" style="width:100%" placeholder="a subsystem or objective, e.g. the fabric discovery system"></div>
     <div class="row" style="margin-top:10px">
       <button class="btn primary" onclick="startImprove()">&#9654; Start &amp; watch</button>
-      <span class="hint">Synthesis runs in the background on <b id="im-editq-lbl">gpt-oss:20b</b> (CPU node). Watch it live in the Watch tab.</span>
+      <span class="hint">Synthesis runs in the background on <b id="im-editq-lbl">gpt-oss:20b</b> (CPU node). Watch it live in the Mission live view.</span>
     </div>`;
 function openImproveForm(){
   openModal('<div class="card-h"><span class="card-t">Start improvement session</span><span class="hint">run → critic scores → editor proposes a better variant → rerun</span></div>'
@@ -4269,8 +4429,8 @@ function _csessActions(s){
   return b||'<span class="hint">—</span>';
 }
 async function csessResume(sid){
-  const inst=prompt('Resume on which instance_id? (auto-dispatch is not built yet — pick the target to run --resume on)',localStorage.getItem('vera_resume_instance')||'');
-  if(!inst)return;localStorage.setItem('vera_resume_instance',inst);
+  const f=await askForm('Resume session',[{id:'inst',label:'Instance id',value:localStorage.getItem('vera_resume_instance')||'',hint:'the target to run --resume on',required:true}],{ok:'Resume'});
+  if(!f)return;const inst=f.inst.trim();localStorage.setItem('vera_resume_instance',inst);
   const r=await post('/ide/claude_sessions/resume',{claude_session_id:sid,instance_id:inst});
   toast(r&&r.ok?('resumed (attempt '+r.attempt+')'):(r&&r.error)||'failed');agentsRefresh();
 }
@@ -4347,7 +4507,8 @@ async function loadEditq(){
   }).join('')+'</table>';
 }
 async function openEditq(id){
-  const r=await api('/evolve/editq/get?id='+encodeURIComponent(id));const a=r&&r.action;if(!a){toast('not found');return}
+  const _tk=openModalLoading('Edit action',id);
+  const r=await api('/evolve/editq/get?id='+encodeURIComponent(id));const a=r&&r.action;if(!a){modalFail(_tk,'edit action '+id+' not found');return}
   const editable=a.status==='queued';
   let h='<div class="card-h"><span class="card-t">Edit action '+esc(id)+'</span><span class="hint">'+esc(a.status)+' · '+esc(a.model||'')+(a.instance?(' @'+esc(a.instance)):'')+'</span></div>';
   h+='<label class="fld">prompt'+(editable?' (editable while queued)':'')+'</label><textarea id="eq-prompt" style="min-height:120px" '+(editable?'':'readonly')+'>'+esc(a.prompt||'')+'</textarea>';
@@ -4531,7 +4692,7 @@ async function selftest(){
     ?'<span style="color:var(--warn)">in-process (can touch real Vera)</span>'
     :(up?('sandbox <span class="tag">'+esc(sb.branch||'?')+'</span> :'+esc(String((sbx&&sbx.dev_port)||'')))
         :('<span style="color:var(--warn)">no sandbox up — '+(mode==='require'?'runs will REFUSE':'falls back in-process')+'</span>'
-          +' <button class="btn sm" onclick="closeModal();nav(\'ship\')">open Sandbox tab</button>'));
+          +' <button class="btn sm" onclick="closeModal();nav(\'ship\')">open Ship</button>'));
   let h='<div class="row" style="margin-bottom:6px;gap:8px;align-items:center;flex-wrap:wrap">'
     +(r.ok?'<span class="pill" style="color:var(--ok)">ALL GREEN</span>':'<span class="pill" style="color:var(--err)">problems found</span>')
     +'<span class="hint">runner: '+runner+' · mode <b>'+esc(mode)+'</b></span></div><table>';
@@ -4827,7 +4988,7 @@ function runCommitTags(commits){
    filter live in renderCensusTable. Callers that used to refresh it refresh
    Work and the Test page's recent-runs card instead. */
 async function loadRuns(){ workOnChange(); if(typeof refreshTestRuns==='function')refreshTestRuns(); }
-async function openRun(id){const r=await api('/evolve/run/get?run_id='+encodeURIComponent(id));if(r&&r.run)openRunDetail(r.run);else toast('run not found')}
+async function openRun(id){const _tk=openModalLoading('Run',id);const r=await api('/evolve/run/get?run_id='+encodeURIComponent(id));if(r&&r.run)openRunDetail(r.run);else modalFail(_tk,'run '+id+' not found')}
 function openRunDetail(d){
   const a=d.assessment||{};
   let h='<div class="card-h"><span class="card-t">'+eid('task',d.task,esc(d.task))+'</span><span class="hint">'+esc(d.run_id)+' · '+(d.elapsed_s||0)+'s'+(d.loop_session?(' · '+eid('loop',d.loop_session,'loop '+esc(String(d.loop_session).slice(0,8)),{goal:d.goal_id})):'')+'</span></div>'
@@ -5055,7 +5216,8 @@ function pipeActions(p){
   return h;
 }
 async function openPipe(id){
-  const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(!r||!r.pipeline){toast('not found');return}
+  const _tk=openModalLoading('Pipeline',id);
+  const r=await api('/evolve/pipeline/get?id='+encodeURIComponent(id));if(!r||!r.pipeline){modalFail(_tk,'pipeline '+id+' not found');return}
   const p=r.pipeline;
   let h='<div class="card-h"><span class="card-t">Pipeline '+esc(id)+' · '+esc(p.kind)+'</span><span class="hint">'+esc(p.profile)+'</span></div>';
   h+='<div class="row" style="margin-bottom:8px">'+pipeDecision(p.decision)+' <span class="pill">'+esc(p.status||'')+'</span>'
@@ -5279,9 +5441,9 @@ async function toggleReviewDiff(id){
     :'<div class="hint">'+esc((d&&d.error)||'no diff (variant pipeline)')+'</div>';
 }
 async function reviewVerdict(id,verdict){
-  const findings=prompt(verdict==='approved'?'Approval notes (optional):':'Findings — what needs to change:');
-  if(findings===null)return;
-  const r=await post('/evolve/pipeline/review',{id,verdict,findings:findings||(verdict+' via Review tab')});
+  const f=await askForm(verdict==='approved'?'Approve':'Request changes',[{id:'t',type:'textarea',label:verdict==='approved'?'Approval notes (optional)':'Findings - what needs to change',required:verdict!=='approved'}],{ok:verdict==='approved'?'Approve':'Send findings'});
+  if(!f)return;const findings=f.t;
+  const r=await post('/evolve/pipeline/review',{id,verdict,findings:findings||(verdict+' via the Ship review')});
   toast(r&&r.ok?('Reviewed as '+r.reviewer):(r&&r.error)||'failed');
   shipRefresh();
 }
@@ -5324,11 +5486,9 @@ async function toggleWsDiff(id){
   }).join('')||'<div class="hint">no files</div>';
 }
 async function wsAccept(id,branch){
-  const into=prompt('Approve by MERGING  '+branch+'  into which integration branch?\n\n'
-    +'Leave blank for the default bleeding edge ('+_defaultEdge()+'). This merges via git in an isolated '
-    +'worktree — prod\'s live checkout is NOT touched, and it refuses rather than '
-    +'clobber if the target is checked out or the merge conflicts.','');
-  if(into===null)return;
+  const f=await askForm('Merge '+branch,[{id:'into',label:'Into which integration branch',type:'select',value:_defaultEdge(),options:_EDGES.length?_EDGES.map(e=>[e.branch,e.branch]):[[_defaultEdge(),_defaultEdge()]]}],
+    {ok:'Merge',text:'Merges via git in an isolated worktree - prod’s live checkout is not touched, and it refuses rather than clobber if the target is checked out or the merge conflicts.'});
+  if(!f)return;const into=f.into;
   const r=await post('/evolve/sandbox/approve',{branch,proposal_id:id,into:((into||'').trim()||_defaultEdge())});
   if(r&&r.ok){toast('Merged '+branch+' → '+r.into+' @ '+String(r.commit||'').slice(0,8));}
   else if(r&&r.conflicts&&r.conflicts.length){toast('Merge conflict: '+r.conflicts.slice(0,3).join(', '));}
@@ -5379,6 +5539,7 @@ async function loadShip(){
   renderSbxStatusLine(r.runner||{});
   renderSbxCapacity(r.capacity);
   renderEdges({edges:r.edges||[],main:r.main,default:r.edges_default});
+  releaseStatus();
   _utLanes(r.tests||{},{pipelines:[].concat.apply([],_shipRows.map(b=>b.pipelines||[]))});
   renderShipHead(r);
   renderShipTable();
@@ -5684,11 +5845,13 @@ async function releaseNodeSync(){const r=await post('/evolve/release/node_sync',
 async function releaseCancel(){const r=await post('/evolve/release/cancel',{reason:'cancelled from Loop Lab'});toast(r&&r.ok?'release cancelled'+(r.census_resumed?' \u00b7 census resumed':''):(r&&r.error)||'failed');releaseStatus()}
 async function releaseForce(){if(!confirm('Release NOW? The restart pauses the census goal in flight and re-runs it later.'))return;await post('/evolve/release/cancel',{reason:'forcing'});const r=await post('/evolve/release/prod',{confirm:true,force:true,reason:'forced from Loop Lab'});toast(r&&r.ok?('releasing: '+(r.status||'')):(r&&(r.error||r.refused))||'failed');releaseStatus()}
 async function edgeRelease(name,branch){
-  const ok=confirm('RELEASE: fast-forward main to '+branch+' ('+name+') and restart prod?\n\nThis is the deliberate step that moves the branch prod serves. Only proceed on the user\'s explicit, unambiguous go-ahead. It refuses unless main is an ancestor of the edge (no merge commit, no guessing).');
-  if(!ok)return;
-  const mode=(prompt('If a census is in flight, how should the release wait?\n  finish = wait until the census has ended (default)\n  goal   = yield: let the goal in flight finish, park, release, resume after\n  force  = release now (the census goal is paused and re-run)','finish')||'finish').trim().toLowerCase();
-  if(['finish','goal','force'].indexOf(mode)<0){toast('unknown mode '+mode);return}
-  const sync=confirm('Also bring the NODES onto this release once it is done?\n\nOK = sync nlp_server / gpu_inference / model_builder / vllm_server (vLLM is updated, never started), the node workers and the warm model slots (after the restart, never while a census goal is in flight).\nCancel = release prod only.');
+  const f=await askForm('Release '+branch+' to prod',[
+      {id:'go',type:'check',label:'I have the owner’s explicit go-ahead for this release',required:true},
+      {id:'mode',label:'If a census is in flight',type:'select',value:'goal',options:[['goal','yield: the goal in flight finishes, the census parks, release, resume after'],['finish','wait until the census has ended (waits forever on a parked census)'],['force','release now (the census goal is paused and re-run)']]},
+      {id:'sync',type:'check',value:false,label:'also bring the nodes onto this release (nlp_server, gpu_inference, model_builder, vllm_server files, node workers, warm slots) after the restart'}],
+    {ok:'Release',text:'Fast-forward main to '+branch+' ('+name+') and restart prod. This moves the branch prod serves; it refuses unless main is an ancestor of the edge.'});
+  if(!f)return;
+  const mode=f.mode, sync=!!f.sync;
   const r=await post('/evolve/release/prod',{edge:name,confirm:true,census:mode,force:mode==='force',sync_nodes:sync,reason:'Loop Lab release button'});
   if(r&&r.held)toast('release pending ('+mode+'): '+(r.why||''));
   else toast(r&&r.ok?('releasing: '+(r.status||'')+' main @ '+String((r.merge||{}).commit||'').slice(0,8)):(r&&(r.error||r.refused))||'refused');
@@ -5872,8 +6035,9 @@ function _sbxItemHtml(s){
     +'</div>';
 }
 async function sbxPlan(name){
+  const _tk=openModalLoading('Sandbox work plan',name);
   const r=await api('/evolve/sandbox/workplan?name='+encodeURIComponent(name));
-  if(!r||r.error){toast((r&&r.error)||'work plan unavailable');return}
+  if(!r||r.error){modalFail(_tk,(r&&r.error)||'work plan unavailable');return}
   const p=r.workplan||{};
   const boardLinks=(p.board_item_ids||[]).map(id=>'<button class="btn sm" onclick="openBoardItem(\''+esc(id)+'\')">board '+esc(id)+'</button>').join('');
   const noteLinks=(p.notes_refs||[]).map(ref=>'<span class="tag mono" title="durable notes reference">'+esc(ref)+'</span>').join('');
@@ -6288,7 +6452,7 @@ setInterval(pollAutonomous,12000);
 _beNowLoad();setInterval(()=>{if(!document.hidden)_beNowLoad()},60000);
 refreshActiveRun();
 
-/* Branch race lanes (Pipelines tab) → click a run block to open its real
+/* Branch race lanes (Ship) → click a run block to open its real
    detail pipeline in a modal, reusing the existing openModal/closeModal. */
 (function(){
   const pl=$('pipe-lanes');
@@ -6310,6 +6474,19 @@ vera-agent-loop-output.alo-fill{display:block;height:max(360px,calc(100vh - 230p
   --alo-cycles-minh:max(300px,calc(100vh - 330px));--alo-cycles-maxh:max(300px,calc(100vh - 330px))}
 /* Schedule: the calendar takes the page; the lists fold away beside it */
 #sec-schedule .sch-card{display:flex;flex-direction:column;height:max(480px,calc(100vh - 118px));min-height:0;margin-bottom:0;box-sizing:border-box}
+#sec-releases .rel-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0}
+#sec-releases .rel-tile{text-align:left;display:flex;flex-direction:column;gap:2px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg1,transparent);color:inherit;cursor:pointer}
+#sec-releases .rel-tile .l{font-size:11.5px;opacity:.7}#sec-releases .rel-tile .b{font-size:20px;font-weight:600}#sec-releases .rel-tile .s{font-size:11.5px;opacity:.7}
+#sec-releases .rel-board{display:grid;grid-template-columns:repeat(6,minmax(190px,1fr));gap:8px;overflow-x:auto;align-items:start}
+#sec-releases .rel-col{display:flex;flex-direction:column;gap:6px;min-width:0}
+#sec-releases .rel-ch{font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+#sec-releases .rel-card{border:1px solid var(--border);border-radius:8px;padding:8px;cursor:pointer;display:flex;flex-direction:column;gap:3px}
+#sec-releases .rel-card:hover{border-color:var(--acc,#7aa2f7)}#sec-releases .rel-card .t{font-weight:600;font-size:12.5px;word-break:break-all}#sec-releases .rel-card .m{font-size:11.5px;opacity:.75}
+#sec-releases .rel-chips{display:flex;flex-wrap:wrap;gap:3px}#sec-releases .rel-chip{font-size:10.5px;padding:1px 5px;border-radius:4px;border:1px solid var(--c);color:var(--c)}
+#sec-releases .rel-live{padding:8px 10px;border:1px solid #2c4a3a;border-radius:8px;margin:6px 0;font-size:12.5px}
+.ask-ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:10050}
+.ask-ov.on{display:flex}
+.ask-ov .ask-box{background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;padding:12px;width:min(520px,92vw);max-height:90%;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.4)}
 #sec-schedule .sch-layers{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:2px 0 8px;flex:none}
 .sch-ly{font:inherit;font-size:12.5px;display:inline-flex;align-items:center;gap:6px;padding:3px 11px;border-radius:999px;border:1px solid var(--border);background:transparent;color:var(--dim);cursor:pointer}
 .sch-ly i{width:11px;height:11px;border-radius:3px;background:var(--c);opacity:.3}

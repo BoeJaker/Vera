@@ -176,15 +176,57 @@ def _seal(plaintext: str) -> str:
     return ""
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+def _reg():
+    import Vera.vera.capability_orchestration as _c
+    return _c.CAPABILITY_REGISTRY
+
+
 def _open(sealed: str) -> str:
     if not sealed:
         return ""
+    if _pa().is_ref(sealed):                       # in the Platforms credential store
+        return _pa().open_value_sync(_reg(), sealed)
     if vsecrets:
         try:
             return vsecrets.open_secret(sealed)
         except Exception:
             return ""
     return ""
+
+
+async def _adopt(dry_run: bool):
+    """Move instance secrets still sealed here into the Platforms store (platform.secrets.adopt)."""
+    rows = await _load_instances()
+    moved, changed = [], False
+    for rec in rows:
+        for f in ('token_sealed', 'api_key_sealed', 'oauth_sealed'):
+            if not _pa().needs_adopting(rec.get(f)):
+                continue
+            key = _pa().key_for("remote_ide", rec.get("id"), f.replace("_sealed", ""))
+            moved.append({"record": rec.get("id"), "field": f, "key": key})
+            if not dry_run:
+                new = await _pa().adopt_value(_reg(), key, rec[f], f"remote_ide {rec.get('label') or rec.get('id')} " + f)
+                changed = changed or new != rec[f]
+                rec[f] = new
+    if changed:
+        await _save_instances(rows)
+    return moved
+
+
+_pa().register_adopter("remote_ide", _adopt)
 
 
 def _public_instance(rec: dict) -> dict:
@@ -224,6 +266,7 @@ async def _ssh(host_id: str, command: str, timeout: int = 120) -> dict:
 
 async def _anthropic_key(inst: dict) -> str:
     """Resolve an Anthropic key: per-instance sealed → providers store → env."""
+    await _pa().prime(_reg(), inst.get("api_key_sealed"), inst.get("oauth_sealed"))
     k = _open(inst.get("api_key_sealed", ""))
     if k:
         return k
@@ -398,11 +441,14 @@ async def ide_remote_register(
     if auth:
         rec["auth"] = auth
     if token:
-        rec["token_sealed"] = _seal(token)
+        rec["token_sealed"] = await _pa().keep(_reg(), _pa().key_for("remote_ide", rec.get("id"), "token"),
+                                       token, f"Remote IDE {rec.get('label') or rec.get('id')} client token") or _seal(token)
     if api_key:
-        rec["api_key_sealed"] = _seal(api_key)
+        rec["api_key_sealed"] = await _pa().keep(_reg(), _pa().key_for("remote_ide", rec.get("id"), "api_key"),
+                                       api_key, f"Remote IDE {rec.get('label') or rec.get('id')} Anthropic key") or _seal(api_key)
     if oauth_token:
-        rec["oauth_sealed"] = _seal(oauth_token)
+        rec["oauth_sealed"] = await _pa().keep(_reg(), _pa().key_for("remote_ide", rec.get("id"), "oauth"),
+                                       oauth_token, f"Remote IDE {rec.get('label') or rec.get('id')} OAuth token") or _seal(oauth_token)
     # MCP passthrough (gap 3): an mcp_config is a non-secret servers blob (URL +
     # allow prefixes via the vera bridge), stored plainly; mcp_enabled gates it.
     if mcp_enabled or mcp_config:

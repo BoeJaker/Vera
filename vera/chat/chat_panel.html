@@ -5222,20 +5222,26 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
 
     const allowedSet=new Set(allowedCaps);
 
+    /* whole words, plurals tolerated (info-seeking plan SK-1.1): a substring test let "out" (from "find out about")
+       match "output", "about" and "without" in nearly every description, and "rate" match "generate" - the same fix
+       the loop's scorer got (dag/cap_relevance_core) */
+    const wre=words.map(w=>new RegExp('(^|[^a-z0-9])'+w.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(e?s)?($|[^a-z0-9])'));
     const scored=ALL_CAPS
       .filter(cap=>allowedSet.has(cap.name))
       .map(cap=>{
         const name=(cap.name||'').toLowerCase();
+        const nameWords=name.replace(/[._-]+/g,' ');
         const desc=(cap.description||'').toLowerCase();
         const tags=(cap.tags||[]).join(' ').toLowerCase();
         const group=name.split('.')[0];
         let score=0;
-        for(const w of words){
-          if(name.includes(w))  score += 15;
-          if(desc.includes(w))  score += 5;
-          if(tags.includes(w))  score += 8;
-          if(group===w)         score += 20;
-        }
+        words.forEach((w,i)=>{
+          const re=wre[i];
+          if(re.test(nameWords)) score += 15;
+          if(re.test(desc))      score += 5;
+          if(re.test(tags))      score += 8;
+          if(group===w)          score += 20;
+        });
         return{name:cap.name,score};
       })
       .filter(c=>c.score >= _CAP_MIN_SCORE);
@@ -5306,6 +5312,27 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
       +'about the conversation itself — those always get a normal reply.';
   }
 
+  /* four-minds FM-3.3 'on' (owner, 17 Oct; switch tools.shortlist.chat): before a non-trivial turn the page asks the
+     server for the most fitting SAFE capabilities from the WHOLE catalogue (caps.chat_shortlist - read / network /
+     model effects only, never shells, secrets, deploys or system controls) and offers them beside the agent's own
+     list. Any other mode, a timeout (900 ms) or an error leaves the page's own scoring exactly as before. */
+  let _chatShortlist={q:'',names:[],mode:''};
+  async function _fetchChatShortlist(msg){
+    _chatShortlist={q:'',names:[],mode:''};
+    if(!document.getElementById('cfgCapInteg')?.checked || _isTrivialChat(msg||'')) return;
+    const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),900);
+    try{
+      const r=await fetch(BASE+'/mcp/call',{method:'POST',headers:{'Content-Type':'application/json'},signal:ctl.signal,
+        body:JSON.stringify({name:'caps.chat_shortlist',arguments:{text:String(msg||'').slice(0,1000),k:24}})});
+      const res=await r.json(); const c=(res&&res.type==='tool_result')?res.content:res;
+      if(c&&c.mode==='on'&&Array.isArray(c.tools)){
+        _chatShortlist={q:msg,mode:'on',names:c.tools.map(x=>x&&x.name).filter(n=>n&&ALL_CAPS.some(cd=>cd.name===n))};
+      }
+    }catch(_){ /* the page's own list stands */ }
+    finally{ clearTimeout(t); }
+  }
+  function _chatShortlistFor(query){ return (_chatShortlist.mode==='on' && _chatShortlist.q===query) ? _chatShortlist.names : []; }
+
   function buildCapHint(a,query){
     // Master gate — user opt-out always wins
     if(!document.getElementById('cfgCapInteg')?.checked) return '';
@@ -5313,10 +5340,13 @@ try{ const cell=await cellResp.json(); _cvLandCell(nbId, cell, cellType, lang, c
     if(mode==='none') return '';
 
     const allowedCaps=_getAgentCaps(a);
-    if(!allowedCaps.length) return '';
+    const serverSafe=_chatShortlistFor(query||'');
+    if(!allowedCaps.length && !serverSafe.length) return '';
 
     const autoExec=document.getElementById('cfgCapAutoExec')?.checked;
     let relevantNames=_findRelevantCaps(query||'',allowedCaps,28);
+    // FM-3.3 'on': the server's safe shortlist first, then the agent's own best matches
+    if(serverSafe.length) relevantNames=[...new Set([...serverSafe,...relevantNames.slice(0,10)])].slice(0,34);
     // With a panel mounted, the panel-interaction caps and the panel's own
     // ui_caps are ALWAYS in play regardless of how the message scores —
     // "try again" / "open the query tab" carry no cap-scoring words, yet are
@@ -11740,6 +11770,9 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
                    + `fill the gap from memory or a guess.`
                  : '');
           await continueConversation(agentName,followUp,null,true);
+          // info.seek need=deep: the overview is answered now; the full report it started follows into this chat when
+          // it is done - not awaited, so the conversation goes on meanwhile (info-seeking plan SK-3.7)
+          if(capName==='info.seek'&&content&&typeof content==='object'&&content.job_id) _followReport(content.job_id,agentName);
         }
       }else{
         HISTORY.push({role:'tool',content:`[${capName} error] ${content.error||'unknown'}`});
@@ -12666,8 +12699,15 @@ Your task: decide what to do next to advance toward the goal.
     const d=String(n.created_at||n.updated_at||'').slice(0,10);
     return /^\d{4}-\d\d-\d\d$/.test(d)?' · '+d:'';
   }
-  function buildCtxInj(forMsg){
+  // ONE memory injection per turn (owner, 2026-10-11): an agent with memory_inject gets its memory from the server's
+  // two-tier recall (agents.py get_agent_memory_context_v2 - agent-scoped, the vector leg next turn, decay, usage);
+  // the page then leaves ITS memory nodes out of "[Retrieved Context]" and keeps the rest (fabric, web, notes). Every
+  // real chat turn in the week to 11 Oct ran on aide, the one agent with memory_inject, and got memory twice.
+  const _CTX_MEM_SRCS=new Set(['memory','vector','both','graph']);
+  function _ctxSkipMem(agentRec){ return !!(agentRec&&agentRec.memory_inject); }
+  function buildCtxInj(forMsg, agentRec){
     if(!document.getElementById('ctxInject')?.checked)return'';
+    const _skipMem=_ctxSkipMem(agentRec);
     // In live-context mode CTX_NODES is query-driven: never inject context that
     // was retrieved for a DIFFERENT message. If the user edited the input and
     // sent before the debounced fetch caught up, CTX_NODES may still hold the
@@ -12682,6 +12722,8 @@ Your task: decide what to do next to advance toward the goal.
       // In live web mode the server owns web/news context — never double-inject
       // any web/news nodes still lingering in the graph from a prior fetch.
       .filter(n=>!(_webLive&&(n.source==='web'||n.source==='news')))
+      // ...and when the server injects the agent's memory, never inject memory a second time
+      .filter(n=>!(_skipMem&&_CTX_MEM_SRCS.has(n.source)))
       .slice(0,k)
       .map(n=>{
         const src=n.source==='web'||n.source==='news'?`${n.source} "${n.label}"${n.url?' '+n.url:''}`:n.source;
@@ -12694,9 +12736,10 @@ Your task: decide what to do next to advance toward the goal.
   }
   // the memory records buildCtxInj put in this turn's prompt (the same filters), so the server can count whether the
   // reply drew on them (context-and-ui CU-M.2 usage signals); only real memory ids - not web, fabric or synthetic rows
-  function _ctxInjIds(forMsg){
+  function _ctxInjIds(forMsg, agentRec){
     try{
       if(!document.getElementById('ctxInject')?.checked) return [];
+      if(_ctxSkipMem(agentRec)) return [];          // its memory came from the server, which counts its own usage
       if(forMsg!==undefined && _ctxLiveOn() && !_ctxMatches(forMsg)) return [];
       const minSim=parseFloat(document.getElementById('ctxSim')?.value||'0.55');
       const k=parseInt(document.getElementById('ctxK')?.value||'8');
@@ -13038,6 +13081,7 @@ Your task: decide what to do next to advance toward the goal.
     // (capHint/panelStateBlock/generic agent) on any failure, so turning
     // this on can never make a panel-scoped question WORSE than today.
     if(await _tryPanelDeferToSpecialist(msg,bubEl)) return;
+    try{ await _fetchChatShortlist(msg); }catch(_){}
     const capHint=buildCapHint(a,msg);
     _lastUserMessage=msg;
     _lastCapHint=capHint;
@@ -13085,7 +13129,7 @@ Your task: decide what to do next to advance toward the goal.
     const ctxBlock=await _ctxBlockP;
     // Recompute injection now that context is guaranteed to match this msg,
     // then reconcile the "+N ctx" pill on the already-painted user message.
-    ctxInj=buildCtxInj(msg);
+    ctxInj=buildCtxInj(msg, a);
     /* The turn's context is captured HERE, at send, because this is the only moment it is certainly the set
        that went with THIS question. The save used to re-read live CTX_NODES when the reply landed, by which
        time it can hold the next question's context or be empty - and it was gated on that set being non-empty,
@@ -13257,7 +13301,7 @@ Your task: decide what to do next to advance toward the goal.
           // what the turn is doing, as it happens (the throbber names it); the turn's id ties the frames to it
           phase_frames:_phasesOn()||undefined, turn_id:_phaseTurnId(aMsg.wrap)||undefined,
           // the memory records this prompt carries, for usage signals (whether the reply drew on them)
-          ctx_ids:(ctxInj?_ctxInjIds(msg):[]),
+          ctx_ids:(ctxInj?_ctxInjIds(msg, a):[]),
         })
       });
       if(!resp.ok){bubEl.textContent='✗ HTTP '+resp.status;return;}
@@ -14589,6 +14633,21 @@ Your task: decide what to do next to advance toward the goal.
     return _rcPromise;
   }
 
+  /* A background report (info.seek need=deep) gets its own card in the conversation; when it finishes the report lands
+     there and the agent adds a line, as for a research job started directly. */
+  function _followReport(jobId, agentName){
+    const card=document.createElement('div');
+    card.className='cap-inline';
+    card.innerHTML=`<span style="color:var(--acc)">&#128269; Full report in progress</span>
+      <div style="font-size:9px;color:var(--dim2);margin-top:2px">The answer above is from the quick look; the full report `
+      +`will appear here when it is done (usually 5-30 minutes). Job: <code>${esc(jobId)}</code></div>
+      <div id="dag-res-area" style="margin-top:4px"></div>`;
+    BOX().appendChild(card);scroll();
+    _streamResearchJob(jobId,agentName,card).catch(e=>{
+      const a=card.querySelector('#dag-res-area'); if(a) a.textContent='Could not follow the report: '+(e&&e.message||e);
+    });
+  }
+
   async function _streamResearchJob(jobId, agentName, card, maxWaitMs=1800000){
     const start=Date.now();
     const host=card?card.querySelector('#dag-res-area')||card:null;
@@ -14667,9 +14726,12 @@ Your task: decide what to do next to advance toward the goal.
     }catch(wsErr){
       // WebSocket failed — fall back to HTTP polling
       setStatus('WS failed, polling…');
-      let polls=0;
-      while(!cancelled&&Date.now()-start<Math.min(maxWaitMs,300000)){
-        await new Promise(r=>setTimeout(r,polls<12?6000:12000));
+      let polls=0, finished=false;
+      // Poll for as long as a report can take (maxWaitMs), not 5 minutes: on 7 Oct a chat research job ran 18 minutes,
+      // the WebSocket had failed, polling stopped at 5 and the report never reached the chat (info-seeking SK-3.7).
+      // After the first minutes the polls slow to every 30 s.
+      while(!cancelled&&Date.now()-start<maxWaitMs){
+        await new Promise(r=>setTimeout(r,polls<12?6000:(polls<30?12000:30000)));
         polls++;
         const res=await api('/research/job/status?job_id='+encodeURIComponent(jobId));
         if(!res)continue;
@@ -14684,14 +14746,20 @@ Your task: decide what to do next to advance toward the goal.
           if(Array.isArray(res.citations)) cits=res.citations;
           (res.citations||[]).length&&push({type:'citations',citations:res.citations});
           finish(result);
+          finished=true;
           break;
         }
         if(status==='error'||status==='failed'){
           setStatus('Research failed: '+(res.error||status));
-          fullText='';break;
+          fullText='';finished=true;break;
         }
       }
-    }finally{ if(rc&&rc._cancelBtn) rc._cancelBtn.remove();
+      // never go quiet: a report still running when the wait ends says so, with where to find it
+      if(!finished&&!cancelled){
+        setStatus(`Still running after ${Math.round((Date.now()-start)/60000)} min - it will be in Research (job ${jobId}) when it finishes`);
+        HISTORY.push({role:'tool',content:`[research ${jobId}] still running after the wait; not delivered to this chat yet`});
+      }
+        }finally{ if(rc&&rc._cancelBtn) rc._cancelBtn.remove();
       /* a run that ended any other way (failed, cancelled, out of time) says so on the canvas rather than spinning on */
       try{ if(_CV_RR[jobId]&&!_CV_RR[jobId].ended) _cvRunFeed(jobId, { error: cancelled?'Cancelled.':(fullText?'':'The run ended without a report.') , final:true }); }catch(_){} }
 

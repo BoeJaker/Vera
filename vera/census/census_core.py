@@ -101,6 +101,15 @@ def _num(v: Any) -> Optional[float]:
     return v if isinstance(v, (int, float)) and not isinstance(v, bool) else None
 
 
+def gate_overlap_s(record: Dict[str, Any]) -> int:
+    """Seconds a pipeline gate's tests ran beside this goal (harness K4 field), 0 when none/unknown."""
+    g = (record or {}).get("gate_overlap")
+    try:
+        return int((g or {}).get("gate_overlap_s") or 0) if isinstance(g, dict) else 0
+    except (TypeError, ValueError):
+        return 0
+
+
 def summarise_run(run_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
     """One run's headline numbers.
 
@@ -127,6 +136,9 @@ def summarise_run(run_id: str, records: Sequence[Dict[str, Any]]) -> Dict[str, A
         "fast_path_total": sum(int(r.get("fast_path") or 0) for r in recs),
         "warnings_total": sum(len(r.get("warnings") or []) for r in recs),
         "wall_total_s": round(sum(walls), 1),
+        # Goals a pipeline gate's tests overlapped (K4 / DEEP-21 D21-6): their wall times are not
+        # comparable with a quiet run's - quality is unaffected.
+        "gate_overlap_goals": sum(1 for r in recs if gate_overlap_s(r) > 0),
         "accounting_measured": len(measured),
         # Names exactly what it checks: the step counters add up. It is NOT a
         # claim that the run's goals were achieved — see the module docstring.
@@ -397,7 +409,9 @@ def compare_runs(base: Sequence[Dict[str, Any]],
             "head_unaccounted": hr.get("unaccounted"),
             "head_gate_inserted": hr.get("gate_inserted"),
             "base_plan_style": row_plan_style(br), "head_plan_style": row_plan_style(hr),
+            "base_gate_overlap_s": gate_overlap_s(br), "head_gate_overlap_s": gate_overlap_s(hr),
         }
+        rec["wall_comparable"] = not (rec["base_gate_overlap_s"] or rec["head_gate_overlap_s"])
         if hr.get("unaccounted"):
             rec["note"] = ("this run has steps no producer claims — its counters "
                            "cannot settle whether the goal really improved")
@@ -405,6 +419,10 @@ def compare_runs(base: Sequence[Dict[str, Any]],
             rec["note"] = ("planned with different styles (%s → %s) — this measures "
                            "the style as much as the code"
                            % (rec["base_plan_style"], rec["head_plan_style"]))
+        elif not rec["wall_comparable"]:
+            rec["note"] = ("a pipeline gate's tests ran beside this goal (base %d s / head %d s) - "
+                           "its wall time is not comparable; the outcome still is"
+                           % (rec["base_gate_overlap_s"], rec["head_gate_overlap_s"]))
         out.append(rec)
     order = {"regressed": 0, "missing": 1, "held": 2, "improved": 3}
     out.sort(key=lambda r: (order.get(r["outcome_change"], 4), str(r["id"])))

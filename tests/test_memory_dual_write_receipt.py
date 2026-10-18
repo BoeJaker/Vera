@@ -51,6 +51,7 @@ def test_receipt_binds_exact_revision_and_is_deterministic_payload_free():
     assert data["authority_state"] == "dual_committed"
     assert data["requires_reconciliation"] is False
     assert data["authority_switch_allowed"] is False
+    assert data["producer_kind"] == "internal"
     assert "portable memory" not in repr(data)
 
 
@@ -123,3 +124,14 @@ def test_invalid_or_incomplete_evidence_fails_closed():
         make(observed_at="2026-01-01T00:00:00")
     with pytest.raises(TypeError, match="RecordRevision"):
         make(revision={})
+    with pytest.raises(ValueError, match="producer_kind"):
+        make(producer_kind="unknown-path")
+
+
+def test_additional_bounded_backend_is_accepted_and_affects_reconciliation():
+    receipt = make(
+        native_outcomes={**outcomes(), "qdrant": "failed"},
+        error_codes={"qdrant": "backend_failed"},
+    )
+    assert receipt.native_outcomes["qdrant"] == "failed"
+    assert receipt.requires_reconciliation is True

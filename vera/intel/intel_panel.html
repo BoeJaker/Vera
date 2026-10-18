@@ -30,9 +30,16 @@ h2{font-size:15px;margin:0 0 10px}h3{font-size:12px;margin:14px 0 6px;color:var(
 .tlist .t b{display:block}.tlist .t .hl{font-size:11.5px;color:var(--muted,#9aa3b2);margin-top:2px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .chip{display:inline-block;font-size:10.5px;padding:1px 7px;border:1px solid var(--line,#2a2f3a);border-radius:999px;color:var(--muted,#9aa3b2);margin-right:4px}
 .chip.new{border-color:var(--int-acc);color:var(--int-acc)}
+.chip.ok{border-color:var(--green,#9ece6a);color:var(--green,#9ece6a)}
+.chip.warn{border-color:var(--yellow,#e0af68);color:var(--yellow,#e0af68)}
+.chip.err{border-color:var(--red,#f7768e);color:var(--red,#f7768e)}
+#apKeys table{width:100%;border-collapse:collapse}
+#apKeys th{text-align:left;font-weight:600;color:var(--muted,#9aa3b2);padding:4px 6px;border-bottom:1px solid var(--line,#2a2f3a)}
+#apKeys td{vertical-align:top;padding:6px;border-bottom:1px solid var(--line,#2a2f3a)}
+#apKeys td .btn{margin:0 4px 4px 0;text-decoration:none;display:inline-block}
 .ws-head h2{margin:0;font-size:17px}
 .state{border-left:3px solid var(--int-acc);padding:6px 10px;margin:6px 0;white-space:pre-wrap}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media (max-width:1100px){.grid2{grid-template-columns:1fr}}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.grid2>*{min-width:0}@media (max-width:1100px){.grid2{grid-template-columns:1fr}}
 .sig{display:grid;grid-template-columns:34px 1fr auto;gap:10px;padding:8px 0;border-top:1px solid var(--line,#2a2f3a)}
 .sig .sc{font-weight:700;text-align:center;border-radius:6px;padding:3px 0;background:var(--bg2,#11141a)}
 .sig .sc.hi{color:var(--green,#9ece6a)}.sig .sc.md{color:var(--yellow,#e0af68)}
@@ -64,6 +71,12 @@ details.card>summary{cursor:pointer;font-weight:600}
 .story .n small{display:block;font-weight:400;font-size:9.5px;color:var(--muted,#9aa3b2)}
 .story a{color:inherit;font-weight:600;text-decoration:none}.story a:hover{text-decoration:underline}
 .story .up{color:var(--green,#9ece6a);white-space:nowrap}
+.evidence-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:8px}
+.evidence-cell{border:1px solid var(--line,#2a2f3a);border-radius:8px;padding:9px;background:var(--bg2,#11141a);min-width:0}
+.evidence-cell h3{margin:0 0 6px}.evidence-cell .metric{font-size:18px;font-weight:700;color:var(--text,#e6e8ee)}
+.evidence-cell .detail{margin-top:5px;line-height:1.45}.evidence-cell .chip{margin-top:3px}
+@media (max-width:1200px){.evidence-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:700px){.evidence-grid{grid-template-columns:1fr}}
 </style>
 <link rel="stylesheet" href="/ui/vera-panel.css">
 </head>
@@ -80,6 +93,7 @@ details.card>summary{cursor:pointer;font-weight:600}
     <button data-label="Reports" data-desc="Briefs and their delivery" data-desc-long="Reports: build a brief, read it, send it to Telegram, chat, email, the canvas and more." class="nav-btn" data-go="reports" onclick="go('reports')"><span class="gl">▤</span>Reports</button>
     <button data-label="Actions" data-desc="What Vera can do next" data-desc-long="Actions reports offered - fetch a repo, research a question further, track an entity - and what became of them." class="nav-btn" data-go="actions" onclick="go('actions')"><span class="gl">➜</span>Actions</button>
     <button data-label="Activity" data-desc="What it is doing on its own" data-desc-long="The night batch, sessions, alerts it raised, research waiting, notes from your drop folders and automation proposals - and a command line." class="nav-btn" data-go="activity" onclick="go('activity')"><span class="gl">◷</span>Activity</button>
+    <button data-label="Search &amp; APIs" data-desc="Search health and the keys sources use" data-desc-long="Is web search getting real results, how often chat answered a current question without looking it up, and the keyed data sources intelligence can use - each key is added once on the Platforms page." class="nav-btn" data-go="apis" onclick="go('apis')"><span class="gl">⚿</span>Search &amp; APIs</button>
     <button data-label="Settings" data-desc="Schedule, delivery, thinking, voice" data-desc-long="When the nightly refresh, the morning brief, the week in review and the proposals run; where briefs and alerts go; how it thinks, the sessions it may plan work into; voice and narration." class="nav-btn" data-go="settings" data-vera-settings="#pane-settings" onclick="go('settings')"><span class="gl">⚙</span>Settings</button>
   </nav>
   <div id="status-tile">
@@ -165,6 +179,18 @@ details.card>summary{cursor:pointer;font-weight:600}
   </div>
 
   <div class="pane" id="pane-activity">
+    <div class="card">
+      <div class="row"><div class="grow"><h2 style="margin:0">How Intelligence connects</h2>
+        <div class="small muted">Intelligence keeps ownership of its jobs and records. These read-only views show where their shared execution, model, effect and data evidence joins - and where evidence is still missing.</div></div>
+        <button class="btn" onclick="loadIntelEvidence()">Refresh evidence</button></div>
+      <div class="evidence-grid" aria-live="polite">
+        <section class="evidence-cell"><h3>Job lifecycle</h3><div class="metric">Shared timeline</div>
+          <div class="detail small">Native background jobs appear on the activity timeline below with their portable run state. The Intel queue still executes and controls them.</div></section>
+        <section class="evidence-cell"><h3>Models and placement</h3><div id="acEvidenceModels" class="small muted">loading…</div></section>
+        <section class="evidence-cell"><h3>External actions</h3><div id="acEvidenceEffects" class="small muted">loading…</div></section>
+        <section class="evidence-cell"><h3>Records and projections</h3><div id="acEvidenceRecords" class="small muted">loading…</div></section>
+      </div>
+    </div>
     <div class="grid2">
       <div class="card">
         <h2>Tonight and now</h2>
@@ -197,6 +223,36 @@ details.card>summary{cursor:pointer;font-weight:600}
     </div>
   </div>
 
+  <div class="pane" id="pane-apis">
+    <div class="grid2">
+      <div class="card">
+        <h2>Web search</h2>
+        <div id="apSearch" class="small muted">loading…</div>
+      </div>
+      <div class="card">
+        <h2>Chat lookups (7 days)</h2>
+        <div id="apMiss" class="small muted">loading…</div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>API keys</h2>
+      <p class="small muted">Keys live in one place - the Platforms page (Vera's secrets service, never shown again).
+        Add a key there and everything that reads it picks it up.</p>
+      <div id="apKeys" class="small muted">loading…</div>
+      <h3>Read without a key</h3>
+      <div id="apKeyless" class="small muted"></div>
+    </div>
+    <div class="card">
+      <h2>API connections</h2>
+      <p class="small muted">Every API Vera reads is a connection on the Platforms page - its address, how it signs
+        in and a reference to its key. Fabric sources read through them; map an endpoint there to add one.</p>
+      <div id="apConns" class="small muted">loading…</div>
+      <div id="apConnAdd" class="small" style="margin-top:8px"></div>
+      <div id="apConnMsg" class="msg"></div>
+      <p id="apHint" class="small muted"></p>
+    </div>
+  </div>
+
   <div class="pane" id="pane-settings">
     <div class="grid2">
       <div class="card">
@@ -215,6 +271,7 @@ details.card>summary{cursor:pointer;font-weight:600}
         <div class="row"><div class="grow"><label class="f">Automation proposals on</label><select id="cAdvDay"></select></div>
           <div class="grow"><label class="f">at (hour)</label><input type="number" id="cAdvHour" min="0" max="23"></div></div>
         <label class="small"><input type="checkbox" id="cIll"> illustrate briefs (image generation)</label>
+        <label class="small"><input type="checkbox" id="cFirst"> sweep a new topic at once (no model), not at the next nightly run</label>
         <div class="row" style="margin-top:8px"><button class="btn pri" onclick="saveConfig()">Save</button><span id="cMsg" class="msg"></span></div>
         <h3>Last runs</h3><div id="cSched" class="small muted"></div>
         <p class="small muted">The refresh runs through the idle queue: only when the box is quiet, one topic at a time,
@@ -285,6 +342,10 @@ details.card>summary{cursor:pointer;font-weight:600}
 const $ = (id) => document.getElementById(id);
 const safeUrl = (u) => /^https?:\/\//i.test(String(u || '')) ? u : '';
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+/* a value inside an inline handler: a JS string literal (JSON), then escaped for the attribute. esc() alone
+   was undone by the HTML parser before the JS ran, so "Moody's" broke a button and crafted market or listing
+   data could inject script (review 2026-10-10). */
+const jsq = (s) => esc(JSON.stringify(String(s == null ? '' : s)));
 async function call(name, args) {
   const r = await fetch('/mcp/call', {method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({name, arguments: args || {}, caller_kind: 'user'})});
@@ -302,6 +363,7 @@ function go(id) {
   if (id === 'actions') loadActions();
   if (id === 'settings' && !LOADED.settings) { LOADED.settings = 1; loadConfig(); }
   if (id === 'activity') loadActivity();
+  if (id === 'apis') loadApis();
   if (id === 'timeline') { loadAsOfTopics(); loadAllStories(); }
   try { localStorage.setItem('vera.intel.pane', id); } catch (e) {}
 }
@@ -317,7 +379,7 @@ let TOPICS = [], CUR = '';
 async function loadTopics() {
   const r = await call('intel.topic.list', {status: $('tStatus').value});
   TOPICS = r.rows || [];
-  $('tlist').innerHTML = TOPICS.length ? TOPICS.map(t => `<div class="t ${t.id===CUR?'on':''}" onclick="openTopic('${esc(t.id)}')">
+  $('tlist').innerHTML = TOPICS.length ? TOPICS.map(t => `<div class="t ${t.id===CUR?'on':''}" onclick="openTopic(${jsq(t.id)})">
       <b>${esc(t.name)}</b>
       <div><span class="chip ${t.signals_24h?'new':''}">${t.signals_24h||0} new</span><span class="chip">${esc(t.depth)}</span><span class="chip">${esc(t.cadence)}</span>${t.status!=='active'?`<span class="chip">${esc(t.status)}</span>`:''}</div>
       ${t.headline?`<div class="hl">${esc(t.headline)}</div>`:''}</div>`).join('')
@@ -334,11 +396,11 @@ async function openTopic(id) {
   $('ws').innerHTML = `
     <div class="card ws-head">
       <div class="row"><h2 class="grow">${esc(t.name)}</h2>
-        <button class="btn" onclick="sweep('${esc(id)}')" title="search now - no model">↻ Sweep</button>
-        <button class="btn" onclick="refresh('${esc(id)}')" title="sweep, read, assess - queued for a quiet moment">◆ Reassess</button>
-        <button class="btn" onclick="topicReport('${esc(id)}')">▤ Report</button>
-        <button class="btn" onclick="toCanvas('${esc(id)}')" title="put this topic's timeline and signals on the chat canvas">⧉ Canvas</button>
-        <button class="btn" onclick="editTopic('${esc(id)}')">✎ Edit</button></div>
+        <button class="btn" onclick="sweep(${jsq(id)})" title="search now - no model">↻ Sweep</button>
+        <button class="btn" onclick="refresh(${jsq(id)})" title="sweep, read, assess - queued for a quiet moment">◆ Reassess</button>
+        <button class="btn" onclick="topicReport(${jsq(id)})">▤ Report</button>
+        <button class="btn" onclick="toCanvas(${jsq(id)})" title="put this topic's timeline and signals on the chat canvas">⧉ Canvas</button>
+        <button class="btn" onclick="editTopic(${jsq(id)})">✎ Edit</button></div>
       <div class="muted">${esc(t.brief||'')}</div>
       ${t.why?`<div class="small"><b>Why:</b> ${esc(t.why)}</div>`:''}
       <div style="margin-top:4px"><span class="chip">${esc(t.depth)}</span><span class="chip">${esc(t.cadence)}</span><span class="chip">${st.signals_total||0} signals</span>${t.dream_loop?'<span class="chip">dream loop</span>':''}<span class="chip">last sweep ${esc((t.last_sweep||'never').slice(0,16).replace('T',' '))}</span></div>
@@ -368,6 +430,7 @@ async function openTopic(id) {
       <div id="srcList" class="small"></div>
       <div class="row" style="margin-top:8px"><select id="srcKind" style="width:auto" onchange="srcKindHint()"></select>
         <input type="text" id="srcVal" class="grow" style="width:auto" onkeydown="if(event.key==='Enter')addSource()">
+        <datalist id="srcConns"></datalist>
         <button class="btn" onclick="addSource()">Read it</button></div>
       <div id="srcGeo" class="row small" style="display:none;margin-top:6px"><input type="text" id="srcBox" class="grow" placeholder="only inside a box (optional): min_lon,min_lat,max_lon,max_lat - e.g. -11,49,2,61 for the UK"></div>
       <div id="srcMap" style="display:none;margin-top:6px"><textarea id="srcMapping" placeholder='field mapping (JSON): {"item_path": "items", "title_field": "name", "url_field": "url", "time_field": "updated_at", "text_fields": "summary"}'></textarea></div>
@@ -425,12 +488,12 @@ async function loadSources() {
     $('srcKind').innerHTML = SRC_KINDS.map(k => `<option value="${esc(k.kind)}">${esc(k.label)}</option>`).join('');
   }
   srcKindHint();
-  const glyph = {feed: '◉', arxiv: '∂', youtube: '▶', github_releases: '⑂', usgs: '≋', api: '{}'};
+  const glyph = {feed: '◉', arxiv: '∂', youtube: '▶', github_releases: '⑂', usgs: '≋', api: '{}', connection: '⇄'};
   $('srcList').innerHTML = (r.sources || []).map(x => `<div class="sig"><div class="sc">${glyph[x.kind] || '•'}</div><div>
       <b>${esc(x.label)}</b>${x.bbox ? ` <span class="chip">inside ${esc(x.bbox.join(', '))}</span>` : ''}
       <div class="muted">${x.missing ? '<b>missing from the fabric</b> · ' : ''}${x.last_pulled ? 'fetched ' + esc(String(x.last_pulled).slice(0, 16).replace('T', ' ')) : 'not fetched yet'}
         · ${x.pulls || 0} pulls · every ${Math.round((x.interval || 0) / 3600 * 10) / 10} h${x.url ? ` · <a href="${esc(safeUrl(x.url))}" target="_blank" rel="noopener">${esc(x.url.length > 60 ? x.url.slice(0, 60) + '…' : x.url)}</a>` : ''}</div></div>
-      <div class="ops"><button class="btn" onclick="rmSource('${esc(x.id)}')">Stop</button></div></div>`).join('')
+      <div class="ops"><button class="btn" onclick="rmSource(${jsq(x.id)})">Stop</button></div></div>`).join('')
     || '<div class="muted" style="padding:6px 0">Only web search so far.</div>';
 }
 function srcKindHint() {
@@ -438,6 +501,18 @@ function srcKindHint() {
   $('srcVal').placeholder = k.value || '';
   $('srcGeo').style.display = k.geo ? '' : 'none';
   $('srcMap').style.display = k.mapping ? '' : 'none';
+  /* an API connection: suggest the ones on the Platforms page with their sample paths */
+  if (k.kind === 'connection') { $('srcVal').setAttribute('list', 'srcConns'); loadSrcConns(); }
+  else $('srcVal').removeAttribute('list');
+}
+let SRC_CONNS_LOADED = false;
+async function loadSrcConns() {
+  if (SRC_CONNS_LOADED) return;
+  const r = await call('platform.list', {});
+  const cs = (r.platforms || []).filter(p => p.kind === 'api');
+  $('srcConns').innerHTML = cs.map(p => `<option value="${esc(p.id + ' ' + ((p.fields || {}).sample_path || '/'))}">${esc(p.label)}</option>`).join('');
+  SRC_CONNS_LOADED = true;
+  if (!cs.length) msg('srcMsg', 'no API connections yet - add one on the Platforms page (Search & APIs links there)');
 }
 async function addSource() {
   const kind = $('srcKind').value, value = $('srcVal').value.trim();
@@ -496,7 +571,7 @@ async function loadInd() {
       <b>${esc(i.label)}</b> <span class="muted">${esc(i.dataset_id)}</span>
       <div class="muted">${i.last != null ? 'last ' + esc(i.kind === 'probability' ? Math.round(i.last * 100) + '%' : String(+(+i.last).toPrecision(6))) + ' · ' : ''}${esc(i.status || '')}${i.bars ? ' · ' + i.bars + ' bars' : ''}${chgTxt(i)}</div>
       ${mine.map(c => `<div>${c.direction === 'up' ? '▲' : '▼'} ${esc(c.text)}${(c.stories || []).length ? ' <span class="muted">· around then: ' + c.stories.map(s => esc(s.title)).join(' · ') + '</span>' : ''}</div>`).join('')}</div>
-      <div class="ops"><button class="btn" onclick="rmInd('${esc(i.id)}')">Stop</button></div></div>`;
+      <div class="ops"><button class="btn" onclick="rmInd(${jsq(i.id)})">Stop</button></div></div>`;
   }).join('') || '<div class="muted" style="padding:6px 0">Nothing yet.</div>';
   const res = r.resolutions || [];
   if (res.length) $('indList').innerHTML += '<h3 style="margin-top:10px">Settled markets</h3><table style="width:100%"><tr><th align=left>question</th><th>answer</th><th>market a week before</th><th>intel\'s confidence then</th></tr>'
@@ -524,7 +599,7 @@ function pmRow(m) {
   const p = m.prob == null ? '–' : Math.round(m.prob * 100) + '%';
   return `<div class="sig"><div class="sc">${esc(p)}</div><div>${safeUrl(m.url) ? `<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.question)}</a>` : esc(m.question)}
     <div class="muted">${esc(m.source)}${m.event && m.event !== m.question ? ' · ' + esc(m.event) : ''}${m.volume ? ' · vol ' + esc(String(Math.round(m.volume))) : ''}${m.end ? ' · ends ' + esc(String(m.end).slice(0, 10)) : ''}</div></div>
-    <div class="ops"><button class="btn" onclick="pmWatch('${esc(m.source)}','${esc(m.id)}',this)">Watch</button></div></div>`;
+    <div class="ops"><button class="btn" onclick="pmWatch(${jsq(m.source)},${jsq(m.id)},this)">Watch</button></div></div>`;
 }
 async function pmFind(q) {
   $('pmRows').innerHTML = '<div class="muted">searching…</div>';
@@ -536,9 +611,9 @@ async function indSuggest() {
   const r = await call('intel.indicator.suggest', {topic_id: CUR});
   const pr = (r.prices || []).map(p => `<div class="sig"><div class="sc">¤</div><div><b>${esc(p.name)}</b> <span class="muted">${esc(p.symbol)}</span>
       <div class="muted">${p.followed ? 'you follow ' + esc(p.entity) : 'named in ' + esc(String(p.mentions)) + ' of its sources as ' + esc(p.entity)}</div></div>
-      <div class="ops"><button class="btn" onclick="priceWatch('${esc(p.provider)}','${esc(p.symbol)}','${esc(p.name)}',this)">Watch</button></div></div>`).join('');
+      <div class="ops"><button class="btn" onclick="priceWatch(${jsq(p.provider)},${jsq(p.symbol)},${jsq(p.name)},this)">Watch</button></div></div>`).join('');
   const mk = (r.markets || []).map(pmRow).join('');
-  const at = (r.attention || []).map(a => `<div class="sig"><div class="sc">◉</div><div><b>${esc(a.label)}</b> <span class="muted">attention</span><div class="muted">${esc(a.description || '')} · daily Wikipedia views of ${esc(a.wiki)}</div></div><div class="ops"><button class="btn" onclick="attWatch('${esc(a.wiki)}','${esc(a.label)}',this)">Watch</button></div></div>`).join('');
+  const at = (r.attention || []).map(a => `<div class="sig"><div class="sc">◉</div><div><b>${esc(a.label)}</b> <span class="muted">attention</span><div class="muted">${esc(a.description || '')} · daily Wikipedia views of ${esc(a.wiki)}</div></div><div class="ops"><button class="btn" onclick="attWatch(${jsq(a.wiki)},${jsq(a.label)},this)">Watch</button></div></div>`).join('');
   $('pmRows').innerHTML = (pr ? '<div style="margin-top:6px"><b>Companies its sources name</b></div>' + pr : '')
     + (mk ? '<div style="margin-top:6px"><b>Prediction markets</b></div>' + mk : '')
     + (at ? '<div style="margin-top:6px"><b>Attention - when people start reading about them</b></div>' + at : '')
@@ -582,9 +657,9 @@ async function loadSignals() {
       ${safeUrl(s.url)?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a>`:`<b>${esc(s.title)}</b>`}
       <div class="small muted">${esc(s.site||'')} · ${esc(s.kind||'')} · ${esc((s.seen||'').slice(0,10))}</div>
       <div>${esc(s.snippet||'')}</div>${s.so_what?`<div class="why">${esc(s.so_what)}</div>`:''}</div>
-      <div class="ops">${s.chars?`<button class="btn" onclick="readSignal('${esc(s.id)}')">Read</button>`:''}
-        <button class="btn" onclick="researchOn('${esc(s.id)}')" title="research.run on this">Research</button>
-        <span class="row" style="gap:4px"><button class="btn" title="useful - teaches the gates" onclick="fb('${esc(s.id)}','useful',this)">👍</button><button class="btn" title="not useful" onclick="fb('${esc(s.id)}','not_useful',this)">👎</button><button class="btn" title="never show this site again for this topic" onclick="fb('${esc(s.id)}','mute_site',this)">🔇</button></span></div></div>`;
+      <div class="ops">${s.chars?`<button class="btn" onclick="readSignal(${jsq(s.id)})">Read</button>`:''}
+        <button class="btn" onclick="researchOn(${jsq(s.id)})" title="research.run on this">Research</button>
+        <span class="row" style="gap:4px"><button class="btn" title="useful - teaches the gates" onclick="fb(${jsq(s.id)},'useful',this)">👍</button><button class="btn" title="not useful" onclick="fb(${jsq(s.id)},'not_useful',this)">👎</button><button class="btn" title="never show this site again for this topic" onclick="fb(${jsq(s.id)},'mute_site',this)">🔇</button></span></div></div>`;
   }).join('') : '<div class="muted small" style="padding:8px 0">Nothing in this window.</div>';
 }
 async function fb(id, verdict, btn) {
@@ -656,8 +731,8 @@ function editTopic(id) {
       <div class="grow"><label class="f">Report from score</label><input type="number" id="eMin" min="0" max="10" value="${esc(t.min_score??5)}"></div></div>
     <label class="small"><input type="checkbox" id="eDisc" ${t.discovery!==false?'checked':''}> map sources into fabric discovery (entity graph)</label><br>
     <label class="small"><input type="checkbox" id="eDream" ${t.dream_loop?'checked':''}> also let the dream director think about it (a think-loop)</label>
-    <div class="row" style="margin-top:10px"><button class="btn pri" onclick="saveTopic('${esc(id||'')}')">Save</button>
-      ${id?`<button class="btn danger" onclick="delTopic('${esc(id)}')">Stop tracking</button>`:''}<span id="eMsg" class="msg"></span></div>`;
+    <div class="row" style="margin-top:10px"><button class="btn pri" onclick="saveTopic(${jsq(id||'')})">Save</button>
+      ${id?`<button class="btn danger" onclick="delTopic(${jsq(id)})">Stop tracking</button>`:''}<span id="eMsg" class="msg"></span></div>`;
   $('dlg').showModal();
 }
 async function saveTopic(id) {
@@ -681,7 +756,7 @@ async function loadReports() {
   const [tl, rl, ch] = await Promise.all([call('intel.topic.list', {status: 'active'}), call('intel.report.list', {limit: 40}), CHANS.length ? null : call('intel.channel.list')]);
   if (ch) CHANS = ch.rows || [];
   $('rTopics').innerHTML = (tl.rows || []).map(t => `<label style="display:inline-block;margin-right:10px"><input type="checkbox" value="${esc(t.id)}"> ${esc(t.name)}</label>`).join('') || '<span class="muted">no active topics</span>';
-  $('rlist').innerHTML = (rl.rows || []).map(r => `<div class="rp ${r.id===RSEL?'on':''}" onclick="pickReport('${esc(r.id)}')"><b>${esc(r.title)}</b>
+  $('rlist').innerHTML = (rl.rows || []).map(r => `<div class="rp ${r.id===RSEL?'on':''}" onclick="pickReport(${jsq(r.id)})"><b>${esc(r.title)}</b>
      <div class="small muted">${esc((r.ts||'').slice(0,16).replace('T',' '))} · ${r.counts&&r.counts.signals||0} signals ${(r.delivered||[]).length?'· sent: '+esc(r.delivered.join(', ')):''}</div></div>`).join('') || '<div class="muted small">No reports yet.</div>';
   $('rChans').innerHTML = CHANS.filter(c => c.id !== 'html').map(c => `<label title="${c.available?'':'unavailable here'}" style="${c.available?'':'opacity:.5'}"><input type="checkbox" value="${esc(c.id)}" ${c.available?'':'disabled'}> ${esc(c.label)}${c.needs_target?' *':''}</label>`).join('');
   if (!ancestorWith('_veraSessionId')) $('rCanvasHere').style.display = 'none';
@@ -728,7 +803,7 @@ async function loadActions() {
   const r = await call('intel.action.list', {status: $('aStatus').value, limit: 100});
   $('alist').innerHTML = (r.rows || []).map(a => `<div class="act"><span style="width:18px;text-align:center">${esc(a.glyph||'')}</span>
      <div class="grow"><b>${esc(a.label)}</b><div class="small muted">${esc(a.query||a.target||'')} · ${esc(a.status)} ${a.result&&a.result.error?'· '+esc(a.result.error):''}</div></div>
-     ${a.status==='offered'?`<button class="btn pri" onclick="runAction('${esc(a.token)}', this)">Run</button>`:''}</div>`).join('') || '<div class="muted small">Nothing here.</div>';
+     ${a.status==='offered'?`<button class="btn pri" onclick="runAction(${jsq(a.token)}, this)">Run</button>`:''}</div>`).join('') || '<div class="muted small">Nothing here.</div>';
 }
 async function runAction(token, btn) {
   btn.disabled = true; btn.textContent = '…';
@@ -744,7 +819,7 @@ async function loadConfig() {
   const c = r.config || {};
   $('cEnabled').checked = !!c.enabled; $('cSweep').value = c.sweep_hour; $('cBrief').value = c.brief_hour;
   $('cMax').value = c.max_topics_per_night; $('cPeriod').value = c.report_period_hours; $('cTz').value = c.timezone || '';
-  $('cBase').value = c.public_base || ''; $('cIll').checked = !!c.illustrate;
+  $('cBase').value = c.public_base || ''; $('cIll').checked = !!c.illustrate; $('cFirst').checked = c.first_sweep !== false;
   $('cChans').innerHTML = CHANS.filter(x => !x.needs_target).map(x => `<label><input type="checkbox" value="${esc(x.id)}" ${(c.brief_channels||[]).includes(x.id)?'checked':''}> ${esc(x.label)}</label>`).join('');
   $('cAlertChans').innerHTML = CHANS.filter(x => !x.needs_target).map(x => `<label><input type="checkbox" value="${esc(x.id)}" ${(c.alert_channels||[]).includes(x.id)?'checked':''}> ${esc(x.label)}</label>`).join('');
   const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -855,6 +930,47 @@ async function loadActivity() {
     + ((r.action_items||[]).length ? '<ul>' + r.action_items.slice(0,5).map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '') + `</div><span class="muted">${esc(r.meta||'')}</span></div>`).join('') || '<span class="muted">no notes read yet</span>';
   loadGates();
   $('acProps').innerHTML = (p.rows||[]).slice(0, 15).map(r => `<div class="act"><div class="grow"><b>${esc(r.title)}</b> <span class="chip">${esc(r.category)}</span><div class="muted">${esc((r.rationale||'').slice(0,200))}</div></div><span class="muted">${r.draft_id ? 'draft '+esc(r.draft_id) : esc(r.error||'')}</span></div>`).join('') || '<span class="muted">none yet</span>';
+  await loadIntelEvidence();
+}
+function evidenceGaps(gaps) {
+  gaps = Array.from(new Set((gaps || []).map(x => String(x || '')).filter(Boolean)));
+  return gaps.length ? '<div class="detail">' + gaps.map(x => `<span class="chip warn">${esc(x.replaceAll('_', ' '))}</span>`).join('') + '</div>' : '<div class="detail"><span class="chip ok">evidence connected</span></div>';
+}
+function evidenceError(target, value) {
+  $(target).innerHTML = `<span class="chip err">unavailable</span><div class="detail">${esc((value && value.error) || 'read model unavailable')}</div>`;
+}
+async function loadIntelEvidence() {
+  ['acEvidenceModels','acEvidenceEffects','acEvidenceRecords'].forEach(id => { $(id).className = 'small muted'; $(id).textContent = 'loading…'; });
+  let models;
+  try { models = await call('intel.models'); } catch (e) { models = {error: e.message || String(e)}; }
+  if (!models || models.error) evidenceError('acEvidenceModels', models);
+  else {
+    const counts = models.counts || {}, total = Number(counts.nlp || 0) + Number(counts.roles || 0);
+    $('acEvidenceModels').className = 'small';
+    $('acEvidenceModels').innerHTML = `<div class="metric">${Number(counts.ready || 0)} / ${total}</div><div>consumers have current callable placement evidence</div>`
+      + `<div class="detail muted">${Number(counts.nlp || 0)} NLP paths · ${Number(counts.roles || 0)} routed language-model roles</div>` + evidenceGaps(models.gaps);
+  }
+  let effects;
+  try { effects = await call('intel.effects'); } catch (e) { effects = {error: e.message || String(e)}; }
+  if (!effects || effects.error) evidenceError('acEvidenceEffects', effects);
+  else {
+    const counts = effects.counts || {}, ready = effects.readiness || {};
+    $('acEvidenceEffects').className = 'small';
+    $('acEvidenceEffects').innerHTML = `<div class="metric">${Number(ready.attributed_observations || 0)}</div><div>source-attributed observations retained</div>`
+      + `<div class="detail muted">${Number(counts.external || 0)} external boundaries · ${Number(counts.unobserved || 0)} without an owning observer · enforcement remains off</div>` + evidenceGaps(effects.gaps);
+  }
+  let records;
+  try { records = await call('intel.records', {limit: 200}); } catch (e) { records = {error: e.message || String(e)}; }
+  if (!records || records.error) evidenceError('acEvidenceRecords', records);
+  else {
+    const summary = records.summary || {}, rows = records.reconciliation || {};
+    const line = Object.entries(rows).map(([name, row]) => `<div><b>${esc(name)}</b> · ${esc((row && row.status) || 'unknown')} · ${Number((row && row.matched) || 0)} matched / ${Number((row && row.expected_shared) || 0)} expected</div>`).join('');
+    const memory = ((rows.reports || {}).memory || {});
+    $('acEvidenceRecords').className = 'small';
+    $('acEvidenceRecords').innerHTML = `<div class="metric">${Number(summary.matched || 0)}</div><div>record families reconciled without a reported gap in this bounded read</div>`
+      + `<div class="detail">${line || '<span class="muted">no reconciled families</span>'}</div>`
+      + (memory.projection_identity_available === false ? '<div class="detail"><span class="chip warn">Memory delivery has no projection identity</span></div>' : '');
+  }
 }
 async function loadGates() {
   const g = await call('intel.decisions.stats', {days: 30});
@@ -877,14 +993,68 @@ async function setLearned(on) { await call('intel.config.set', {settings: {calib
 async function runCmd() { const t = $('acCmd').value.trim(); if (!t) return; $('acOut').textContent = '…'; const r = await call('intel.command', {text: t}); $('acOut').textContent = r.text || r.error || JSON.stringify(r); tile(); }
 async function runFiles() { const r = await call('intel.files.run', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
 async function runAdvise() { const r = await call('intel.advise', {queue: true}); $('acOut').textContent = r.message || r.error || ''; }
+/* Search & APIs: web.engines.health, info.misses, intel.apis (keys themselves are only ever set on the Platforms
+   page - platform.secrets, the master key store) */
+async function loadApis() {
+  const [h, m, a] = await Promise.all([call('web.engines.health', {}), call('info.misses', {days: 7}), call('intel.apis', {})]);
+  const st = (h && h.state) || 'unknown';
+  const cls = st === 'ok' ? 'ok' : (st === 'down' ? 'err' : 'warn');
+  $('apSearch').innerHTML = h && !h.error
+    ? `<div><span class="chip ${cls}">${esc(st)}</span> ${esc(h.message || '')}</div>`
+      + ((h.unresponsive || []).length ? `<div style="margin-top:6px">Not answering: ${(h.unresponsive || []).map(u => `<span class="chip">${esc(u)}</span>`).join(' ')}</div>` : '')
+      + `<div class="muted" style="margin-top:6px">last good answer ${esc(h.ok_at || '-')} · checked ${esc(h.checked_at || '-')}</div>`
+    : esc((h && h.error) || 'no search since the last restart');
+  const t = (m && m.totals) || {};
+  $('apMiss').innerHTML = m && !m.error
+    ? `<div><b>${t.web_turns || 0}</b> questions wanted the web · <b>${(t.no_lookup || 0) + (t.snippets_only || 0)}</b> answered without a lookup`
+      + (m.miss_rate != null ? ` (${Math.round(m.miss_rate * 100)}%)` : '') + `</div>`
+      + `<div class="muted" style="margin-top:6px">no lookup ${t.no_lookup || 0} · snippets only ${t.snippets_only || 0} · you pushed back ${t.pushback || 0}</div>`
+    : esc((m && m.error) || '');
+  const rows = (a && a.apis) || [];
+  $('apKeys').innerHTML = rows.length ? '<table class="vb-table"><tr><th>Source</th><th>What it adds</th><th>Key</th><th></th></tr>'
+    + rows.map(r => `<tr><td><b>${esc(r.name)}</b><div class="muted">${esc(r.status === 'used' ? 'used by ' + r.used_by : 'planned source')}</div></td>
+      <td>${esc(r.gives)}<div class="muted">${esc(r.cost || '')}</div></td>
+      <td><span class="chip ${r.set ? 'ok' : (r.status === 'used' ? 'warn' : '')}">${r.set ? 'set' : 'not set'}</span><div class="muted"><code>${esc(r.ref)}</code></div></td>
+      <td><a class="btn" href="/platform/panel?secret=${encodeURIComponent(r.key)}" target="_blank" rel="noopener">${r.set ? 'Change' : 'Add key'}</a>
+        <a class="btn" href="${esc(r.get)}" target="_blank" rel="noopener noreferrer">Get one</a>
+        ${r.connection ? `<div class="muted" style="margin-top:4px">connection <code>${esc(r.connection)}</code></div>`
+          : (r.template ? `<button class="btn" onclick="addApiConnection(${jsq(r.template)})">Add connection</button>` : '')}</td></tr>`).join('') + '</table>'
+    : esc((a && a.error) || 'nothing listed');
+  $('apKeyless').innerHTML = ((a && a.keyless) || []).map(k => `<span class="chip">${esc(k)}</span>`).join(' ');
+  const cs = (a && a.connections) || [];
+  $('apConns').innerHTML = cs.length
+    ? '<table class="vb-table"><tr><th>Connection</th><th>State</th><th>Fabric sources</th></tr>'
+      + cs.map(c => `<tr><td><b>${esc(c.label)}</b><div class="muted">${esc(c.base_url)}</div></td>
+        <td><span class="chip ${c.configured && c.enabled ? 'ok' : 'warn'}">${!c.enabled ? 'off' : (c.configured ? 'ready' : 'needs its key')}</span></td>
+        <td>${c.sources || 0}</td></tr>`).join('') + '</table>'
+    : 'No API connections yet.';
+  const free = ((a && a.keyless_templates) || []).filter(t => !t.connection);
+  $('apConnAdd').innerHTML = (free.length ? 'Add a keyless API: ' + free.map(t =>
+      `<button class="btn" onclick="addApiConnection(${jsq(t.id)})">${esc(t.label)}</button>`).join(' ') + ' ' : '')
+    + '<a class="btn" href="/platform/panel" target="_blank" rel="noopener">Open Platforms</a>';
+  $('apHint').textContent = (a && a.json_api_hint) || '';
+}
+async function addApiConnection(template) {
+  const r = await call('platform.connection.add', {template});
+  if (r.error) { msg('apConnMsg', r.error, 'err'); return; }
+  loadApis();
+}
+
 async function saveConfig() {
   const r = await call('intel.config.set', {enabled: $('cEnabled').checked, sweep_hour: +$('cSweep').value, brief_hour: +$('cBrief').value,
     max_topics_per_night: +$('cMax').value, report_period_hours: +$('cPeriod').value, timezone: $('cTz').value, public_base: $('cBase').value,
     illustrate: $('cIll').checked, brief_channels: [...document.querySelectorAll('#cChans input:checked')].map(x => x.value)});
   const r2 = r.error ? {} : await call('intel.config.set', {settings: {
     alert_channels: [...document.querySelectorAll('#cAlertChans input:checked')].map(x => x.value),
-    weekly_day: +$('cWeekDay').value, weekly_hour: +$('cWeekHour').value, advise_day: +$('cAdvDay').value, advise_hour: +$('cAdvHour').value}});
-  msg('cMsg', r.error || r2.error || 'saved', (r.error || r2.error) ? 'err' : 'ok'); tile();
+    weekly_day: +$('cWeekDay').value, weekly_hour: +$('cWeekHour').value, advise_day: +$('cAdvDay').value, advise_hour: +$('cAdvHour').value,
+    first_sweep: $('cFirst').checked}});
+  // a refused value (a public link base off the allowed hosts, a folder outside the drop root) is reported, not stored -
+  // the form used to say "saved" over it
+  const rej = [].concat(r.rejected || [], r2.rejected || []);
+  const bad = r.error || r2.error || (rej.length ? 'not saved: ' + rej.join('; ') : '');
+  msg('cMsg', bad || 'saved', bad ? 'err' : 'ok');
+  if (rej.length) { LOADED.settings = 0; loadConfig(); }       // show what is actually stored
+  tile();
 }
 async function n8nImport(dry) {
   $('nImp').textContent = 'reading the n8n datasets…';

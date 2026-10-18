@@ -248,7 +248,8 @@ A **connection** is a saved, named handle onto a target. It never duplicates a c
 | `conn.save` | `POST /remote/conn/save` | Save a connection (`kind`: `docker`, `ssh` or `proxmox`, plus the referenced host, container or guest) |
 | `conn.delete` | `POST /remote/conn/delete` | Delete a connection |
 | `conn.targets` | `GET /remote/conn/targets` | Enumerate openable targets (containers, SSH hosts, optionally Proxmox guests) |
-| `conn.open` | `POST /remote/conn/open` | Resolve a connection or ad-hoc target to a terminal WebSocket descriptor |
+| `conn.open` | `POST /remote/conn/open` | Resolve a connection or ad-hoc target to a terminal WebSocket descriptor (its `ws_path` carries a ticket) |
+| `remote.term.ticket` | `POST /remote/term/ticket` | Mint a fresh ticket for a terminal WebSocket path; `<vera-terminal>` calls it on every connect |
 | `conn.exec` | `POST /remote/conn/exec` | One-shot command against a connection (`docker exec` or SSH run) |
 
 Every `conn.*`, `operator.*` and `fs.*` call accepts either `conn_id` or an inline target (`kind`, `docker_host_id` + `container`, or `ssh_host_id`, …).
@@ -259,6 +260,8 @@ Every `conn.*`, `operator.*` and `fs.*` call accepts either `conn_id` or an inli
 WS /remote/docker/term/ws/{host_id}/{container}   TTY into a running container
 WS /remote/ssh/term/ws/{host_id}                  interactive shell on an SSH host or VM
 ```
+
+A terminal socket opens only with a single-use ticket in its `ticket` query parameter: 128 bits, valid 90 seconds, bound to the host and container, and spent on first use. `conn.open`, `sandbox.session.terminal` and `remote.term.ticket` mint them; a capability call is a same-origin request (the edge guard, [29](./29-security.md)), so a page or client that never asked Vera cannot open a shell. The routes also check `Origin` themselves whatever the edge guard's mode. A refusal writes a line into the terminal and closes with 4403 (origin) or 4401 (no valid ticket), and records a `remote.term.refused` event.
 
 Proxmox guest consoles use the existing `/proxmox/console/ws` proxy. The wire protocol is shared: the browser sends JSON text frames `{"d": "<keystrokes>"}` and `{"r": [cols, rows]}` (resize); the server sends raw binary frames of terminal output. The Docker terminal uses the Engine API exec-hijack for local/TCP hosts and asyncssh for SSH hosts, falling back to a `docker exec -i` subprocess; the SSH terminal uses an asyncssh remote PTY (no local PTY needed). The launch command passes through the exec sandbox; keystrokes inside an accepted session are not individually gated. The shared `<vera-terminal>` element is served from `/ui/vera-terminal.js`.
 

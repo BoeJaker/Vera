@@ -1280,15 +1280,214 @@ def _train_epochs_sync(module: dict, weights: dict, X_tr, y_tr, X_va, y_va,
             "best_val_loss": round(best_val_loss, 6) if best_val_loss != float("inf") else None}
 
 
+#: Inference waits this long for a node with room, then runs on the host
+#: (degraded mode, as nlp.local is): an interactive call must not hang.
+INFER_WAIT_S = 20
+
+
+#: Prepared arrays, stored once in Redis (npz, no pickle) and named by a
+#: data_ref: training jobs and sweep trials fetch them by reference instead of
+#: carrying their own copy (ml-workshop-compute MW-2).
+DATA_KEY = "vera:ml:data:{ref}"
+DATA_TTL_S = 86400
+DATA_ARRAYS = ("X_train", "y_train", "X_val", "y_val", "X_test", "y_test")
+
+
+def _ncc():
+    try:
+        from Vera.vera.workers import node_compute_core as c
+    except Exception:                                   # worktree / test import
+        from vera.workers import node_compute_core as c   # type: ignore
+    return c
+
+
+def _redis():
+    return getattr(__import__("sys").modules.get("Vera.vera.capability_orchestration"), "REDIS", None)
+
+
+async def _store_data(arrays: dict) -> str:
+    """Store prepared arrays once; returns their data_ref ('' without Redis)."""
+    import hashlib as _hl
+    r = _redis()
+    if r is None:
+        return ""
+    blob = _ncc().pack({k: np.asarray(arrays[k], dtype=np.float32) for k in DATA_ARRAYS if k in arrays})
+    ref = _hl.sha1(blob).hexdigest()[:16]
+    await r.set(DATA_KEY.format(ref=ref), blob, ex=DATA_TTL_S)
+    return ref
+
+
+async def _load_data(ref: str) -> Optional[dict]:
+    r = _redis()
+    blob = await r.get(DATA_KEY.format(ref=ref)) if r is not None and ref else None
+    return _ncc().unpack(blob) if blob else None
+
+
+def fold_split(X_tr, y_tr, X_va, y_va, fold: int, folds: int):
+    """Fold `fold` of k over train+val, as contiguous blocks (deterministic,
+    and order-preserving for time series): (X_train, y_train, X_val, y_val)."""
+    X = np.concatenate([np.asarray(X_tr), np.asarray(X_va)])
+    y = np.concatenate([np.asarray(y_tr), np.asarray(y_va)])
+    edges = np.linspace(0, len(X), int(folds) + 1).astype(int)
+    a, b = int(edges[int(fold)]), int(edges[int(fold) + 1])
+    keep = np.ones(len(X), dtype=bool)
+    keep[a:b] = False
+    return X[keep], y[keep], X[a:b], y[a:b]
+
+
+def node_forward(inputs: dict, progress, should_stop) -> dict:
+    """compute.run entry (FUNCTIONS["ml.forward"]): a trained module's forward
+    pass. Weights travel as [node_id, arrays] pairs, as in training."""
+    weights = {nid: dict(w) for nid, w in inputs["weights"]}
+    y, _ = _forward_with_weights(inputs["module"], weights, np.asarray(inputs["X"], dtype=np.float32))
+    return {"y": np.asarray(y)}
+
+
+async def _forward_on_pool(module: dict, weights: dict, X, label: str):
+    """(y_pred, where): the forward pass on a node worker, else (no compute
+    module, or no node within INFER_WAIT_S) on the host's executor."""
+    sys_mod = __import__("sys")
+    run = getattr(sys_mod.modules.get("Vera.vera.capability_orchestration"), "NODE_COMPUTE", None)
+    if run is not None:
+        out = await run("ml.forward", {"module": module,
+                                       "weights": [[nid, w] for nid, w in weights.items()],
+                                       "X": X}, label=label, max_wait_s=INFER_WAIT_S,
+                        host_fallback=True)
+        return np.asarray(out["y"]), (out.get("_node") or out.get("_where") or "")
+    y, _ = await asyncio.get_running_loop().run_in_executor(None, _forward_with_weights, module, weights, X)
+    return y, "host"
+
+
 def node_train_epochs(inputs: dict, progress, should_stop) -> dict:
     """compute.run entry (node_compute_core.FUNCTIONS["ml.train"]). Weights
     travel as [node_id, arrays] pairs so a numeric node id stays numeric."""
     weights = {nid: dict(w) for nid, w in inputs["weights"]}
-    res = _train_epochs_sync(inputs["module"], weights, inputs["X_train"], inputs["y_train"],
-                             inputs["X_val"], inputs["y_val"], inputs.get("config") or {},
+    if "data" in inputs:                       # prepared arrays, by reference (MW-2)
+        d = _ncc().unpack(inputs["data"])
+        X_tr, y_tr, X_va, y_va = d["X_train"], d["y_train"], d["X_val"], d["y_val"]
+    else:
+        X_tr, y_tr, X_va, y_va = inputs["X_train"], inputs["y_train"], inputs["X_val"], inputs["y_val"]
+    if inputs.get("folds"):                    # one fold of a cross-validation (MW-3)
+        X_tr, y_tr, X_va, y_va = fold_split(X_tr, y_tr, X_va, y_va, inputs["fold"], inputs["folds"])
+    res = _train_epochs_sync(inputs["module"], weights, np.asarray(X_tr, dtype=np.float32),
+                             np.asarray(y_tr, dtype=np.float32), np.asarray(X_va, dtype=np.float32),
+                             np.asarray(y_va, dtype=np.float32), inputs.get("config") or {},
                              progress, should_stop)
     res["weights"] = [[nid, w] for nid, w in res["weights"].items()]
     return res
+
+
+_SWEEPS: Dict[str, dict] = {}
+SWEEP_MAX_TRIALS = 96
+
+
+def sweep_configs(base: dict, grid: dict, n_random: int = 0, seed: int = 0) -> List[dict]:
+    """Every combination of the grid over the base config (a random sample of
+    n_random when that is smaller), capped at SWEEP_MAX_TRIALS."""
+    import itertools
+    import random
+    keys = [k for k, v in (grid or {}).items() if isinstance(v, list) and v]
+    combos = [dict(zip(keys, vals)) for vals in itertools.product(*[grid[k] for k in keys])] or [{}]
+    if n_random and n_random < len(combos):
+        combos = random.Random(seed).sample(combos, int(n_random))
+    return [{**(base or {}), **c} for c in combos[:SWEEP_MAX_TRIALS]]
+
+
+def rank_trials(trials: List[dict]) -> List[dict]:
+    """Configurations by mean best validation loss over their finished folds."""
+    by: Dict[str, dict] = {}
+    for t in trials:
+        if t.get("best_val_loss") is None:
+            continue
+        k = json.dumps(t["config"], sort_keys=True)
+        e = by.setdefault(k, {"config": t["config"], "losses": []})
+        e["losses"].append(float(t["best_val_loss"]))
+    out = [{"config": e["config"], "mean_val_loss": round(sum(e["losses"]) / len(e["losses"]), 6),
+            "folds_done": len(e["losses"])} for e in by.values()]
+    return sorted(out, key=lambda x: x["mean_val_loss"])
+
+
+def _sweep_view(sw: dict, brief: bool = False) -> dict:
+    total = len(sw["configs"]) * max(1, sw["folds"])
+    done = sum(1 for t in sw["trials"] if t.get("done"))
+    out = {"sweep_id": sw["sweep_id"], "module_id": sw["module_id"], "status": sw["status"],
+           "done": done, "total": total, "folds": sw["folds"], "started": sw["started"]}
+    ranking = rank_trials(sw["trials"])
+    out["best"] = ranking[0] if ranking else None
+    if not brief:
+        out.update({"ranking": ranking, "trials": sw["trials"], "data_ref": sw["data_ref"],
+                    "nodes": sorted({t.get("node") for t in sw["trials"] if t.get("node")}),
+                    "final_job": sw.get("final_job")})
+    return out
+
+
+async def _run_sweep(sw: dict):
+    """Run every trial as its own node job (at most max_parallel at once; the
+    node scheduler spreads them by free CPU / memory), then rank."""
+    import time as _t
+    ml_mod = __import__("sys").modules.get("ml_workshop")
+    module = ml_mod._MODULES.get(sw["module_id"]) if ml_mod else None
+    if not module:
+        sw["status"] = "error"; sw["error"] = f"module {sw['module_id']} not loaded"
+        return
+    w0 = _init_weights(module)
+    run = getattr(__import__("sys").modules.get("Vera.vera.capability_orchestration"), "NODE_COMPUTE", None)
+    sem = asyncio.Semaphore(sw["max_parallel"])
+    key = DATA_KEY.format(ref=sw["data_ref"])
+
+    async def trial(i, cfg, fold):
+        t = {"i": i, "config": cfg, "fold": fold, "done": False}
+        sw["trials"].append(t)
+        async with sem:
+            t0 = _t.time()
+            inputs = {"module": module, "weights": [[nid, w] for nid, w in w0.items()],
+                      "config": cfg, "_blob_refs": {"data": key}}
+            if sw["folds"]:
+                inputs.update({"fold": fold, "folds": sw["folds"]})
+            try:
+                if run is None:            # no compute module: one at a time on the host
+                    d = await _load_data(sw["data_ref"])
+                    inputs.pop("_blob_refs")
+                    inputs.update({k: d[k] for k in ("X_train", "y_train", "X_val", "y_val")})
+                    out = await asyncio.get_running_loop().run_in_executor(
+                        None, node_train_epochs, inputs, lambda d: None, lambda: False)
+                    out["_node"] = "host"
+                else:
+                    out = await run("ml.train", inputs, label=f"{sw['sweep_id']} trial {i}"
+                                    + (f" fold {fold}" if sw["folds"] else ""))
+                t.update({"best_val_loss": out.get("best_val_loss"), "epochs": out.get("epoch"),
+                          "node": out.get("_node") or out.get("_where"), "status": out.get("status")})
+            except Exception as e:
+                t["error"] = str(e)[:300]
+            t["seconds"] = round(_t.time() - t0, 1)
+            t["done"] = True
+            await emit_event({"type": "ml.sweep_trial", "sweep_id": sw["sweep_id"], "i": i, "fold": fold,
+                              "best_val_loss": t.get("best_val_loss"), "node": t.get("node"),
+                              "error": t.get("error", "")})
+
+    jobs, i = [], 0
+    for cfg in sw["configs"]:
+        for fold in range(max(1, sw["folds"])):
+            jobs.append(trial(i, cfg, fold))
+            i += 1
+    await asyncio.gather(*jobs)
+    ranking = rank_trials(sw["trials"])
+    sw["status"] = "done" if ranking else "error"
+    if not ranking:
+        sw["error"] = "no trial finished"
+    if ranking and sw.get("apply_best"):
+        # the module itself is trained once more, with the winner, the normal way
+        best = ranking[0]["config"]
+        job_id = str(uuid.uuid4())[:8]
+        job = {"job_id": job_id, "module_id": sw["module_id"], "status": "queued", "config": best,
+               "data_ref": sw["data_ref"], "dataset_id": sw.get("dataset_id", ""), "task": sw.get("task", ""),
+               "epoch": 0, "progress": 0.0, "history": {}, "stop": False, "created_at": now_iso(),
+               "from_sweep": sw["sweep_id"]}
+        _TRAINING_JOBS[job_id] = job
+        sw["final_job"] = job_id
+        asyncio.create_task(_train_loop(job_id, job))
+    await emit_event({"type": "ml.sweep_done", "sweep_id": sw["sweep_id"], "status": sw["status"],
+                      "best": ranking[0] if ranking else None})
 
 
 async def _train_loop(job_id: str, job: dict):
@@ -1351,10 +1550,20 @@ async def _train_loop(job_id: str, job: dict):
     cfg_t     = job["config"]
     epochs    = int(cfg_t.get("epochs", 20))
 
-    X_tr = np.array(job["X_train"], dtype=np.float32)
-    y_tr = np.array(job["y_train"], dtype=np.float32)
-    X_va = np.array(job.get("X_val", X_tr[:max(1, len(X_tr)//5)]), dtype=np.float32)
-    y_va = np.array(job.get("y_val", y_tr[:max(1, len(y_tr)//5)]), dtype=np.float32)
+    if job.get("data_ref"):
+        d = await _load_data(job["data_ref"])
+        if d is None:
+            job["status"] = "error"
+            job["error"] = "prepared data expired or missing - run ml.data.prepare again"
+            return
+        X_tr, y_tr, X_va, y_va = (np.asarray(d[k], dtype=np.float32)
+                                  for k in ("X_train", "y_train", "X_val", "y_val"))
+    else:
+        X_tr = np.array(job["X_train"], dtype=np.float32)
+        y_tr = np.array(job["y_train"], dtype=np.float32)
+        X_va = np.array(job.get("X_val", X_tr[:max(1, len(X_tr)//5)]), dtype=np.float32)
+        y_va = np.array(job.get("y_val", y_tr[:max(1, len(y_tr)//5)]), dtype=np.float32)
+    job["n_features"] = int(X_tr.shape[1]) if X_tr.ndim > 1 else 1
 
     # Init weights (or continue from checkpoint)
     if module_id in _WEIGHTS:
@@ -1408,8 +1617,11 @@ async def _train_loop(job_id: str, job: dict):
         else:
             out = await run("ml.train", {
                 "module": module, "weights": [[nid, w] for nid, w in weights.items()],
-                "X_train": X_tr, "y_train": y_tr, "X_val": X_va, "y_val": y_va,
+                **({"_blob_refs": {"data": DATA_KEY.format(ref=job["data_ref"])}}
+                   if job.get("data_ref") else
+                   {"X_train": X_tr, "y_train": y_tr, "X_val": X_va, "y_val": y_va}),
                 "config": cfg_t}, label=f"ml.train {module_id}",
+                avoid=tuple(cfg_t.get("avoid_nodes") or ()),
                 on_progress=on_progress, stop=lambda: bool(job.get("stop")))
             res = {**out, "weights": {nid: w for nid, w in out["weights"]}}
             job["trained_on"] = out.get("_node") or out.get("_where", "")
@@ -1905,7 +2117,10 @@ if _CAP_AVAILABLE:
             "Load a fabric dataset, engineer features, normalise, and split into "
             "train/val/test arrays ready for ml.train. "
             "task: classification | regression | forecasting | ohlcv_direction. "
-            "Returns {X_train, y_train, X_val, y_val, X_test, y_test, feature_names}."
+            "The arrays are stored once (24 h) and named by data_ref, which ml.train, "
+            "ml.train.from_dataset and ml.sweep take instead of the arrays. inline "
+            "(bool=true) also returns them. Returns {data_ref, n_train, n_val, n_test, "
+            "features, feature_names[, X_train, y_train, X_val, y_val, X_test, y_test]}."
         ),
     )
     async def ml_data_prepare(
@@ -1917,6 +2132,7 @@ if _CAP_AVAILABLE:
         val_frac:    float = 0.15,
         test_frac:   float = 0.15,
         normalise:   bool  = True,
+        inline:      bool  = True,
         trace_id=None,
     ):
         if not HAS_NP:
@@ -1931,101 +2147,115 @@ if _CAP_AVAILABLE:
         if not rows:
             return {"error": f"No data found for dataset_id={dataset_id}"}
 
-        # ── Parse fabric records — each row has a 'data' JSON field ──────────
-        def _parse_row(r: dict) -> dict:
-            """Extract the payload dict from a fabric record."""
-            raw = r.get("data")
-            if raw is None:
-                # Some records store directly in the row dict
-                return {k: v for k, v in r.items()
-                        if k not in ("id","dataset_id","text","source_id",
-                                     "tags","created_at","synced_pg")}
-            if isinstance(raw, str):
-                try:
-                    return json.loads(raw)
-                except Exception:
-                    return {}
-            if isinstance(raw, dict):
-                return raw
-            return {}
+        # Off the event loop (ml-workshop-compute MW-2): feature engineering,
+        # normalising and splitting are CPU work on up to max_rows rows.
+        def _build():
+            # ── Parse fabric records — each row has a 'data' JSON field ──────────
+            def _parse_row(r: dict) -> dict:
+                """Extract the payload dict from a fabric record."""
+                raw = r.get("data")
+                if raw is None:
+                    # Some records store directly in the row dict
+                    return {k: v for k, v in r.items()
+                            if k not in ("id","dataset_id","text","source_id",
+                                         "tags","created_at","synced_pg")}
+                if isinstance(raw, str):
+                    try:
+                        return json.loads(raw)
+                    except Exception:
+                        return {}
+                if isinstance(raw, dict):
+                    return raw
+                return {}
 
-        # Parse feature and label columns
-        try:
-            if task == "ohlcv_direction":
-                ohlcv_data = [_parse_row(r) for r in rows]
-                ohlcv = {
-                    "open":   [float(d.get("open",  0) or 0) for d in ohlcv_data],
-                    "high":   [float(d.get("high",  0) or 0) for d in ohlcv_data],
-                    "low":    [float(d.get("low",   0) or 0) for d in ohlcv_data],
-                    "close":  [float(d.get("close", 0) or 0) for d in ohlcv_data],
-                    "volume": [float(d.get("volume",0) or 0) for d in ohlcv_data],
-                }
-                # Filter rows where close=0 (gaps)
-                valid = [i for i,c in enumerate(ohlcv["close"]) if c > 0]
-                if len(valid) < 30:
-                    return {"error": "Not enough valid OHLCV rows (need >30 non-zero close prices)"}
-                for k in ohlcv:
-                    ohlcv[k] = [ohlcv[k][i] for i in valid]
-                X, y = _make_ohlcv_features(ohlcv)
-                y    = y[:, np.newaxis]
-                feature_names = ["return","z_price","rsi","macd","macd_hist","bb_pos","volume"]
-
-            else:
-                data_rows = [_parse_row(r) for r in rows]
-
-                # Extract feature_col
-                X_list, y_list = [], []
-                for row in data_rows:
-                    feat = row.get(feature_col, [])
-                    if not feat and feat != 0:
-                        continue
-                    if isinstance(feat, (int, float)):
-                        feat = [float(feat)]
-                    elif not isinstance(feat, list):
-                        continue
-                    lbl_raw = row.get(label_col, row.get("target", row.get("close")))
-                    if lbl_raw is None:
-                        continue
-                    lbl = lbl_raw if isinstance(lbl_raw, list) else [float(lbl_raw)]
-                    X_list.append([float(v) for v in feat])
-                    y_list.append(lbl)
-
-                if not X_list:
-                    return {
-                        "error": (
-                            f"No '{feature_col}' column found in {len(data_rows)} "
-                            f"records of dataset '{dataset_id}'. "
-                            f"Sample keys: {list(data_rows[0].keys())[:8] if data_rows else []}"
-                        )
+            # Parse feature and label columns
+            try:
+                if task == "ohlcv_direction":
+                    ohlcv_data = [_parse_row(r) for r in rows]
+                    ohlcv = {
+                        "open":   [float(d.get("open",  0) or 0) for d in ohlcv_data],
+                        "high":   [float(d.get("high",  0) or 0) for d in ohlcv_data],
+                        "low":    [float(d.get("low",   0) or 0) for d in ohlcv_data],
+                        "close":  [float(d.get("close", 0) or 0) for d in ohlcv_data],
+                        "volume": [float(d.get("volume",0) or 0) for d in ohlcv_data],
                     }
+                    # Filter rows where close=0 (gaps)
+                    valid = [i for i,c in enumerate(ohlcv["close"]) if c > 0]
+                    if len(valid) < 30:
+                        return {"error": "Not enough valid OHLCV rows (need >30 non-zero close prices)"}
+                    for k in ohlcv:
+                        ohlcv[k] = [ohlcv[k][i] for i in valid]
+                    X, y = _make_ohlcv_features(ohlcv)
+                    y    = y[:, np.newaxis]
+                    feature_names = ["return","z_price","rsi","macd","macd_hist","bb_pos","volume"]
 
-                X = np.array(X_list, dtype=np.float32)
-                y = np.array(y_list, dtype=np.float32)
-                feature_names = [f"f{i}" for i in range(X.shape[1])]
+                else:
+                    data_rows = [_parse_row(r) for r in rows]
 
-        except Exception as e:
-            return {"error": f"Feature extraction failed: {e}"}
+                    # Extract feature_col
+                    X_list, y_list = [], []
+                    for row in data_rows:
+                        feat = row.get(feature_col, [])
+                        if not feat and feat != 0:
+                            continue
+                        if isinstance(feat, (int, float)):
+                            feat = [float(feat)]
+                        elif not isinstance(feat, list):
+                            continue
+                        lbl_raw = row.get(label_col, row.get("target", row.get("close")))
+                        if lbl_raw is None:
+                            continue
+                        lbl = lbl_raw if isinstance(lbl_raw, list) else [float(lbl_raw)]
+                        X_list.append([float(v) for v in feat])
+                        y_list.append(lbl)
 
-        if normalise:
-            X, xmu, xsig = _normalise(X)
+                    if not X_list:
+                        return {
+                            "error": (
+                                f"No '{feature_col}' column found in {len(data_rows)} "
+                                f"records of dataset '{dataset_id}'. "
+                                f"Sample keys: {list(data_rows[0].keys())[:8] if data_rows else []}"
+                            )
+                        }
 
-        X_tr, y_tr, X_va, y_va, X_te, y_te = _train_val_test_split(
-            X, y, val=val_frac, test=test_frac
-        )
+                    X = np.array(X_list, dtype=np.float32)
+                    y = np.array(y_list, dtype=np.float32)
+                    feature_names = [f"f{i}" for i in range(X.shape[1])]
 
-        return {
+            except Exception as e:
+                return {"error": f"Feature extraction failed: {e}"}
+
+            if normalise:
+                X, xmu, xsig = _normalise(X)
+
+            X_tr, y_tr, X_va, y_va, X_te, y_te = _train_val_test_split(
+                X, y, val=val_frac, test=test_frac
+            )
+            return {"X_tr": X_tr, "y_tr": y_tr, "X_va": X_va, "y_va": y_va, "X_te": X_te, "y_te": y_te,
+                    "feature_names": feature_names, "n_features": int(X.shape[1])}
+
+        built = await asyncio.get_running_loop().run_in_executor(None, _build)
+        if "error" in built:
+            return built
+        X_tr, y_tr, X_va, y_va, X_te, y_te = (built[k] for k in ("X_tr", "y_tr", "X_va", "y_va", "X_te", "y_te"))
+        data_ref = await _store_data({"X_train": X_tr, "y_train": y_tr, "X_val": X_va, "y_val": y_va,
+                                      "X_test": X_te, "y_test": y_te})
+        out = {
             "ok": True,
             "dataset_id":    dataset_id,
             "task":          task,
+            "data_ref":      data_ref,
             "n_train":       len(X_tr),
             "n_val":         len(X_va),
             "n_test":        len(X_te),
-            "features":      X.shape[1],
-            "feature_names": feature_names,
-            "X_train": X_tr.tolist(), "y_train": y_tr.tolist(),
-            "X_val":   X_va.tolist(), "y_val":   y_va.tolist(),
-            "X_test":  X_te.tolist(), "y_test":  y_te.tolist(),
+            "features":      built["n_features"],
+            "feature_names": built["feature_names"],
         }
+        if inline or not data_ref:
+            out.update({"X_train": X_tr.tolist(), "y_train": y_tr.tolist(),
+                        "X_val":   X_va.tolist(), "y_val":   y_va.tolist(),
+                        "X_test":  X_te.tolist(), "y_test":  y_te.tolist()})
+        return out
 
     # ── Train ─────────────────────────────────────────────────────────────────
 
@@ -2034,8 +2264,10 @@ if _CAP_AVAILABLE:
         http_method="POST", http_path="/ml/train", http_tags=["ml"],
         memory="on",
         description=(
-            "Start a training run. Supply module_id, X_train/y_train arrays (JSON lists), "
-            "and optional X_val/y_val. Config: epochs, lr, batch_size, optimiser "
+            "Start a training run. Supply module_id and either data_ref (from "
+            "ml.data.prepare) or X_train/y_train arrays (JSON lists) with optional "
+            "X_val/y_val; dataset_id / task (str) are recorded with the job and the "
+            "exported model. Config: epochs, lr, batch_size, optimiser "
             "(sgd|adam|adamw), loss (mse|mae|bce|cross_entropy|huber), "
             "lr_schedule (constant|step|cosine|linear), early_stopping_patience, "
             "weight_decay, grad_clip. "
@@ -2044,26 +2276,45 @@ if _CAP_AVAILABLE:
     )
     async def ml_train(
         module_id:  str,
-        X_train:    str,
-        y_train:    str,
+        X_train:    str = "",
+        y_train:    str = "",
         X_val:      str = "[]",
         y_val:      str = "[]",
         config:     str = "{}",
+        data_ref:   str = "",
+        dataset_id: str = "",
+        task:       str = "",
         trace_id=None,
     ):
         if not HAS_NP:
             return {"error": "NumPy required for training"}
         try:
-            Xtr = json.loads(X_train)
-            ytr = json.loads(y_train)
+            cfg = json.loads(config) if isinstance(config, str) else (config or {})
+        except Exception as e:
+            return {"error": f"JSON parse: {e}"}
+        if data_ref:
+            if await _load_data(data_ref) is None:
+                return {"error": f"no prepared data {data_ref!r} (expired?) - run ml.data.prepare"}
+            job_id = str(uuid.uuid4())[:8]
+            job = {"job_id": job_id, "module_id": module_id, "status": "queued", "config": cfg,
+                   "data_ref": data_ref, "dataset_id": dataset_id, "task": task,
+                   "epoch": 0, "progress": 0.0, "history": {}, "stop": False, "created_at": now_iso()}
+            _TRAINING_JOBS[job_id] = job
+            asyncio.create_task(_train_loop(job_id, job))
+            await emit_event({"type": "ml.train_started", "job_id": job_id,
+                              "module_id": module_id, "config": cfg})
+            return {"ok": True, "job_id": job_id, "module_id": module_id, "data_ref": data_ref,
+                    "message": "Training started - listen for ml.train_epoch events"}
+        try:
+            Xtr = json.loads(X_train) if X_train else []
+            ytr = json.loads(y_train) if y_train else []
             Xva = json.loads(X_val) if X_val and X_val != "[]" else []
             yva = json.loads(y_val) if y_val and y_val != "[]" else []
-            cfg = json.loads(config) if isinstance(config, str) else config
         except Exception as e:
             return {"error": f"JSON parse: {e}"}
 
         if not Xtr:
-            return {"error": "X_train is empty"}
+            return {"error": "X_train is empty (or give data_ref from ml.data.prepare)"}
 
         # Auto-split val from train if not provided
         if not Xva:
@@ -2084,6 +2335,8 @@ if _CAP_AVAILABLE:
             "y_train":   ytr,
             "X_val":     Xva,
             "y_val":     yva,
+            "dataset_id": dataset_id,
+            "task":      task,
             "epoch":     0,
             "progress":  0.0,
             "history":   {},
@@ -2124,7 +2377,7 @@ if _CAP_AVAILABLE:
     ):
         # Prepare
         prep = await ml_data_prepare(
-            dataset_id=dataset_id, task=task, max_rows=max_rows
+            dataset_id=dataset_id, task=task, max_rows=max_rows, inline=False
         )
         if "error" in prep:
             return prep
@@ -2141,6 +2394,9 @@ if _CAP_AVAILABLE:
                 "reconstruction": "mse",
             }.get(task, "mse")
 
+        if prep.get("data_ref"):              # by reference (MW-2)
+            return await ml_train(module_id=module_id, config=json.dumps(cfg),
+                                  data_ref=prep["data_ref"], dataset_id=dataset_id, task=task)
         return await ml_train(
             module_id=module_id,
             X_train=json.dumps(prep["X_train"]),
@@ -2148,7 +2404,78 @@ if _CAP_AVAILABLE:
             X_val=json.dumps(prep["X_val"]),
             y_val=json.dumps(prep["y_val"]),
             config=json.dumps(cfg),
+            dataset_id=dataset_id, task=task,
         )
+
+    # ── Sweeps: parallel trials over the node pool (ml-workshop-compute MW-3) ──
+
+    @capability(
+        "ml.sweep",
+        http_method="POST", http_path="/ml/sweep", http_tags=["ml"],
+        memory="on",
+        description=(
+            "Train many configurations of a module side by side on the node workers "
+            "and rank them: a grid over training settings ({\"lr\": [0.01, 0.001], "
+            "\"batch_size\": [32, 64]}), optionally a random sample of it (n_random), "
+            "optionally k-fold cross-validation (folds) on the same prepared data. Each "
+            "trial is one node job, spread by free CPU / memory; trials start from the "
+            "same initial weights and do not touch the module's own weights. "
+            "apply_best=true then trains the module with the best configuration. "
+            "Inputs: module_id (str!), data_ref (from ml.data.prepare) or dataset_id "
+            "+ task, grid (JSON), base_config (JSON), n_random (int), folds (int, 0 = "
+            "none), max_parallel (int=12), apply_best (bool). Returns {sweep_id}; "
+            "ml.sweep.status for results."
+        ),
+    )
+    async def ml_sweep(module_id: str, data_ref: str = "", dataset_id: str = "",
+                       task: str = "classification", grid: str = "{}", base_config: str = "{}",
+                       n_random: int = 0, folds: int = 0, max_parallel: int = 12,
+                       apply_best: bool = False, trace_id=None):
+        if not HAS_NP:
+            return {"error": "NumPy required"}
+        try:
+            g = json.loads(grid) if isinstance(grid, str) else (grid or {})
+            base = json.loads(base_config) if isinstance(base_config, str) else (base_config or {})
+        except Exception as e:
+            return {"error": f"JSON parse: {e}"}
+        configs = sweep_configs(base, g, int(n_random or 0))
+        if not configs:
+            return {"error": "the grid gives no configuration"}
+        if not data_ref:
+            if not dataset_id:
+                return {"error": "give data_ref (ml.data.prepare) or dataset_id"}
+            prep = await ml_data_prepare(dataset_id=dataset_id, task=task, inline=False)
+            if "error" in prep:
+                return prep
+            data_ref = prep.get("data_ref") or ""
+            if not data_ref:
+                return {"error": "sweeps need Redis for the prepared data"}
+        if await _load_data(data_ref) is None:
+            return {"error": f"no prepared data {data_ref!r} (expired?)"}
+        sid = "sw-" + str(uuid.uuid4())[:8]
+        folds = max(0, min(10, int(folds or 0)))
+        sw = {"sweep_id": sid, "module_id": module_id, "data_ref": data_ref, "dataset_id": dataset_id,
+              "task": task, "configs": configs, "folds": folds, "status": "running",
+              "trials": [], "started": now_iso(), "apply_best": bool(apply_best),
+              "max_parallel": max(1, min(64, int(max_parallel or 12)))}
+        _SWEEPS[sid] = sw
+        asyncio.create_task(_run_sweep(sw))
+        return {"ok": True, "sweep_id": sid, "configs": len(configs), "trials": len(configs) * max(1, folds),
+                "data_ref": data_ref}
+
+    @capability(
+        "ml.sweep.status",
+        http_method="GET", http_path="/ml/sweep/status", http_tags=["ml"],
+        memory="off", silent=True,
+        description="A sweep's progress and ranking: {status, done, total, ranking:[{config, "
+                    "mean_val_loss, folds_done}], trials:[{config, fold, best_val_loss, node, "
+                    "seconds, error}], best}. Omit sweep_id for every sweep.",
+    )
+    async def ml_sweep_status(sweep_id: str = "", trace_id=None):
+        if not sweep_id:
+            return {"sweeps": [_sweep_view(s, brief=True) for s in _SWEEPS.values()]}
+        sw = _SWEEPS.get(sweep_id)
+        return _sweep_view(sw) if sw else {"error": f"no sweep {sweep_id!r}"}
 
     # ── Job status ────────────────────────────────────────────────────────────
 
@@ -2199,6 +2526,12 @@ if _CAP_AVAILABLE:
                 "best_val_loss": job.get("best_val_loss", None),
                 "config":    job.get("config", {}),
                 "created_at": job.get("created_at",""),
+                # where the epochs ran (a node, or the host) and on what
+                "trained_on": job.get("trained_on", ""),
+                "data_ref":  job.get("data_ref", ""),
+                "dataset_id": job.get("dataset_id", ""),
+                "task":      job.get("task", ""),
+                **({"error": job["error"]} if job.get("error") else {}),
             }
         # List: merge in-process jobs with fabric history
         jobs = []
@@ -2322,10 +2655,9 @@ if _CAP_AVAILABLE:
         except Exception as e:
             return {"error": f"JSON parse: {e}"}
 
-        # Offloaded: a caller-supplied test set can be arbitrarily large, and this
-        # runs inside the HTTP handler on the event loop (see _fast_grad).
-        y_pred, _ = await asyncio.get_running_loop().run_in_executor(
-            None, _forward_with_weights, module, w, X)
+        # On a node worker (ml-workshop-compute MW-1); the host only as the
+        # degraded fallback, off the event loop.
+        y_pred, ran_on = await _forward_on_pool(module, w, X, f"ml.evaluate {module_id}")
 
         metrics = {
             "loss":     round(_compute_loss(y_pred, y, loss_fn), 6),
@@ -2349,6 +2681,7 @@ if _CAP_AVAILABLE:
             "ok":             True,
             "module_id":      module_id,
             "n_samples":      len(X),
+            "ran_on":         ran_on,
             "metrics":        metrics,
             "predictions_sample": pred_sample,
         }
@@ -2378,13 +2711,13 @@ if _CAP_AVAILABLE:
             Xarr = np.array(json.loads(X), dtype=np.float32)
         except Exception as e:
             return {"error": f"JSON parse: {e}"}
-        # Offloaded: batch inference on a caller-supplied X, on the event loop.
-        y_pred, _ = await asyncio.get_running_loop().run_in_executor(
-            None, _forward_with_weights, module, w, Xarr)
+        # On a node worker (ml-workshop-compute MW-1); host only as the fallback.
+        y_pred, ran_on = await _forward_on_pool(module, w, Xarr, f"ml.predict {module_id}")
         return {
             "ok":         True,
             "module_id":  module_id,
             "n":          len(Xarr),
+            "ran_on":     ran_on,
             "predictions": y_pred.tolist() if hasattr(y_pred, "tolist") else [[float(y_pred)]],
             "shape":      list(y_pred.shape) if hasattr(y_pred, "shape") else [],
         }

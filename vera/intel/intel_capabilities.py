@@ -71,6 +71,15 @@ try:
     from Vera.vera.intel import intel_sources_core as srcs
     from Vera.vera.intel import intel_story_core as story
     from Vera.vera.intel import intel_activity_core as act
+    from Vera.vera.intel import intel_apis_core as apis_core
+    from Vera.vera.intel import intel_switches_core as isw
+    from Vera.vera.intel import intel_run_projection as intel_run
+    from Vera.vera.intel import intel_model_inventory as intel_models
+    from Vera.vera.intel import intel_effect_inventory as intel_effects
+    from Vera.vera.intel import intel_repo_effects
+    from Vera.vera.intel import intel_record_reconciliation as intel_records
+    from Vera.vera.intel import intel_replay_core as intel_replay
+    from Vera.vera.integrations import effect_observation_context as effect_context
     from Vera.vera.intel.intel_store import IntelStore
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.intel import intel_core as core
@@ -84,6 +93,15 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.intel import intel_sources_core as srcs
     from vera.intel import intel_story_core as story
     from vera.intel import intel_activity_core as act
+    from vera.intel import intel_apis_core as apis_core
+    from vera.intel import intel_switches_core as isw
+    from vera.intel import intel_run_projection as intel_run
+    from vera.intel import intel_model_inventory as intel_models
+    from vera.intel import intel_effect_inventory as intel_effects
+    from vera.intel import intel_repo_effects
+    from vera.intel import intel_record_reconciliation as intel_records
+    from vera.intel import intel_replay_core as intel_replay
+    from vera.integrations import effect_observation_context as effect_context
     from vera.intel.intel_store import IntelStore
 app = core._app                      # the installable app: the same module the report pages are rendered with
 
@@ -108,6 +126,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "alert_channels": ["telegram"],
     "public_base": "https://llm.int:8999",   # links in Telegram / phone / email must work off the box
     "illustrate": False,
+    "first_sweep": True,          # a new topic is swept (no model) at once, not at the next nightly batch
     "speak": True,                # read every report aloud (background) - the page gets a player
     "speak_voice": "",            # "" = the voice set for all of Vera (tts.config.set)
     "speak_speed": 0.0,           # 0 = the speed set for all of Vera
@@ -158,7 +177,34 @@ def store() -> IntelStore:
 def config() -> Dict[str, Any]:
     c = dict(DEFAULT_CONFIG)
     c.update(store().get_kv("config", {}) or {})
+    c.update(_switch_overrides())
     return c
+
+
+# intel's modes as switchboard switches (four-minds FM-13.3, intel_switches_core): a SET switch overrides its config
+# key, a switch at its default changes nothing. config() runs for every signal in triage, so the effective modes are
+# read in the background at most every isw.TTL_S seconds and config() only reads the cached copy.
+_SW: Dict[str, Any] = {"at": 0.0, "over": {}, "task": None}
+
+
+def _switch_overrides() -> Dict[str, Any]:
+    now = time.monotonic()
+    if now - _SW["at"] >= isw.TTL_S and (_SW["task"] is None or _SW["task"].done()) and _has("minds.effective"):
+        try:
+            _SW["task"] = asyncio.get_running_loop().create_task(_refresh_switches())
+            _SW["at"] = now
+        except RuntimeError:                 # no loop (a sync caller): keep the last read
+            pass
+    return dict(_SW["over"])
+
+
+async def _refresh_switches() -> None:
+    try:
+        eff = await _call("minds.effective")
+        if isinstance(eff, dict) and isinstance(eff.get("modes"), dict):
+            _SW["over"] = isw.overrides(eff.get("modes") or {}, eff.get("source") or {})
+    except Exception as ex:  # noqa: BLE001 - a switch read must never break triage
+        log.debug("intel: switch read: %s", ex)
 
 
 # ── plumbing ─────────────────────────────────────────────────────────────────
@@ -183,7 +229,8 @@ async def _call(name: str, /, **kw) -> Dict[str, Any]:
     except (TypeError, ValueError):
         pass
     try:
-        r = await fn(**kw)
+        with effect_context.attributed("intel"):
+            r = await fn(**kw)
     except Exception as ex:  # noqa: BLE001 - a sibling subsystem failing must not take intel down
         log.warning("intel: %s failed: %s", name, ex)
         return {"error": f"{type(ex).__name__}: {ex}"}
@@ -288,27 +335,32 @@ def _spend(key: str, seconds: float) -> None:
 _LEDGER_TASKS: set = set()
 
 
-def _to_ledger(row: Dict[str, Any]) -> None:
+def _to_ledger(row: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> None:
     """Mirror a Decision/Outcome v0 row into the shared decision ledger
     (decide.record), in the background and best effort: the local store stays
-    the record, and intel.decisions.export -> decide.ledger.import backfills."""
+    the record, and intel.decisions.export -> decide.ledger.import backfills.
+    `inputs` (what the decision saw) goes to the training store, so the
+    decision can be rated in /decide/labels (four-minds FM-13.6)."""
     if not _has("decide.record"):
         return
     try:
-        task = asyncio.get_running_loop().create_task(_call("decide.record", row=row))
+        kw = {"inputs": inputs} if inputs else {}
+        task = asyncio.get_running_loop().create_task(_call("decide.record", row=row, **kw))
     except RuntimeError:                     # no loop (a sync caller in a test)
         return
     _LEDGER_TASKS.add(task)
     task.add_done_callback(_LEDGER_TASKS.discard)
 
 
-def _decide(question_id: str, answer: Any, *, state: Any, ref_kind: str, ref_id: str, **kw) -> Optional[str]:
+def _decide(question_id: str, answer: Any, *, state: Any, ref_kind: str, ref_id: str,
+            inputs: Optional[Dict[str, Any]] = None, **kw) -> Optional[str]:
     """Record one decision in the four-minds Decision v0 shape: the local store,
-    mirrored to the shared ledger. Never raises; returns the decision id."""
+    mirrored to the shared ledger, with what it saw (`inputs`, else `state`) for
+    the training store. Never raises; returns the decision id."""
     try:
         d = ledger.make_decision(question_id, answer, state=state, state_ref={"kind": ref_kind, "id": ref_id}, **kw)
         store().put_decision(d)
-        _to_ledger(d)
+        _to_ledger(d, inputs or (state if isinstance(state, dict) else None))
         return d["decision_id"]
     except Exception as ex:  # noqa: BLE001
         log.debug("intel: decision not recorded: %s", ex)
@@ -385,6 +437,12 @@ def _report_url(rid: str, *, public: bool = False) -> str:
 
 # ── topics ───────────────────────────────────────────────────────────────────
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability("intel.topic.list", http_method="GET", http_path="/intel/topic/list", http_tags=["intel"],
             contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["name", "status", "depth", "cadence", "signals_24h", "signals_total", "confidence", "headline", "last_sweep"]}, "empty": "No topics tracked"}},
             memory="off", silent=True,
@@ -408,6 +466,47 @@ async def cap_topic_get(id: str = "", trace_id=None):
         return {"error": f"unknown topic: {id}"}
     return {"topic": t, "snapshot": store().latest_snapshot(id), "stats": _topic_stats(t),
             "queries": core.topic_queries(t)}
+
+
+_APIS_DECLARED = {"done": False}
+
+
+def _declare_apis() -> bool:
+    """Tell the Platforms page (platform.secrets, the master key store) which credentials intelligence can use, so
+    unset ones show there as wanted. Idempotent; False while the platforms module is not loaded."""
+    try:
+        try:
+            from Vera.vera.platforms import platform_access as _pa
+        except Exception:
+            from vera.platforms import platform_access as _pa
+        ok = all(_pa.declare(CAPABILITY_REGISTRY, a["key"], "intelligence" + (f" ({a['used_by']})" if a["used_by"]
+                             else " (planned source)"), label=a["name"], why=a["gives"][:160]) for a in apis_core.APIS)
+        _APIS_DECLARED["done"] = ok
+        return ok
+    except Exception as e:  # noqa: BLE001
+        log.debug("intel: declaring api keys: %s", e)
+        return False
+
+
+@capability("intel.apis", http_method="GET", http_path="/intel/apis", http_tags=["intel"], memory="off", silent=True,
+            description="The keyed data sources intelligence can use: for each, the Platforms credential it reads "
+                        "(platform.secrets - the master key store; add keys on the Platforms page, never here), what "
+                        "it adds, where to get a key, whether one is set, and whether Vera uses it yet (used | "
+                        "planned), and its API connection on the Platforms page (template, connection). Also what it reads "
+                        "without a key and the API connections with how many fabric sources read through each. Never "
+                        "returns a key. Output: {apis:[{key, name, status, gives, used_by, get, cost, set, ref, "
+                        "template, connection}], keyless, keyless_templates, connections:[{id, label, base_url, "
+                        "configured, enabled, sources}], json_api_hint, missing_used}.")
+async def cap_apis(trace_id=None):
+    _declare_apis()
+    rows = (await _call("platform.secrets.list")).get("secrets") or []
+    tpls = (await _call("platform.connection.templates")).get("templates") or []
+    plats = (await _call("platform.list")).get("platforms") or []
+    uses = (await _call("fabric.sources.connections")).get("connections") or {}
+    conns = [{"id": p["id"], "label": p.get("label", p["id"]), "base_url": (p.get("fields") or {}).get("base_url", ""),
+              "configured": bool(p.get("configured")), "enabled": p.get("enabled", True) is not False,
+              "sources": len(uses.get(p["id"]) or [])} for p in plats if p.get("kind") == "api"]
+    return apis_core.view(rows, tpls, conns)
 
 
 @capability("intel.lookup", http_method="GET", http_path="/intel/lookup", http_tags=["intel"],
@@ -472,10 +571,21 @@ async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: s
     except ValueError as e:
         return {"error": str(e)}
     st.put_topic(t)
+    _touch_topic_map(t, None, source="intel.topic.save")
     if t.get("dream_loop"):
         await _ensure_think_loop(t)
+    elif existing and existing.get("dream_loop"):
+        await _drop_think_loop(t["id"])           # switched off: the loop stops too (it used to run on)
     await _event("topic.saved", topic=t["id"], name=t["name"], created=existing is None)
-    return {"ok": True, "topic": t, "created": existing is None}
+    out = {"ok": True, "topic": t, "created": existing is None}
+    if existing is None and t.get("status") == "active" and config().get("first_sweep", True):
+        # the first collection now, not at tonight's batch (no model; the idle queue runs it when the box is quiet)
+        r = await _submit("first", f"intel: first sweep of {t['name'][:50]}", key=f"first:{t['id']}",
+                          payload={"topic_id": t["id"]}, priority=30)
+        out["first_sweep"] = r.get("message")
+        out["message"] = (f"Now tracking {t['name']}. A first sweep is {r.get('message')}; model summaries and "
+                          f"the assessment follow in the {t.get('cadence') or 'nightly'} run.")
+    return out
 
 
 @capability("intel.topic.delete", http_method="POST", http_path="/intel/topic/delete", http_tags=["intel"],
@@ -486,13 +596,53 @@ async def cap_topic_delete(id: str = "", purge: bool = False, trace_id=None):
     if not id:
         return {"error": "id required"}
     gone = [s["id"] for s in store().signals(id, limit=100000)] if purge else []
+    t = store().get_topic(id)
     ok = store().delete_topic(id, purge=purge)
+    cleaned = await _forget_topic(id, t) if ok else {}
     removed = 0
     for sid in gone:                              # and their copies in the fabric's signals dataset
         r = await _call("fabric.delete_record", record_id=_fabric_signal_id(sid), dataset_id=SIGNALS_DATASET)
         removed += 0 if r.get("error") else 1
     await _event("topic.deleted", topic=id, purge=purge)
-    return {"ok": ok, **({"fabric_records_removed": removed} if purge else {})}
+    return {"ok": ok, "cleaned": cleaned, **({"fabric_records_removed": removed} if purge else {})}
+
+
+async def _drop_think_loop(topic_id: str) -> bool:
+    st = store()
+    loops = st.get_kv("think_loops", {}) or {}
+    name = loops.pop(topic_id, None)
+    if not name:
+        return False
+    st.set_kv("think_loops", loops)
+    if _has("dream.think.delete"):
+        await _call("dream.think.delete", name=name)
+    return True
+
+
+async def _forget_topic(topic_id: str, t: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """What a deleted topic left running or stored outside its own record (review 2026-10-10): its dream think-loop
+    kept thinking, its indicators kept being checked, its research jobs and per-topic notes stayed, and its fabric
+    sources kept pulling for nobody. Each is removed here; a fabric source another topic still reads is kept."""
+    st = store()
+    out: Dict[str, Any] = {"think_loop": await _drop_think_loop(topic_id)}
+    had = bool(_indicators(topic_id))
+    _save_indicators(topic_id, [])
+    out["indicators"] = had
+    st.set_kv("ind_changes", [c for c in st.get_kv("ind_changes", []) or [] if c.get("topic_id") != topic_id])
+    jobs = st.get_kv("research_jobs", {}) or {}
+    st.set_kv("research_jobs", {k: v for k, v in jobs.items() if v.get("topic_id") != topic_id})
+    for key in (f"wv_over:{topic_id}", f"ind_suggest:{topic_id}"):
+        if st.get_kv(key) is not None:
+            st.set_kv(key, None)
+    removed = []
+    for sub in (t or {}).get("sources") or []:
+        sid = str(sub.get("id") or "")
+        if sid.startswith("intel-src-") and not srcs.users_of(st.topics(), sid, except_topic=topic_id):
+            r = await _call("fabric.sources.delete", source_id=sid)
+            if not r.get("error"):
+                removed.append(sid)
+    out["fabric_sources_removed"] = removed
+    return out
 
 
 async def _ensure_think_loop(t: Dict[str, Any]) -> None:
@@ -785,16 +935,39 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
         else:
             rel_ans = "relevant" if (c.get("score") or 0) >= float(t.get("min_score", 5)) else "not_relevant"
         _decide("intel.signal_relevant", rel_ans, state=ledger.signal_state(c, t["id"]), ref_kind="signal",
-                ref_id=c["id"], decider="calibrated" if learned else "rule", mode="learned" if learned else "rule",
+                ref_id=c["id"], inputs=ledger.signal_inputs(c, t), decider="calibrated" if learned else "rule", mode="learned" if learned else "rule",
                 p=ps if (curve and curve.get("usable")) else None,
                 detail={"score": c.get("score"), "rerank": rel.get(i), "novelty": c.get("novelty"),
                         "threshold": float(t.get("min_score", 5)), "p_shadow": ps})
         if c.get("genre") or c.get("genre_p") is not None:
             _decide("intel.page_genre", c.get("genre") or "unsure", state=ledger.signal_state(c, t["id"]),
-                    ref_kind="signal", ref_id=c["id"], decider="student", mode="rule",
+                    ref_kind="signal", ref_id=c["id"], inputs=ledger.signal_inputs(c, t), decider="student",
+                    mode="rule",
                     detail={"score": c.get("genre_p")})
     stats["nlp"] = bool(vecs or rel)
     return out
+
+
+def _touch_topic_map(t: Dict[str, Any], signals: Optional[List[Dict[str, Any]]] = None, *, source: str = "intel"):
+    """The web map's topic map for this intel topic (web-ingress WI-10): the topic is the canonical id, its queries,
+    sites and entities are the seeds, and a sweep's signals are members. Fire-and-forget: a map that is missing
+    or slow never touches a sweep. Returns the task (tests await it) or None."""
+    if not _has("fabric.map.topic.touch"):
+        return None
+    urls = [str(s.get("url") or "") for s in (signals or []) if s.get("url")]
+    kw = {"topic_id": t["id"], "name": t.get("name") or "", "urls": urls[:200], "role": "source", "source": source,
+          "seeds": list(t.get("sites") or []), "queries": list(t.get("queries") or []) + list(t.get("questions") or [])[:10],
+          "entities": list(t.get("entities") or [])}
+
+    async def _go():
+        try:
+            await _call("fabric.map.topic.touch", **kw)
+        except Exception as ex:  # noqa: BLE001
+            log.debug("intel: topic map touch: %s", ex)
+    try:
+        return asyncio.get_running_loop().create_task(_go())
+    except RuntimeError:
+        return None
 
 
 async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
@@ -834,6 +1007,7 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
     new += await _research_signals(t)
     st.patch_topic(t["id"], {"query_cursor": cursor, "last_sweep": core.now_iso()})
     await _to_fabric(new)
+    _touch_topic_map(t, new, source="intel.sweep")             # the web map's topic map (WI-10), off the path
     for s in new[:20]:
         await _event("signal.new", topic=t["id"], id=s["id"], title=s["title"], score=s.get("score"))
     return {"topic": t["id"], "queries": queries, "new": len(new), "joined": stats.get("joined", 0),
@@ -844,6 +1018,28 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
 async def _fabric_sources_by_id() -> Dict[str, Dict[str, Any]]:
     r = await _call("fabric.sources")
     return {str(s.get("id")): s for s in (r.get("sources") or []) if isinstance(s, dict)}
+
+
+SOURCE_MAX_PAGES = 10
+
+
+async def _browse_since(dataset_id: str, cursor: str) -> Dict[str, Any]:
+    """A source dataset's records newer than `cursor`, newest first, reading page after page until it reaches the
+    cursor (at most SOURCE_MAX_PAGES pages). One page of srcs.PER_SOURCE used to be all a sweep read, and the cursor
+    then moved to the newest - anything past the first page was skipped for good (review 2026-10-10 D7: USGS and
+    Telegram sources produce more than that between sweeps). Without a cursor (a new source) one page is enough."""
+    out: List[Dict[str, Any]] = []
+    page = int(srcs.PER_SOURCE)
+    for i in range(SOURCE_MAX_PAGES if cursor else 1):
+        r = await _call("fabric.browse", dataset_id=dataset_id, limit=page, offset=i * page)
+        if r.get("error"):
+            return {"error": r["error"]} if not out else {"records": out, "read": len(out)}
+        recs = r.get("records") or []
+        out += recs
+        reached = any(str(x.get("created_at") or "") <= cursor for x in recs) if cursor else True
+        if reached or not r.get("has_more") or not recs:
+            return {"records": out, "read": len(out)}
+    return {"records": out, "read": len(out), "truncated": True}
 
 
 async def _source_candidates(t: Dict[str, Any], seen_ids: set) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -866,14 +1062,17 @@ async def _source_candidates(t: Dict[str, Any], seen_ids: set) -> Tuple[List[Dic
             pr = await _call("fabric.sources.pull", source_id=sub["id"])
             if pr.get("error"):
                 errors.append(f"{sub.get('label', sub['id'])}: {pr['error']}")
-        r = await _call("fabric.browse", dataset_id=sub["dataset_id"], limit=srcs.PER_SOURCE)
+        cursor = str(sub.get("cursor") or "")
+        r = await _browse_since(sub["dataset_id"], cursor)
         if r.get("error"):
             errors.append(f"{sub.get('label', sub['id'])}: {r['error']}")
             continue
+        if r.get("truncated"):
+            errors.append(f"{sub.get('label', sub['id'])}: more than {r['read']} new items since the last sweep - "
+                          "the oldest of them were not read")
         box = srcs.parse_bbox(sub.get("bbox")) if sub.get("bbox") else None
         # only records the fabric stored since the last sweep read this source: an item triage
         # joined to another story, or found off-topic, is not offered (and scored) again
-        cursor = str(sub.get("cursor") or "")
         recs = [rec for rec in r.get("records") or [] if str(rec.get("created_at") or "") > cursor or not cursor]
         newest = max([str(rec.get("created_at") or "") for rec in recs] + [cursor])
         if newest and newest != cursor:
@@ -917,22 +1116,47 @@ async def _dream_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
     return out
 
 
+RESEARCH_FORGET_AFTER = 5            # consecutive failed status checks before a job is let go
+RESEARCH_MAX_AGE_DAYS = 3
+
+
+def _remember_research(job_id: str, topic_id: str, query: str) -> None:
+    """Note a research run started for a topic, so its result comes back as a signal at the topic's next sweep."""
+    if not job_id or not topic_id:
+        return
+    st = store()
+    jobs = st.get_kv("research_jobs", {}) or {}
+    jobs[job_id] = {"topic_id": topic_id, "query": query, "started": core.now_iso()}
+    st.set_kv("research_jobs", jobs)
+
+
 async def _research_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Research runs started for this topic (sessions, report buttons) that have
     finished since: their result becomes a research signal."""
     st = store()
     jobs = st.get_kv("research_jobs", {}) or {}
-    out, keep = [], {}
+    out: List[Dict[str, Any]] = []
+    gone: set = set()
+    updated: Dict[str, Dict[str, Any]] = {}
     for jid, j in jobs.items():
         if j.get("topic_id") != t["id"]:
-            keep[jid] = j
             continue
         r = await _call("research.job.status", job_id=jid)
         status = str(r.get("status") or "")
         if status not in ("done", "completed", "complete", "finished"):
-            if status in ("failed", "error", "cancelled", "not_found") or (not status and r.get("error")):
-                continue                       # gone - forget it
-            keep[jid] = j
+            if status in ("failed", "error", "cancelled", "not_found"):
+                gone.add(jid)                  # the job itself ended without a result
+            elif not status and r.get("error"):
+                # the status call failed (research module restarting, a timeout): try again next sweep; let go only
+                # after several failures in a row or when the job is days old (review D8: one failure forgot it)
+                n = int(j.get("status_errors") or 0) + 1
+                age = core.age_days(j.get("started")) or 0
+                if n >= RESEARCH_FORGET_AFTER or age > RESEARCH_MAX_AGE_DAYS:
+                    gone.add(jid)
+                else:
+                    updated[jid] = dict(j, status_errors=n)
+            elif j.get("status_errors"):
+                updated[jid] = {k: v for k, v in j.items() if k != "status_errors"}
             continue
         res = r.get("result")
         text = res if isinstance(res, str) else str((res or {}).get("report") or (res or {}).get("text") or res or "")
@@ -942,7 +1166,16 @@ async def _research_signals(t: Dict[str, Any]) -> List[Dict[str, Any]]:
             s.update(score=7.5, summary=core.clean_prose(text)[:1500], enriched=True)
             st.put_signal(s)
             out.append(s)
-    st.set_kv("research_jobs", keep)
+        gone.add(jid)
+    # re-read before writing: a job started (by a session or a report button) while these statuses were being
+    # checked must not be overwritten by the copy read at the top
+    cur = st.get_kv("research_jobs", {}) or {}
+    for jid in gone:
+        cur.pop(jid, None)
+    for jid, j in updated.items():
+        if jid in cur:
+            cur[jid] = j
+    st.set_kv("research_jobs", cur)
     return out
 
 
@@ -1060,7 +1293,7 @@ async def enrich_topic(t: Dict[str, Any], *, limit: int = 0, should_continue=Non
         low_genre = s2.get("genre") in ops.LOW_GENRES and not (s2.get("genre") == "marketing" and t.get("vendors"))
         to_model = not ((s2.get("score") or 0) < gate or llm_done >= n or low_genre)
         _decide("intel.enrich_worth", "model" if to_model else "nlp_only", state=ledger.signal_state(s2, t["id"]),
-                ref_kind="signal", ref_id=s2["id"], decider="rule", mode="rule",
+                ref_kind="signal", ref_id=s2["id"], inputs=ledger.signal_inputs(s2, t), decider="rule", mode="rule",
                 detail={"score": s2.get("score"), "gate": gate, "budget_left": n - llm_done, "low_genre": low_genre})
         if not to_model:
             text = str(page.get("markdown") or s.get("snippet") or "")
@@ -1194,16 +1427,57 @@ async def _alert(t: Dict[str, Any], snap: Dict[str, Any], why: str) -> None:
     if snap["id"] in sent:
         return
     text = ops.alert_text(t["name"], snap, why, config().get("public_base", "").rstrip("/") + f"/intel/go/alert/{snap['id']}")
+    ok, failed = await _send_alert(t, snap, text)
+    st = store()
+    if ok:
+        st.set_kv("alerts_sent", ((st.get_kv("alerts_sent", []) or []) + [snap["id"]])[-300:])
+    else:
+        # review 2026-10-10: a failed send was marked sent and never retried - the tick retries it (ALERT_RETRIES)
+        pend = [p for p in (st.get_kv("alerts_retry", []) or []) if p.get("snap") != snap["id"]]
+        st.set_kv("alerts_retry", (pend + [{"snap": snap["id"], "topic": t["id"], "text": text, "tries": 1,
+                                            "ts": core.now_iso()}])[-50:])
+    st.set_kv("alerts", ((st.get_kv("alerts", []) or []) + [{"ts": core.now_iso(), "topic": t["id"], "why": why,
+                                                            "headline": snap.get("headline"), "sent_to": ok,
+                                                            "failed": failed}])[-100:])
+    await _event("alert", topic=t["id"], why=why, headline=snap.get("headline"), sent_to=ok, failed=failed)
+
+
+ALERT_RETRIES = 3
+
+
+async def _send_alert(t: Dict[str, Any], snap: Dict[str, Any], text: str) -> Tuple[List[str], List[str]]:
+    """Send an alert on each configured channel; (channels that took it, channels that failed)."""
+    ok, failed = [], []
     for ch in config().get("alert_channels") or ["telegram"]:
         if ch == "telegram":
-            await _call("tg.notify", text=text, idempotency_key=f"intel-alert-{snap['id']}")
+            r = await _call("tg.notify", text=text, idempotency_key=f"intel-alert-{snap['id']}")
         elif ch == "phone":
-            await _call("ha.notify", target=config().get("phone_target"), title=f"Intel: {t['name']}"[:80],
-                        message=text[:240])
-    st.set_kv("alerts_sent", (sent + [snap["id"]])[-300:])
-    st.set_kv("alerts", ((st.get_kv("alerts", []) or []) + [{"ts": core.now_iso(), "topic": t["id"], "why": why,
-                                                            "headline": snap.get("headline")}])[-100:])
-    await _event("alert", topic=t["id"], why=why, headline=snap.get("headline"))
+            r = await _call("ha.notify", target=config().get("phone_target"), title=f"Intel: {t['name']}"[:80],
+                            message=text[:240])
+        else:
+            continue
+        (failed if (not isinstance(r, dict) or r.get("error") or r.get("ok") is False) else ok).append(ch)
+    return ok, failed
+
+
+async def _retry_alerts() -> None:
+    """Alerts no channel took, tried again on the tick - up to ALERT_RETRIES times in all."""
+    st = store()
+    pend = st.get_kv("alerts_retry", []) or []
+    if not pend:
+        return
+    keep = []
+    for p in pend:
+        t = st.get_topic(p.get("topic", "")) or {"id": p.get("topic", ""), "name": p.get("topic", "")}
+        ok, _failed = await _send_alert(t, {"id": p.get("snap", "")}, str(p.get("text") or ""))
+        if ok:
+            st.set_kv("alerts_sent", ((st.get_kv("alerts_sent", []) or []) + [p.get("snap")])[-300:])
+            await _event("alert.retried", topic=t["id"], sent_to=ok)
+        elif int(p.get("tries") or 1) + 1 < ALERT_RETRIES:
+            keep.append(dict(p, tries=int(p.get("tries") or 1) + 1))
+        else:
+            log.warning("intel: alert for %s not delivered after %d tries", t["id"], ALERT_RETRIES)
+    st.set_kv("alerts_retry", keep)
 
 
 @capability("intel.sweep", http_method="POST", http_path="/intel/sweep", http_tags=["intel"],
@@ -1339,7 +1613,8 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
             new.append(c)
     fresh = {i["id"]: i for i in _indicators(t["id"])}          # an add/remove while we read wins
     _save_indicators(t["id"], [dict(fresh[i["id"]], **{k: i.get(k) for k in ("status", "last", "last_t", "bars", "checked",
-                                                                              "chg7", "chg30", "resolved")
+                                                                              "chg7", "chg30", "resolved",
+                                                                              "fabric_source", "fabric_dataset")
                                                         if k in i}) for i in inds if i["id"] in fresh])
     if new:
         st.set_kv("ind_changes", ((st.get_kv("ind_changes", []) or []) + new)[-400:])
@@ -1355,9 +1630,11 @@ async def check_indicators(t: Dict[str, Any], *, lookback_days: int = 14) -> Lis
             schema=enum_schema(kind=list(srcs.KINDS)),
             description="Have a topic read a source besides web search, through the data fabric's sources system "
                         "(the fabric pulls it on its schedule; each sweep triages what is new). Input: topic_id (str!), "
-                        "kind (feed|arxiv|youtube|github_releases|usgs|api), value (str! - a site/page/feed URL; an "
+                        "kind (feed|arxiv|youtube|github_releases|usgs|api|telegram|connection), value (str! - a site/page/feed URL; an "
                         "arXiv category like cs.AI; a YouTube channel URL, id or @handle; owner/repo; a USGS magnitude "
-                        "significant|4.5|2.5|1.0|all; a JSON API URL), label, interval_h (hours between pulls), "
+                        "significant|4.5|2.5|1.0|all; a JSON API URL; for kind=connection a Platforms API connection id and "
+                        "a path, e.g. 'guardian /search?q=house+prices' - its key stays in the credential store), "
+                        "label, interval_h (hours between pulls), "
                         "bbox (min_lon,min_lat,max_lon,max_lat - only items inside, for geo sources), mapping (JSON "
                         "field mapping for kind=api: item_path, title_field, url_field, time_field, text_fields, "
                         "geo_field). Output: {ok, source, pulled}.")
@@ -1385,7 +1662,7 @@ async def cap_source_add(topic_id: str = "", kind: str = "feed", value: str = ""
         name = srcs.srcmap.feed_label(feeds[0].get("title", ""), str(d.get("site") or ""))
         if name and not label:                      # the site's name, not a feed link's "Atom"
             plan["label"] = f"{srcs.KINDS[kind]['label']}: {name}"[:80]
-    if kind == "api" and mapping:
+    if kind in ("api", "connection") and mapping:
         try:
             plan["config"] = mapping if isinstance(mapping, dict) else json.loads(str(mapping))
         except ValueError:
@@ -1395,10 +1672,13 @@ async def cap_source_add(topic_id: str = "", kind: str = "feed", value: str = ""
     args = {k: plan[k] for k in ("id", "url", "source_type", "label", "dataset_id", "interval", "tags")}
     if plan.get("config"):
         args["config"] = json.dumps(plan["config"])
+    if plan.get("connection"):                   # the fabric fills the URL from the connection, without its key
+        args.update(connection=plan["connection"], path=plan.get("path", ""))
     r = await _call("fabric.sources.add", **args)
     if r.get("error"):
         return {"error": f"fabric: {r['error']}"}
     plan["dataset_id"] = r.get("dataset_id") or plan["dataset_id"]
+    plan["url"] = plan.get("url") or r.get("url", "")
     sub = srcs.subscription(plan, kind, value, bbox=box, now_iso=core.now_iso())
     subs = [s for s in (t.get("sources") or []) if s.get("id") != sub["id"]] + [sub]
     st.patch_topic(t["id"], {"sources": subs})
@@ -1562,15 +1842,83 @@ async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str 
 
 # ── prediction markets: an open question with a price on it ──────────────────
 
+def _ingress_client(timeout: float, headers: Dict[str, str], purpose: str = "api"):
+    """intel's HTTP client (web-ingress WI-9c): through the ingress gateway when it is loaded - every response a
+    receipt in the web map, every request on the host's shared slot - else a plain client."""
+    import httpx
+    ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+    if ing is not None and hasattr(ing, "hooked_client"):
+        try:
+            return ing.hooked_client(caller="intel", purpose=purpose, timeout=timeout, headers=headers,
+                                     follow_redirects=True)
+        except Exception as ex:  # noqa: BLE001
+            log.debug("intel: ingress client: %s", ex)
+    return httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=True)
+
+
 async def _http_json(url: str, params: Optional[Dict[str, Any]] = None, timeout: float = 20.0,
                      headers: Optional[Dict[str, str]] = None) -> Any:
     """A public, keyless JSON read (prediction markets, the geocoder)."""
-    import httpx
-    async with httpx.AsyncClient(timeout=timeout, headers=headers or {"User-Agent": "vera-intel/1"},
-                                 follow_redirects=True) as c:
+    async with _ingress_client(timeout, headers or {"User-Agent": "vera-intel/1"}) as c:
         r = await c.get(url, params=params)
         r.raise_for_status()
         return r.json()
+
+
+# the keyless APIs intelligence reads, as Platforms connections (data-connections plan, phase 2): made on the
+# first tick so the owner sees them, can rate-limit or switch one off, and the reads show up there
+INTEL_CONNECTIONS = ("polymarket", "polymarket_clob", "manifold", "wikidata", "nominatim", "wikimedia",
+                     "fred", "blockchain_info")          # the last two: markets' macro series, which indicators watch
+_CONNS_ENSURED = {"done": False}
+
+
+async def _ensure_connections() -> bool:
+    """Add the connections intel reads that are not on the Platforms page yet (idempotent)."""
+    have = {t.get("id"): t.get("added") for t in (await _call("platform.connection.templates")).get("templates") or []}
+    if not have:
+        return False
+    for tid in INTEL_CONNECTIONS:
+        if tid in have and not have[tid]:
+            r = await _call("platform.connection.add", template=tid)
+            if r.get("error"):
+                log.debug("intel: connection %s: %s", tid, r["error"])
+    _CONNS_ENSURED["done"] = True
+    return True
+
+
+def _pa():
+    try:
+        from Vera.vera.platforms import platform_access as _p
+    except Exception:
+        from vera.platforms import platform_access as _p
+    return _p
+
+
+async def _api(conn: str, base: str, path: str, params: Optional[Dict[str, Any]] = None, *,
+               headers: Optional[Dict[str, str]] = None, timeout: float = 20.0) -> Any:
+    """A keyless JSON read through the Platforms connection `conn` (its rate limit, its switch, its visibility);
+    the same read straight to `base` while there is no such connection (older setups, a sandbox)."""
+    try:
+        got = await _pa().connection_get(CAPABILITY_REGISTRY, conn, path, params, timeout=timeout,
+                                         accept="application/json")
+    except Exception as ex:  # noqa: BLE001
+        got = {"error": f"no connection ({ex})"}
+    err = str(got.get("error") or "")
+    if err and ("no connection" in err or "not loaded" in err or "no API connection" in err):
+        try:
+            from Vera.vera.platforms.connections_core import expand_path
+        except ImportError:
+            from vera.platforms.connections_core import expand_path
+        from urllib.parse import parse_qsl
+        kw = {"headers": headers} if headers else {}
+        pth, _, qs = expand_path(path).partition("?")          # a query in the path rides as params, as it always did
+        merged = dict(parse_qsl(qs, keep_blank_values=True), **(params or {})) if qs else params
+        return await _http_json(base.rstrip("/") + pth, merged, timeout=timeout, **kw)
+    if err:
+        raise RuntimeError(f"{conn}: {err}")
+    r = got["response"]
+    r.raise_for_status()
+    return r.json()
 
 
 async def pm_search(query: str, limit: int = 8) -> Tuple[List[Dict[str, Any]], List[str]]:
@@ -1579,12 +1927,12 @@ async def pm_search(query: str, limit: int = 8) -> Tuple[List[Dict[str, Any]], L
     cands: List[Dict[str, Any]] = []
     errors: List[str] = []
     try:
-        cands += pm.polymarket_search(await _http_json(f"{pm.GAMMA}/public-search", {
+        cands += pm.polymarket_search(await _api("polymarket", pm.GAMMA, "/public-search", {
             "q": query, "limit_per_type": 6, "events_status": "active"}), 20)
     except Exception as ex:  # noqa: BLE001
         errors.append(f"polymarket: {type(ex).__name__}: {ex}"[:200])
     try:
-        cands += pm.manifold_search(await _http_json(f"{pm.MANIFOLD}/search-markets", {"term": query, "limit": 10}), 10)
+        cands += pm.manifold_search(await _api("manifold", pm.MANIFOLD, "/search-markets", {"term": query, "limit": 10}), 10)
     except Exception as ex:  # noqa: BLE001
         errors.append(f"manifold: {type(ex).__name__}: {ex}"[:200])
     if cands:
@@ -1602,9 +1950,9 @@ async def _market_resolution(m: Dict[str, Any]) -> Optional[str]:
     """'yes'/'no' when a watched market has resolved (one small read per check)."""
     try:
         if m.get("source") == "polymarket":
-            return pm.resolution("polymarket", await _http_json(f"{pm.GAMMA}/markets/{m.get('id')}"))
+            return pm.resolution("polymarket", await _api("polymarket", pm.GAMMA, f"/markets/{m.get('id')}"))
         if m.get("source") == "manifold":
-            return pm.resolution("manifold", await _http_json(f"{pm.MANIFOLD}/market/{m.get('id')}"))
+            return pm.resolution("manifold", await _api("manifold", pm.MANIFOLD, f"/market/{m.get('id')}"))
     except Exception as ex:  # noqa: BLE001
         log.debug("intel: market state unavailable: %s", ex)
     return None
@@ -1627,47 +1975,102 @@ def _record_resolution(t: Dict[str, Any], ind: Dict[str, Any], answer: str, chg7
 
 async def _pm_market(source: str, market_id: str) -> Optional[Dict[str, Any]]:
     if source == "polymarket":
-        return pm.polymarket_market(await _http_json(f"{pm.GAMMA}/markets/{market_id}"))
+        return pm.polymarket_market(await _api("polymarket", pm.GAMMA, f"/markets/{market_id}"))
     if source == "manifold":
-        return pm.manifold_market(await _http_json(f"{pm.MANIFOLD}/market/{market_id}"))
+        return pm.manifold_market(await _api("manifold", pm.MANIFOLD, f"/market/{market_id}"))
     return None
 
 
-async def _series(ind: Dict[str, Any]) -> Tuple[List[float], List[float], str]:
-    """An indicator's (times, values) oldest first, or an error: a market's price
-    history straight from its source (hourly), or stored bars from the markets
-    subsystem (daily), or a Wikipedia article's daily views (attention)."""
+def _ind_feed(ind: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """Where an indicator's series is read: {conn, base, path, kind} for a Wikipedia article's views or a
+    prediction market's history; None for stored bars (the markets subsystem keeps those)."""
     ds = str(ind.get("dataset_id") or "")
     if ds.startswith("wiki:"):
         _, lang, title = ds.split(":", 2)
         from urllib.parse import quote
-        end = datetime.now(timezone.utc)
-        start = end - timedelta(days=120)
-        url = (f"https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/{lang}.wikipedia/all-access/user/"
-               f"{quote(title, safe='')}/daily/{start:%Y%m%d}/{end:%Y%m%d}")
+        return {"conn": "wikimedia", "base": "https://wikimedia.org/api/rest_v1", "kind": "wiki",
+                "path": (f"/metrics/pageviews/per-article/{lang}.wikipedia/all-access/user/{quote(title, safe='')}"
+                         "/daily/{days_ago:120:%Y%m%d}/{today:%Y%m%d}")}
+    m = ind.get("market") or {}
+    if m.get("source") == "polymarket" and m.get("token"):
+        return {"conn": "polymarket_clob", "base": pm.CLOB, "kind": "polymarket",
+                "path": f"/prices-history?market={m.get('token')}&interval=1m&fidelity=60"}
+    if m.get("source") == "manifold" and m.get("id"):
+        return {"conn": "manifold", "base": pm.MANIFOLD, "kind": "manifold",
+                "path": f"/bets?contractId={m.get('id')}&limit=1000"}
+    return None
+
+
+IND_FEED_INTERVAL_S = 6 * 3600          # the fabric pulls an indicator's series this often
+
+
+def _ind_ids(feed: Dict[str, str]) -> Tuple[str, str]:
+    """The fabric source id and dataset for an indicator's series - deterministic, so topics watching the same
+    market or article share one source."""
+    sid = srcs.source_id("connection", f"{feed['conn']} {feed['path']}")
+    return sid, f"intel_ind_{sid[10:]}"
+
+
+async def _ind_register(ind: Dict[str, Any], feed: Dict[str, str]) -> bool:
+    """Register the fabric source that pulls this indicator's series through its connection - one record, replaced
+    each pull - so the data is in the fabric like every other source."""
+    sid, ds = _ind_ids(feed)
+    r = await _call("fabric.sources.add", id=sid, connection=feed["conn"], path=feed["path"], source_type="api",
+                    label=f"Indicator: {ind.get('label') or ind.get('id')}"[:80], dataset_id=ds,
+                    interval=IND_FEED_INTERVAL_S, tags="intel,indicator", config=json.dumps({"whole": True}))
+    if r.get("error"):
+        log.debug("intel: indicator source %s: %s", ind.get("id"), r["error"])
+        return False
+    ind["fabric_source"], ind["fabric_dataset"] = sid, ds
+    return True
+
+
+async def _ind_doc(ind: Dict[str, Any], feed: Dict[str, str]) -> Any:
+    """The indicator's latest series document: the fabric's copy when it is fresh; else read live (registering
+    the fabric source first if its dataset is empty - registering again would reset its pull state)."""
+    sid, ds = _ind_ids(feed)
+    b = await _call("fabric.browse", dataset_id=ds, limit=1)
+    rec = (b.get("records") or [None])[0]
+    if rec:
+        ind["fabric_source"], ind["fabric_dataset"] = sid, ds
+        at = core.parse_ts(rec.get("created_at"))
+        if at and at > datetime.now(timezone.utc) - timedelta(seconds=1.5 * IND_FEED_INTERVAL_S):
+            data = rec.get("data")
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except ValueError:
+                    data = None
+            if isinstance(data, dict):
+                return data.get("items") if set(data) == {"items"} else data
+    elif not b.get("error"):
+        await _ind_register(ind, feed)
+    return await _api(feed["conn"], feed["base"], feed["path"],
+                      headers={"User-Agent": rsv.USER_AGENT} if feed["kind"] == "wiki" else None)
+
+
+async def _series(ind: Dict[str, Any]) -> Tuple[List[float], List[float], str]:
+    """An indicator's (times, values) oldest first, or an error: a market's price
+    history (hourly) or a Wikipedia article's daily views (attention) - from the fabric source
+    that pulls it through its connection, live when that copy is missing or stale - or stored
+    bars from the markets subsystem (daily)."""
+    feed = _ind_feed(ind)
+    if feed:
         try:
-            items = (await _http_json(url, headers={"User-Agent": rsv.USER_AGENT})).get("items") or []
+            doc = await _ind_doc(ind, feed)
         except Exception as ex:  # noqa: BLE001
             return [], [], f"{type(ex).__name__}: {ex}"[:200]
-        pts = []
-        for it in items:
-            try:
-                d = datetime.strptime(str(it["timestamp"])[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
-                pts.append((d.timestamp(), float(it.get("views") or 0)))
-            except (KeyError, ValueError):
-                continue
-        pts.sort()
-        return [p[0] for p in pts], [p[1] for p in pts], ""
-    m = ind.get("market")
-    if m:
-        try:
-            if m.get("source") == "polymarket":
-                pts = pm.polymarket_series(await _http_json(f"{pm.CLOB}/prices-history", {
-                    "market": m.get("token"), "interval": "1m", "fidelity": 60}))
-            else:
-                pts = pm.manifold_series(await _http_json(f"{pm.MANIFOLD}/bets", {"contractId": m.get("id"), "limit": 1000}))
-        except Exception as ex:  # noqa: BLE001
-            return [], [], f"{type(ex).__name__}: {ex}"[:200]
+        if feed["kind"] == "wiki":
+            pts = []
+            for it in (doc or {}).get("items") or []:
+                try:
+                    d = datetime.strptime(str(it["timestamp"])[:8], "%Y%m%d").replace(tzinfo=timezone.utc)
+                    pts.append((d.timestamp(), float(it.get("views") or 0)))
+                except (KeyError, ValueError):
+                    continue
+            pts.sort()
+            return [p[0] for p in pts], [p[1] for p in pts], ""
+        pts = pm.polymarket_series(doc) if feed["kind"] == "polymarket" else pm.manifold_series(doc)
         ts, vals = pm.resample(pts, 3600.0, until=time.time())
         return ts, vals, ""
     r = await _call("markets.bars", dataset_id=ind["dataset_id"], limit=50000)
@@ -1857,7 +2260,8 @@ async def geo_lookup(name: str, cc: str = "") -> Optional[Dict[str, Any]]:
             params = {"q": name, "format": "jsonv2", "limit": 1, "addressdetails": 1, "accept-language": "en"}
             if cc:
                 params["countrycodes"] = cc
-            res = geo.parse(await _http_json(geo.NOMINATIM, params, headers={"User-Agent": geo.USER_AGENT}), name)
+            res = geo.parse(await _api("nominatim", geo.NOMINATIM.rsplit("/", 1)[0], "/search", params,
+                                       headers={"User-Agent": geo.USER_AGENT}), name)
         except Exception as ex:  # noqa: BLE001
             log.debug("intel: geocode failed for %s: %s", name, ex)
             return None
@@ -1884,7 +2288,8 @@ async def _wd(params: Dict[str, Any]) -> Dict[str, Any]:
         if wait > 0:
             await asyncio.sleep(wait)
         try:
-            return await _http_json(rsv.API, dict(params, format="json"), headers={"User-Agent": rsv.USER_AGENT})
+            return await _api("wikidata", rsv.API.rsplit("/w/", 1)[0], "/w/api.php", dict(params, format="json"),
+                              headers={"User-Agent": rsv.USER_AGENT})
         except Exception as ex:  # noqa: BLE001
             raise _Throttled(str(ex)[:160]) from ex
         finally:
@@ -2567,6 +2972,138 @@ async def cap_channel_list(trace_id=None):
     return {"rows": rows}
 
 
+@capability("intel.effects", http_method="GET", http_path="/intel/effects",
+            http_tags=["intel", "integrations"], memory="off", silent=True,
+            description="Read-only inventory of Intelligence delivery, alert, action, repository, "
+                        "automation and source effects. Distinguishes downstream provider shadow "
+                        "coverage from Intel-attributable evidence and reports unobserved paths. "
+                        "Never calls a provider, records synthetic evidence, retries or enforces.")
+async def cap_effects(trace_id=None):
+    evidence = {}
+    for family in ("telegram", "email", "homeassistant", "n8n", "repository", "printing"):
+        result = await _call("integration.effect.shadow.evidence", family=family,
+                             source="intel", limit=50)
+        evidence[family] = result if not result.get("error") else {
+            "totals": {"observations": 0}, "error": result.get("error")}
+    return intel_effects.project(core.CHANNELS, core.ACTIONS,
+                                 available_caps=tuple(CAPABILITY_REGISTRY),
+                                 attributed_evidence=evidence)
+
+
+@capability("intel.replay.evaluate", http_method="GET", http_path="/intel/replay/evaluate",
+            http_tags=["intel", "evaluation"], memory="off", silent=True,
+            description="Evaluate Intel's versioned synthetic replay corpus through its real pure scoring, "
+                        "enrichment, snapshot, report and delivery-planning seams. Returns aggregate accuracy, "
+                        "coverage, determinism and opaque failed-case IDs only. Never calls a model, network, "
+                        "provider or capability and never writes state.")
+async def cap_replay_evaluate(trace_id=None):
+    corpus_path = Path(__file__).resolve().parents[2] / "evaluations" / "intel-replay-v1.json"
+    return intel_replay.evaluate_corpus(intel_replay.load_corpus(corpus_path))
+
+
+async def _intel_fabric_records(dataset_id: str, limit: int) -> Dict[str, Any]:
+    """Read a bounded Fabric window without treating a partial page as complete."""
+    rows: List[Dict[str, Any]] = []
+    total = -1
+    error = ""
+    while len(rows) < limit:
+        page_limit = min(200, limit - len(rows))
+        result = await _call("fabric.browse", dataset_id=dataset_id,
+                             limit=page_limit, offset=len(rows), lite=False)
+        if result.get("error"):
+            error = str(result.get("error") or "unavailable")
+            break
+        page = [row for row in (result.get("records") or []) if isinstance(row, dict)]
+        rows.extend(page)
+        if int(result.get("total", -1)) >= 0:
+            total = int(result["total"])
+        if not result.get("has_more") or not page:
+            break
+    if total < 0:
+        total = len(rows)
+    return {"records": rows, "total": total,
+            "complete": not error and total <= len(rows), "error": error}
+
+
+@capability("intel.records", http_method="GET", http_path="/intel/records",
+            http_tags=["intel", "fabric", "memory"], memory="off", silent=True,
+            description="Read-only reconciliation of Intelligence record families with actual Fabric and Memory "
+                        "delivery evidence. Reports native authority, bounded identity matches and explicit gaps; "
+                        "never creates revisions or projections, calls a model/provider, or changes routing.")
+async def cap_records(limit: int = 200, trace_id=None):
+    limit = max(1, min(500, int(limit)))
+    st = store()
+
+    signals = st.signals(limit=limit)
+    signal_total = st.count_signals()
+    signal_shared = await _intel_fabric_records(intel_records.SIGNAL_DATASET, limit)
+    if signal_shared["error"]:
+        signal_recon = intel_records.unavailable_reconciliation(
+            family="signals", local_total=signal_total,
+            local_sampled=len(signals), error=signal_shared["error"])
+    else:
+        signal_recon = intel_records.reconcile_ids(
+            family="signals", local_ids=(row.get("id") for row in signals),
+            shared_records=signal_shared["records"], local_total=signal_total,
+            shared_total=signal_shared["total"], local_complete=signal_total <= len(signals),
+            shared_complete=signal_shared["complete"])
+    signal_recon["dataset_id"] = intel_records.SIGNAL_DATASET
+
+    reports = st.reports(limit=limit)
+    report_total = st.count_reports()
+    report_complete = report_total <= len(reports)
+    report_ids = {str(row.get("id") or "") for row in reports}
+    delivered_channels = st.successful_delivery_channels(report_ids)
+    fabric_delivered = {
+        report_id for report_id, channels in delivered_channels.items()
+        if "fabric" in channels
+    }
+    memory_delivered = {
+        report_id for report_id, channels in delivered_channels.items()
+        if "memory" in channels
+    }
+    report_shared = await _intel_fabric_records(intel_records.REPORT_DATASET, limit)
+    if report_shared["error"]:
+        report_recon = intel_records.unavailable_reconciliation(
+            family="reports", local_total=report_total,
+            local_sampled=len(reports), error=report_shared["error"])
+    else:
+        report_recon = intel_records.reconcile_ids(
+            family="reports", local_ids=report_ids,
+            expected_shared_ids=fabric_delivered,
+            shared_records=report_shared["records"], local_total=report_total,
+            shared_total=report_shared["total"], local_complete=report_complete,
+            shared_complete=report_shared["complete"])
+    report_recon.update({
+        "dataset_id": intel_records.REPORT_DATASET,
+        "fabric_delivery_successes_sampled": len(fabric_delivered),
+        "memory": {
+            "delivery_successes_sampled": len(memory_delivered),
+            "projection_identity_available": False,
+            "status": "delivery_evidence_only" if memory_delivered else "no_successful_delivery_in_window",
+            "reason": "native_delivery_log_retains_no_projection_identity",
+        },
+    })
+
+    families = intel_records.family_contracts()
+    counts = st.record_family_counts()
+    native_counts = {
+        "topics": counts["topics"],
+        "signals": counts["signals"],
+        "snapshots": counts["snapshots"],
+        "reports": counts["reports"],
+        "decisions_outcomes": counts["decisions"] + counts["outcomes"],
+        "actions_deliveries": counts["actions"] + counts["deliveries"],
+        "configuration": counts["kv"],
+    }
+    for family in families:
+        family["native_count"] = native_counts.get(family["id"], 0)
+    return intel_records.result_envelope(
+        families=families,
+        reconciliation={"signals": signal_recon, "reports": report_recon},
+        limit=limit)
+
+
 # ── actions: what a report's buttons do ──────────────────────────────────────
 
 @capability("intel.action.list", http_method="GET", http_path="/intel/action/list", http_tags=["intel"],
@@ -2603,6 +3140,10 @@ async def cap_action_run(token: str = "", trace_id=None):
     except Exception as ex:  # noqa: BLE001 - never leave a claimed action 'running'
         r = {"error": f"{type(ex).__name__}: {ex}"}
     good = not r.get("error")
+    if good and a.get("cap") == "research.run" and r.get("job_id"):
+        # review D8: research started from a report button was never collected - its result now comes back as a
+        # signal at the topic's next sweep, as the docstring always said
+        _remember_research(str(r["job_id"]), str(a.get("topic_id") or ""), str(args.get("query") or ""))
     st.finish_action(token, "done" if good else "failed", {k: r.get(k) for k in list(r)[:12]})
     if good and a.get("target") and a.get("topic_id"):
         tgt = core.canonical_url(a["target"])
@@ -2641,16 +3182,24 @@ _REPO_ROOT_ENV = "VERA_INTEL_REPO_DIR"
 
 
 @capability("intel.repo.get", http_method="POST", http_path="/intel/repo/get", http_tags=["intel"],
+            redact_args=["url", "topic_id", "idempotency_key", "approval_receipt_ref"],
+            redact_result=True,
             description="Fetch a code repository a report found: a shallow clone (no submodules, no hooks run) into "
                         "the intel repo area, then its README as a digest. Input: url (github/gitlab/codeberg/"
-                        "bitbucket repo page or .git url), topic_id. Output: {ok, path, readme, files}.")
-async def cap_repo_get(url: str = "", topic_id: str = "", trace_id=None):
+                        "bitbucket repo page or .git url), topic_id and optional observe-only effect controls. "
+                        "Output: {ok, path, readme, files}.")
+async def cap_repo_get(url: str = "", topic_id: str = "", idempotency_key: str = "",
+                       approval_receipt_ref: str = "", retry: bool = False,
+                       trace_id=None):
     r = core.repo_of(url)
     if not r:
         return {"error": "not a recognised repository url"}
     from Vera.vera.state_paths import state_dir
     root = Path(os.environ.get(_REPO_ROOT_ENV) or state_dir("intel", "repos"))
     dest = root / r["host"] / r["owner"] / r["repo"]
+    # belt and braces with repo_of's dot-name refusal: the clone target never leaves the repos folder
+    if root.resolve() not in dest.resolve().parents:
+        return {"error": "refused: the repository path would leave the intel repo folder"}
     dest.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_ASKPASS="true")
     fresh = not (dest / ".git").exists()
@@ -2661,6 +3210,11 @@ async def cap_repo_get(url: str = "", topic_id: str = "", trace_id=None):
         cmds = [["git", "-C", str(dest), "fetch", "--depth", "1", "origin", "HEAD"],
                 ["git", "-C", str(dest), "reset", "--hard", "FETCH_HEAD"]]
     for cmd in cmds:
+        operation = "clone" if cmd[1] == "clone" else cmd[3]
+        intel_repo_effects.observe_repository_effect(
+            operation=operation, repository_ref=r["clone"], provider=r["host"],
+            idempotency_key=idempotency_key,
+            approval_receipt_ref=approval_receipt_ref, retry=retry)
         try:
             p = await asyncio.create_subprocess_exec(*cmd, env=env, stdout=asyncio.subprocess.PIPE,
                                                      stderr=asyncio.subprocess.PIPE)
@@ -2819,6 +3373,32 @@ def _past(until: str) -> bool:
 async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
     p = job.get("payload") or {}
     mode = p.get("mode") or ("topic" if p.get("topic_id") else "night")
+    try:
+        attempt = max(1, int(job.get("preempts") or 0) + 1)
+    except (TypeError, ValueError):
+        attempt = 1
+    projection = intel_run.start_intel_job_run(
+        job_id=str(job.get("id") or ""), mode=str(mode),
+        attempt=attempt,
+    )
+    result: Dict[str, Any] = {}
+    try:
+        result = await _intel_job_native(job, p, str(mode), should_continue)
+        return result
+    except asyncio.CancelledError:
+        intel_run.finish_intel_job_run(projection, cancelled=True)
+        raise
+    except Exception as ex:
+        intel_run.finish_intel_job_run(
+            projection, error_type=type(ex).__name__)
+        raise
+    finally:
+        if not projection or not projection.terminal:
+            intel_run.finish_intel_job_run(projection, result=result)
+
+
+async def _intel_job_native(job: Dict[str, Any], p: Dict[str, Any], mode: str,
+                            should_continue) -> Dict[str, Any]:
     if p.get("until") and _past(p["until"]):
         return {"ok": True, "skipped": "its session ended"}       # dropped, not re-queued
     if mode == "topic":
@@ -2831,6 +3411,8 @@ async def _intel_job(job: Dict[str, Any], should_continue) -> Dict[str, Any]:
         return await _job_research(p)
     if mode == "sweeps":
         return await _job_sweeps(job, p, should_continue)
+    if mode == "first":
+        return await _job_first_sweep(p)
     if mode == "speak":
         return await speak_report(p.get("report_id", ""), should_continue=should_continue)
     if mode == "brief":
@@ -2911,6 +3493,19 @@ async def _sweep_and_check(t: Dict[str, Any]) -> Dict[str, Any]:
     return sw
 
 
+async def _job_first_sweep(p: Dict[str, Any]) -> Dict[str, Any]:
+    """A new topic's first collection (search, NLP triage - no model), so "track X" has signals within the hour
+    rather than after tonight's batch (info-seeking plan SK-3.6). Skipped if the topic has been swept meanwhile."""
+    t = store().get_topic(str(p.get("topic_id") or ""))
+    if not t or t.get("status") != "active":
+        return {"ok": True, "skipped": "topic gone or not active"}
+    if t.get("last_sweep"):
+        return {"ok": True, "skipped": "already swept"}
+    sw = await _sweep_and_check(t)
+    await _event("topic.first_sweep", topic=t["id"], new=int(sw.get("new") or 0))
+    return {"ok": True, "topic_id": t["id"], "new": int(sw.get("new") or 0)}
+
+
 async def _job_sweeps(job: Dict[str, Any], p: Dict[str, Any], should_continue) -> Dict[str, Any]:
     """Phase 1 of a night: sweep EVERY topic (search, NLP triage, numbers - no
     model) before any topic gets model time, so a night cut short by interactive
@@ -2955,10 +3550,7 @@ async def _job_research(p: Dict[str, Any]) -> Dict[str, Any]:
     r = await _call("research.run", query=q, mode="single", output_mode="report")
     if r.get("error") or not r.get("job_id"):
         return {"ok": False, "error": r.get("error") or "research did not start"}
-    st = store()
-    jobs = st.get_kv("research_jobs", {}) or {}
-    jobs[str(r["job_id"])] = {"topic_id": tid, "query": q, "started": core.now_iso()}
-    st.set_kv("research_jobs", jobs)
+    _remember_research(str(r["job_id"]), tid, q)
     return {"ok": True, "job_id": r["job_id"]}
 
 
@@ -3011,7 +3603,12 @@ async def _finish_night(night: str) -> None:
     n = st.get_kv("night", {}) or {}
     if n.get("brief"):
         return
-    doc = await build_report([], period_hours=int(config().get("report_period_hours", 24)), synthesize=True)
+    try:                     # the learned gate's curves follow the ratings: refit once a night (arithmetic only)
+        await asyncio.to_thread(fit_curves)
+    except Exception as ex:  # noqa: BLE001 - a refit must never cost the brief
+        log.debug("intel: calibration refit: %s", ex)
+    doc = await build_report([], period_hours=int(config().get("report_period_hours", 24)),
+                             synthesize=bool(config().get("brief_synthesize", True)))   # intel.brief (FM-13.3)
     n["brief"] = doc["id"] if _has_content(doc) else "-"
     st.set_kv("night", n)
     if _has_content(doc):
@@ -3123,9 +3720,20 @@ async def _tick() -> None:
     brief (never generate it). Monday: the week in review. Sunday: the advisor.
     Any time: due topics as idle-queue units within the daily budget, and an open
     session's planned work. Nothing here runs a model - the queue does, when quiet."""
+    if not _APIS_DECLARED["done"]:
+        _declare_apis()                       # once the platforms module is loaded: unset keys show there as wanted
+    if not _CONNS_ENSURED["done"]:
+        try:
+            await _ensure_connections()           # intel's keyless APIs as Platforms connections
+        except Exception as e:  # noqa: BLE001
+            log.debug("intel: ensuring connections: %s", e)
     c = config()
     if not c.get("enabled"):
         return
+    try:
+        await _retry_alerts()
+    except Exception as e:  # noqa: BLE001 - a retry never stops the tick
+        log.warning("intel: alert retry: %s", e)
     st = store()
     now = _local_now()
     today = now.date().isoformat()
@@ -3139,9 +3747,15 @@ async def _tick() -> None:
         st.set_kv("brief_day", today)
         pend = st.get_kv("pending_brief") or {}
         rid = pend.get("id")
-        if not rid:              # the night did not finish: brief what is in, and say so
+        if not rid:              # the night did not finish: brief what is in, and say so (and why)
+            blocker = ""
+            try:
+                if _has("background.status"):
+                    blocker = str((await _call("background.status")).get("busy_reason") or "")
+            except Exception as ex:  # noqa: BLE001 - the reason is a courtesy, never a reason not to brief
+                log.debug("intel: background reason: %s", ex)
             doc = await build_report([], period_hours=int(c.get("report_period_hours", 24)),
-                                     note=ops.night_note(st.get_kv("night", {}) or {}))
+                                     note=ops.night_note(st.get_kv("night", {}) or {}, blocker))
             rid = doc["id"] if _has_content(doc) else ""
         if rid:
             await deliver_report(rid, list(c.get("brief_channels") or ["html"]))
@@ -3173,10 +3787,13 @@ async def _tick() -> None:
         st.prune_decisions(_since(24 * 90))
     if st.get_kv("calibrated_week") != week:      # refit the topic curves from a week's new ratings
         st.set_kv("calibrated_week", week)
-        fit_curves()
+        # off the event loop: up to 20,000 decisions, each with its signal read from SQLite (review 2026-10-10)
+        await asyncio.to_thread(fit_curves)
 
 
 def _curves() -> Dict[str, Dict[str, Any]]:
+    if config().get("calibration_off"):      # intel.calibrated_gate=off (FM-13.3): no p_shadow either
+        return {}
     return (store().get_kv("calibration", {}) or {}).get("topics") or {}
 
 
@@ -3186,14 +3803,18 @@ def fit_curves() -> Dict[str, Any]:
     report buttons). Pure arithmetic over the local store - no model call."""
     st = store()
     by_topic: Dict[str, List[Tuple[float, int]]] = {}
+    topic_of: Dict[str, str] = {}
     for d in st.decisions(question_id="intel.signal_relevant", limit=20000, with_outcomes=True):
         y = calib.label_of(o.get("source") for o in d.get("outcomes") or [])
         score = (d.get("detail") or {}).get("score")
         if y is None or score is None:
             continue
-        sig = st.get_signal((d.get("state_ref") or {}).get("id", ""))
-        if sig:
-            by_topic.setdefault(sig["topic_id"], []).append((float(score), y))
+        sid = (d.get("state_ref") or {}).get("id", "")
+        if sid not in topic_of:                    # one read per signal, however many decisions name it
+            sig = st.get_signal(sid)
+            topic_of[sid] = sig["topic_id"] if sig else ""
+        if topic_of[sid]:
+            by_topic.setdefault(topic_of[sid], []).append((float(score), y))
     topics = {tid: calib.calibrate(pairs) for tid, pairs in by_topic.items()}
     rec = {"at": core.now_iso(), "topics": topics,
            "labelled": sum(len(v) for v in by_topic.values())}
@@ -3208,12 +3829,109 @@ def fit_curves() -> Dict[str, Any]:
                         "score where it says 50/50, and whether the learned gate is switched on (calibrated_gate). "
                         "Input: refit (bool - fit now from the ratings so far). Output: {at, labelled, on, topics}.")
 async def cap_calibration_status(refit: bool = False, trace_id=None):
-    rec = fit_curves() if refit else (store().get_kv("calibration", {}) or {})
+    rec = await asyncio.to_thread(fit_curves) if refit else (store().get_kv("calibration", {}) or {})
     return {"at": rec.get("at"), "labelled": rec.get("labelled", 0), "on": bool(config().get("calibrated_gate")),
             "topics": rec.get("topics") or {}}
 
 
 schedule(_tick, 300, name="intel.tick", skip_in_sandbox=True, singleton=True)
+
+
+# ── the night as a Loop Lab schedule entry ───────────────────────────────────
+# 12-17 Oct 2026: the background queue needs 600 s of quiet and a night of censuses, probes and landings never
+# gave it one, so the deep assessments and the narrations waited six days. The owner's call: intel's run goes in
+# the Loop Lab schedule. An exclusive scheduled cap keeps censuses off the box while it runs; inside it the idle
+# queue is reserved for intel's jobs, so the quiet gate no longer applies to them.
+
+_NIGHT_RUN_POLL_S = 5.0
+
+
+async def _box_busy() -> str:
+    """The box's busy reason (background.status), '' when quiet or unknown. Used once the reserved window has
+    passed: a job that overran still yields to a person."""
+    try:
+        if _has("background.status"):
+            return str((await _call("background.status")).get("busy_reason") or "")
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+@capability("intel.night.run", http_method="POST", http_path="/intel/night/run", http_tags=["intel"],
+            description="Run tonight's intelligence batch now, inside a window that is Vera's to use: start the "
+                        "night if it has not started, reserve the idle queue for intel's jobs for up to `minutes` "
+                        "(default 150) and drain them one after another until the brief is written or the time "
+                        "is up. Meant to be the target of an exclusive Loop Lab schedule entry (intel.night.schedule), "
+                        "which keeps censuses off meanwhile; called by hand it does not check the box first. "
+                        "Input: minutes. Output: {ok, night, ran, remaining, minutes, reason}.")
+async def cap_night_run(minutes: int = 150, trace_id=None):
+    st = store()
+    now = _local_now()
+    night = _night_of(now, int(config().get("sweep_hour", 23)))
+    if not st.topics("active"):
+        return {"ok": False, "night": night, "error": "no active topics"}
+    if st.get_kv("nightly_day") != night:
+        st.set_kv("nightly_day", night)
+        await _start_night(night)
+    svc = _svc()
+    if svc is None or not hasattr(svc, "reserve"):
+        return {"ok": True, "night": night, "ran": 0, "remaining": 0, "minutes": 0,
+                "reason": "no idle queue - the batch ran inline"}
+    budget = max(5, min(int(minutes or 150), 600)) * 60
+    t0 = time.time()
+    ran, reason = 0, "brief written"
+    svc.reserve((KIND_INTEL,), t0 + budget, by="intel.night.run")
+    try:
+        while True:
+            jobs = [j for j in await svc.load_jobs()
+                    if j.get("kind") == KIND_INTEL and j.get("state") in ("waiting", "running")]
+            n = st.get_kv("night", {}) or {}
+            if not jobs:
+                reason = "brief written" if (n.get("id") == night and n.get("brief")) else "nothing queued"
+                break
+            if time.time() - t0 >= budget:
+                reason = "time is up"
+                break
+            r = await svc.drain_once("", _box_busy, time.time())
+            if r.get("action") == "started":
+                ran += 1
+            await asyncio.sleep(_NIGHT_RUN_POLL_S)
+    finally:
+        svc.release_reservation("intel.night.run")
+    left = sum(1 for j in await svc.load_jobs() if j.get("kind") == KIND_INTEL and j.get("state") == "waiting")
+    await _event("night_run", night=night, ran=ran, remaining=left, reason=reason)
+    return {"ok": True, "night": night, "ran": ran, "remaining": left,
+            "minutes": round((time.time() - t0) / 60, 1), "reason": reason}
+
+
+@capability("intel.night.schedule", http_method="POST", http_path="/intel/night/schedule", http_tags=["intel"],
+            description="Give the night batch a protected window in the Loop Lab schedule: an exclusive scheduled "
+                        "cap intel.night.run (censuses stay off while it runs), every night, 00:10-02:40 local by "
+                        "default. Idempotent: it updates the entry it made before. Input: start, end (HH:MM), "
+                        "minutes, enabled, days (weekday numbers 0=Mon..6=Sun; default every day). "
+                        "Output: {ok, schedule, next}.")
+async def cap_night_schedule(start: str = "00:10", end: str = "02:40", minutes: int = 150, enabled: bool = True,
+                             days: Any = None, trace_id=None):
+    if not _has("evolve.schedule.upsert"):
+        return {"error": "the Loop Lab schedule is not available"}
+    if isinstance(days, str):
+        days = [int(x) for x in re.findall(r"\d", days)]
+    rec: Dict[str, Any] = {
+        "kind": "cap", "title": "Intel night",
+        "target": {"name": "intel.night.run", "arguments": {"minutes": int(minutes)}},
+        "days": list(days) if days is not None else [0, 1, 2, 3, 4, 5, 6],
+        "start": start, "end": end, "repeat": "once_per_window", "exclusive": True, "at_window_end": "finish",
+        "enabled": bool(enabled),
+        "notes": "intel's night batch (sweeps, assessments, brief, narration) in a window censuses keep out of",
+    }
+    prev = store().get_kv("night_schedule_id")
+    if prev:
+        rec["id"] = prev
+    r = await _call("evolve.schedule.upsert", schedule=rec)
+    sid = ((r or {}).get("schedule") or {}).get("id")
+    if sid:
+        store().set_kv("night_schedule_id", sid)
+    return r
 
 
 # ── drop folders (notes / inbox / print / podcast) ──────────────────────────
@@ -3551,20 +4269,106 @@ async def cap_session_status(trace_id=None):
             "night": {k: v for k, v in (st.get_kv("night", {}) or {}).items() if k != "pending"}}
 
 
+@capability("intel.models", http_method="GET", http_path="/intel/models",
+            http_tags=["intel", "models"], memory="off", silent=True,
+            description="Read-only inventory of the distributed NLP models and routed LLM roles "
+                        "the Intelligence subsystem actually consumes, joined to current callable, "
+                        "node-placement and portable package evidence. Reports missing evidence as "
+                        "gaps; never loads, executes, downloads or reroutes a model.")
+async def cap_models(trace_id=None):
+    callable_rows: List[Dict[str, Any]] = []
+    sources: Dict[str, Any] = {}
+    entry = CAPABILITY_REGISTRY.get("model.callable") or {}
+    reader = entry.get("func") or entry.get("raw")
+    if reader is None:
+        sources["model.callable"] = {"status": "unavailable", "reason": "capability_not_loaded"}
+    else:
+        try:
+            result = reader(include_llms=False, measure=False)
+            if inspect.isawaitable(result):
+                result = await result
+            callable_rows.extend((result or {}).get("models") or [])
+            sources["model.callable"] = {"status": "available",
+                                         "count": len((result or {}).get("models") or [])}
+        except Exception as exc:  # an inventory-source outage is data, not a 500
+            sources["model.callable"] = {"status": "unavailable", "reason": type(exc).__name__}
+    try:
+        try:
+            from Vera.vera import model_binding_core as model_binding
+        except ImportError:
+            from vera import model_binding_core as model_binding
+        llms = model_binding.llm_rows(getattr(_orch, "OLLAMA_INSTANCES", {}) or {},
+                                      getattr(_orch, "MODEL_TAGS", {}) or {})
+        callable_rows.extend(llms)
+        sources["llm.routing"] = {"status": "available", "count": len(llms),
+                                  "kind": "in_memory_placement"}
+    except Exception as exc:
+        sources["llm.routing"] = {"status": "unavailable", "reason": type(exc).__name__}
+    try:
+        profiles = getattr(_orch, "_effective_role_profiles", lambda: {})() or {}
+        profile = profiles.get("intel") or {"name": "intel", "roles": {}}
+        sources["intel.profile"] = {"status": "available" if profile.get("roles") else "unavailable",
+                                    "roles": len(profile.get("roles") or {})}
+    except Exception as exc:
+        profile = {"name": "intel", "roles": {}}
+        sources["intel.profile"] = {"status": "unavailable", "reason": type(exc).__name__}
+    return intel_models.project(callable_rows, profile, sources=sources)
+
+
 @capability("intel.config.get", http_method="GET", http_path="/intel/config", http_tags=["intel"],
             contract={"presentation": {"kind": "kv", "map": {"fields": "config"}}},
             memory="off", silent=True,
             description="Intelligence settings: schedule, delivery, persona, competitors, drop folders, sessions, NLP "
-                        "and model gates. Output: {config, schedule, profile}.")
+                        "and model gates. Output: {config, schedule, profile, switch_overrides} - switch_overrides "
+                        "names the settings an intel.* switchboard switch is overriding (four-minds FM-13.3), which "
+                        "intel.config.set cannot change while the switch is set.")
 async def cap_config_get(trace_id=None):
     st = store()
     return {"config": config(), "profile": "intel" if _PROFILE["declared"] else "",
+            "switch_overrides": sorted(_switch_overrides()),
             "schedule": {"nightly_day": st.get_kv("nightly_day"), "brief_day": st.get_kv("brief_day"),
                          "pending_brief": st.get_kv("pending_brief"), "last_nightly": st.get_kv("last_nightly"),
                          "weekly_day_done": st.get_kv("weekly_day_done"), "advise_week": st.get_kv("advise_week")}}
 
 
-def _clean_config(raw: Dict[str, Any]) -> Dict[str, Any]:
+# Settings that, changed by anyone who can call intel.config.set (chat, or text injected into a page a model read),
+# could send Telegram links and n8n calls elsewhere or read any folder on the files host (review 2026-10-10 D9).
+DROP_ROOT = os.environ.get("VERA_INTEL_DROP_ROOT", "/srv/pools/tank_sde/vfs/home").rstrip("/")
+_PUBLIC_HOSTS = re.compile(r"^(llm\.int|localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.66\.66\.\d{1,3}|"
+                           r"[a-z0-9-]+(\.[a-z0-9-]+)*\.duckdns\.org)$", re.I)
+PERSONA_MAX = 4000
+
+
+def _safe_folder(path: Any) -> str:
+    """The folder normalised, or "" when it is relative, climbs with "..", or leaves DROP_ROOT."""
+    import posixpath
+    p = str(path or "").strip()
+    if not p.startswith("/") or ".." in p.split("/"):
+        return ""
+    p = posixpath.normpath(p)
+    return p if (p == DROP_ROOT or p.startswith(DROP_ROOT + "/")) else ""
+
+
+def _safe_public_base(url: Any) -> str:
+    """scheme://host[:port] for a host Vera is reached by (llm.int, the LAN, the wg door, DuckDNS, or one in
+    VERA_INTEL_PUBLIC_HOSTS), else ""."""
+    from urllib.parse import urlsplit
+    u = str(url or "").strip().rstrip("/")
+    try:
+        sp = urlsplit(u)
+    except ValueError:
+        return ""
+    host = (sp.hostname or "").lower()
+    extra = {h.strip().lower() for h in os.environ.get("VERA_INTEL_PUBLIC_HOSTS", "").split(",") if h.strip()}
+    if sp.scheme not in ("http", "https") or not host or sp.path not in ("", "/") or sp.query or sp.username:
+        return ""
+    if not (_PUBLIC_HOSTS.match(host) or host in extra):
+        return ""
+    return f"{sp.scheme}://{sp.netloc}"
+
+
+def _clean_config(raw: Dict[str, Any], rejected: Optional[List[str]] = None) -> Dict[str, Any]:
+
     out: Dict[str, Any] = {}
     for k, v in (raw or {}).items():
         if k not in _CONFIG_KEYS or v is None:
@@ -3578,8 +4382,20 @@ def _clean_config(raw: Dict[str, Any]) -> Dict[str, Any]:
             v = [x for x in (ops.normalise_session(s) for s in (v if isinstance(v, list) else [])
                              if isinstance(s, dict)) if x][:12]
         elif k == "drop_folders":
-            v = [{"kind": f.get("kind"), "path": str(f.get("path") or "")} for f in (v if isinstance(v, list) else [])
-                 if isinstance(f, dict) and f.get("kind") in ops.FOLDER_KINDS and f.get("path")][:12]
+            got = [{"kind": f.get("kind"), "path": _safe_folder(f.get("path"))} for f in (v if isinstance(v, list) else [])
+                   if isinstance(f, dict) and f.get("kind") in ops.FOLDER_KINDS and f.get("path")][:12]
+            if any(not f["path"] for f in got) and rejected is not None:
+                rejected.append(f"drop_folders: only absolute folders under {DROP_ROOT} (no ..)")
+            v = [f for f in got if f["path"]]
+        elif k == "public_base":
+            v = _safe_public_base(v)
+            if not v:
+                if rejected is not None:
+                    rejected.append("public_base: a bare http(s)://host[:port] on llm.int, the LAN, the wg door or "
+                                    "DuckDNS (or VERA_INTEL_PUBLIC_HOSTS)")
+                continue
+        elif k == "persona":
+            v = str(v)[:PERSONA_MAX]
         elif isinstance(d, bool):
             v = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on")
         elif isinstance(d, int):
@@ -3617,13 +4433,17 @@ async def cap_config_set(settings: Any = None, enabled: bool = None, timezone: s
         if v is not None:
             raw[k] = v
     try:
-        clean = _clean_config(raw)
+        rejected: List[str] = []
+        clean = _clean_config(raw, rejected)
     except (TypeError, ValueError) as e:
         return {"error": f"bad setting: {e}"}
     cur = store().get_kv("config", {}) or {}
     cur.update(clean)
     store().set_kv("config", cur)
-    return {"ok": True, "config": config(), "changed": sorted(clean)}
+    out = {"ok": True, "config": config(), "changed": sorted(clean)}
+    if rejected:
+        out["rejected"] = rejected
+    return out
 
 
 # ── leaving n8n ──────────────────────────────────────────────────────────────
@@ -3769,17 +4589,31 @@ async def cap_n8n_retire(dry_run: bool = True, reactivate: bool = False, trace_i
 
 # ── outcomes from the product: link opens, feedback, alerts acted on ────────
 
+# Link-preview fetchers open every link in a message the moment it is sent; counting them taught the gates that
+# every alert and link was acted on (review 2026-10-10). A preview is redirected but never counted.
+_PREVIEW_UA = re.compile(r"(?i)(telegrambot|twitterbot|facebookexternalhit|slackbot|discordbot|whatsapp|"
+                         r"linkedinbot|skypeuripreview|embedly|bot\b|crawler|spider|preview)")
+
+
+def _is_preview(request: Any) -> bool:
+    try:
+        return bool(_PREVIEW_UA.search(str(request.headers.get("user-agent") or "")))
+    except Exception:
+        return False
+
+
 @APP.get("/intel/go/alert/{snap_id}", include_in_schema=False)
-async def _go_alert(snap_id: str):
-    """An alert's link: counts as 'acted on', then opens the panel."""
+async def _go_alert(snap_id: str, request: Request = None):
+    """An alert's link: counts as 'acted on' (unless a link-preview bot fetched it), then opens the panel."""
     from fastapi.responses import RedirectResponse
-    _outcome("snapshot", re.sub(r"[^a-f0-9]", "", snap_id)[:32], "alert.acted",
-             questions=["intel.material_change"])
+    if not _is_preview(request):
+        _outcome("snapshot", re.sub(r"[^a-f0-9]", "", snap_id)[:32], "alert.acted",
+                 questions=["intel.material_change"])
     return RedirectResponse("/intel/panel", status_code=302)
 
 
 @APP.get("/intel/go/{signal_id}", include_in_schema=False)
-async def _go_signal(signal_id: str):
+async def _go_signal(signal_id: str, request: Request = None):
     """A signal link in a report or a message: counts as 'opened', then redirects to the
     page the signal points at - only ever a stored http(s) URL, never one from the request."""
     from fastapi.responses import RedirectResponse
@@ -3787,8 +4621,9 @@ async def _go_signal(signal_id: str):
     s = store().get_signal(sid)
     if not s or not re.match(r"(?i)^https?://", str(s.get("url") or "")):
         return HTMLResponse("<h1>No such link</h1>", status_code=404)
-    _outcome("signal", sid, "link.opened", questions=["intel.signal_relevant", "intel.enrich_worth",
-                                                      "intel.page_genre"])
+    if not _is_preview(request):
+        _outcome("signal", sid, "link.opened", questions=["intel.signal_relevant", "intel.enrich_worth",
+                                                          "intel.page_genre"])
     return RedirectResponse(s["url"], status_code=302)
 
 
@@ -3843,6 +4678,41 @@ async def cap_decisions_export(since: str = "", limit: int = 5000, trace_id=None
             "schema": {"decision": ledger.DECISION_SCHEMA, "outcome": ledger.OUTCOME_SCHEMA}}
 
 
+@capability("intel.decisions.backfill_inputs", http_method="POST", http_path="/intel/decisions/backfill_inputs",
+            contract=_MC.contract("intel.decision.inputs.backfill", effects=["read", "write"], idempotency="idempotent"),
+            http_tags=["intel"], memory="off",
+            description="Give past signal decisions (signal_relevant, page_genre, enrich_worth) what they saw in the "
+                        "training store, rebuilt from the stored signal and its topic, so they can be rated in "
+                        "/decide/labels (four-minds FM-13.6). The signal as it is now, not as it was: a later "
+                        "enrichment may have added a summary. Input: days (default 30), dry_run (default true). "
+                        "Output: {decisions, rebuilt, written, missing_signal}.")
+async def cap_decisions_backfill_inputs(days: int = 30, dry_run: bool = True, trace_id=None):
+    if isinstance(dry_run, str):
+        dry_run = dry_run.strip().lower() not in ("0", "false", "no")
+    ts = sys.modules.get("training_state") or sys.modules.get("Vera.vera.minds.training_state")
+    if ts is None and not dry_run:
+        return {"ok": False, "error": "training store not loaded"}
+    st = store()
+    since = _since(24 * max(1, min(90, int(days))))
+    out = {"ok": True, "dry_run": dry_run, "decisions": 0, "rebuilt": 0, "written": 0, "missing_signal": 0}
+    topics: Dict[str, Dict[str, Any]] = {}
+    for q in ledger.SIGNAL_QUESTIONS:
+        for d in st.decisions(question_id=q, since=since, limit=20000, with_outcomes=False):
+            out["decisions"] += 1
+            sig = st.get_signal(str((d.get("state_ref") or {}).get("id") or ""))
+            if not sig:
+                out["missing_signal"] += 1
+                continue
+            tid = str(sig.get("topic_id") or "")
+            if tid not in topics:
+                topics[tid] = st.get_topic(tid) or {"id": tid}
+            inputs = ledger.signal_inputs(sig, topics[tid])
+            out["rebuilt"] += 1
+            if not dry_run and await ts.put_now(d, inputs):
+                out["written"] += 1
+    return out
+
+
 # ── UI ───────────────────────────────────────────────────────────────────────
 
 @capability("intel.panel.html", http_method="GET", http_path="/intel/panel", http_tags=["intel"],
@@ -3866,6 +4736,7 @@ register_ui(
          'style="flex:1;border:none;width:100%;height:100%"></iframe></div>',
     ui_caps=["intel.topic.list", "intel.topic.save", "intel.signal.list", "intel.timeline.get",
              "intel.report.build", "intel.report.list", "intel.deliver", "intel.refresh", "intel.command",
-             "intel.save", "intel.session.status", "intel.notes.list", "intel.advise"],
+             "intel.save", "intel.session.status", "intel.notes.list", "intel.advise", "intel.apis",
+             "platform.connection.add", "platform.list"],
     mode="tab", tab_order=58,
 )

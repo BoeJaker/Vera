@@ -85,7 +85,7 @@ def test_web_fetch_reports_a_404_as_a_failure(monkeypatch):
     import asyncio
     from Vera.vera.web import web_capabilities as WC
 
-    async def fake_fetch(url, timeout=8.0, max_chars=16000):
+    async def fake_fetch(url, timeout=8.0, max_chars=16000, **kw):   # caller/purpose: the receipt's
         return {"html": "<h1>Not found</h1>", "text": "Not found", "title": "404", "status": 404}
 
     monkeypatch.setattr(WC._wc, "fetch_page", fake_fetch)

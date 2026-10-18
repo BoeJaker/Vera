@@ -410,7 +410,7 @@ def test_run_streaming_reports_a_missing_binary(build_caps):
     assert any("could not start" in l for l in b.job_view(jid)["log"])
 
 
-def test_builder_up_forwards_the_container_name(build_caps, monkeypatch):
+def test_builder_up_forwards_the_container_name(build_caps, monkeypatch, tmp_path):
     """Regression: the capability-dispatch helper took the cap name as `name`,
     which collided with docker.run's container `name` kwarg and failed the whole
     bring-up with "got multiple values for argument 'name'"."""
@@ -448,6 +448,8 @@ def test_builder_up_forwards_the_container_name(build_caps, monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
     monkeypatch.setattr(b, "resolve_builder_url", _fake_resolve)
     monkeypatch.setattr(b, "builder_get", _fake_health)
+    monkeypatch.delenv("VERA_BUILDER_TOKEN", raising=False)
+    monkeypatch.setattr(b, "builder_token_path", lambda: tmp_path / "token")
 
     jid = b.job_start("test")
     res = asyncio.run(b._builder_up_job(jid, 8785, False, "", 60))
@@ -455,8 +457,14 @@ def test_builder_up_forwards_the_container_name(build_caps, monkeypatch):
     assert res.get("ok"), res
     assert calls["rm"]["container"] == "vera-builder"
     assert calls["run"]["name"] == "vera-builder", "container name must reach docker.run"
-    assert calls["run"]["ports"] == "8785:8080"
+    assert calls["run"]["ports"] == "127.0.0.1:8785:8080", "the shell runner must not be published on the LAN"
     assert "/opt/arduino" in calls["run"]["volumes"]
+    # the token reaches the container as a read-only file, never in the command line
+    tok = (tmp_path / "token").read_text().strip()
+    assert len(tok) == 64 and (tmp_path / "token").stat().st_mode & 0o077 == 0
+    assert f"{tmp_path / 'token'}:/run/vera/builder.token:ro" in calls["run"]["volumes"]
+    assert calls["run"]["env"]["BUILDER_TOKEN_FILE"] == "/run/vera/builder.token"
+    assert tok not in str(calls["run"])
     assert b.job_view(jid)["done"] and b.job_view(jid)["ok"]
 
 

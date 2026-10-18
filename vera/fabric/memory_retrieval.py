@@ -75,6 +75,22 @@ try:                                     # pragma: no cover - import-shape only
     from Vera.vera.fabric import fusion_core as _fc
 except ImportError:                      # pragma: no cover
     from vera.fabric import fusion_core as _fc   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.fabric import seek_cache_core as _scc
+except ImportError:                      # pragma: no cover
+    from vera.fabric import seek_cache_core as _scc   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import switchboard_core as _SB
+except ImportError:                      # pragma: no cover
+    from vera.minds import switchboard_core as _SB   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.fabric import rank_core as _rk
+except ImportError:                      # pragma: no cover
+    from vera.fabric import rank_core as _rk   # type: ignore
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.worldview import worldview_corpus_core as _wvc
+except ImportError:                      # pragma: no cover
+    from vera.worldview import worldview_corpus_core as _wvc   # type: ignore
 try:                                     # the retrieval eval set (FM-7.0): seeks + reads as labels
     from Vera.vera.fabric import retrieval_eval as _reval
 except Exception:                        # pragma: no cover
@@ -86,10 +102,42 @@ except Exception:                        # pragma: no cover
 log = logging.getLogger("vera.memory_retrieval")
 
 
+def _df_candidates() -> List[Any]:
+    """Every data_fabric module object this process holds: both sys.modules names and the module that owns the
+    registered fabric.query (11 Oct 2026: sys.modules["data_fabric"] was an unconnected copy while fabric.query's
+    module was connected)."""
+    out: List[Any] = []
+    for m in (sys.modules.get("data_fabric"), sys.modules.get("Vera.vera.fabric.data_fabric")):
+        if m is not None and all(m is not x for x in out):
+            out.append(m)
+    try:
+        fn = (CAPABILITY_REGISTRY.get("fabric.query") or {}).get("func")
+        owner = sys.modules.get(getattr(fn, "__module__", "") or "")
+        if owner is not None and hasattr(owner, "FABRIC_PG") and all(owner is not x for x in out):
+            out.append(owner)
+    except Exception:
+        pass
+    return out
+
+
+def _connected(m: Any) -> bool:
+    return bool(getattr(getattr(m, "FABRIC_PG", None), "available", False)
+                or getattr(getattr(m, "FABRIC_CHROMA", None), "available", False))
+
+
 def _df():
-    """The LIVE data_fabric module instance (loaded by the module loader)."""
-    return (sys.modules.get("data_fabric")
-            or sys.modules.get("Vera.vera.fabric.data_fabric"))
+    """The LIVE data_fabric module: the candidate whose stores are connected, else the first one."""
+    cands = _df_candidates()
+    return next((m for m in cands if _connected(m)), cands[0] if cands else None)
+
+
+def _df_evidence(df: Any) -> Dict[str, Any]:
+    """Which data_fabric served this seek, and every candidate's identity and connection state."""
+    return {"used": f"{getattr(df, '__name__', '')}@{id(df):x}",
+            "candidates": [{"name": getattr(m, "__name__", ""), "id": f"{id(m):x}",
+                            "pg": bool(getattr(getattr(m, "FABRIC_PG", None), "available", False)),
+                            "chroma": bool(getattr(getattr(m, "FABRIC_CHROMA", None), "available", False))}
+                           for m in _df_candidates()]}
 
 
 def _mem():
@@ -367,14 +415,26 @@ async def _gather_ranked_lists(df, query: str, scope: str, pool: int, env=None):
         env.stage("chroma", 0.0, "skipped:no-vector")
 
     if getattr(df.FABRIC_PG, "available", False):
-        res, ms = await _rtc.timed(asyncio.wait_for(
-            df.FABRIC_PG.search_text(query, scoped_ds or None, limit=pool), timeout=6))
+        # FM-7.1 (switch memory.text_index): the full-text index when it is ready, else the ILIKE scan
+        leg, res, ms = "pg_text", None, 0.0
+        if hasattr(df.FABRIC_PG, "search_text_fts") and await _switch("memory.text_index") == "fts":
+            res, ms = await _rtc.timed(asyncio.wait_for(
+                df.FABRIC_PG.search_text_fts(query, scoped_ds or None, limit=pool), timeout=6))
+            leg = "pg_fts"
+            if isinstance(res, BaseException):
+                log.debug("seek pg_fts: %s", res)
+                _leg(env, "pg_fts", res, ms)
+                res = None
+        if res is None:
+            res, ms = await _rtc.timed(asyncio.wait_for(
+                df.FABRIC_PG.search_text(query, scoped_ds or None, limit=pool), timeout=6))
+            leg = "pg_text"
         if isinstance(res, BaseException):
-            log.debug("seek pg_text: %s", res)
+            log.debug("seek %s: %s", leg, res)
         elif res:
             ranked.append([rid for rid, _ in res])
             text_ids.update(rid for rid, _ in res)
-        _leg(env, "pg_text", res, ms)
+        _leg(env, leg, res, ms)
     elif env is not None:
         env.stage("pg_text", 0.0, "skipped:unavailable")
 
@@ -411,6 +471,7 @@ async def _memory_candidates(query: str, limit: int, weight: float = 1.0) -> Lis
                     "tags": rec.get("tags", []) or [],
                     "source": "memory",
                     "score": float(weight) / (_RRF_K + rank),
+                    "importance": rec.get("importance"),
                     "origin": "memory"})
     terms = _fc.query_terms(query)
     return [c for c in out if _fc.lexical_pass(terms, c["text"])]
@@ -450,8 +511,138 @@ def _render_seek(query: str, selected: List[Dict], candidates: int,
 # CAPABILITIES
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _seek_redis():
+    try:
+        import Vera.vera.capability_orchestration as _o
+        return getattr(_o, "REDIS", None)
+    except Exception:
+        return None
+
+
+async def _switch(feature_id: str, default: str = "off") -> str:
+    """A switch's mode for this seek: the run's own modes first (a census arm, an eval run - switchboard RUN_MINDS),
+    then the global layer (minds.effective), else the default. Never raises."""
+    try:
+        run = _SB.RUN_MINDS.get()
+        modes = (run or {}).get("modes", run or {}) if isinstance(run, dict) else {}
+        if feature_id in modes:
+            return str(modes[feature_id])
+        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        if eff:
+            return str((((await eff()) or {}).get("modes") or {}).get(feature_id) or default)
+    except Exception as e:
+        log.debug("switch %s: %s", feature_id, e)
+    return default
+
+
+async def _seek_cache_key(query, scope, since, k, max_chars, include_memory) -> Optional[str]:
+    """The cache key when the switch `memory.seek_cache` is on and Redis answers, else None (FM-7.1)."""
+    try:
+        if await _switch("memory.seek_cache") != "on":
+            return None
+        r = _seek_redis()
+        if r is None:
+            return None
+        gen = await r.get(_scc.GEN_KEY)
+        if isinstance(gen, bytes):
+            gen = gen.decode()
+        return _scc.key(query, scope, since, k, max_chars, include_memory, gen or 0)
+    except Exception as e:
+        log.debug("seek cache key: %s", e)
+        return None
+
+
+_RERANK_TIMEOUT_S = float(os.getenv("VERA_SEEK_RERANK_TIMEOUT_S", "1.5") or 1.5)
+# where nobody waits on the reply (memory.rerank=not_chat outside a live chat turn) the cross-encoder gets longer: on
+# 12 Oct at night its node (cpu-247, beside the 35B) answered in 2.7-2.9 s, so a 1.5 s bound made every rerank a
+# timeout - 1.5 s spent, nothing gained
+_RERANK_BACKGROUND_TIMEOUT_S = float(os.getenv("VERA_SEEK_RERANK_BACKGROUND_TIMEOUT_S", "6") or 6)
+
+
+def _live_chat_seek() -> bool:
+    """This seek is a live chat turn's own tool call: the browser called memory.seek directly over /mcp/call (no
+    caller kind) and nothing else is running around it. Research, discovery, loops, evals and MCP agents call it
+    nested in another capability, or name their caller kind."""
+    orch = sys.modules.get("Vera.vera.capability_orchestration")
+    try:
+        caps = orch.RUNNING_CAPS.get() if orch is not None else ()
+        kind = orch.CALLER_KIND.get() if orch is not None else ""
+    except Exception:
+        return False
+    return bool(caps) and caps[0] == "memory.seek" and not kind
+
+
+def _rerank_wanted(mode: str) -> bool:
+    """memory.rerank: 'on' everywhere; 'not_chat' (owner, 12 Oct: research, discovery, loops and background, where
+    nobody waits on the reply) everywhere but a live chat turn's own seek; 'off' nowhere."""
+    return mode == "on" or (mode == "not_chat" and not _live_chat_seek())
+
+
+async def _rerank_head(query: str, cands: List[Dict], env=None, timeout_s: Optional[float] = None) -> None:
+    """FM-7.3 (switch memory.rerank): the cross-encoder re-reads the top fused candidates (one node call) and
+    decides their order; they stay above the rest. Bounded at _RERANK_TIMEOUT_S; any failure keeps the fused order.
+    Calls nlp.rerank's bare function, so a seek writes no activity record for it."""
+    head = sorted(cands, key=lambda c: -c["score"])[:_fc.RERANK_TOP]
+    if len(head) < 2:
+        return
+    cap = CAPABILITY_REGISTRY.get("nlp.rerank") or {}
+    fn = cap.get("raw") or cap.get("func")
+    outcome, n = "unavailable", 0
+    if fn:
+        try:
+            res = await asyncio.wait_for(fn(query=query, documents=[(c["text"] or "")[:1000] for c in head], top_k=0),
+                                         timeout_s or _RERANK_TIMEOUT_S)
+            ranked = (res or {}).get("ranked") if isinstance(res, dict) else None
+            if ranked:
+                by_idx = {int(r["index"]): float(r["score"]) for r in ranked if "index" in r}
+                if len(by_idx) == len(head):
+                    top = max(c["score"] for c in cands)
+                    for c, new in zip(head, _fc.rerank_lift([by_idx[i] for i in range(len(head))], top)):
+                        c["score"] = new
+                    outcome, n = "ok", len(head)
+                else:
+                    outcome = "partial"
+            else:
+                outcome = "error"
+        except asyncio.TimeoutError:
+            outcome = "timeout"
+        except Exception as e:
+            log.debug("seek rerank: %s", e)
+            outcome = "error"
+    if env is not None:
+        env.stage("rerank", env.mark(), outcome, n)
+
+
+_SEEK_CACHE_STATS: Dict[str, int] = {"hits": 0, "misses": 0}   # read by fabric.stats (fix list #11)
+
+
+async def _seek_cache_get(ck: str) -> Optional[Dict]:
+    try:
+        raw = await _seek_redis().get(ck)
+        _SEEK_CACHE_STATS["hits" if raw else "misses"] += 1
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def _seek_cache_put(ck: Optional[str], out: Dict) -> Dict:
+    if ck:
+        try:
+            await _seek_redis().setex(ck, _scc.TTL_S, json.dumps(out, default=str))
+        except Exception as e:
+            log.debug("seek cache put: %s", e)
+    return out
+
+
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "memory.seek",
+    contract=_MC.contract("memory.seek", effects=["read", "model"], idempotency="idempotent"),
     http_method="POST", http_path="/memory/seek", http_tags=["memory", "fabric"],
     memory="off",
     description=(
@@ -489,6 +680,16 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     scope = (scope or "").strip()
     scope_prefix = scope.rstrip(".") if scope else ""
     since_dt = _parse_since(since)
+
+    # FM-7.1 seek result cache (switch memory.seek_cache, default off): the same seek within 10 minutes and the same
+    # fabric generation answers from Redis; the retrieval eval still sees it as a seek
+    ck = await _seek_cache_key(query, scope, since, k, max_chars, include_memory)
+    if ck:
+        hit = await _seek_cache_get(ck)
+        if hit is not None:
+            if _reval is not None:
+                _reval.on_seek(query, [r.get("id") for r in hit.get("results") or [] if r.get("id")])
+            return dict(hit, cached=True)
 
     pool = _CANDIDATE_POOL
     env = _rtc.Envelope("memory.seek")
@@ -565,19 +766,34 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                  if c["dataset_id"] == scope_prefix
                  or c["dataset_id"].startswith(scope_prefix + ".")
                  or c["dataset_id"] == scope]
+    elif await _switch("memory.seek_exclude_self") == "on":
+        # Vera's own telemetry (chat logs, IDE sessions, capability output, bus/ts streams - the worldview corpus'
+        # SELF_TELEMETRY) leaves an unscoped seek; asking for one of those datasets by scope still finds it
+        cands = [c for c in cands if not _wvc.excluded(c["dataset_id"])]
     if since_dt:
         cands = [c for c in cands if (_dt(c["created_at"]) or since_dt) >= since_dt]
 
     if not cands:
         _record(env)
-        return {"text": _render_seek(query, [], 0, 0, max_chars),
-                "results": [], "count": 0, "candidates": 0,
-                "collapsed": 0, "datasets": []}
+        return await _seek_cache_put(ck, {"text": _render_seek(query, [], 0, 0, max_chars),
+                                          "results": [], "count": 0, "candidates": 0,
+                                          "collapsed": 0, "datasets": [],
+                                          "legs": list(env.stages), "fabric": _df_evidence(df)})
 
-    # Normalise fused scores to ~0..1 for display, apply mild recency boost.
+    _rr_mode = await _switch("memory.rerank")
+    if _rerank_wanted(_rr_mode):
+        await _rerank_head(query, cands, env,
+                           _RERANK_BACKGROUND_TIMEOUT_S if _rr_mode == "not_chat" else _RERANK_TIMEOUT_S)
+
+    # Normalise fused scores to ~0..1 for display, then age them: per dataset class and the question's temporal
+    # intent with memory.rank on (FM-7.2, rank_core), else the old mild recency boost.
+    ranked_mode = await _switch("memory.rank") == "on"
+    intent = _rk.temporal_intent(query) if ranked_mode else "none"
     top = max(c["score"] for c in cands) or 1.0
     for c in cands:
-        c["score"] = (c["score"] / top) * _recency_boost(c["created_at"])
+        rel = c["score"] / top
+        c["score"] = (_rk.score(rel, c["created_at"], c["dataset_id"], c.get("importance"), intent) if ranked_mode
+                      else rel * _recency_boost(c["created_at"]))
         c["_tok"] = _tok(c["text"])
     cands.sort(key=lambda c: -c["score"])
 
@@ -611,25 +827,35 @@ async def cap_memory_seek(query: str, scope: str = "", since: str = "",
     text = _render_seek(query, selected, len(cands), collapsed_total, max_chars)
     env.stage("select", env.mark(), "weak" if weak_ctx else "ok", len(selected))
     _record(env)
+    # the evidence behind each pick (FM-7.1): its cosine, whether keyword search found it, and where it came from
     results = [{"n": i, "id": c["id"], "dataset_id": c["dataset_id"],
                 "score": round(c["score"], 3), "created_at": c["created_at"],
-                "collapsed": c.get("collapsed", 0)}
+                "collapsed": c.get("collapsed", 0),
+                "vector_score": round(float((vec_sims or {}).get(c["id"], 0.0)), 3),
+                "keyword": c["id"] in (text_ids or set()),
+                "origin": c.get("origin") or "fabric"}
                for i, c in enumerate(selected, 1)]
     out = {"text": text, "results": results, "count": len(selected),
            "candidates": len(cands), "collapsed": collapsed_total,
            "weak": bool(weak_ctx),
-           "datasets": sorted({c["dataset_id"] for c in selected})}
+           "datasets": sorted({c["dataset_id"] for c in selected}),
+           # what each backend leg returned (stage, ms, outcome, n) and which fabric module served it - the evidence
+           # that found seek's semantic leg empty on 11 Oct 2026
+           "legs": list(env.stages), "fabric": _df_evidence(df)}
+    if ranked_mode:
+        out["temporal_intent"] = intent
     if _reval is not None:
         _reval.on_seek(query, [r["id"] for r in results if r.get("id")])
     if weak_ctx:
         out["note"] = ("No strongly-relevant stored knowledge — the closest matches are "
                        "below the relevance floor. Treat this as little/no data on the topic "
                        "rather than authoritative context.")
-    return out
+    return await _seek_cache_put(ck, out)
 
 
 @capability(
     "memory.read",
+    contract=_MC.contract("memory.read", effects=["read"], idempotency="idempotent"),
     http_method="POST", http_path="/memory/read", http_tags=["memory", "fabric"],
     memory="off",
     description=(
@@ -717,6 +943,7 @@ async def cap_memory_read(record_id: str, offset: int = 0, max_chars: int = 6000
 
 @capability(
     "memory.map",
+    contract=_MC.contract("memory.map", effects=["read"], idempotency="idempotent"),
     http_method="GET", http_path="/memory/map", http_tags=["memory", "fabric"],
     memory="off", silent=True,
     description=(
@@ -814,6 +1041,7 @@ def _render_browse(scope: str, rows: List[Dict], total: Optional[int],
 
 @capability(
     "memory.browse",
+    contract=_MC.contract("memory.browse", effects=["read"], idempotency="idempotent"),
     http_method="POST", http_path="/memory/browse", http_tags=["memory", "fabric"],
     memory="off",
     description=(

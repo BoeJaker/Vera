@@ -34,6 +34,7 @@ Artifacts live in `ML_ONNX_DIR` (default `<repo>/edge/models`), tying into §4
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -471,6 +472,51 @@ def _run_session_array(slug: str, Xarr):
     return out[0], (sess.get_providers()[0] if sess.get_providers() else None)
 
 
+#: ONNX sessions a worker built from artifact bytes, by sha256 (a node has no
+#: artifact files: the host stores each artifact once in Redis by its hash).
+_NODE_SESSIONS: Dict[str, Any] = {}
+ART_KEY = "vera:ml:onnx:art:{sha}"
+ART_TTL_S = 86400
+INFER_WAIT_S = 20
+
+
+def node_onnx_run(inputs: dict, progress, should_stop) -> dict:
+    """compute.run entry (FUNCTIONS["onnx.run"]): run an exported model on a
+    node from its bytes (`artifact`, sent by reference) on X."""
+    import hashlib as _hl
+    import onnxruntime as _ort
+    art = inputs["artifact"]
+    sha = inputs.get("sha") or _hl.sha256(art).hexdigest()
+    sess = _NODE_SESSIONS.get(sha)
+    if sess is None:
+        sess = _ort.InferenceSession(art, providers=["CPUExecutionProvider"])
+        _NODE_SESSIONS.clear() if len(_NODE_SESSIONS) > 32 else None
+        _NODE_SESSIONS[sha] = sess
+    inp = sess.get_inputs()[0]
+    dt = np.float64 if "double" in inp.type else np.float32
+    out = sess.run(None, {inp.name: np.asarray(inputs["X"], dtype=dt)})
+    return {"y": np.asarray(out[0]), "provider": "CPUExecutionProvider"}
+
+
+async def _run_on_pool(slug: str, onnx_path: str, Xarr):
+    """(predictions, provider, where) on a node worker; None when the compute
+    module is not loaded (the caller then runs it here)."""
+    import hashlib as _hl
+    orch = sys.modules.get("Vera.vera.capability_orchestration")
+    run = getattr(orch, "NODE_COMPUTE", None)
+    r = getattr(orch, "REDIS", None)
+    if run is None or r is None:
+        return None
+    with open(onnx_path, "rb") as f:
+        art = f.read()
+    sha = _hl.sha256(art).hexdigest()
+    key = ART_KEY.format(sha=sha)
+    await r.set(key, art, ex=ART_TTL_S, nx=True)
+    out = await run("onnx.run", {"_blob_refs": {"artifact": key}, "sha": sha, "X": Xarr},
+                    label=f"onnx {slug}", max_wait_s=INFER_WAIT_S, host_fallback=True)
+    return np.asarray(out["y"]), out.get("provider"), (out.get("_node") or out.get("_where") or "")
+
+
 async def _run_artifact(slug_or_id: str, X) -> dict:
     if not HAS_ORT:
         return {"error": "onnxruntime not installed", "hint": "pip install onnxruntime"}
@@ -487,11 +533,18 @@ async def _run_artifact(slug_or_id: str, X) -> dict:
         return {"error": f"X JSON parse: {e}"}
     if Xarr.ndim == 1:
         Xarr = Xarr[None, :]
+    ran_on = "host"
     try:
-        out, provider = _run_session_array(slug, Xarr)
+        pooled = await _run_on_pool(slug, onnx_path, Xarr)       # MW-1: on a node
+        if pooled is not None:
+            out, provider, ran_on = pooled
+        else:
+            # off the event loop: a large batch blocked every request on the host
+            out, provider = await asyncio.get_running_loop().run_in_executor(
+                None, _run_session_array, slug, Xarr)
     except Exception as e:
         return {"error": f"onnxruntime inference failed: {e}"}
-    return {"ok": True, "artifact": slug, "provider": provider,
+    return {"ok": True, "artifact": slug, "provider": provider, "ran_on": ran_on,
             "predictions": out.tolist(), "shape": list(out.shape)}
 
 
@@ -505,7 +558,77 @@ def _make_runner(slug: str):
     return _runner
 
 
-def _register_model_cap(slug: str, module_id: str, live_mount: bool = False) -> Optional[str]:
+def trained_for(module_id: str) -> Dict[str, Any]:
+    """What the module's latest finished training run was for (dataset, task,
+    features, best validation loss) - recorded in the export manifest so the
+    model's binding can say it (MW-5)."""
+    mt = sys.modules.get("ml_training")
+    ws = sys.modules.get("ml_workshop")
+    jobs = [j for j in (getattr(mt, "_TRAINING_JOBS", {}) or {}).values()
+            if j.get("module_id") == module_id and j.get("status") in ("complete", "early_stopped")]
+    j = jobs[-1] if jobs else {}
+    m = (getattr(ws, "_MODULES", {}) or {}).get(module_id) or {}
+    return {k: v for k, v in {"name": m.get("name") or "", "dataset_id": j.get("dataset_id") or "",
+                              "task": j.get("task") or "", "n_features": j.get("n_features"),
+                              "best_val_loss": j.get("best_val_loss"),
+                              "loss": (j.get("config") or {}).get("loss")}.items() if v not in (None, "")}
+
+
+def model_uses(module_id: str, t: Optional[Dict[str, Any]]) -> str:
+    t = t or {}
+    what = f"Predictions from the ML Workshop model {(t.get('name') or module_id)!r}"
+    if t.get("task") or t.get("dataset_id"):
+        what += " trained for " + (t.get("task") or "prediction") + \
+                (f" on dataset {t['dataset_id']}" if t.get("dataset_id") else "")
+    det = []
+    if t.get("n_features"):
+        det.append(f"{t['n_features']} input features")
+    if t.get("best_val_loss") is not None:
+        det.append(f"best validation loss {float(t['best_val_loss']):.4g}" +
+                   (f" ({t['loss']})" if t.get("loss") else ""))
+    if t.get("student"):
+        q = ", ".join(t.get("questions") or [])
+        held = []
+        if t.get("auc") is not None:
+            held.append(f"{t.get('eval') or 'held-out'} AUC {float(t['auc']):.3g}")
+        if t.get("accuracy") is not None:
+            held.append(f"accuracy {float(t['accuracy']):.3g}")
+        return (f"System 1 student for {q} (shadow only): p(positive answer) from a decision's "
+                f"MiniLM-384 state vector" + (" (" + ", ".join(held) + ")" if held else "") + ".")
+    return what + (" (" + ", ".join(det) + ")" if det else "") + \
+        ": give it feature rows (X, a JSON list), get its outputs back."
+
+
+def bind_student(slug: str, module_id: str, trained: Dict[str, Any],
+                 bound: bool = True) -> Optional[str]:
+    """A System 1 student (student_training, MW-6): record what it is for in
+    the artifact manifest (so a restart re-binds it the same way) and (re)bind
+    its ml.onnx.model.<slug> capability with questions + tier. bound=False
+    (its evaluation failed) unbinds it instead: no cap_name in the manifest,
+    so a restart does not bring it back."""
+    try:
+        _, meta_path = _paths(slug)
+        meta = {}
+        if os.path.exists(meta_path):
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+        meta.update({"trained": trained, "cap_name": f"ml.onnx.model.{slug}", "slug": slug,
+                     "module_id": module_id})
+        if not bound:
+            meta.pop("cap_name", None)
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=1, default=str)
+    except Exception as e:
+        log.warning("ml_onnx: student manifest for %s: %s", slug, e)
+    cap_name = f"ml.onnx.model.{slug}"
+    CAPABILITY_REGISTRY.pop(cap_name, None)           # re-bind with the new record
+    if not bound:
+        return None
+    return _register_model_cap(slug, module_id, live_mount=True, trained=trained)
+
+
+def _register_model_cap(slug: str, module_id: str, live_mount: bool = False,
+                        trained: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """Register `ml.onnx.model.<slug>` bound to one artifact. Import-time calls
     get HTTP routes from the normal lifespan mount pass; runtime calls pass
     live_mount=True to add the route immediately (best-effort)."""
@@ -514,9 +637,22 @@ def _register_model_cap(slug: str, module_id: str, live_mount: bool = False) -> 
     cap_name = f"ml.onnx.model.{slug}"
     path = f"/ml/onnx/model/{slug}"
     if cap_name not in CAPABILITY_REGISTRY:
+        try:
+            from Vera.vera.model_binding_core import binding as _bind
+        except ImportError:  # standalone/test import path
+            from vera.model_binding_core import binding as _bind
         capability(
             cap_name, http_method="POST", http_path=path,
             http_tags=["ml", "onnx", "model"], memory="on",
+            serves=_bind((trained or {}).get("task") or "predict", "onnx", io_in="vectors",
+                         io_out="labels" if "class" in str((trained or {}).get("task") or "") else "scores",
+                         placement="any", uses=model_uses(module_id, trained),
+                         questions=(trained or {}).get("questions") or (),
+                         tier=int((trained or {}).get("tier") or 0),
+                         package_id=str((trained or {}).get("package_id") or ""),
+                         limits="inputs with a different feature layout than it was trained on"
+                                + (f" (it takes {trained['n_features']})" if (trained or {}).get("n_features") else "")
+                                + "."),
             description=(f"Run the exported ONNX model {module_id!r} via ONNX "
                          f"Runtime. Input: X (JSON list). Output: {{predictions}}."),
         )(_make_runner(slug))
@@ -575,15 +711,19 @@ if _CAP_AVAILABLE:
         await _emit({"type": "ml.onnx.progress", "stage": "build",
                      "message": f"exporting {module_id} → ONNX"})
         try:
-            model, meta = _build_model(module, weights, dtype)
-            onnx_path, slug = _save_artifact(module_id, model, meta)
+            trained = trained_for(module_id)
+            def _build_and_save():
+                model, meta = _build_model(module, weights, dtype)
+                meta["trained"] = trained          # what it is for (MW-5), kept in the manifest
+                return _save_artifact(module_id, model, meta) + (meta,)
+            onnx_path, slug, meta = await asyncio.get_running_loop().run_in_executor(None, _build_and_save)
         except Exception as e:
             log.error("ml_onnx export failed for %s: %s", module_id, e)
             return {"error": f"onnx export failed: {e}"}
 
         cap_name = None
         if register_cap:
-            cap_name = _register_model_cap(slug, module_id, live_mount=True)
+            cap_name = _register_model_cap(slug, module_id, live_mount=True, trained=trained)
             # stamp cap_name into the manifest so a restart re-registers it
             try:
                 _, meta_path = _paths(slug)
@@ -657,10 +797,11 @@ if _CAP_AVAILABLE:
             return {"error": f"X JSON parse: {e}"}
 
         try:
-            ref, _ = mt._forward_with_weights(module, weights, Xarr)
-            ref = np.asarray(ref, dtype=np.float64)
-            ortout, provider = _run_session_array(slug, Xarr)
-            ortout = np.asarray(ortout, dtype=np.float64)
+            def _both():
+                r, _ = mt._forward_with_weights(module, weights, Xarr)
+                o, pv = _run_session_array(slug, Xarr)
+                return np.asarray(r, dtype=np.float64), np.asarray(o, dtype=np.float64), pv
+            ref, ortout, provider = await asyncio.get_running_loop().run_in_executor(None, _both)
         except Exception as e:
             return {"error": f"verify run failed: {e}"}
 
@@ -740,7 +881,8 @@ if _CAP_AVAILABLE:
                     m = json.load(f)
                 if m.get("cap_name"):
                     _register_model_cap(m.get("slug", os.path.splitext(fn)[0]),
-                                        m.get("module_id", ""), live_mount=False)
+                                        m.get("module_id", ""), live_mount=False,
+                                        trained=m.get("trained"))
                     n += 1
             except Exception:
                 pass

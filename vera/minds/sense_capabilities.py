@@ -65,8 +65,11 @@ async def _cards() -> Dict[str, List[float]]:
         if r is not None:
             try:
                 raw = await r.get(KEY_CARDS + h)
-                if raw:
-                    _CARDS[h] = json.loads(raw)
+                got = json.loads(raw) if raw else None
+                # v2 payload: the vectors with the model and dimension that made them (backbone review 11 Oct);
+                # a v1 payload (bare vectors, no identity) is re-embedded once
+                if isinstance(got, dict) and isinstance(got.get("vectors"), dict):
+                    _CARDS[h] = got["vectors"]
                     return _CARDS[h]
             except Exception:
                 pass
@@ -79,14 +82,34 @@ async def _cards() -> Dict[str, List[float]]:
         _CARDS[h] = cards
         if r is not None:
             try:
-                await r.set(KEY_CARDS + h, json.dumps(cards))
+                await r.set(KEY_CARDS + h, json.dumps({"model": res.get("model") or "", "dim": len(vecs[0] or []),
+                                                       "vectors": cards}))
             except Exception:
                 pass
         return cards
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.model_binding_core import binding as _bind
+except Exception:                        # worktree / app-free import
+    from vera.model_binding_core import binding as _bind   # type: ignore
+
+_SERVES_FRAME = _bind(
+    "frame", "nlp", io_in="text", io_out="labels", tier=1, placement="nlp",
+    uses="Frame a text before anything else runs: patterns (urls, paths, tickers, nodes, capability "
+         "names), the nearest domains by MiniLM against domain cards, optionally entities and language.",
+    limits="understanding meaning beyond domains and patterns (it routes, it does not answer).")
+
+
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
-    "sense.frame", http_method="POST", http_path="/sense/frame", http_tags=["minds"],
+    "sense.frame", serves=_SERVES_FRAME, http_method="POST", http_path="/sense/frame", http_tags=["minds"],
+    contract=_MC.contract("sense.frame", effects=["read", "model"], idempotency="idempotent"),
     memory="off", silent=True,
     description="One Frame per text (four-minds FM-1.1): regex patterns (urls, paths, tickers, nodes, "
                 "sessions, capability names), the nearest domains by the decision-space vector (MiniLM "
@@ -165,6 +188,7 @@ async def cap_sense_frame(text: str = "", kind: str = "chat", ner: bool = False,
 
 @capability(
     "sense.stats", http_method="GET", http_path="/sense/stats", http_tags=["minds"],
+    contract=_MC.contract("sense.stats", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="sense.frame counters in this process (calls, cached, degraded) and the domain cards in use. "
                 "Output: {stats, cards: {domain: text}, cards_version, cards_embedded}.",

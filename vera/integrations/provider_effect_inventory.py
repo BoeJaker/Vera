@@ -1,8 +1,9 @@
 """Deterministic inventory of commerce and infrastructure effect boundaries.
 
-This module describes existing code.  It deliberately imports no provider,
-opens no connection or credential, and does not imply that an operation has
-been migrated to Vera's shared external-effect contract.
+This module describes existing code.  It deliberately imports no provider and
+opens no connection or credential.  Observation coverage and enforcement
+authority are reported separately: a migrated observe-only projection is not
+an activated enforcement boundary.
 """
 from __future__ import annotations
 
@@ -63,7 +64,11 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "external_mutation": True,
         "effect_family": "commerce",
         "effect_contract_applied": True,
+        "effect_observation": "complete",
         "effect_enforcement": "observe_only",
+        "operation_specific_approval_enforced": False,
+        "provider_idempotency_validated": False,
+        "durable_completion_receipts": False,
         "automatic_retries": False,
         "source_modules": [
             "vera/commerce/commerce_platforms.py",
@@ -93,8 +98,12 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "authority": "selected_docker_engine_or_builder",
         "external_mutation": True,
         "effect_family": "infrastructure",
-        "effect_contract_applied": False,
-        "effect_observation": "partial",
+        "effect_contract_applied": True,
+        "effect_observation": "complete",
+        "effect_enforcement": "observe_only",
+        "operation_specific_approval_enforced": False,
+        "provider_idempotency_validated": False,
+        "durable_completion_receipts": False,
         "observed_mutations": [
             "docker.exec", "docker.stop", "docker.rm", "docker.run",
             "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn",
@@ -136,8 +145,12 @@ _DOMAINS: tuple[dict[str, Any], ...] = (
         "authority": "selected_proxmox_cluster_or_managed_host",
         "external_mutation": True,
         "effect_family": "infrastructure",
-        "effect_contract_applied": False,
+        "effect_contract_applied": True,
         "effect_observation": "complete",
+        "effect_enforcement": "observe_only",
+        "operation_specific_approval_enforced": False,
+        "provider_idempotency_validated": False,
+        "durable_completion_receipts": False,
         "observed_mutations": [
             "proxmox.guest.action", "proxmox.guest.exec",
             "proxmox.node.exec", "proxmox.guest.clone",
@@ -168,7 +181,8 @@ def provider_effect_inventory() -> dict[str, Any]:
         "summary": {
             "domains": len(domains),
             "external_mutation_domains": mutating,
-            "migrated_effect_families": ["commerce"],
+            "migrated_effect_families": ["commerce", "infrastructure"],
+            "enforced_effect_families": [],
             "enforcement_available": False,
         },
         "next_adapter": {

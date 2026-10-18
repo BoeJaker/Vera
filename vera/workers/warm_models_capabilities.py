@@ -586,7 +586,7 @@ async def _node_models_js():
 
 @APP.get("/nodes/models/panel", include_in_schema=False)
 async def _node_models_panel(section: str = "warm"):
-    sec = section if section in ("warm", "settings", "nlp", "training") else "warm"
+    sec = section if section in ("warm", "settings", "nlp", "training", "callable") else "warm"
     return HTMLResponse(("""<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
 <script>(function(){try{var d=document.documentElement,S=window.localStorage;
 var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);

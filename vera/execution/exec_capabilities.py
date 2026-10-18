@@ -260,11 +260,70 @@ def _obfuscate(s: str) -> str:
         return _xor_obfuscate(s)
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+def _reg():
+    import Vera.vera.capability_orchestration as _c
+    return _c.CAPABILITY_REGISTRY
+
+
+async def _keep_secret(hid: str, field: str, value: str, label: str) -> str:
+    """A host secret for storage: in the Platforms credential store (its reference kept here); sealed here the
+    old way only without that store."""
+    try:
+        ref = await _pa().vault(_reg(), _pa().key_for("ssh_exec", hid, field), value, label)
+    except Exception:
+        ref = ""
+    return ref or _obfuscate(value)
+
+
+async def _adopt(dry_run: bool):
+    """Move host passwords/passphrases still sealed (or XOR-obfuscated) here into the Platforms store
+    (platform.secrets.adopt). Decoded with _deobfuscate first - an XOR value is not a sealed one."""
+    hosts = await _load_hosts()
+    moved, changed = [], False
+    for hid, rec in hosts.items():
+        for f in ("password_obf", "passphrase_obf"):
+            v = rec.get(f)
+            if not _pa().needs_adopting(v):
+                continue
+            key = _pa().key_for("ssh_exec", hid, f.replace("_obf", ""))
+            moved.append({"record": hid, "field": f, "key": key})
+            if dry_run:
+                continue
+            plain = _deobfuscate(v)
+            if not plain:
+                continue
+            ref = await _pa().vault(_reg(), key, plain, f"SSH {rec.get('label') or hid} {f.replace('_obf', '')}")
+            if ref:
+                rec[f] = ref
+                changed = True
+    if changed:
+        await _save_hosts(hosts)
+    return moved
+
+
+_pa().register_adopter("ssh_exec", _adopt)
+
+
 def _deobfuscate(s: str) -> str:
-    """Open a stored secret. Fernet tokens are decrypted; legacy XOR values are
-    decoded for backward compatibility."""
+    """Open a stored secret: a reference from the Platforms store; Fernet tokens are decrypted; legacy XOR values
+    are decoded for backward compatibility."""
     if not s:
         return ""
+    if _pa().is_ref(s):
+        return _pa().open_value_sync(_reg(), s)
     if vsecrets.is_sealed(s):
         return vsecrets.open_secret(s)
     return _xor_deobfuscate(s)
@@ -362,6 +421,10 @@ async def _load_hosts() -> Dict[str, dict]:
     if data is not None and within_ttl and (not redis_ok or ver == _HOSTS_CACHE.get("ver")):
         return dict(data)
     loaded = await _load_hosts_uncached()
+    try:
+        await _pa().prime(_reg(), *(v.get(f) for v in loaded.values() for f in ("password_obf", "passphrase_obf")))
+    except Exception as e:  # noqa: BLE001 - a store hiccup must not stop the host list loading
+        log.debug("ssh hosts: priming credentials: %s", e)
     _HOSTS_CACHE["data"] = loaded
     _HOSTS_CACHE["ver"] = ver
     _HOSTS_CACHE_TS[0] = time.monotonic()
@@ -2283,11 +2346,11 @@ async def cap_ssh_hosts_save(
     }
     # Only overwrite secrets if provided (so edits don't wipe them)
     if password:
-        rec["password_obf"] = _obfuscate(password)
+        rec["password_obf"] = await _keep_secret(hid, "password", password, f"SSH {rec['label']} password")
     elif "password_obf" in existing and rec["auth"] == "password":
         rec["password_obf"] = existing["password_obf"]
     if passphrase:
-        rec["passphrase_obf"] = _obfuscate(passphrase)
+        rec["passphrase_obf"] = await _keep_secret(hid, "passphrase", passphrase, f"SSH {rec['label']} key passphrase")
     elif "passphrase_obf" in existing and rec["auth"] == "key":
         rec["passphrase_obf"] = existing["passphrase_obf"]
 

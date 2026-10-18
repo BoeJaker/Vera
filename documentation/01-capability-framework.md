@@ -398,6 +398,58 @@ the argument against the same list (`model_binding_core.selector_values`). So
 the tool form, the LLM-facing signature and the check cannot drift from what
 the capability declares.
 
+Each row also carries `measured`, worked out from the last 24 hours of node activity: calls,
+`p50_s` / `p95_s`, `error_rate` and the nodes that served it.
+- **LLMs** are matched by model name.
+- **Node NLP and media calls** are recorded per endpoint without the model, so the bindings
+  behind one endpoint (`nlp.ner`'s ner / gliner / spacy) share a figure. Their `scope` says
+  `endpoint 'ner' (shared)`.
+
+The `Models:` section in a description keeps only the first sentence of each
+model's uses and limits, because it rides in every tool listing. The full
+text is in `model.callable`.
+
+`model.pick` (`POST /models/pick`) answers "which model fits this task?". It takes `need`, a
+task in words, and ranks every callable model by:
+- **meaning:** the cosine of the need's MiniLM vector (`nlp.embed`) against each model's
+  `uses`, cached per text;
+- **shared words**, with the words a model's `limits` add counting against it;
+- **direction:** the media the need starts from and wants out ("turn this voice memo into
+  text" is audio in, text out), with a model facing the reverse direction marked down;
+- **language:** a need naming a non-English language favours multilingual models;
+- **state:** models loaded now come first, and measured errors cost.
+
+Each pick says how to call the model (cap + selector) and `why` it ranked. With no NLP node it
+ranks by words alone, and says so in `ranked_by`.
+
+The Models tab has a **Callable models** page (`<vera-node-models section="callable">`,
+`/nodes/models/panel?section=callable`). It shows a "which model for a task?" box (`model.pick`), then
+the specialist models and the LLMs with what each is for and not for, where each is loaded, and p50 / p95
+latency, with family and text filters. It loads when opened and on reload only, because it reads node
+activity and every NLP node.
+
+Bound today:
+- **NLP:** `nlp.*` (11 models).
+- **Speech:** `stt.transcribe` (Whisper), `tts.synthesize` (Kokoro / Coqui by `engine`).
+- **Images:** `image.generate` (Stable Diffusion), `image.pose` (ControlNet), `image.rembg`,
+  `image.upscale` (Real-ESRGAN).
+- **Vision and worldview:** `vision.describe`, `worldview.encode` / `predict`.
+- **ONNX:** every `ml.onnx.model.<slug>`.
+- **Decision models (System 1):** `decide.shadow.score` (small-LLM judge, tier 4) and
+  `decide.shadow.knn` (nearest past decisions, tier 2), both answering every
+  `judge_core.QUESTIONS` id; `sense.frame` (tier 1); `caps.shortlist` (`loop.caps_shortlist`).
+  `model.callable question=<id>` lists what can answer a question. These only describe the
+  cascade; choosing among them stays with the four-minds plan.
+
+**Placement.** A binding's `placement` is recorded per capability
+(`worker_placement_core.MODEL_PLACEMENT`, when all its bindings agree). It
+never makes a capability node-eligible: only the evidence (`nodes.parity.*`)
+or the node-safe lists do. But it has two effects:
+- **`host`** keeps the capability on the host even if it is vetted, because its model lives in
+  the host process (the worldview).
+- **`nlp` / `gpu` / `media`** sends an eligible capability to the `nlp` or `media` worker class
+  instead of the catch-all vetted class, so it lands on nodes that serve that kind of work.
+
 ### Duplicate names
 
 The decorator does not guard against re-registration: a later

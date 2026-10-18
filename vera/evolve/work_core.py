@@ -46,7 +46,8 @@ def _epoch(iso: Any) -> float:
     try:
         base = s[:19]
         t = time.strptime(base, "%Y-%m-%dT%H:%M:%S")
-        return float(time.mktime(t) - time.timezone)
+        import calendar           # UTC text: timegm, not mktime - mktime is local time (D21-3)
+        return float(calendar.timegm(t))
     except Exception:
         return 0.0
 

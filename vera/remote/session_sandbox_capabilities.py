@@ -641,6 +641,20 @@ def _volname(session_id: str) -> str:
     return _idle_core.container_name(session_id, suffix="-ws")
 
 
+async def _image_present(dk, rec_host: Dict, image: str) -> bool:
+    """Is `image` on the docker host? Unknown (the check itself failed to run) reads as yes,
+    which keeps the old behaviour."""
+    try:
+        r = await dk._run_local(await dk._docker_argv(rec_host, ["image", "inspect", "--format", "{{.Id}}", image]),
+                                timeout=30)
+    except Exception:
+        return True
+    if r.get("ok"):
+        return True
+    err = str(r.get("stderr") or r.get("error") or "").lower()
+    return not ("no such image" in err or "no such object" in err)
+
+
 async def _container_running(dk, rec_host: Dict, cname: str) -> Optional[str]:
     """Return the container State ('running'/'exited'/…) or None if absent."""
     import urllib.parse
@@ -1017,6 +1031,17 @@ async def cap_sbx_start(session_id: str = "", base_image: str = "",
                         "woken": True, "restored": False, "active": bool(enable)}
         # Different image requested (or wake failed) → recreate fresh below.
         await dk._run_local(await dk._docker_argv(host, ["rm", "-f", cname]), timeout=40)
+
+    # The committed snapshot can be gone: docker.disk.reap prunes old unused vera-session
+    # images (17 Oct 2026 removed 1,901 by hand). Starting from a missing image fails
+    # (docker looks for it on Docker Hub), so start from the base image instead; /workspace
+    # still comes back from its volume or the session store below.
+    if restored and not await _image_present(dk, host, image):
+        fallback = str(rec.get("base_image") or "")
+        if not fallback or fallback == committed or fallback.startswith("vera-session:"):
+            fallback = scfg.get("base_image") or _DEFAULT_BASE
+        log.info("sandbox %s: committed image %s is gone, starting from %s", session_id, image, fallback)
+        image, restored, committed = fallback, False, ""
 
     # Bake the write-confinement env into the container config so `docker exec`
     # (and an interactive terminal) inherit HOME/temp/cache → /workspace.
@@ -1874,6 +1899,8 @@ async def cap_sbx_terminal(session_id: str = "", shell: str = "bash",
     sh = (shell or "bash").strip() or "bash"
     ws_path = (f"/remote/docker/term/ws/{quote(hid, safe='')}/"
                f"{quote(cont, safe='')}?shell={quote(sh)}")
+    from Vera.vera.remote import term_tickets as _tt
+    ws_path = _tt.with_ticket(ws_path, _tt.BOOK.mint("docker", hid, cont))
     page_url = (f"/remote/sandbox/terminal?session_id={quote(session_id, safe='')}"
                 f"&shell={quote(sh)}")
     return {"ok": True, "ws_path": ws_path, "page_url": page_url,

@@ -77,6 +77,36 @@ def _redis():
     return getattr(_orch, "REDIS", None)
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+def _reg():
+    import Vera.vera.capability_orchestration as _c
+    return _c.CAPABILITY_REGISTRY
+
+
+async def _adopt(dry_run: bool):
+    """Move cluster join tokens and node check-in tokens into the Platforms store (platform.secrets.adopt);
+    node tokens were kept in plaintext."""
+    moved = await _pa().adopt_json_hash(_reg(), _redis(), K_CLUSTERS, ["token"], "foundry", dry_run, "Foundry cluster")
+    moved += await _pa().adopt_json_hash(_reg(), _redis(), "vera:foundry:nodes", ["token"], "foundry_node", dry_run,
+                                         "Foundry node")
+    return moved
+
+
+_pa().register_adopter("foundry", _adopt)
+
+
 async def _call(_cap_name: str, **kw) -> Dict:
     """Invoke another capability by name (raw function). The first arg is
     underscore-prefixed so target caps that take a `name` kwarg don't collide."""
@@ -608,7 +638,8 @@ async def cap_cluster_register(name: str = "", kind: str = "", join_addr: str = 
     if command:
         opts["command"] = command
     rec = {"name": name, "kind": kind, "join_addr": (join_addr or "").strip(),
-           "token": vsecrets.seal(token) if token else "",
+           "token": (await _pa().keep(_reg(), _pa().key_for("foundry", name, "token"), token,
+                                      f"Foundry cluster {name} join token")) if token else "",
            "role": (role or "").strip(), "opts": opts, "updated": time.time()}
     await r.hset(K_CLUSTERS, name, json.dumps(rec))
     await emit_event({"type": "foundry.cluster.registered", "name": name, "kind": kind})
@@ -838,7 +869,7 @@ async def _resolve_cluster_scripts(feats) -> List[str]:
         if rec["name"] in seen:
             continue
         seen.add(rec["name"])
-        tok = vsecrets.open_secret(rec["token"]) if rec.get("token") else ""
+        tok = (await _pa().open_any(_reg(), rec["token"])) if rec.get("token") else ""
         s = cluster_join_script(rec.get("kind", ""), rec.get("join_addr", ""), tok,
                                 rec.get("role", ""), rec.get("opts") or {})
         if s:
@@ -2220,8 +2251,10 @@ async def cap_sdcard_provision(cluster_id: str = "", boot: str = "",
 
     r = _redis()
     if r:
+        # the node's check-in token goes to the credential store too (it was kept here in plaintext)
+        node_tok = await _pa().keep(_reg(), _pa().key_for("foundry_node", label), token, f"Foundry node {label}")
         await r.hset(K_NODES, label, json.dumps(
-            {"label": label, "role": role, "token": token, "kind": "rpi",
+            {"label": label, "role": role, "token": node_tok, "kind": "rpi",
              "provisioned": time.time(), "panel": panel, "status": "awaiting-first-boot"}))
     await emit_event({"type": "foundry.sdcard.provisioned", "label": label,
                       "files": len(written)})
@@ -2251,7 +2284,8 @@ async def cap_node_checkin(label: str = "", role: str = "frame", ip: str = "",
     # that found the endpoint. Unknown nodes are recorded, not trusted.
     rec.update({"role": role, "ip": ip, "mac": mac, "kind": kind,
                 "last_seen": time.time(),
-                "status": "online" if token and token == rec.get("token") else "unverified"})
+                "status": "online" if token and token == await _pa().open_any(_reg(), rec.get("token") or "")
+                          else "unverified"})
     await r.hset(K_NODES, label, json.dumps(rec))
     await emit_event({"type": "foundry.node.checkin", "label": label, "ip": ip})
     return {"ok": True, "label": label, "status": rec["status"]}

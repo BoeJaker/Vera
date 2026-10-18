@@ -48,6 +48,9 @@ KINDS: Dict[str, Dict[str, Any]] = {
             "mapping": True},
     "telegram": {"label": "Telegram channel", "value": "Public channel: @name or t.me/name", "signal_kind": "note",
                  "interval_h": 3},
+    # an endpoint of a Platforms API connection: the connection holds the address and the key (data-connections)
+    "connection": {"label": "API connection", "value": "Connection and path, e.g. guardian /search?q=house+prices",
+                   "signal_kind": "page", "interval_h": 6, "mapping": True},
 }
 USGS_LEVELS = ("significant", "4.5", "2.5", "1.0", "all")
 USGS_MAPPING = {"item_path": "features", "title_field": "properties.title", "url_field": "properties.url",
@@ -114,6 +117,14 @@ def plan_source(kind: str, value: str, *, label: str = "", interval_h: float = 0
         if not name:
             return {"error": "a public channel: @name, t.me/name or https://t.me/s/name"}
         return {**base, "url": f"https://t.me/s/{name}", "source_type": "telegram", "config": {"channel": name}}
+    if kind == "connection":
+        conn, _, path = value.partition(" ")
+        conn, path = conn.strip().lower(), path.strip()
+        if not re.fullmatch(r"[a-z0-9_]{1,64}", conn):
+            return {"error": "start with the connection's id (Platforms > API connections), then the path"}
+        if path.lower().startswith(("http://", "https://")):
+            return {"error": "give the path under the connection, not a full URL"}
+        return {**base, "url": "", "source_type": "api", "connection": conn, "path": path}
     if kind == "api":
         if not value.startswith(("http://", "https://")):
             return {"error": "the API URL must start with http:// or https://"}

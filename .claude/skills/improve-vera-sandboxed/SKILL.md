@@ -201,9 +201,9 @@ which defeats the point of having one.
 **This applies to docs too**, not just code — a `documentation/*.md` change
 looks zero-risk (no import-time impact, no gate to fail), which is exactly why
 it's tempting to shortcut straight to `main`. Don't. Route it through
-`bleeding-edge` like everything else, even though `evolve.pipeline.adopt`'s
-gate will report `gate_passed: null` for it (nothing to compile-check) and
-`promote` needs `force=true` (no code gate to satisfy).
+`bleeding-edge` like everything else. A docs/skills-only branch passes the
+compile gate (no `.py` to parse), so `promote` should not need `force`; if it
+refuses, read why instead of forcing.
 
 **This is now automatic, not a manual convention.** As of 2026-08-16
 (`_default_pipeline_base` in evolve_capabilities.py — landed the same day as
@@ -214,9 +214,10 @@ off it and merging into it — whenever a `bleeding-edge` branch exists for the
 repo, falling back to the real mainline only if it doesn't. You don't need to
 branch off it by hand any more; the plumbing above (`git branch feat/<name>
 origin/bleeding-edge`) is the fallback for when you want explicit control, not
-the normal path. Still pass `to="bleeding-edge"` explicitly on `adopt`/`promote`
-anyway (§7) — `adopt`'s own default wasn't updated to match, so relying on the
-default there specifically still lands you on `main`.
+the normal path. `adopt` and `promote` both default to `bleeding-edge` too
+(`to: str = "bleeding-edge"`), and `adopt` refuses `main` without the
+`authorize_main` sentinel. Pass `to="bleeding-edge"` explicitly anyway: explicit
+beats a default that could change.
 
 **Before landing, check the branches haven't diverged** (another agent may
 have promoted something to `bleeding-edge` since you branched):
@@ -230,11 +231,19 @@ next piece of work off `main` instead of `bleeding-edge` once, which pulls it
 back in) before continuing.
 
 **Promoting `bleeding-edge` → `main` is a separate, deliberate step**, not
-something that happens as a side effect of landing a feature. Only do it when:
-the user asks explicitly, or you've been given standing authorization for this
-session. Ask first otherwise — it triggers a prod restart (§8) and ships
-*everything* currently staged on `bleeding-edge`, including other agents'
-already-merged work, not just yours.
+something that happens as a side effect of landing a feature. It is a release:
+it re-execs prod (§8) and ships *everything* staged on `bleeding-edge`,
+including other agents' merged work. Do it only under one of these two, and
+quote which one in the release summary:
+1. the owner's explicit go-ahead in this conversation, or
+2. the owner's written release policy in
+   `<git-common-dir>/vera-work/shared-planning/backbone-roadmap/DECISIONS.md`
+   (D4, 2026-10-17: continuous releases).
+
+Never release beside a running census (`/health` `census.busy`), never with a
+red or skipped gate on anything staged, and never because a "standing
+authorization" was assumed. The owner's 18:00-01:00 hours are a working window,
+not off-limits.
 
 ## 3. Start atomically — `evolve.pipeline.begin` (ONE call), then edit the worktree
 ```
@@ -353,14 +362,22 @@ trailer; that's git-attribution policy). Container syntax checks:
 `evolve.sandbox.exec(where="container", branch="feat/<name>", cmd="python3 -c
 'import ast; ast.parse(open(\"vera/…\").read())'")`.
 
-**Docs changes:** `content.edit`/`content.status` exist as a purpose-built,
-lighter-weight path for `documentation/`/`.claude/skills/` (out-of-tree
-worktree, hook-gated, no dev container needed) — try it first. **Known-broken
-as of 2026-08-16 (route-forward.md T7):** its worktree's git link can be
-severed (`content.status` reports it healthy; `content.edit` fails with `fatal:
-not a git repository`). If it fails, don't try to repair a shared worktree's
-git internals blind — fall back to a normal small branch + worktree + host
-commit, same as code, then land via §7 like any other change.
+**Docs and skills changes go the same way as code:** a small branch, a
+worktree, a host commit, then §7. **Do not use `content.edit`.** It merges
+straight into `main`, skipping `bleeding-edge`, and runs a repo-wide
+`git worktree prune` on every first use (`evolve_capabilities.py`
+`_content_sync_worktree`), which breaks §0's never-prune rule. It is fenced
+under backbone-roadmap D32-7.
+
+**When the sandbox pool is full** (`begin` fails with `no free Redis DB in the
+pool`, after it has already created the branch): make the worktree on the host
+through another sandbox's exec. For example:
+`evolve.sandbox.exec(where="worktree", branch="loop-lab/bleeding-edge-mirror",
+cmd="cd /home/boejaker/Vera && git worktree add
+/home/boejaker/Vera/.loop-lab-worktrees/<name> <branch>")`. Then
+`evolve.worktree.claim` it at once, edit over SMB, commit through the same exec
+with `cd <worktree> && git ... commit`, and `evolve.pipeline.adopt(branch,
+to="bleeding-edge")` to record the pipeline.
 
 ## 5. Two roles on the SAME change — don't skip the reviewer
 1. **Coder** — make the fix in the worktree.
@@ -374,8 +391,8 @@ commit, same as code, then land via §7 like any other change.
 - **pytest / pure-module unit test** under `tests/` for the touched logic. Pure
   helpers (no I/O) are easiest — extract them if needed (e.g. `board_core.py`,
   `remote_exec_core.py`, `sandbox_reap.py`, `ollama_gate.py`, `evolve_git_core.py`).
-  `tests/conftest.py` already defines a **`critical` pytest marker** over a
-  handful of modules — "pure, deterministic tests guarding systems where a
+  `tests/conftest.py` already defines a **`critical` pytest marker** (a listed
+  tier of ~280 modules plus ~490 files that mark themselves) — "pure, deterministic tests guarding systems where a
   regression is expensive and was actually hit." If your fix touches one of
   those systems (or is exactly this kind of regression-prone logic), add your
   test there and mark it `critical` — it becomes part of the merge gate itself
@@ -406,9 +423,11 @@ commit, same as code, then land via §7 like any other change.
     earns its keep: the logic is reachable as `vera.X` without the app.
   - **in the container**, where the worktree IS `/app/Vera` so `Vera.vera.X`
     resolves right: `evolve.sandbox.exec(where="container", branch="feat/<name>",
-    cmd="pip install -q pytest && cd /app/Vera && python -m pytest tests/<one_file> -q")`.
-    In-container pytest does **not** OOM — pytest just isn't baked into the image
-    yet, so install it first. **Caveat (§8.3 #9b):** a *targeted* test is fine, but
+    cmd="cd /app/Vera && python -m pytest tests/<one_file> -q")`.
+    In-container pytest does **not** OOM. pytest is baked into the image on a
+    best-effort basis (`Dockerfile`), and the test runner installs it at run time
+    if it is missing; if `python -m pytest` reports no module, `pip install -q
+    pytest` first. **Caveat (§8.3 #9b):** a *targeted* test is fine, but
     running the **full app-importing suite in the container that is SERVING the app**
     contends with its event loop and can make its HTTP go unresponsive — for a full
     suite use a separate ephemeral `vera:latest` exec, not the serving container
@@ -416,6 +435,18 @@ commit, same as code, then land via §7 like any other change.
   - Host venv (has pytest): `/home/boejaker/langchain/bin/python3 -m pytest
     tests/… -q` — fast, but only correct via the lowercase `vera.X` + sys.path
     insert above; `Vera.vera.X` there still hits main.
+- **Capability entry modules loaded by path are not package modules.** Files in
+  the orchestrator's loader list (guarded by
+  `tests/test_loader_modules_have_no_parent_package.py`) can be imported as
+  top-level modules, so a relative import such as `from .effects import …`
+  prevents the entire entry module from registering. Use the canonical
+  `Vera.vera...` absolute identity in those entry modules. In ordinary package
+  internals, keep stateful helpers (`ContextVar`, caches, registries, singleton
+  stores) on one consistent package identity: mixing `Vera.vera.X` and `vera.X`
+  loads two module objects and silently splits their state. Run the loader test
+  for every changed capability entry point and an identity-sensitive focused
+  test for shared state; do not turn the host-worktree lowercase testing
+  workaround into production imports.
 - **Package re-exports expand the import closure (confirmed 2026-10-01).** A
   new export in `vera/<package>/__init__.py` is eager: every import of any child
   first runs the parent initializer, then every relative import it exposes.
@@ -449,27 +480,26 @@ evolve.pipeline.adopt(branch="feat/<name>", to="bleeding-edge", title, summary, 
 evolve.pipeline.review.request(id, reason)
 evolve.pipeline.review(id, verdict="approved|changes_requested|blocked",
                        findings="<adversarial findings>")
-evolve.pipeline.promote(id, to="bleeding-edge"[, force=true])   # force for docs/UI/infra
+evolve.pipeline.promote(id, to="bleeding-edge")   # force only with a stated reason, never to skip a red gate
 ```
-`to="bleeding-edge"` per §2 — `evolve.pipeline.promote`'s own default is
-`bleeding-edge` too now (as of 2026-08-16), but `adopt`'s default is still
-`main`, so pass it explicitly on `adopt` regardless. If you started with
-`evolve.pipeline.begin` (§3) you already have the pipeline `id` — skip `adopt`
-and go straight to `review.request` + recorded `review` +
-`promote(to="bleeding-edge")` (promote
-refreshes the branch's commits before merging; if you omit `to`, it defaults
-there anyway, but pass it — explicit beats relying on a default that could
-change again).
+`to="bleeding-edge"` per §2: both `adopt` and `promote` default to it, but pass
+it explicitly. If you started with `evolve.pipeline.begin` (§3) you already have
+the pipeline `id`, so skip `adopt`. **`begin` runs no gate**, though: call
+`evolve.pipeline.test(id=...)` (below) before `review.request`, `review` and
+`promote`, or promote refuses and you end up forcing it. Promote refreshes the
+branch's commits before merging.
 
 The critical tier currently exceeds the historical 900-second starter ceiling.
-Never launch duplicate runners to work around that. `evolve.unittest.run` is
-single-flight by exact worktree plus pytest tokens (the timeout is deliberately
-not part of the key): start one exact `paths="tests", markers="critical"` run
-with `timeout=1800`, then call `evolve.pipeline.test` while it is active so the
-pipeline joins the same execution and records the shared JUnit receipt. Do not
-change `extra` between those calls; that creates a different key and therefore
-a second container. A client timeout is not a test failure and not permission
-to re-fire—inspect test history/pipeline state and running containers first.
+Never launch duplicate runners to work around that. Use exactly one gate caller:
+for a pipeline created or adopted through Loop Lab, call only
+`evolve.pipeline.test(id=..., paths="tests", markers="critical", timeout=1800)`;
+for an independent branch with no pipeline, call only `evolve.unittest.run`
+with those exact test tokens. Do not start `unittest.run` and then call
+`pipeline.test`: as observed on 2026-10-13, the two callers can miss the shared
+single-flight execution and launch a second 12-shard gate even with identical
+tokens (board `loop-lab-critical-single-flight-join`). A client timeout is not
+a test failure and not permission to re-fire—inspect test history, pipeline
+state and running containers first.
 
 **`gate_passed` is TWO checks, not one** (as of the 2026-08-16 M3 work — the
 description on the cap itself is the source of truth if this drifts):
@@ -482,9 +512,9 @@ description on the cap itself is the source of truth if this drifts):
    give you one). Skipped (falls back to the compile gate alone,
    same as before) if there's no live worktree yet.
 
-`gate_passed` is `true` only when both applicable checks pass; `null` when
-nothing was checked (no `.py` changed — docs/UI/infra, use `force=true` on
-promote). `adopt` records the pipeline (shows in the CI/CD UI with your session
+`gate_passed` is `true` only when every applicable check passes. A branch with
+no `.py` change (docs, skills, UI) passes the compile gate, and its panel HTML/JS
+gets the UI parse check, so promote does not need `force`. `adopt` records the pipeline (shows in the CI/CD UI with your session
 + drill-down). Promote does a guarded `--no-ff` merge and returns
 `restart_required` — **for `bleeding-edge` this is generally not actionable**
 (nothing serves off it) unless prod happens to be the "live checkout" being
@@ -496,15 +526,14 @@ use the dedicated `evolve.bleeding_edge.promote_to_main(repo="vera")` (not a
 manual `adopt`/`promote` with `branch="bleeding-edge"`, though that shape
 still works too). Same safe-merge machinery underneath, one call, no `id` to
 track — this is a deliberate release action, never called automatically by
-any gate/scheduler/other capability. Only do this with explicit authorization
-(§2); it's the one that actually reaches prod (§8).
+any gate/scheduler/other capability. Only do this under §2's two conditions
+(owner go-ahead in this conversation, or the owner's written release policy),
+quoted in the summary; it's the one that actually reaches prod (§8).
 
-## 8. Deploy = push + restart (only `main` reaching prod, and only for `.py`)
-- **Push:** creds live on the Windows host — push from there. Push
-  `bleeding-edge` after every merge into it (`git -C \\llm.int\boejaker\Vera
-  -c credential.interactive=false push origin bleeding-edge`) so it's durably
-  available even before a `main` promotion. Push `main` the same way after a
-  `bleeding-edge`→`main` promotion.
+## 8. Deploy = restart (only `main` reaching prod, and only for `.py`)
+- **Never push to origin** unless the owner asks for it in this conversation.
+  Land on `bleeding-edge` through the pipeline and stop there; compare local
+  branches. This matches AGENTS.md and vera-coordinate §8.
 - **Restart** (`.py`/import-time changes reaching **prod's `main` checkout**
   only): the restart tool re-execs prod. A `bleeding-edge` merge never needs
   this — prod doesn't run it. **UI-only changes (panel HTML, `/ui/elements/*.js`)
@@ -519,8 +548,8 @@ Say it in chat: branch, pipeline id, which branch it landed on
 (`bleeding-edge`, almost always — not `main`), what the gate/tests showed, what
 landed. Promoting your own vetted change into `bleeding-edge` is normal and
 doesn't need to wait for permission. Promoting `bleeding-edge` → `main` (§2, §8)
-is a separate, higher-stakes step — always confirm first unless already
-authorized for the session. It all shows in the Loop Lab CI/CD + Review tabs.
+is a separate, higher-stakes step, done only under §2's two conditions and
+quoted in the summary. It all shows in the Loop Lab CI/CD + Review tabs.
 
 ## 10. Keep the plan and the board current — the board is the primary planning surface
 **The full coordination procedure is now the `vera-coordinate` skill** (homes for plans/handovers, board
@@ -561,6 +590,31 @@ must not be reopened, and which runs are comparable at all.
 
 ---
 
+## 10a. Background work is SCHEDULED - there is no quiet time
+
+There is NO quiet time on this box (owner, 18 Oct 2026: "you must not rely on quiet time - there is no such
+thing, quiet time must be scheduled"). Censuses, probes, gates and loops run day and night, so anything that
+waits for an idle box waits forever: on 17-18 Oct, 51 background jobs sat unstarted for 8+ hours, and intel's
+batch once waited six days.
+
+- **Anything you queue or leave to run later gets a scheduled slot.** That covers background.enqueue jobs,
+  shadow judges, backfills, evals and measurements. Never write code or a plan that waits for "the box to go
+  quiet", "an idle gap" or "a quiet hour".
+- **The box's standing windows** are Loop Lab schedule entries "Background work · nightly 03:30-05:00" and
+  "· weekdays 17:00-18:00", running `evolve.background.window`. That capability reserves the idle queue for every
+  job kind with work waiting and drains them one after another; it is exclusive, so no census starts meanwhile,
+  and it yields at its window end. A job you `background.enqueue` is picked up by the next standing window.
+- **Your own work needs more, or sooner?** Book a window for it, on your unit's night or a free gap:
+  `evolve.schedule.upsert {schedule: {kind: "cap", title: "<what> · <unit>", target: {name:
+  "evolve.background.window", arguments: {kinds: "<your job kind>", minutes: N}}, days: [...], start, end,
+  exclusive: true, at_window_end: "yield", notes: "<why, who>"}}`. For work that is its own capability, schedule
+  that capability as the cap instead (allow-listed families: `schedule_core.CAP_ALLOW_PREFIXES`).
+- **Check it ran.** `evolve.schedule.all` and the Loop Lab Schedule tab show every slot and what it is for;
+  `background.status` shows the queue's depth and how long its oldest job has waited. A job waiting longer than
+  a day means a missing window: book one, do not wait.
+- **A slot can be stopped:** census with `census.control.set action=yield`; any other run with
+  `evolve.schedule.stop_run {run_id}` (the ■ on the run).
+
 ## 11. OPTIONAL MODE — the census-driven improvement loop
 
 For a change whose effect is **behavioural rather than unit-testable**: the
@@ -574,9 +628,11 @@ changes do not raise.
 
 ### 11.1 The harness
 
-Two runners, both in `/home/boejaker/loop-census`, both OUTSIDE the git repo —
-so they are not pipeline-gated and carry no tests. Treat edits there with the
-care that absence implies.
+Two runners. Their code is in the repo at `tools/loop-census/`
+(`run_census.py`, `run_operator_census.py`), so edits land through the pipeline
+like any other change; `tests/test_loop_census_harness.py` and the other census
+tests cover it. `/home/boejaker/loop-census` holds only the data (templates,
+archives, logs) and shims (`tools/loop-census/README.md`).
 
     run_census.py           --template <name> [--model M] [--list]
     run_operator_census.py  --template <name> [--list]
@@ -771,8 +827,11 @@ operator-family 05:00-07:00.
   capabilities (`may not run from a schedule`), so a schedule cannot re-enable
   another one. If you were allowed to disable one, record the re-enable in
   your notes with its deadline.
-- Other kinds exist: `task` (a Loop Lab task), `pipeline` (test/adopt/promote),
-  `board` (board.dispatch), `cap` (one capability).
+- Other kinds exist (`schedule_core.KINDS`): `suite`, `task` (a Loop Lab task),
+  `pipeline` (test/adopt/promote), `board` (board.dispatch), `loop`, `tests`,
+  `cap` (one capability). A `cap` schedule is fenced only by a deny-list today,
+  so it can reach release and exec capabilities (backbone-roadmap D21-2). Never
+  schedule a capability that releases, restarts, or runs shell.
 
 **When no census is scheduled or running**, the GPU is free for development:
 one test at a time (§0), or a code report delegated to Vera

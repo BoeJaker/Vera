@@ -87,6 +87,12 @@ async def _widget_content(cap: str, args: Dict[str, Any], res: Any, title: str) 
     return dict(r, widget=r.get("form"), form=r.get("form"), title=title, record=r)
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "canvas.enrich", memory="off",
     http_method="POST", http_path="/canvas/enrich", http_tags=["canvas"],
@@ -454,6 +460,7 @@ async def cap_turn_prepare(text: str = "", session_id: str = "", mid: str = "", 
     except asyncio.TimeoutError:
         pass
     found = sc.find(await _surface_index(), text, ents, max_items=max(1, int(max_items or 5)))
+    _surface_rank_shadow(text, found, max(1, int(max_items or 5)))     # FM-6.2/6.3: never awaited
     surfaces = found.get("surfaces") or []
     if not surfaces:
         return {"ok": True, "domains": found.get("domains") or [], "placed": [], "pending": 0, "prompt": "",
@@ -522,3 +529,135 @@ async def cap_turn_prepare(text: str = "", session_id: str = "", mid: str = "", 
     return {"ok": True, "domains": found.get("domains") or [], "placed": placed, "pending": len(pending),
             "prompt": sc.prompt_block(placed, pending=len(pending)) if tell else "",
             "ms": int((time.monotonic() - t0) * 1000)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE CANVAS CURATOR, FIRST QUESTIONS IN SHADOW (four-minds FM-6.2 turn domain, FM-6.3 which surfaces; switch
+# canvas.surface_rank). Each turn.prepare also asks the turn's decision-space vector (the Frame's, usually already
+# cached by the chat PRE frame) which domains and surfaces it is nearest to, and records that beside what the word
+# lists chose. Nothing on the canvas changes; canvas.surface_rank.report reads the agreement.
+# ─────────────────────────────────────────────────────────────────────────────
+
+try:
+    from Vera.vera.canvas import surface_rank_core as src
+except ImportError:                                   # pragma: no cover
+    from vera.canvas import surface_rank_core as src
+
+_RANK_TASKS: set = set()
+_SCARDS: Dict[str, Any] = {"hash": "", "domains": {}, "surfaces": {}, "domain_of": {}}
+_SCARDS_LOCK = asyncio.Lock()
+
+
+def _redis():
+    return getattr(sys.modules.get("Vera.vera.capability_orchestration"), "REDIS", None)
+
+
+_EMBED_ID: Dict[str, Any] = {"model": "", "dim": 0}    # what made the last vectors (nlp.embed reports it)
+
+
+async def _embed_many(texts: List[str]) -> List[Optional[List[float]]]:
+    out: List[Optional[List[float]]] = []
+    for i in range(0, len(texts), 64):
+        chunk = texts[i:i + 64]
+        res = await _call_raw("nlp.embed", texts=chunk)
+        vecs = res.get("embeddings") if isinstance(res, dict) and isinstance(res.get("embeddings"), list) else []
+        if vecs and isinstance(res, dict) and res.get("model"):
+            _EMBED_ID.update(model=str(res["model"]), dim=int(res.get("dim") or len(vecs[0] or [])))
+        out += vecs if len(vecs) == len(chunk) else [None] * len(chunk)
+    return out
+
+
+async def _surface_cards(idx: Dict[str, Any]) -> Dict[str, Any]:
+    """The domain and surface cards' vectors, embedded once per card set (in process, then Redis)."""
+    dcards = src.domain_cards(sc.DOMAINS)
+    scards = {s["id"]: src.surface_card(s) for s in idx.get("surfaces") or [] if s.get("id")}
+    h = src.cards_hash({**{"d:" + k: v for k, v in dcards.items()}, **{"s:" + k: v for k, v in scards.items()}})
+    if _SCARDS["hash"] == h:
+        return _SCARDS
+    async with _SCARDS_LOCK:
+        if _SCARDS["hash"] == h:
+            return _SCARDS
+        r = _redis()
+        got = None
+        if r is not None:
+            try:
+                raw = await r.get(src.CARDS_KEY + h)
+                got = _json.loads(raw) if raw else None
+            except Exception:
+                got = None
+        if not got:
+            dk, sk = list(dcards), list(scards)
+            vecs = await _embed_many([dcards[k] for k in dk] + [scards[k] for k in sk])
+            if any(v is None for v in vecs):
+                return {}                              # the NLP tier is down: try again next turn
+            rnd = lambda v: [round(float(x), 4) for x in v]  # noqa: E731
+            got = {"domains": {k: rnd(v) for k, v in zip(dk, vecs[:len(dk)])},
+                   "surfaces": {k: rnd(v) for k, v in zip(sk, vecs[len(dk):])},
+                   "model": _EMBED_ID["model"], "dim": _EMBED_ID["dim"]}       # which model made them
+            if r is not None:
+                try:
+                    await r.set(src.CARDS_KEY + h, _json.dumps(got), ex=7 * 86400)
+                except Exception:
+                    pass
+        _SCARDS.update(hash=h, domains=got["domains"], surfaces=got["surfaces"],
+                       domain_of={s["id"]: s["domain"] for s in idx.get("surfaces") or [] if s.get("id")})
+        return _SCARDS
+
+
+async def _surface_rank_record(text: str, found: Dict[str, Any], k: int) -> None:
+    try:
+        eff = await _call_raw("minds.effective")
+        if ((eff or {}).get("modes") or {}).get("canvas.surface_rank") != "shadow":
+            return
+        fr = await _call_raw("sense.frame", text=text[:4000], kind="chat", vector=True)
+        vec = (fr or {}).get("vector") if isinstance(fr, dict) else None
+        cards = await _surface_cards(await _surface_index())
+        if not vec or not cards:
+            return
+        dranked = src.rank(vec, cards["domains"])
+        doms = src.pick_domains(dranked)
+        sranked = src.rank(vec, cards["surfaces"])
+        r = _redis()
+        if r is None:
+            return
+        row = src.row(str((fr or {}).get("text_hash") or ""), [d["id"] for d in found.get("domains") or []], doms,
+                      dranked, [s.get("id") or s.get("cap") or s.get("panel") for s in found.get("surfaces") or []],
+                      src.pick_surfaces(sranked, cards["domain_of"], doms, k),
+                      ts=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        await r.lpush(src.SHADOW_KEY, _json.dumps(row))
+        await r.ltrim(src.SHADOW_KEY, 0, src.SHADOW_KEEP - 1)
+    except Exception as e:
+        log.debug("surface rank shadow: %s", e)
+
+
+def _surface_rank_shadow(text: str, found: Dict[str, Any], k: int) -> None:
+    """Start the shadow for this turn in the background; never raises, never waits."""
+    try:
+        task = asyncio.get_running_loop().create_task(_surface_rank_record(str(text or ""), found, k))
+        _RANK_TASKS.add(task)
+        task.add_done_callback(_RANK_TASKS.discard)
+    except Exception as e:
+        log.debug("surface rank shadow start: %s", e)
+
+
+@capability(
+    "canvas.surface_rank.report", memory="off", silent=True,
+    contract=_MC.contract("canvas.surface_rank.report", effects=["read"], idempotency="idempotent"),
+    http_method="GET", http_path="/canvas/surface_rank/report", http_tags=["canvas"],
+    description="The canvas curator's first questions in shadow (four-minds FM-6.2/6.3, switch canvas.surface_rank): "
+                "over recorded turns, how often the turn's Frame vector (cosine against domain and surface cards) "
+                "agreed with surface.find's word lists on the top domain and on the surfaces, and how often only one "
+                "side found a domain. Input: limit (int=2000, newest rows). Output: {rows, summary, examples}.")
+async def cap_canvas_surface_rank_report(limit: int = 2000, trace_id=None) -> Dict[str, Any]:
+    r = _redis()
+    if r is None:
+        return {"rows": 0, "error": "redis unavailable"}
+    raw = await r.lrange(src.SHADOW_KEY, 0, max(1, min(src.SHADOW_KEEP, int(limit or 2000))) - 1)
+    rows = []
+    for x in raw:
+        try:
+            rows.append(_json.loads(x))
+        except Exception:
+            continue
+    return {"rows": len(rows), "summary": src.summarize(rows),
+            "examples": [x for x in rows if x.get("words") != x.get("cards")][:5]}

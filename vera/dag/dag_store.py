@@ -1320,6 +1320,18 @@ async def caps_search(
         category_filter=category or None,
         tag_filter=[t.strip() for t in tags.split(",") if t.strip()] or None,
     )
+    # A question about the outside world gets the information caps first (info-seeking plan SK-1.2): word overlap
+    # put mcp.register_server first for "latest news about MCP" and evolve.delegate.rate for "what is the base rate".
+    if not category and not tags:
+        try:
+            try:
+                from Vera.vera.web import info_seek_core as _isc
+            except Exception:
+                from vera.web import info_seek_core as _isc
+            if _isc.info_intent(query):
+                results = _isc.boost_info(results, CAPABILITY_REGISTRY.keys(), top_k)
+        except Exception as e:                       # ranking help never breaks the search
+            log.debug("caps.search info boost: %s", e)
     return {
         "results": [
             {
@@ -1640,6 +1652,7 @@ async def dag_store_run(
     supervised:    bool = False,
     auto_correct:  bool = True,
     include_workflow_ir: bool = False,
+    session_id:    str  = "",
     trace_id=None,
 ):
     rec = None
@@ -1675,6 +1688,14 @@ async def dag_store_run(
     # Update usage stats
     await DAG_STORE.update_stats(rec.id, result.get("runtime_ms", 0))
     await emit_event({"type": "dag.store_run", "id": rec.id, "name": rec.name, "trace_id": tid})
+    from ..execution.workflow_memory_observer import observe_completed_workflow
+    await observe_completed_workflow(
+        session_id=session_id,
+        dag=rec.dag,
+        state=state,
+        result=result.get("result") or {},
+        trigger="stored_dag",
+    )
 
     return {"dag_id": rec.id, "dag_name": rec.name, **result}
 
@@ -1692,6 +1713,7 @@ async def dag_run_monitored(
     supervised:   bool = False,
     auto_correct: bool = True,
     include_workflow_ir: bool = False,
+    session_id:   str  = "",
     trace_id=None,
 ):
     try: dag_arr = json.loads(dag)
@@ -1701,12 +1723,21 @@ async def dag_run_monitored(
     except: state_dict = {}
 
     tid = trace_id or new_id_fn()
-    return await EXEC_MONITOR.run_and_correct(
+    result = await EXEC_MONITOR.run_and_correct(
         dag_arr, state_dict, tid,
         max_corrections=3 if auto_correct else 0,
         supervised=supervised,
         include_workflow_ir=include_workflow_ir,
     )
+    from ..execution.workflow_memory_observer import observe_completed_workflow
+    await observe_completed_workflow(
+        session_id=session_id,
+        dag=dag_arr,
+        state=state_dict,
+        result=result.get("result") or {},
+        trigger="monitored_dag",
+    )
+    return result
 
 
 def new_id_fn():

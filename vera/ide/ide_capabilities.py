@@ -294,7 +294,7 @@ async def _record(
                 importance=importance, capability=capability_name,
                 metadata=meta, created_at=ts, updated_at=ts,
             )
-            await MEMORY.store(rec)
+            await MEMORY.store(rec, producer_kind="ide")
             graph_ok = True
     except Exception as e:
         log.warning("ide _record graph [%s]: %s", category, e)
@@ -2482,7 +2482,7 @@ async def _store_mem_node(node_id, session_id, record_type, source_type,
             text=text[:500], full_text=full_text, importance=importance,
             capability=capability_name, metadata=metadata or {},
         )
-        await MEMORY.store(rec)
+        await MEMORY.store(rec, producer_kind="ide")
         return True
     except Exception as e:
         log.debug("ide store_mem_node: %s", e)

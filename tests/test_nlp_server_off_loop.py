@@ -28,7 +28,9 @@ def test_health_answers_while_a_model_is_working(monkeypatch):
 
     def slow_classify(text, task):
         started.set()
-        time.sleep(3)
+        # 8 s, not 3: /health walks the model inventory, and on a loaded gate host (a census or chat run
+        # beside it) that alone took over 3 s - the order check flaked 1 in 3 (12 Oct 2026).
+        time.sleep(8)
         finished.set()
         return {"label": "ok"}
     monkeypatch.setattr(ns, "run_classify", slow_classify)
@@ -39,7 +41,7 @@ def test_health_answers_while_a_model_is_working(monkeypatch):
         assert started.wait(10), "the inference never started"
         h = c.get("/health")
         answered_during = not finished.is_set()     # no wall-clock threshold: only the order matters
-        t.join(15)
+        t.join(25)
     assert h.status_code == 200 and answered_during, "/health waited for the inference to finish"
     body = h.json()
     assert body["workers"] == ns.NLP_WORKERS and body["inflight"] == 1

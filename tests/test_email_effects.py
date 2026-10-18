@@ -103,6 +103,23 @@ async def test_evidence_inspection_selects_one_family(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_evidence_inspection_can_filter_by_attributed_source(monkeypatch):
+    selected = {}
+
+    class Evidence:
+        def summary(self, *, limit, source):
+            selected.update(limit=limit, source=source)
+            return {"totals": {"observations": 2}, "source_filter": source}
+
+    monkeypatch.setattr(integrations, "default_external_effect_shadow_evidence",
+                        lambda **_kwargs: Evidence())
+    result = await integrations.integration_effect_shadow_evidence.__wrapped__(
+        family="email", source="intel", limit=12)
+    assert selected == {"limit": 12, "source": "intel"}
+    assert result["totals"]["observations"] == 2
+
+
+@pytest.mark.asyncio
 async def test_send_observes_before_transport_and_does_not_forward_controls(monkeypatch):
     order = []
     observed = {}

@@ -133,8 +133,9 @@ SOURCE_ASSERTIONS = {
         "def project_native_memory_with_receipt(",
     ),
     "vera/fabric/memory_hooks.py": (
-        "async def record_agent_turn(", "await MEMORY.store(human_rec)",
-        "await MEMORY.store(ai_rec)",
+        "async def record_agent_turn(",
+        "await MEMORY.store(human_rec, producer_kind=\"conversation\")",
+        "await MEMORY.store(ai_rec, producer_kind=\"conversation\")",
     ),
 }
 

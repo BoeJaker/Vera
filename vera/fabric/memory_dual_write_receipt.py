@@ -19,9 +19,14 @@ from typing import Any, Mapping
 from .record_revision import RecordRevision
 
 
-SCHEMA = "vera.memory-dual-write-receipt/v1"
+SCHEMA = "vera.memory-dual-write-receipt/v2"
 OUTCOMES = frozenset({"committed", "failed", "timed_out", "cancelled", "skipped"})
 NATIVE_BACKENDS = ("postgres", "chroma", "neo4j")
+PRODUCER_KINDS = frozenset({
+    "public_capability", "conversation", "capability_activity", "workflow",
+    "automatic_promotion", "ide", "skill", "context_stream", "internal",
+})
+MAX_NATIVE_BACKENDS = 32
 _TOKEN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$")
 _ERROR = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 
@@ -67,6 +72,7 @@ class MemoryDualWriteReceipt:
     revision_outcome: str
     native_outcomes: Mapping[str, str]
     error_codes: Mapping[str, str] = field(default_factory=dict)
+    producer_kind: str = "internal"
     schema: str = SCHEMA
     receipt_id: str = field(init=False)
     authority_state: str = field(init=False)
@@ -82,16 +88,23 @@ class MemoryDualWriteReceipt:
         content_hash = _token(self.content_hash, "content_hash")
         observed_at = _timestamp(self.observed_at)
         revision_outcome = _outcome(self.revision_outcome, "revision_outcome")
+        producer_kind = _token(self.producer_kind, "producer_kind")
+        if producer_kind not in PRODUCER_KINDS:
+            raise ValueError("producer_kind is unsupported")
 
         supplied = dict(self.native_outcomes)
-        if set(supplied) != set(NATIVE_BACKENDS):
-            raise ValueError("native_outcomes must cover postgres, chroma and neo4j exactly")
+        if not set(NATIVE_BACKENDS).issubset(supplied):
+            raise ValueError("native_outcomes must cover postgres, chroma and neo4j")
+        if len(supplied) > MAX_NATIVE_BACKENDS:
+            raise ValueError("native_outcomes exceeds the bounded backend limit")
+        for backend in supplied:
+            _token(backend, "native_outcomes backend")
         native = {
             backend: _outcome(supplied[backend], f"native_outcomes.{backend}")
-            for backend in NATIVE_BACKENDS
+            for backend in sorted(supplied)
         }
         errors = dict(self.error_codes)
-        allowed_error_keys = {"revision", *NATIVE_BACKENDS}
+        allowed_error_keys = {"revision", *native}
         if not set(errors).issubset(allowed_error_keys):
             raise ValueError("error_codes contains an unknown operation")
         for key, code in errors.items():
@@ -132,6 +145,7 @@ class MemoryDualWriteReceipt:
         object.__setattr__(self, "revision_outcome", revision_outcome)
         object.__setattr__(self, "native_outcomes", MappingProxyType(native))
         object.__setattr__(self, "error_codes", MappingProxyType(dict(sorted(errors.items()))))
+        object.__setattr__(self, "producer_kind", producer_kind)
         object.__setattr__(self, "authority_state", authority_state)
         object.__setattr__(self, "requires_reconciliation", requires_reconciliation)
         identity = self.identity_dict()
@@ -151,6 +165,7 @@ class MemoryDualWriteReceipt:
             "revision_outcome": self.revision_outcome,
             "native_outcomes": dict(self.native_outcomes),
             "error_codes": dict(self.error_codes),
+            "producer_kind": self.producer_kind,
             "authority_state": self.authority_state,
             "requires_reconciliation": self.requires_reconciliation,
             "authority_switch_allowed": False,
@@ -166,6 +181,7 @@ def create_memory_dual_write_receipt(
     observed_at: str, revision_outcome: str,
     native_outcomes: Mapping[str, str],
     error_codes: Mapping[str, str] | None = None,
+    producer_kind: str = "internal",
 ) -> MemoryDualWriteReceipt:
     """Bind one native identity and all observed outcomes to one exact revision."""
     if not isinstance(revision, RecordRevision):
@@ -181,4 +197,5 @@ def create_memory_dual_write_receipt(
         revision_outcome=revision_outcome,
         native_outcomes=native_outcomes,
         error_codes=error_codes or {},
+        producer_kind=producer_kind,
     )

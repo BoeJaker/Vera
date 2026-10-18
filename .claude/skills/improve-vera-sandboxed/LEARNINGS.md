@@ -157,3 +157,38 @@ rules; new ones start here. Newest at the bottom.
 - evidence: traces `c6142d3a-e40b-4fc1-a409-b240d923fdeb` and
   `ccb2aae7-a13c-439c-8517-2739fa3dfc5d`
 - status: folded into SKILL.md v2
+
+## 2026-10-13 — standalone and pipeline critical callers did not share execution
+- task: validate the JEPA retrieval-binding durability repair (SW-09, pipeline
+  `a9e77ffd`)
+- what happened: `evolve.unittest.run` began the exact 1,019-file critical
+  tier, then `evolve.pipeline.test` with identical paths, marker, timeout and no
+  extra arguments waited instead of joining. After the first 12-shard run
+  completed 7,400/0, the pipeline launched a second 12-shard run.
+- cause: the documented cross-caller single-flight assumption is not true in
+  the deployed Loop Lab implementation, even though each caller is internally
+  single-flight.
+- rule now: use one authoritative gate caller only: `pipeline.test` for a
+  pipeline-managed change, or `unittest.run` for an independent branch; never
+  sequence both for the same gate.
+- evidence: pipeline `a9e77ffd`; unittest history at
+  `2026-10-12T22:55:00Z`; board `loop-lab-critical-single-flight-join`
+- status: folded into SKILL.md v3
+
+## 2026-10-16 — loader entry points and stateful helpers need different import rules
+- task: add Home Assistant owning-boundary effect evidence (pipeline `f200db75`)
+- what happened: the first critical gate failed
+  `tests.test_loader_modules_have_no_parent_package` because
+  `homeassistant/ha_capabilities.py` used `from .ha_effects import …`. An earlier
+  effect-context test had also shown that mixing `Vera.vera...` and `vera...`
+  creates two `ContextVar` instances and loses attribution.
+- cause: capability entry modules can be loaded by file path with no parent
+  package, while Python also treats the uppercase and lowercase package paths
+  as different module identities. “Always relative” and “lowercase for
+  worktrees” are therefore not valid production-import rules.
+- rule now: use canonical `Vera.vera...` imports in path-loaded entry modules;
+  keep stateful package internals on one consistent identity; run the loader
+  guard and an identity-sensitive focused test before the full gate.
+- evidence: pipeline `f200db75`; first gate 7,445 passed/1 failed, repaired gate
+  7,446 passed/0 failed, 36 skipped; promoted `658bb3f5`
+- status: folded into SKILL.md v4

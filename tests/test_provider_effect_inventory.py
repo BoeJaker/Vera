@@ -32,9 +32,11 @@ def test_inventory_separates_local_business_from_real_provider_mutations():
         "shopify", "woocommerce", "etsy", "amazon"]
 
 
-def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
+def test_inventory_separates_migrated_observation_from_enforcement_and_retry():
     result = provider_effect_inventory()
-    assert result["summary"]["migrated_effect_families"] == ["commerce"]
+    assert result["summary"]["migrated_effect_families"] == [
+        "commerce", "infrastructure"]
+    assert result["summary"]["enforced_effect_families"] == []
     assert result["summary"]["enforcement_available"] is False
     assert result["claims"] == {
         "executes": False, "probes": False, "opens_credentials": False,
@@ -43,19 +45,22 @@ def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
     }
     commerce = _domain(result, "commerce_marketplaces")
     assert commerce["effect_contract_applied"] is True
+    assert commerce["effect_observation"] == "complete"
     assert commerce["effect_enforcement"] == "observe_only"
     assert "commerce" in EVIDENCE_FAMILIES
     infrastructure = _domain(result, "container_and_build")
-    assert infrastructure["effect_contract_applied"] is False
-    assert infrastructure["effect_observation"] == "partial"
+    assert infrastructure["effect_contract_applied"] is True
+    assert infrastructure["effect_observation"] == "complete"
+    assert infrastructure["effect_enforcement"] == "observe_only"
     assert infrastructure["observed_mutations"] == [
         "docker.exec", "docker.stop", "docker.rm", "docker.run",
         "docker.worker.stop", "docker.image.ensure", "docker.worker.spawn",
         "docker.stack.deploy", "build.builder.up", "build.arduino",
         "build.platformio", "build.run", "build.python"]
     provisioning = _domain(result, "proxmox_and_provisioning")
-    assert provisioning["effect_contract_applied"] is False
+    assert provisioning["effect_contract_applied"] is True
     assert provisioning["effect_observation"] == "complete"
+    assert provisioning["effect_enforcement"] == "observe_only"
     assert provisioning["observed_mutations"] == [
         "proxmox.guest.action", "proxmox.guest.exec",
         "proxmox.node.exec", "proxmox.guest.clone",
@@ -66,6 +71,10 @@ def test_inventory_does_not_claim_unmigrated_enforcement_or_retry():
         "provision.store.deploy", "provision.store.remove",
         "provision.security.deploy", "provision.security.remove"]
     assert "infrastructure" in EVIDENCE_FAMILIES
+    for domain in (commerce, infrastructure, provisioning):
+        assert domain["operation_specific_approval_enforced"] is False
+        assert domain["provider_idempotency_validated"] is False
+        assert domain["durable_completion_receipts"] is False
 
 
 def test_inventory_returns_an_independent_snapshot():
@@ -131,3 +140,5 @@ def test_integrations_ui_exposes_inventory_without_rollout_controls():
     assert "Static inventory only" in source
     assert "commerce:'Commerce'" in source
     assert "infrastructure:'Infrastructure'" in source
+    assert "observe-only projection" in source
+    assert "No additional observation adapter is selected" in source

@@ -395,3 +395,78 @@ def latency(ms: Iterable[int]) -> Dict[str, Any]:
     if not v:
         return {}
     return {"ms_p50": v[len(v) // 2], "ms_p90": v[min(len(v) - 1, int(len(v) * 0.9))]}
+
+
+# ── the card-similarity judge (FM-2.1 stage-0: no training, no generation) ─────────────────────────────────────
+# One short description per label, embedded once in the decision space (MiniLM-384 on a node); a decision takes the
+# label whose card its own input vector is nearest. Strongest where the label is about WHAT the text is (intent,
+# tier), weakest where it is about how two parts of it relate (a criterion vs a result) - measured, not assumed.
+CARD_IMPL = "card:minilm"
+CARD_TEMP = 20.0
+CARDS: Dict[str, Dict[str, str]] = {
+    "loop.step_verify": {
+        "met": "The step's result shows its success criterion was fully met.",
+        "not_met": "The step's result does not show its success criterion was met: something is missing, wrong "
+                   "or failed."},
+    "loop.step_done": {
+        "end": "What the tool calls have produced is enough to finish this step now.",
+        "continue": "The step needs more work: what has been produced so far is not enough."},
+    "loop.prestep_needed": {
+        "needed": "Facts, data or parameters must be gathered before this step can start.",
+        "not_needed": "Everything needed to start this step is already known."},
+    "loop.intent": {
+        "build": "Create or write something: code, an app, a script, a file or a document.",
+        "research": "Look up external or current information and report what was found.",
+        "action": "Operate, configure or fix a live system or service.",
+        "mixed": "Look things up first, then build something with what was found."},
+    "loop.tier": {
+        "single": "A single lookup or one tool call answers it.",
+        "simple": "A short task of one to three steps.",
+        "complex": "Several steps that need a plan.",
+        "strategic": "A large multi-day project with many parts."},
+    "loop.controller_action": {
+        "continue": "Carry on with the queued steps as planned.",
+        "replan": "The plan no longer fits what happened; replan the remaining steps.",
+        "insert": "A step is missing; insert it before continuing.",
+        "stop": "Stop now: the goal is met or cannot make progress."},
+}
+
+
+def card_vote(vec: Optional[Iterable[float]], card_vecs: Dict[str, Iterable[float]],
+              temp: float = CARD_TEMP) -> Tuple[Optional[str], Optional[float]]:
+    """(label, p) for the nearest card - p a softmax over the cosine similarities (temperature temp); (None, None)
+    without a vector or cards."""
+    if not vec or not card_vecs:
+        return None, None
+    v = _unit(vec)
+    sims = {lab: sum(a * b for a, b in zip(v, _unit(cv))) for lab, cv in card_vecs.items() if cv}
+    if not sims:
+        return None, None
+    top = max(sims.values())
+    ex = {lab: math.exp(temp * (s - top)) for lab, s in sims.items()}
+    best = max(sims, key=sims.get)
+    return best, round(ex[best] / sum(ex.values()), 4)
+
+
+# ── the candidate matrix (owner, 17 Oct): decision points beyond the loop, scored by every judge ──────────────────
+# applications_core holds them in this file's shape; merged here so the LLM judges (any model), kNN, cards, zero-shot,
+# NLI and the cross-encoder all score them with no further wiring. LOOP_QUESTIONS keeps the loop's own six apart
+# (the loop student, the cascade switches and the live-model filters are about those).
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import applications_core as _APPS
+except Exception:                        # worktree / app-free import
+    from vera.minds import applications_core as _APPS  # type: ignore
+
+LOOP_QUESTIONS = tuple(QUESTIONS)
+for _q, _d in _APPS.QUESTIONS.items():
+    QUESTIONS.setdefault(_q, _d)
+for _q, _d in _APPS.CARDS.items():
+    CARDS.setdefault(_q, _d)
+_loop_user_message = user_message
+
+
+def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:  # noqa: F811 - extends the loop's
+    """The question put to the model: an application's own builder, else the loop's."""
+    if question_id in _APPS.QUESTIONS:
+        return _APPS.user_message(question_id, state)
+    return _loop_user_message(question_id, state)

@@ -69,6 +69,8 @@ WORKER_ML_PIP = (
     ("psutil",),
     ("--index-url", "https://download.pytorch.org/whl/cpu", "torch"),
     ("scikit-learn", "scipy"),
+    # ML Workshop ONNX inference on the nodes (compute.run "onnx.run")
+    ("onnxruntime",),
 )
 #: Printed when a training library did not install (the provision log shows it).
 ML_PIP_FAILED = "VERA_ML_PIP_FAILED"

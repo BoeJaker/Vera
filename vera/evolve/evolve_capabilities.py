@@ -172,7 +172,7 @@ DEFAULT_TEST_DENYLIST = [
     "mail.", "tg.", "exec.", "docker.", "git.", "provision.", "ssh.", "mesh.",
     "deploy.", "comms.", "netsec.", "ide.remote.", "sandbox.host.",
     "loops.run", "dream.cycle.run", "dream.scheduler.", "evolve.",
-    "markets.evolve.", "business.", "commerce.", "accounts.",
+    "markets.evolve.", "markets.broker.", "business.", "commerce.", "accounts.",
 ]
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -2009,18 +2009,16 @@ async def _update_run(run_id: str, patch: Dict[str, Any]):
             det.update(patch)
             await r.set(KEY_RUN + run_id, json.dumps(det, default=str))
             await r.expire(KEY_RUN + run_id, 14 * 86400)
-        rows = await r.lrange(KEY_RUNS, 0, RUNS_CAP - 1)
-        for i, row in enumerate(rows or []):
-            try:
-                rec = json.loads(row.decode() if isinstance(row, bytes) else row)
-            except Exception:
-                continue
-            if rec.get("run_id") == run_id:
-                for k in ("score", "combined", "assessed_by", "passed"):
-                    if k in patch:
-                        rec[k] = patch[k]
-                await r.lset(KEY_RUNS, i, json.dumps(rec, default=str))
-                break
+        # under WATCH/MULTI (DEEP-21 D21-12): an LPUSH between find and set shifted the index
+        # and the LSET overwrote the neighbouring run
+        try:
+            from Vera.vera.evolve.redis_list_patch import patch_list_item
+        except ImportError:                                   # pragma: no cover
+            from vera.evolve.redis_list_patch import patch_list_item
+        _keys = ("score", "combined", "assessed_by", "passed")
+        await patch_list_item(r, KEY_RUNS, lambda rec: rec.get("run_id") == run_id,
+                              lambda rec: dict(rec, **{k: patch[k] for k in _keys if k in patch}),
+                              scan=RUNS_CAP)
     except Exception as e:
         log.debug("evolve update run: %s", e)
 
@@ -9560,6 +9558,11 @@ except ImportError:                                        # pragma: no cover
 DOCKER_DISK_MOUNT = os.getenv("VERA_DOCKER_DISK_MOUNT", "")
 _DISK_SWEEP_INTERVAL_S = int(os.getenv("VERA_DISK_SWEEP_INTERVAL", "900") or 900)
 _SBX_RETAIN_H = float(os.getenv("VERA_SESSION_SANDBOX_RETAIN_HOURS", "24") or 24)
+# Session snapshot images and workspace volumes (disk plan C5): kept 14 days, reaped once a
+# day in the hour after the 04:00-05:00 quiet hour, so the ~7 GB/day stops accumulating.
+_IMG_RETAIN_H = float(os.getenv("VERA_SESSION_IMAGE_RETAIN_HOURS", "336") or 336)
+_DAILY_REAP_HOUR = int(os.getenv("VERA_DISK_DAILY_REAP_HOUR", "5") or 5)
+_DAILY_REAP = {"day": ""}
 
 
 async def _docker_root() -> str:
@@ -9646,6 +9649,49 @@ async def docker_disk_status(trace_id=None):
     return res
 
 
+async def _session_images() -> List[Dict[str, Any]]:
+    """vera-session snapshot images with their age (disk plan C5)."""
+    r = await _sh(["docker", "images", _disk.SESSION_IMAGE_REPO, "--no-trunc",
+                   "--format", "{{.Repository}}:{{.Tag}}|{{.ID}}|{{.CreatedAt}}"], timeout=120)
+    if not r.get("ok"):
+        raise RuntimeError("docker images failed")
+    now = time.time()
+    out = []
+    for line in (r.get("out") or "").splitlines():
+        parts = line.split("|")
+        if len(parts) >= 3:
+            out.append({"ref": parts[0], "id": parts[1], "age_hours": _disk.hours_since(parts[2], now)})
+    return out
+
+
+async def _images_in_use() -> List[str]:
+    """The image (ref or id) of every container, running or not."""
+    r = await _sh(["docker", "ps", "-a", "--no-trunc", "--format", "{{.Image}}"], timeout=120)
+    if not r.get("ok"):
+        raise RuntimeError("docker ps failed")
+    return [l.strip() for l in (r.get("out") or "").splitlines() if l.strip()]
+
+
+async def _session_volumes() -> List[Dict[str, Any]]:
+    """Dangling vera-sbx-* volumes with their age (disk plan C5)."""
+    r = await _sh(["docker", "volume", "ls", "-q", "--filter", "dangling=true"], timeout=120)
+    if not r.get("ok"):
+        raise RuntimeError("docker volume ls failed")
+    names = [n.strip() for n in (r.get("out") or "").splitlines()
+             if n.strip().startswith(_disk.SESSION_PREFIX)]
+    now = time.time()
+    out = []
+    for i in range(0, len(names), 50):
+        insp = await _sh(["docker", "volume", "inspect", "--format", "{{.Name}}|{{.CreatedAt}}"]
+                         + names[i:i + 50], timeout=120)
+        for line in (insp.get("out") or "").splitlines():
+            parts = line.split("|", 1)
+            if len(parts) == 2:
+                out.append({"name": parts[0], "dangling": True,
+                            "age_hours": _disk.hours_since(parts[1], now)})
+    return out
+
+
 @capability("docker.disk.reap", memory="on",
             http_method="POST", http_path="/docker/disk/reap",
             http_tags=["docker", "evolve"],
@@ -9653,36 +9699,94 @@ async def docker_disk_status(trace_id=None):
                         "finished longer ago than retain_hours (default 24). "
                         "Never touches a running container, never touches a "
                         "Loop Lab dev sandbox (vera-dev-*), and keeps any "
-                        "container whose finish time cannot be read. "
+                        "container whose finish time cannot be read. With "
+                        "images=true (default) also vera-session snapshot images no "
+                        "container uses and dangling vera-sbx-* workspace volumes, older "
+                        "than image_retain_hours (default 336 = 14 days; a session "
+                        "re-opened later starts from the base image and rehydrates). "
+                        "Never forces a removal. "
                         "dry_run=true (default) reports what it would remove.")
 async def docker_disk_reap(retain_hours: float = 0, dry_run: bool = True,
+                           images: bool = True, image_retain_hours: float = 0,
                            trace_id=None):
     if _disk is None:                                      # pragma: no cover
         return {"error": "disk_headroom module unavailable"}
     retain = float(retain_hours or _SBX_RETAIN_H)
+    img_retain = float(image_retain_hours or _IMG_RETAIN_H)
     boxes = await _session_containers()
     plan = _disk.reap_summary(boxes, retain)
     doomed = _disk.reapable(boxes, retain)
-    if dry_run or not doomed:
-        return {"ok": True, "dry_run": True, **plan}
     removed, failed = 0, 0
-    for i in range(0, len(doomed), 40):
-        ids = [d["id"] for d in doomed[i:i + 40] if d.get("id")]
-        if not ids:
-            continue
-        # -v takes each container's own anonymous volumes with it; leaving them
-        # behind is half the leak.
-        r = await _sh(["docker", "rm", "-v"] + ids, timeout=300)
-        removed += len(ids) if r.get("ok") else 0
-        failed += 0 if r.get("ok") else len(ids)
+    if not dry_run:
+        for i in range(0, len(doomed), 40):
+            ids = [d["id"] for d in doomed[i:i + 40] if d.get("id")]
+            if not ids:
+                continue
+            # -v takes each container's own anonymous volumes with it; leaving them
+            # behind is half the leak.
+            r = await _sh(["docker", "rm", "-v"] + ids, timeout=300)
+            removed += len(ids) if r.get("ok") else 0
+            failed += 0 if r.get("ok") else len(ids)
+    # Snapshot images and workspace volumes after the containers, which may have been the
+    # last users of some of them. One `docker rmi` per image, never -f: docker itself
+    # refuses an image a container still uses. Any scan failure removes nothing.
+    imgs_doomed: List[Dict[str, Any]] = []
+    vols_doomed: List[Dict[str, Any]] = []
+    img_removed = vol_removed = 0
+    if images:
+        try:
+            imgs_doomed = _disk.reapable_images(await _session_images(), await _images_in_use(), img_retain)
+            vols_doomed = _disk.reapable_volumes(await _session_volumes(), img_retain)
+        except Exception as e:
+            log.warning("disk reap: image/volume scan failed, none removed: %s", e)
+            imgs_doomed, vols_doomed = [], []
+        if not dry_run:
+            for im in imgs_doomed:
+                r = await _sh(["docker", "rmi", im["ref"]], timeout=120)
+                img_removed += 1 if r.get("ok") else 0
+            for v in vols_doomed:
+                r = await _sh(["docker", "volume", "rm", v["name"]], timeout=60)
+                vol_removed += 1 if r.get("ok") else 0
+    extra = {"images": {"reapable": len(imgs_doomed), "removed": img_removed, "retain_hours": img_retain,
+                        "refs": [i["ref"] for i in imgs_doomed[:50]]},
+             "volumes": {"reapable": len(vols_doomed), "removed": vol_removed,
+                         "names": [v["name"] for v in vols_doomed[:50]]}} if images else {}
+    if dry_run or not (doomed or imgs_doomed or vols_doomed):
+        return {"ok": True, "dry_run": True, **plan, **extra}
     after = await _disk_reading(await _docker_root())
     await _audit("docker.disk.reap",
-                 "removed %d exited session sandbox(es) older than %.0fh"
-                 % (removed, retain))
+                 "removed %d exited session sandbox(es) older than %.0fh, %d snapshot image(s) "
+                 "and %d workspace volume(s) older than %.0fh"
+                 % (removed, retain, img_removed, vol_removed, img_retain))
     await emit_event({"type": "docker.disk.reaped", "removed": removed,
-                      "failed": failed, "retain_hours": retain})
+                      "failed": failed, "retain_hours": retain,
+                      "images_removed": img_removed, "volumes_removed": vol_removed})
     return {"ok": True, "dry_run": False, "removed": removed, "failed": failed,
-            **plan, "free_gb_after": (after or {}).get("free_gb")}
+            **plan, **extra, "free_gb_after": (after or {}).get("free_gb")}
+
+
+async def _disk_daily_reap():
+    """Once a day, in the hour after the 04:00-05:00 quiet hour: the full reap (disk plan
+    C5). Before this, reaping ran only at CRITICAL and snapshot images were never reaped."""
+    if _disk is None:                                      # pragma: no cover
+        return
+    from datetime import datetime
+    now = datetime.now()
+    day = now.strftime("%Y-%m-%d")
+    if now.hour != _DAILY_REAP_HOUR or _DAILY_REAP["day"] == day:
+        return
+    _DAILY_REAP["day"] = day
+    try:
+        out = await docker_disk_reap(dry_run=False)
+        log.info("docker disk daily reap: %d sandbox(es), %d image(s), %d volume(s); free %sG",
+                 out.get("removed", 0), (out.get("images") or {}).get("removed", 0),
+                 (out.get("volumes") or {}).get("removed", 0), out.get("free_gb_after"))
+    except Exception as e:
+        log.warning("docker disk daily reap: %s", e)
+
+
+schedule(_disk_daily_reap, _DISK_SWEEP_INTERVAL_S, name="docker.disk.daily_reap",
+         singleton=True, skip_in_sandbox=True)
 
 
 _DISK_LAST_LEVEL = {"v": _disk.OK if _disk else "ok"}

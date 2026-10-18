@@ -39,8 +39,15 @@ async def read_global() -> Dict[str, Any]:
         return {}
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "minds.switch.list", http_method="GET", http_path="/minds/switches",
+    contract=_MC.contract("switchboard.switch.list", effects=["read"], idempotency="idempotent"),
     http_tags=["minds"], memory="off", silent=True,
     description="Every registered switch (four-minds switchboard): id, modes (first is the "
                 "default), surface, roadmap package, owner, whether a census arm may set it. "
@@ -52,6 +59,7 @@ async def cap_minds_switch_list(trace_id=None) -> Dict[str, Any]:
 
 @capability(
     "minds.switch.get", http_method="GET", http_path="/minds/switch",
+    contract=_MC.contract("switchboard.switch.get", effects=["read"], idempotency="idempotent"),
     http_tags=["minds"], memory="off", silent=True,
     description="The global switchboard layer (what is switched on for every run unless a "
                 "run, census arm or chat session says otherwise). Output: {global, killed}.",
@@ -63,6 +71,7 @@ async def cap_minds_switch_get(trace_id=None) -> Dict[str, Any]:
 
 @capability(
     "minds.switch.set", http_method="POST", http_path="/minds/switch",
+    contract=_MC.contract("switchboard.switch.set", effects=["write"], idempotency="idempotent"),
     http_tags=["minds"], memory="off",
     description="Set one switch in the global layer. Inputs: id (str! - a registered switch, "
                 "or '*' with mode 'default' for the kill switch that puts every behaviour back "
@@ -101,6 +110,7 @@ async def cap_minds_switch_set(id: str = "", mode: str = "", reason: str = "", b
 
 @capability(
     "minds.validate", http_method="POST", http_path="/minds/validate",
+    contract=_MC.contract("switchboard.validate", effects=["read"], idempotency="idempotent"),
     http_tags=["minds"], memory="off", silent=True,
     description="Strictly validate a requested set {feature_id: mode} - what a run's minds= or a "
                 "census arm's target.minds would be. Inputs: minds (object), census (bool - also "
@@ -115,6 +125,7 @@ async def cap_minds_validate(minds: Optional[Dict[str, Any]] = None, census: boo
 
 @capability(
     "minds.effective", http_method="POST", http_path="/minds/effective",
+    contract=_MC.contract("switchboard.effective", effects=["read"], idempotency="idempotent"),
     http_tags=["minds"], memory="off", silent=True,
     description="What would be on for a run requesting `minds` right now: the effective mode of "
                 "every switch and which layer set it (call > arm > session > global > default). "

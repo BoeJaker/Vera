@@ -51,5 +51,37 @@ t('other caps are not', !look('cal.events.list') && !look('web.research.extra') 
 t('the follow-up after a lookup asks for dated [n] citations and no guesses',
   /\+ \(_isLookupCap\(capName\)/.test(CHAT) && /cite them as \[n\] with their date/.test(CHAT) && /do not `\s*\+ `fill the gap from memory or a guess/.test(CHAT));
 
+// SK-3.7: a background report reaches the chat. 7 Oct: an 18-minute research job never did - the WebSocket failed and
+// polling stopped at 5 minutes, silently. info.seek need=deep returns a job_id with no status, so nothing followed it.
+t('polling lasts as long as a report can (maxWaitMs), not 5 minutes', !/Math\.min\(maxWaitMs,300000\)/.test(CHAT)
+  && /while\(!cancelled&&Date\.now\(\)-start<maxWaitMs\)\{/.test(CHAT));
+t('a report still running when the wait ends says so', /if\(!finished&&!cancelled\)\{\s*setStatus\(`Still running after/.test(CHAT));
+t('info.seek deep: the report it started is followed into the chat, not awaited',
+  /if\(capName==='info\.seek'&&content&&typeof content==='object'&&content\.job_id\) _followReport\(content\.job_id,agentName\);/.test(CHAT)
+  && /function _followReport\(jobId, agentName\)\{[\s\S]{0,900}_streamResearchJob\(jobId,agentName,card\)\.catch\(/.test(CHAT));
+
+// SK-1.1: the picker matches whole words - "out" (find out about) no longer matches output/about/without, "rate" no
+// longer matches generate; plurals still match
+{
+  const pick = new Function('ALL_CAPS',
+    grab(/const _CAP_STOPWORDS=new Set\(\[[\s\S]*?\]\);/, '_CAP_STOPWORDS') + '\n'
+    + grab(/const _CAP_MIN_SCORE=\d+;/, '_CAP_MIN_SCORE') + '\n'
+    + grab(/function _findRelevantCaps\(query, allowedCaps, maxN=24\)\{[\s\S]*?\n  \}/, '_findRelevantCaps')
+    + '\nreturn _findRelevantCaps;');
+  const caps = [
+    {name: 'web.research', description: 'look something up on the web: a fact, the latest news, updates', tags: ['web', 'latest', 'news']},
+    {name: 'media.export', description: 'writes output files about without limits', tags: ['media']},
+    {name: 'image.generate', description: 'generate an image at any rate', tags: ['image']},
+    {name: 'markets.rate', description: 'an interest rate series', tags: ['markets']},
+  ];
+  const f = pick(caps);
+  const all = caps.map(c => c.name);
+  const r1 = f('find out about the latest EU AI Act news', all, 10);
+  t('whole words: "out"/"about" do not pull in an output-writing tool', r1.includes('web.research') && !r1.includes('media.export'), JSON.stringify(r1));
+  const r2 = f('current interest rate figures', all, 10);
+  t('"rate" matches the rate tool, not generate', r2.includes('markets.rate') && !r2.includes('image.generate') || r2.indexOf('markets.rate') < r2.indexOf('image.generate'), JSON.stringify(r2));
+  t('plurals match ("updates" finds "update"-tagged text)', f('any news updates please', all, 10).includes('web.research'));
+}
+
 if (fails) { console.log(fails + ' failed'); process.exit(1); }
 console.log('all passed');

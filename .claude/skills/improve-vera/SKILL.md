@@ -98,10 +98,12 @@ altogether — worth naming explicitly so it isn't repeated.
    the right choice for launching/monitoring a TEST LOOP specifically
    (full control over polling cadence, direct Redis trace access) and
    for any one-off capability call where you want the raw response.
-2. **SMB file edits** (`\\llm.int\boejaker\Vera`, Read/Edit/Write tools)
-   — the right choice when YOU have already diagnosed the exact fix and
-   want to apply it precisely yourself. This is what almost every fix in
-   docs 35/36 used.
+2. **SMB file edits** (Read/Edit/Write tools), **only inside a branch
+   worktree** (`…\.loop-lab-worktrees\<branch>\…`), never the main checkout:
+   the right choice when YOU have already diagnosed the exact fix and want to
+   apply it precisely yourself. The change then lands through
+   `improve-vera-sandboxed` (commit via the host, then the pipeline into
+   `bleeding-edge`).
 3. **MCP tools** — genuinely useful, actively under-used this session
    past the one real restriction:
    - `mcp__vera__dag_run` and the other `dag_agent_loop*`/loop-launch
@@ -227,22 +229,20 @@ or loudly depending on what wraps the call site.
 
 ## 4. Restarting Vera
 
-Vera runs natively (no docker) via `./build.sh run` on the `llm` host.
-A tool already exists for Claude to restart it directly over SSH:
-`C:\Users\User\.vera-ops\Invoke-VeraRestart.ps1` (defaults to a dry run;
-pass `-Confirmed` to actually restart). Before confirming a restart,
-check for other active loop sessions (§0's redis-cli check) that aren't
-your own already-diagnosed test traffic — a restart kills everything
-in flight.
+Vera runs natively (no docker) on the `llm` host, from the `langchain` venv
+(`/home/boejaker/langchain`). Restart it **only** through Vera's own
+capabilities:
+- `sys.dev.restart(confirm=true)`, which re-execs in place and goes through the census gate (pause, ack, cancel owned loops, re-exec, restore);
+- `evolve.release.prod` as part of a release.
 
-If setting this up fresh: the real interpreter with Vera's dependencies
-installed is often a specific venv (e.g. a `langchain` venv), NOT bare
-`python3` on the host's PATH — confirm which one actually has the
-project's dependencies (e.g. `uvicorn`) before assuming a restart
-command is complete. `C:\Users\User\.vera-ops\Check-VeraLog.ps1` and
-`Check-VeraPy.ps1` exist for diagnosing a failed restart (tail the
-remote log / check which Python has the deps) without needing Vera
-itself to be up.
+**Never kill the process** and never restart over SSH by hand: that bypasses the census gate. Before any restart:
+- check `/health` (`census.busy`, `gpu_gate`, `activity`);
+- check that no loop is running (`/workshop/agent_loop/sessions?status=running` is empty);
+- check that no other agent is mid-generation.
+
+A restart ends everything in flight, including delegate jobs and other agents' calls. The old `C:\Users\User\.vera-ops\*.ps1` scripts are not part of the estate any more.
+
+To diagnose a failed restart, read `logs/vera.log*` on the share (`//192.168.0.138/boejaker/Vera/logs/`). The interpreter with the dependencies is the `langchain` venv, not bare `python3`.
 
 ## 5. Background monitoring, not tight polling
 
@@ -252,6 +252,31 @@ time) — never repeated `mcp__vera__dag_run`/loop-tool calls from the
 main thread, and never a tight sleep-loop typed directly into the main
 conversation. Wait for the background task's completion notification
 rather than manually re-checking on a timer.
+
+## 5a. Background work is SCHEDULED - there is no quiet time
+
+There is NO quiet time on this box (owner, 18 Oct 2026: "you must not rely on quiet time - there is no such
+thing, quiet time must be scheduled"). Censuses, probes, gates and loops run day and night, so anything that
+waits for an idle box waits forever: on 17-18 Oct, 51 background jobs sat unstarted for 8+ hours, and intel's
+batch once waited six days.
+
+- **Anything you queue or leave to run later gets a scheduled slot.** That covers background.enqueue jobs,
+  shadow judges, backfills, evals and measurements. Never write code or a plan that waits for "the box to go
+  quiet", "an idle gap" or "a quiet hour".
+- **The box's standing windows** are Loop Lab schedule entries "Background work · nightly 03:30-05:00" and
+  "· weekdays 17:00-18:00", running `evolve.background.window`. That capability reserves the idle queue for every
+  job kind with work waiting and drains them one after another; it is exclusive, so no census starts meanwhile,
+  and it yields at its window end. A job you `background.enqueue` is picked up by the next standing window.
+- **Your own work needs more, or sooner?** Book a window for it, on your unit's night or a free gap:
+  `evolve.schedule.upsert {schedule: {kind: "cap", title: "<what> · <unit>", target: {name:
+  "evolve.background.window", arguments: {kinds: "<your job kind>", minutes: N}}, days: [...], start, end,
+  exclusive: true, at_window_end: "yield", notes: "<why, who>"}}`. For work that is its own capability, schedule
+  that capability as the cap instead (allow-listed families: `schedule_core.CAP_ALLOW_PREFIXES`).
+- **Check it ran.** `evolve.schedule.all` and the Loop Lab Schedule tab show every slot and what it is for;
+  `background.status` shows the queue's depth and how long its oldest job has waited. A job waiting longer than
+  a day means a missing window: book one, do not wait.
+- **A slot can be stopped:** census with `census.control.set action=yield`; any other run with
+  `evolve.schedule.stop_run {run_id}` (the ■ on the run).
 
 ## 6. The Perf/Observe UI — check this before assuming a hang is your bug
 

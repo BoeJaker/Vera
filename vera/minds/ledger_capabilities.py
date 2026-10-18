@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -260,23 +261,43 @@ def _rows_arg(rows: Any) -> List[Dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "decide.record", http_method="POST", http_path="/decide/record", http_tags=["minds"],
+    contract=_MC.contract("decision.record", effects=["write"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Record one Decision v0 or Outcome v0 row in the decision ledger (four-minds FM-0.2). "
                 "The row is checked against the frozen v0 shape (ROADMAP §5.1) and appended to a Redis "
-                "stream; a background job moves it to Postgres. Input: row (object or JSON string). "
-                "Output: {ok, decision_id, kind} or {ok:false, errors[]}.",
+                "stream; a background job moves it to Postgres. Input: row (object or JSON string), inputs "
+                "(optional object: what the decision saw, kept in the training store when its surface is "
+                "enabled, so it can be rated in /decide/labels). Output: {ok, decision_id, kind} or "
+                "{ok:false, errors[]}.",
 )
-async def cap_decide_record(row: Any = None, trace_id=None) -> Dict[str, Any]:
+async def cap_decide_record(row: Any = None, inputs: Any = None, trace_id=None) -> Dict[str, Any]:
     rows = _rows_arg(row)
     if len(rows) != 1:
         return {"ok": False, "errors": ["pass exactly one row"]}
-    return await append(rows[0])
+    out = await append(rows[0])
+    if out.get("ok") and isinstance(inputs, dict) and inputs and out.get("kind") == "decision":
+        ts = _training_state()
+        if ts is not None:
+            ts.put(rows[0], inputs)
+    return out
+
+
+def _training_state():
+    """The LIVE training_state module (the loader loads it under its bare name, after this one)."""
+    return sys.modules.get("training_state") or sys.modules.get("Vera.vera.minds.training_state")
 
 
 @capability(
     "decide.ledger.import", http_method="POST", http_path="/decide/ledger/import", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.import", effects=["write"], idempotency="idempotent"),
     memory="off",
     description="Import Decision v0 / Outcome v0 rows kept by an early emitter (intel's own store) into "
                 "the decision ledger, unchanged. Input: rows (list, JSON array, or JSONL), dry_run "
@@ -309,6 +330,7 @@ async def cap_decide_ledger_import(rows: Any = None, dry_run: bool = True, trace
 
 @capability(
     "decide.ledger", http_method="GET", http_path="/decide/ledger", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.read", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Read the decision ledger (four-minds FM-0.2): the latest decisions, newest first, each "
                 "with its outcomes and the strongest one. Input: question_id, surface, run_id, "
@@ -357,6 +379,7 @@ async def cap_decide_ledger(question_id: str = "", surface: str = "", run_id: st
 
 @capability(
     "decide.ledger.stats", http_method="GET", http_path="/decide/ledger/stats", http_tags=["minds"],
+    contract=_MC.contract("decision.ledger.stats", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="Decision ledger health (four-minds FM-0.2): this process's append/refuse/drop/drain "
                 "counters, the stream's length and undrained rows, and decisions per question with "
