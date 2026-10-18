@@ -296,6 +296,10 @@
       // the tile that was just placed shows where it landed
       '@keyframes vdLanded{0%{box-shadow:0 0 0 2px var(--acc,#5a9e8f),0 0 24px color-mix(in srgb,var(--acc,#5a9e8f) 45%,transparent)}100%{box-shadow:none}}',
       '.widget.vd-landed{animation:vdLanded 1.6s ease-out}',
+      // P-SUMMON: a summoned tile says so - dashed edge, the 'summoned' tag; it goes with its search
+      '.widget.vd-temp{outline:1px dashed var(--acc,#7aa2f7);outline-offset:-1px}',
+      '.widget .vd-temp-tag{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--acc,#7aa2f7);border:1px solid currentColor;border-radius:8px;padding:0 5px;margin-right:4px;align-self:center}',
+      '.widget .w-title[draggable=true]{cursor:grab}',
       // ⚙ — the record's editor on every tile; lit while the grid is being edited
       '.w-iconbtn.vd-cfg{font-size:12px}',
       '.dash-grid.editing .w-iconbtn.vd-cfg{color:var(--acc,#5a9e8f)}',
@@ -392,6 +396,31 @@
   } else {
     _soloBoot();
   }
+
+  /* ── P-SUMMON (looplab-control W1; owner 18 Oct: "the user could type in what widget htey want i.e. board and it could
+     enter the dash, the user can drag them to the schedule and then if they cleear the search it goes"). The search reads
+     the widget catalogue (widget.template.list); the best match comes in as a REAL vera-widget, placed as a temporary
+     instance (widget.template.instantiate, config.temporary) that lives as long as the search: clearing it removes every
+     tile it brought (widget.instance.remove); 📌 keep makes one an ordinary tile. A tile's head drags as an item record
+     (application/x-vera-item: {kind:'widget', content:{record}, source}) for any drop target (Compare pins its lanes). */
+  /* summon:match begin */
+  function summonMatches(list, q) {
+    q = String(q || '').trim().toLowerCase();
+    if (!q) return [];
+    var words = q.split(/\s+/).filter(Boolean);
+    function text(t) { return [t.name, t.id, t.form, t.frame, (t.tags || []).join(' '), t.reads && t.reads.cap, t.reads && t.reads.note].join(' ').toLowerCase(); }
+    return (list || []).map(function (t) {
+      var name = String(t.name || '').toLowerCase(), all = text(t), score = 0;
+      if (name === q) score += 100; else if (name.indexOf(q) === 0) score += 60; else if (name.indexOf(q) >= 0) score += 40;
+      words.forEach(function (w) { if (new RegExp('\\b' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(name)) score += 15; else if (all.indexOf(w) >= 0) score += 6; else score -= 25; });
+      if (t.form === 'panel') score -= 3;                          // a drawn widget before a whole panel of the same name
+      return { t: t, score: score };
+    }).filter(function (x) { return x.score > 0; })
+      .sort(function (a, b) { return b.score - a.score || String(a.t.name).localeCompare(String(b.t.name)); })
+      .map(function (x) { return x.t; });
+  }
+  /* summon:match end */
+  if (typeof window !== 'undefined') window.VeraDashboardSummon = { matches: summonMatches };
 
   /* ── shared "+ Add Widget" modal (one per document) ──────────────────── */
   var _modal = null, _modalCtl = null, _modalPanels = [];
@@ -657,7 +686,7 @@
     }
     function snapWidth(n) { var near = GRID.widths[0], best = Infinity; GRID.widths.forEach(function (a) { var dd = Math.abs(a - n); if (dd < best) { best = dd; near = a; } }); return near; }
     // the tile's record: the user's edit first, then the file's, then the one a user tile carries
-    function recordOf(wid) { return state.edits[wid] || state.records[wid] || (state.dynamic[wid] && state.dynamic[wid].record) || null; }
+    function recordOf(wid) { return state.edits[wid] || state.records[wid] || (state.dynamic[wid] && state.dynamic[wid].record) || ((state.temp || {})[wid] && state.temp[wid].record) || null; }
     function withId(r, wid) { var o = {}; Object.keys(r || {}).forEach(function (k) { o[k] = r[k]; }); o.id = wid; return o; }
     // the span picks the size a record tile draws at; the tile says its size either way
     /* the span picks the size, read against the grid's OWN width: a grid narrower than a page (a dashboard in a side pane -
@@ -694,7 +723,7 @@
       Array.prototype.slice.call(grid.children).forEach(function (el) {
         var floated = el.hasAttribute && el.hasAttribute('data-vd-ph');
         var w = floated ? byIdAnywhere(el.getAttribute('data-vd-ph')) : (el.classList && el.classList.contains('widget') ? el : null);
-        if (!w || !w.dataset.wid) return;
+        if (!w || !w.dataset.wid || w.dataset.temp) return;          // a summoned tile lives as long as its search, never in the layout
         var wid = w.dataset.wid, dyn = state.dynamic[wid], m = state.meta[wid] || {};
         var sp = state.sizes[wid] && +state.sizes[wid].w ? [+state.sizes[wid].w, +state.sizes[wid].h || 1] : spanOf(w);
         var ed = state.edits[wid];
@@ -1831,7 +1860,8 @@
       widget.innerHTML =
         '<div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span>' +
         '<span class="w-title">' + esc(record.title || record.name || record.form || 'widget') + '</span>' +
-        '<span class="w-actions"><button class="w-iconbtn" data-vd-hide title="Hide">×</button>' +
+        '<span class="w-actions">' + ((o2 && o2.temp) ? '<span class="vd-temp-tag" title="summoned by the search - it goes when the search is cleared">summoned</span><button class="w-iconbtn" data-vd-keep title="Keep it on the dashboard">📌</button>' : '') +
+        '<button class="w-iconbtn" data-vd-hide title="Hide">×</button>' +
         ((o2 && o2.fromFile) ? '' : '<button class="w-iconbtn" data-vd-remove title="Remove widget">🗑</button>') + '</span></div>' +
         '<div class="w-body" style="padding:8px;position:relative;min-height:0"></div>' +
         '<span class="w-resize" data-resize></span>';
@@ -1854,9 +1884,13 @@
       el.setAttribute('record', JSON.stringify(shown));
       widget.querySelector('.w-body').appendChild(el);
       widget.querySelector('[data-vd-hide]').onclick = function () { hide(wid); };
-      var rm = widget.querySelector('[data-vd-remove]'); if (rm) rm.onclick = function () { removeDynamic(wid); };
+      var rm = widget.querySelector('[data-vd-remove]'); if (rm) rm.onclick = function () { if (widget.dataset.temp) unsummon(wid); else removeDynamic(wid); };
+      var kp = widget.querySelector('[data-vd-keep]'); if (kp) kp.onclick = function () { keepSummoned(wid); };
+      itemDrag(widget, wid);
       grid.appendChild(widget);
-      if (o2 && o2.fromFile) { state.records[wid] = record; } else { state.dynamic[wid] = { record: record, wid: wid }; }
+      if (o2 && o2.fromFile) { state.records[wid] = record; }
+      else if (o2 && o2.temp) { widget.dataset.temp = '1'; widget.classList.add('vd-temp'); state.temp = state.temp || {}; state.temp[wid] = { record: record, wid: wid, instance: '' }; }
+      else { state.dynamic[wid] = { record: record, wid: wid }; }
       state.meta[wid] = state.meta[wid] || { at: null, refresh: refresh, floated: false };
       wireWidget(widget);
       if (!(o2 && o2.silent)) { state.order = widgets().map(function (w) { return w.dataset.wid; }); }
@@ -1903,6 +1937,66 @@
           save();
         }).catch(function () {});
     }
+    /* ── P-SUMMON: the search's tiles (see summonMatches above) ── */
+    var _tplList = null, _summonSeq = 0;
+    function mcp(name, args) {
+      return fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vera-Surface': 'dashboard; trigger=person' }, body: JSON.stringify({ name: name, arguments: args || {} }) })
+        .then(function (r) { return r.json(); }).then(function (j) { return j && j.content !== undefined ? j.content : j; });
+    }
+    function templates() {
+      if (!_tplList) _tplList = mcp('widget.template.list', {}).then(function (c) { return (c && c.templates) || []; }, function () { _tplList = null; return []; });
+      return _tplList;
+    }
+    // the search changed: what it brought before goes, its best match (or the template picked) comes in
+    function summon(q, o2) {
+      var seq = ++_summonSeq; o2 = o2 || {};
+      clearSummoned();
+      if (!String(q || '').trim() && !o2.template) return Promise.resolve({ placed: [], matches: [] });
+      return templates().then(function (list) {
+        if (seq !== _summonSeq) return { placed: [], matches: [] };            // a newer keystroke won
+        var m = o2.template ? list.filter(function (t) { return t.id === o2.template; }) : summonMatches(list, q);
+        var take = m.slice(0, Math.max(1, +o2.max || 1));
+        return { placed: take.map(placeSummoned).filter(Boolean), matches: m.slice(0, 8) };
+      });
+    }
+    function placeSummoned(t) {
+      var rec = {}; Object.keys(t).forEach(function (k) { if (!/^(placements|instances|created_at|updated_at|version)$/.test(k)) rec[k] = t[k]; });
+      rec.title = t.name || t.id;
+      if (t.form === 'panel' && t.source && t.source.panel) rec.panel = t.source.panel;
+      var w = addRecord(rec, { temp: true, silent: true }); if (!w) return null;
+      var wid = w.dataset.wid;
+      grid.insertBefore(w, grid.firstChild);                                    // summoned tiles come in at the top
+      mcp('widget.template.instantiate', { id: t.id, where: 'dashboard', host: key, config: { temporary: true, summoned_by: 'search' } })
+        .then(function (r) { var inst = r && r.instance && r.instance.id; if (inst && state.temp[wid]) state.temp[wid].instance = inst; else if (inst) mcp('widget.instance.remove', { id: inst }); }, function () {});
+      return landed(w);
+    }
+    function unsummon(wid) {
+      var tmp = (state.temp || {})[wid]; if (!tmp) return;
+      var w = grid.querySelector(':scope > [data-wid="' + wid + '"]'); if (w) w.remove();
+      if (tmp.instance) mcp('widget.instance.remove', { id: tmp.instance }).catch(function () {});
+      delete state.temp[wid]; delete state.meta[wid];
+    }
+    function clearSummoned() { Object.keys(state.temp || {}).forEach(unsummon); }
+    // 📌 keep: the tile stays as an ordinary one - saved with the layout; its placed instance stays placed
+    function keepSummoned(wid) {
+      var tmp = (state.temp || {})[wid]; if (!tmp) return;
+      var w = grid.querySelector(':scope > [data-wid="' + wid + '"]');
+      if (w) { delete w.dataset.temp; w.classList.remove('vd-temp'); var tg = w.querySelector('.vd-temp-tag'), kb = w.querySelector('[data-vd-keep]'); if (tg) tg.remove(); if (kb) kb.remove(); }
+      state.dynamic[wid] = { record: tmp.record, wid: wid }; delete state.temp[wid];
+      state.order = widgets().map(function (x) { return x.dataset.wid; }); save();
+    }
+    // a tile's head drags as an ITEM RECORD (the desk's item-contract format), so any surface can take it
+    function itemDrag(widget, wid) {
+      var head = widget.querySelector('.w-title'); if (!head) return;
+      head.setAttribute('draggable', 'true'); head.title = 'drag me onto Compare, the Schedule or another surface';
+      head.addEventListener('dragstart', function (e) {
+        var rec = recordOf(wid); if (!rec || !e.dataTransfer) return;
+        var item = { kind: 'widget', title: rec.title || rec.name || rec.form || 'widget', content: { record: rec }, source: { dashboard: key, wid: wid, temporary: !!widget.dataset.temp } };
+        try { e.dataTransfer.setData('application/x-vera-item', JSON.stringify(item)); e.dataTransfer.setData('text/plain', item.title); e.dataTransfer.effectAllowed = 'copy'; } catch (err) {}
+        e.stopPropagation();
+      });
+    }
+
     function removeDynamic(wid) {
       var w = grid.querySelector(':scope > [data-wid="' + wid + '"]'); if (w) w.remove();
       delete state.dynamic[wid]; state.hidden.delete(wid);
@@ -2117,6 +2211,8 @@
       key: key, grid: grid,
       toggleEdit: toggleEdit, reset: reset, openLoader: openLoader,
       hide: hide, show: show, addWidget: addWidget, addRecord: addRecord, refresh: applyLayout,
+      // P-SUMMON: the search's temporary tiles
+      summon: summon, clearSummoned: clearSummoned, keepSummoned: keepSummoned, summoned: function () { return Object.keys(state.temp || {}); },
       // the widget surface's paths: the picker of panels, a record placed, a tile's ⚙, a record saved, a tile drawn
       openPanels: openPanels, openPanelTab: openPanelTab, recordPlace: recordPlace, placeRecord: placeRecord, configure: configure, applyRecord: applyRecord,
       drawTile: function (wid, rec) { var w = byIdAnywhere(wid); if (w) drawTile(w, rec || recordOf(wid)); recordChip(w); return w; },
@@ -2215,6 +2311,11 @@
      so a page needs no dashboard CSS of its own. Attributes: layout (the file's key), storage (defaults to panel-<layout>),
      title, no-bar (no toolbar), no-popout. ── */
   var ELEM_CSS = [
+    // P-SUMMON: the summon box and the other matches beside it
+    'vera-dashboard .vdb-summon{min-width:220px;flex:0 1 320px;font:inherit;font-size:12px;padding:3px 8px;border:1px solid var(--border,#2a313c);border-radius:6px;background:var(--bg2,#1b222c);color:inherit}',
+    'vera-dashboard .vdb-sm{display:inline-flex;gap:4px;flex-wrap:wrap;margin-left:6px}',
+    'vera-dashboard .vdb-sm button{font:inherit;font-size:11px;border:1px solid var(--border,#2a313c);border-radius:10px;background:none;color:var(--dim,#8b93a1);padding:1px 8px;cursor:pointer}',
+    'vera-dashboard .vdb-sm i{font-size:11px;color:var(--dim,#8b93a1)}',
     'vera-dashboard{display:flex;flex-direction:column;gap:10px;min-width:0}',
     'vera-dashboard .vdb-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}',
     'vera-dashboard .vdb-bar b{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--dim2,var(--t2,#8a92a0))}',
@@ -2270,7 +2371,7 @@
         var n = ++_vdbN, editId = 'vdb-edit-' + n;
         var bar = doc.createElement('div'); bar.className = 'vdb-bar';
         var title = this.getAttribute('title');
-        bar.innerHTML = (title ? '<b></b>' : '') + '<span class="sp"></span><button type="button" data-a="add" title="Add a widget to this dashboard">\uff0b Widget</button><button type="button" id="' + editId + '" data-a="edit" title="Move, resize and hide the tiles">\u2699 Configure</button>';
+        bar.innerHTML = (title ? '<b></b>' : '') + (self.hasAttribute('summon') ? '<input type="search" class="vdb-summon" placeholder="' + (self.getAttribute('summon') || 'Summon a widget… (e.g. board)') + '" title="type a widget - the best match comes in; clear the search and it goes; 📌 keeps one"><span class="vdb-sm"></span>' : '') + '<span class="sp"></span><button type="button" data-a="add" title="Add a widget to this dashboard">\uff0b Widget</button><button type="button" id="' + editId + '" data-a="edit" title="Move, resize and hide the tiles">\u2699 Configure</button>';
         if (title) bar.querySelector('b').textContent = title;
         if (this.hasAttribute('no-bar')) bar.hidden = true;
         var grid = doc.createElement('div'); grid.className = 'dash-grid'; grid.id = 'vdb-grid-' + n;
@@ -2278,6 +2379,16 @@
         ensureWidgetEl(doc, function () {
           var ctl = init(grid, { key: self.getAttribute('storage') || ('panel-' + layout), layout: '/ui/widgets/layouts/' + encodeURIComponent(layout), loader: true, popout: !self.hasAttribute('no-popout'), editBtn: editId });
           self._ctl = ctl;
+          var sIn = bar.querySelector('.vdb-summon'), sHint = bar.querySelector('.vdb-sm'), sT = null;
+          if (sIn) {
+            var go = function (opts) { ctl.summon(sIn.value, opts).then(function (r) {
+              var more = (r.matches || []).slice(1, 5);
+              sHint.innerHTML = !sIn.value.trim() ? '' : !r.placed.length && !opts ? '<i>nothing matches</i>' : more.map(function (t) { return '<button type="button" data-sm="' + esc(t.id) + '" title="bring this one in instead">' + esc(t.name) + '</button>'; }).join('');
+            }); };
+            sIn.addEventListener('input', function () { clearTimeout(sT); sT = setTimeout(function () { go(); }, 280); });
+            sIn.addEventListener('keydown', function (e) { if (e.key === 'Escape') { sIn.value = ''; go(); } });
+            sHint.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-sm]'); if (b) go({ template: b.getAttribute('data-sm') }); });
+          }
           bar.addEventListener('click', function (e) { var b = e.target.closest && e.target.closest('[data-a]'); if (!b) return;
             var a = b.getAttribute('data-a'); if (a === 'edit') ctl.toggleEdit(); else if (a === 'add') ctl.openLoader(); });
           try { self.dispatchEvent(new CustomEvent('vera:dashboard:ready', { bubbles: true, detail: { layout: layout, ctl: ctl } })); } catch (e) {}
