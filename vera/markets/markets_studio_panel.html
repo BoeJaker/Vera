@@ -3271,23 +3271,8 @@ function gaugeHtml(label,val,pct,color,sub){
     <div class="gbar"><i data-w="${Math.max(2,Math.min(100,pct||0))}" style="background:${color};width:0"></i></div>
     <div class="gl" style="margin-top:4px;text-transform:none;letter-spacing:0">${sub||''}</div></div>`;
 }
-function drawSpark(cv,vals,up){
-  const dpr=devicePixelRatio||1;
-  const W=cv.clientWidth||56,H=cv.clientHeight||20;
-  cv.width=W*dpr;cv.height=H*dpr;
-  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
-  const lo=Math.min(...vals),hi=Math.max(...vals);
-  const col=up?COL.up:COL.dn;
-  ctx.beginPath();
-  vals.forEach((v,i)=>{
-    const x=i/(vals.length-1)*W, y=H-1-(hi>lo?(v-lo)/(hi-lo):0.5)*(H-2);
-    i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
-  ctx.strokeStyle=col; ctx.lineWidth=1.2; ctx.stroke();
-  ctx.lineTo(W,H); ctx.lineTo(0,H); ctx.closePath();
-  const g=ctx.createLinearGradient(0,0,0,H);
-  g.addColorStop(0,hexA(col,.3)); g.addColorStop(1,hexA(col,0));
-  ctx.fillStyle=g; ctx.fill();
-}
+/* shared (markets/chart.js), drawn in this page's theme colours */
+function drawSpark(cv,vals,up){ return VeraMktChart.drawSpark(cv,vals,up,{up:COL.up,dn:COL.dn,hexA}); }
 /* animated slice-and-dice treemap grouped by sector */
 function drawTreemap(){
   const cv=$('treemapCv'); if(!cv||!S.pulse) return;
@@ -4621,9 +4606,7 @@ async function loadMarketNews(){
     api('/markets/sentiment/map')]);
   let html='';
   if(news&&news.headlines)
-    html+=news.headlines.slice(0,6).map(h=>
-      `<div class="macroRow"><a href="${esc(h.url)}" target="_blank" rel="noopener"
-        style="color:var(--ink);text-decoration:none">${esc(h.title)}</a></div>`).join('');
+    html+=VeraMktChart.rows.news(news.headlines.slice(0,6),{esc});   /* the shared rows: the desk chart's News tab draws the same */
   else html+='<div class="muted">'+esc((news&&news.error)||'news unavailable')+'</div>';
   const bm=((sent&&sent.benchmarks)||[]).filter(b=>b.score!=null);
   if(bm.length)
@@ -5449,8 +5432,6 @@ $('folioOptimize').onclick=()=>{ switchView('proj'); $('pjSource').value='portfo
   setTimeout(()=>$('opGo').click(),300); };
 
 /* ── 🔔 Alerts & monitors page ── */
-const DIR_CHIP={entry:['▲ entry','bull'],exit:['▽ exit','bear'],
-  short_entry:['▼ short','bear'],short_exit:['△ cover','bull']};
 async function renderAlertsPage(){
   const [mon,al]=await Promise.all([
     api('/markets/monitor/status'),
@@ -5476,16 +5457,8 @@ async function renderAlertsPage(){
     renderAlertsPage(); loadStrats();
   });
   const alerts=(al&&al.alerts)||[];
-  $('alFeed').innerHTML=alerts.map(a=>{
-    const [lbl,cls]=DIR_CHIP[a.direction]||[esc(a.direction||''),''];
-    return `<div class="condRow" style="opacity:${a.seen?'.55':'1'}">
-      <span class="muted num" style="font-size:10px;width:86px">${esc(String(a.created_at||'').slice(5,16).replace('T',' '))}</span>
-      <span class="chip ${cls}" style="font-size:9.5px">${lbl}</span>
-      <b style="font-size:11.5px">${esc(a.name||'')}</b>
-      <span class="muted" style="font-size:10.5px">${esc(String(a.dataset_id||'').replace('mkt.',''))}</span>
-      <span class="num" style="font-size:11px">@ ${fmtPx(a.price)}</span>
-      <span style="flex:1"></span></div>`;
-  }).join('')
+  /* the rows are the shared ones (markets/chart.js VeraMktChart.rows): the desk chart's Alerts tab draws the same */
+  $('alFeed').innerHTML=VeraMktChart.rows.alerts(alerts,{esc,fmtPx})
     ||'<div class="empty">no alerts'+($('alUnseen').checked?' unseen':'')+' — signals from every monitor land here</div>';
   updateBellBadge(al?al.unseen:null);
   const rb=$('railAlBadge');
@@ -6049,24 +6022,7 @@ async function miniCloses(key,limit){
 }
 /* pulse-style stats computed client-side from daily closes (works for every
    asset class incl. customs; no dependency on the heavy overview cap) */
-function computeStats(c){
-  if(!c||c.length<2) return null;
-  const n=c.length, last=c[n-1];
-  const at=k=>c[Math.max(0,n-1-k)];
-  const pct=(a,b)=>(b?((a-b)/b*100):null);
-  let rsi=null;
-  if(n>15){ let g=0,l=0; for(let i=n-14;i<n;i++){ const d=c[i]-c[i-1]; if(d>=0)g+=d; else l-=d; }
-    const rs=l===0?100:g/l; rsi=l===0?100:100-100/(1+rs); }
-  let vol=null;
-  const rets=[]; for(let i=Math.max(1,n-31);i<n;i++){ if(c[i-1]) rets.push(c[i]/c[i-1]-1); }
-  if(rets.length>=8){ const m=rets.reduce((s,x)=>s+x,0)/rets.length;
-    const v=rets.reduce((s,x)=>s+(x-m)*(x-m),0)/rets.length; vol=Math.sqrt(v)*Math.sqrt(252)*100; }
-  const w52=c.slice(-252), lo=Math.min.apply(null,w52), hi=Math.max.apply(null,w52);
-  return {last:last, chg1d:pct(last,at(1)), chg1w:pct(last,at(5)), chg1m:pct(last,at(21)),
-    chg3m:pct(last,at(63)), chg1y:pct(last,at(252)),
-    rsi:(rsi==null?null:Math.round(rsi)), vol:(vol==null?null:Math.round(vol)),
-    lo52:lo, hi52:hi, range52:(hi>lo?Math.round((last-lo)/(hi-lo)*100):50)};
-}
+function computeStats(c){ return VeraMktChart.computeStats(c); }   /* shared (markets/chart.js): the desk chart computes the same */
 /* cached sentiment map, indexed by symbol_key */
 let _sentIdx=null,_sentAt=0;
 async function sentIndex(){
@@ -6393,26 +6349,11 @@ async function renderAccounts(){
 }
 
 /* enriched holdings table — pulse stats + sparkline, filled asynchronously */
+/* the table and its pulse stats are the shared ones (markets/chart.js VeraMktChart.rows.holdings / fillHoldings): the desk
+   chart's Position tab draws the same */
 function renderHoldingsTable(holdings,isReal){
   const host=$('foPos'); if(!host) return;
-  const cols=['asset','trend','last','1D','1W','1M','RSI','30d vol','52w','sent','qty','value','uP&L','uP&L %','alloc'];
-  const head='<tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
-  const rows=holdings.map((p,i)=>{
-    const dim=(p.qty||0)>0?'':'opacity:.45';
-    return '<tr data-hk="'+esc(p.symbol_key)+'" style="cursor:pointer;'+dim+'" title="open info card">'+
-      '<td><b>'+esc(p.symbol_key)+'</b></td>'+
-      '<td><canvas class="hspark" width="70" height="22" style="width:70px;height:22px"></canvas></td>'+
-      '<td class="hLast num">—</td><td class="hc1d num">—</td><td class="hc1w num">—</td><td class="hc1m num">—</td>'+
-      '<td class="hRsi num">—</td><td class="hVol num">—</td>'+
-      '<td class="h52" style="min-width:64px">—</td><td class="hSent">—</td>'+
-      '<td class="num">'+(p.qty!=null?(+p.qty).toFixed(4):'—')+'</td>'+
-      '<td class="num">'+(p.value!=null?'$'+fmtN(p.value):'—')+'</td>'+
-      '<td class="num '+((p.unrealized||0)>=0?'up':'dn')+'">'+(p.unrealized!=null?fmtN(p.unrealized):'—')+'</td>'+
-      '<td class="num '+((p.unrealized_pct||0)>=0?'up':'dn')+'">'+fmtPct(p.unrealized_pct)+'</td>'+
-      '<td class="num">'+(p.alloc!=null?p.alloc+'%':'—')+'</td></tr>';
-  }).join('');
-  host.innerHTML=head+(rows||'<tr><td colspan="'+cols.length+'" class="muted">'+
-    (isReal?'empty book — record your holdings in the ledger below':'flat — place a paper order below')+'</td></tr>');
+  host.innerHTML=VeraMktChart.rows.holdings(holdings,{esc,fmtN,fmtPct},isReal);
   /* keep the wide pulse table scrolling inside its own box, never the page */
   if(host.parentElement&&!host.parentElement.classList.contains('tblScroll')){
     const w=document.createElement('div'); w.className='tblScroll';
@@ -6420,28 +6361,7 @@ function renderHoldingsTable(holdings,isReal){
     host.parentNode.insertBefore(w,host); w.appendChild(host);
   }
   host.querySelectorAll('tr[data-hk]').forEach(tr=>tr.onclick=()=>assetInfoCard(tr.getAttribute('data-hk')));
-  host.querySelectorAll('tr[data-hk]').forEach(async tr=>{
-    const key=tr.getAttribute('data-hk');
-    const bars=await miniCloses(key,300);
-    const st=bars?computeStats(bars.c):null;
-    if(st){
-      const cv=tr.querySelector('.hspark');
-      if(cv&&bars.c.length>1) drawSpark(cv,bars.c.slice(-60),(st.chg1m||0)>=0);
-      const q=cls=>tr.querySelector('.'+cls);
-      q('hLast').textContent=fmtPx(st.last);
-      const setC=(cls,v)=>{ const el=q(cls); if(el){ el.textContent=fmtPct(v); el.classList.add((v||0)>=0?'up':'dn'); } };
-      setC('hc1d',st.chg1d); setC('hc1w',st.chg1w); setC('hc1m',st.chg1m);
-      q('hRsi').textContent=(st.rsi==null?'—':st.rsi);
-      q('hVol').textContent=(st.vol==null?'—':st.vol+'%');
-      q('h52').innerHTML='<span class="pbar" style="width:56px;display:inline-block;vertical-align:middle">'+
-        '<i style="width:'+st.range52+'%;background:linear-gradient(90deg,var(--dn),var(--warn),var(--up))"></i></span>';
-    }
-    let sdat=null; try{ sdat=(await sentIndex())[key]; }catch(_){}
-    const sc=tr.querySelector('.hSent');
-    if(sc){ if(sdat&&sdat.score!=null){ const cls=sdat.score>0.15?'bull':sdat.score<-0.15?'bear':'flat';
-        sc.innerHTML='<span class="chip '+cls+'" style="font-size:9px">'+(sdat.score>0?'+':'')+Number(sdat.score).toFixed(2)+'</span>'; }
-      else sc.innerHTML='<span class="muted">—</span>'; }
-  });
+  VeraMktChart.fillHoldings(host,{closes:k=>miniCloses(k,300),sent:sentIndex,fmtPx,fmtPct,spark:drawSpark});
 }
 
 /* sim-account controls (ticket + auto-trade + orders + reset/delete) into #foLedger */

@@ -102,6 +102,129 @@
         if (st[k] != null && st[k] !== '') put(st[k], { position: up ? 'belowBar' : 'aboveBar', color: '#e8b34d', shape: up ? 'arrowUp' : 'arrowDown', text: M.shortText(m.name, 16) }); }); });
     return { markers, lines };
   };
+  /* THE MARKETS PAGES' OWN ROWS, ONCE (the redesign plan section 4: from the chart to the asset's news, positions, alerts and
+     backtests - drawn by the pages' own row code, moved here unchanged). f = the page's formatters {esc, fmtPx, fmtPct, fmtN}:
+     each page passes its own, so its rows read exactly as before; the desk chart passes its own. */
+  M.DIR_CHIP = { entry: ['▲ entry', 'bull'], exit: ['▽ exit', 'bear'], short_entry: ['▼ short', 'bear'], short_exit: ['△ cover', 'bull'] };
+  M.rows = {
+    /* the Markets page's stored backtests (a row's data-btid opens it) */
+    backtests: (list, f) => { const esc = f.esc, fmtPct = f.fmtPct; return (list || []).map(b=>{
+    const s=b.stats||{};
+    return `<div style="display:flex;gap:6px;align-items:center;padding:3px 0;font-size:10.5px;cursor:pointer"
+      data-btid="${b.id}">
+      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+        <b>${esc(b.name)}</b> <span class="muted">${esc(b.dataset_id)}</span></span>
+      <span class="${(s.total_return_pct||0)>=0?'pos':'neg'}" style="font-family:var(--mono)">${fmtPct(s.total_return_pct)}</span>
+    </div>`;
+  }).join(''); },
+    /* the Markets page's backtest trades (the last 40, newest first) */
+    trades: (trades, f) => { const esc = f.esc, fmtPct = f.fmtPct; return (trades||[]).slice(-40).reverse().map(t=>{
+    const d1=new Date(t.entry_t*1000).toISOString().slice(0,10);
+    const d2=t.exit_t?new Date(t.exit_t*1000).toISOString().slice(0,10):'—';
+    return `<tr><td>${d1}</td><td>${d2}</td>
+      <td class="${t.ret_pct>0?'pos':'neg'}">${fmtPct(t.ret_pct)}</td><td class="tx">${esc(t.reason||'')}</td></tr>`;
+  }).join('')||'<tr><td colspan="4" class="tx muted">no trades</td></tr>'; },
+    /* the Quant Studio's alert feed */
+    alerts: (alerts, f) => { const esc = f.esc, fmtPx = f.fmtPx; return (alerts || []).map(a=>{
+    const [lbl,cls]=M.DIR_CHIP[a.direction]||[esc(a.direction||''),''];
+    return `<div class="condRow" style="opacity:${a.seen?'.55':'1'}">
+      <span class="muted num" style="font-size:10px;width:86px">${esc(String(a.created_at||'').slice(5,16).replace('T',' '))}</span>
+      <span class="chip ${cls}" style="font-size:9.5px">${lbl}</span>
+      <b style="font-size:11.5px">${esc(a.name||'')}</b>
+      <span class="muted" style="font-size:10.5px">${esc(String(a.dataset_id||'').replace('mkt.',''))}</span>
+      <span class="num" style="font-size:11px">@ ${fmtPx(a.price)}</span>
+      <span style="flex:1"></span></div>`;
+  }).join(''); },
+    /* the Quant Studio's holdings table (its Portfolio page): head, rows (pulse cells filled after by M.fillHoldings), the empty
+       book or the flat sim account */
+    holdings: (holdings, f, isReal) => { const esc = f.esc, fmtN = f.fmtN, fmtPct = f.fmtPct;
+  const cols=['asset','trend','last','1D','1W','1M','RSI','30d vol','52w','sent','qty','value','uP&L','uP&L %','alloc'];
+  const head='<tr>'+cols.map(c=>'<th>'+c+'</th>').join('')+'</tr>';
+  const rows=(holdings || []).map((p,i)=>{
+    const dim=(p.qty||0)>0?'':'opacity:.45';
+    return '<tr data-hk="'+esc(p.symbol_key)+'" style="cursor:pointer;'+dim+'" title="open info card">'+
+      '<td><b>'+esc(p.symbol_key)+'</b></td>'+
+      '<td><canvas class="hspark" width="70" height="22" style="width:70px;height:22px"></canvas></td>'+
+      '<td class="hLast num">—</td><td class="hc1d num">—</td><td class="hc1w num">—</td><td class="hc1m num">—</td>'+
+      '<td class="hRsi num">—</td><td class="hVol num">—</td>'+
+      '<td class="h52" style="min-width:64px">—</td><td class="hSent">—</td>'+
+      '<td class="num">'+(p.qty!=null?(+p.qty).toFixed(4):'—')+'</td>'+
+      '<td class="num">'+(p.value!=null?'$'+fmtN(p.value):'—')+'</td>'+
+      '<td class="num '+((p.unrealized||0)>=0?'up':'dn')+'">'+(p.unrealized!=null?fmtN(p.unrealized):'—')+'</td>'+
+      '<td class="num '+((p.unrealized_pct||0)>=0?'up':'dn')+'">'+fmtPct(p.unrealized_pct)+'</td>'+
+      '<td class="num">'+(p.alloc!=null?p.alloc+'%':'—')+'</td></tr>';
+  }).join('');
+  return head+(rows||'<tr><td colspan="'+cols.length+'" class="muted">'+
+    (isReal?'empty book — record your holdings in the ledger below':'flat — place a paper order below')+'</td></tr>'); },
+    /* the Quant Studio's headlines */
+    news: (headlines, f) => { const esc = f.esc; return (headlines || []).map(h=>
+      `<div class="macroRow"><a href="${esc(h.url)}" target="_blank" rel="noopener"
+        style="color:var(--ink);text-decoration:none">${esc(h.title)}</a></div>`).join(''); },
+  };
+  /* the Quant Studio's pulse stats from daily closes (every asset class, customs too) */
+  M.computeStats = function(c){
+  if(!c||c.length<2) return null;
+  const n=c.length, last=c[n-1];
+  const at=k=>c[Math.max(0,n-1-k)];
+  const pct=(a,b)=>(b?((a-b)/b*100):null);
+  let rsi=null;
+  if(n>15){ let g=0,l=0; for(let i=n-14;i<n;i++){ const d=c[i]-c[i-1]; if(d>=0)g+=d; else l-=d; }
+    const rs=l===0?100:g/l; rsi=l===0?100:100-100/(1+rs); }
+  let vol=null;
+  const rets=[]; for(let i=Math.max(1,n-31);i<n;i++){ if(c[i-1]) rets.push(c[i]/c[i-1]-1); }
+  if(rets.length>=8){ const m=rets.reduce((s,x)=>s+x,0)/rets.length;
+    const v=rets.reduce((s,x)=>s+(x-m)*(x-m),0)/rets.length; vol=Math.sqrt(v)*Math.sqrt(252)*100; }
+  const w52=c.slice(-252), lo=Math.min.apply(null,w52), hi=Math.max.apply(null,w52);
+  return {last:last, chg1d:pct(last,at(1)), chg1w:pct(last,at(5)), chg1m:pct(last,at(21)),
+    chg3m:pct(last,at(63)), chg1y:pct(last,at(252)),
+    rsi:(rsi==null?null:Math.round(rsi)), vol:(vol==null?null:Math.round(vol)),
+    lo52:lo, hi52:hi, range52:(hi>lo?Math.round((last-lo)/(hi-lo)*100):50)};
+  };
+  /* the Quant Studio's sparkline; c = the page's colours {up, dn, hexA} */
+  M.drawSpark = function(cv,vals,up,c){
+  const dpr=root.devicePixelRatio||1;
+  const W=cv.clientWidth||56,H=cv.clientHeight||20;
+  cv.width=W*dpr;cv.height=H*dpr;
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  const lo=Math.min(...vals),hi=Math.max(...vals);
+  const col=up?c.up:c.dn;
+  ctx.beginPath();
+  vals.forEach((v,i)=>{
+    const x=i/(vals.length-1)*W, y=H-1-(hi>lo?(v-lo)/(hi-lo):0.5)*(H-2);
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.strokeStyle=col; ctx.lineWidth=1.2; ctx.stroke();
+  ctx.lineTo(W,H); ctx.lineTo(0,H); ctx.closePath();
+  const g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,c.hexA(col,.3)); g.addColorStop(1,c.hexA(col,0));
+  ctx.fillStyle=g; ctx.fill();
+  };
+  /* the holdings table's pulse cells, filled row by row. d = {closes(key) -> {c} | null, sent() -> {key: {score}}, fmtPx, fmtPct,
+     spark(canvas, values, up)} */
+  M.fillHoldings = function(host, d){
+  const computeStats=M.computeStats, fmtPx=d.fmtPx, fmtPct=d.fmtPct;
+  host.querySelectorAll('tr[data-hk]').forEach(async tr=>{
+    const key=tr.getAttribute('data-hk');
+    const bars=await d.closes(key);
+    const st=bars?computeStats(bars.c):null;
+    if(st){
+      const cv=tr.querySelector('.hspark');
+      if(cv&&bars.c.length>1) d.spark(cv,bars.c.slice(-60),(st.chg1m||0)>=0);
+      const q=cls=>tr.querySelector('.'+cls);
+      q('hLast').textContent=fmtPx(st.last);
+      const setC=(cls,v)=>{ const el=q(cls); if(el){ el.textContent=fmtPct(v); el.classList.add((v||0)>=0?'up':'dn'); } };
+      setC('hc1d',st.chg1d); setC('hc1w',st.chg1w); setC('hc1m',st.chg1m);
+      q('hRsi').textContent=(st.rsi==null?'—':st.rsi);
+      q('hVol').textContent=(st.vol==null?'—':st.vol+'%');
+      q('h52').innerHTML='<span class="pbar" style="width:56px;display:inline-block;vertical-align:middle">'+
+        '<i style="width:'+st.range52+'%;background:linear-gradient(90deg,var(--dn),var(--warn),var(--up))"></i></span>';
+    }
+    let sdat=null; try{ sdat=(await d.sent())[key]; }catch(_){}
+    const sc=tr.querySelector('.hSent');
+    if(sc){ if(sdat&&sdat.score!=null){ const cls=sdat.score>0.15?'bull':sdat.score<-0.15?'bear':'flat';
+        sc.innerHTML='<span class="chip '+cls+'" style="font-size:9px">'+(sdat.score>0?'+':'')+Number(sdat.score).toFixed(2)+'</span>'; }
+      else sc.innerHTML='<span class="muted">—</span>'; }
+  });
+  };
   /* /markets/indicators' answer drawn: overlays on the price chart, the rest in panes made by addSub(id, labelHtml).
      ctx = { main, bars (columnar), result, addSub, overlays (array the overlay series go in), esc }. */
   M.drawIndicators = function (ctx) {
@@ -158,8 +281,24 @@
     { id: 'macd', label: 'MACD', kind: 'macd', params: { fast: 12, slow: 26, signal: 9 } },
   ];
   const ON_KEY = 'vera:mktchart:ind';
+  /* the chart and the views deeper into its asset (navigation, not actions: nothing here places or changes anything) */
+  const VIEWS = [
+    { id: 'chart', label: 'Chart', tip: 'The candles' },
+    { id: 'news', label: 'News', tip: "The asset's headlines (a web search, run when this is opened)" },
+    { id: 'pos', label: 'Position', tip: 'Your holding in this asset and its recorded trades' },
+    { id: 'alerts', label: 'Alerts', tip: "The strategies' signals and the monitors on this asset" },
+    { id: 'bt', label: 'Backtests', tip: 'Backtests run on this asset - pick one to put its trades on the candles' },
+  ];
+  const NEWS_TTL = 600000;   /* an asset's headlines are searched again after 10 minutes, not on every opening */
+  const newsSeen = new Map();
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   const fmt = (v) => (v == null || !isFinite(v) ? '—' : Math.abs(v) >= 1000 ? v.toFixed(2) : Math.abs(v) >= 1 ? v.toFixed(3) : v.toPrecision(4));
+  /* the deeper views' formatters (the Quant Studio's) */
+  const F = { esc,
+    fmtPx: (v) => { if (v == null || !isFinite(v)) return '—'; const a = Math.abs(v);
+      return a >= 100000 ? v.toLocaleString(undefined, { maximumFractionDigits: 0 }) : a >= 1000 ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : a >= 1 ? v.toFixed(2) : a >= 0.01 ? v.toFixed(4) : v.toPrecision(4); },
+    fmtPct: (v) => (v == null || !isFinite(v) ? '—' : (v >= 0 ? '+' : '') + Number(v).toFixed(2) + '%'),
+    fmtN: (v) => (v == null ? '—' : Math.abs(v) >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : Math.abs(v) >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : (+v).toFixed(2)) };
   const fmtV = (v) => (v == null ? '—' : v >= 1e9 ? (v / 1e9).toFixed(2) + 'B' : v >= 1e6 ? (v / 1e6).toFixed(2) + 'M' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'k' : String(Math.round(v)));
   /* a theme colour as the chart library can read it: the theme's names may be color-mix(...) expressions, which it cannot
      parse - one pixel painted with it says what it is */
@@ -256,11 +395,29 @@
         .pane{position:relative;min-height:0;overflow:hidden} .pane.main{flex:3 1 0} .pane.sub{flex:1 1 0;border-top:1px solid var(--bd,rgba(127,127,127,.18))}
         .pl{position:absolute;left:4px;top:2px;z-index:3;font-size:9.5px;color:var(--dim2,#8a7e70);pointer-events:none}
         .msg{padding:12px;color:var(--dim2,#8a7e70)}
+        [hidden]{display:none!important}
+        .vw{display:inline-flex;gap:2px;margin-left:auto}
+        .vw button{font:inherit;font-size:9.5px;padding:0 6px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--dim2,#8a7e70);cursor:pointer}
+        .vw button.on{color:var(--t1,#e8e0d4);border-bottom-color:var(--acc,#5a9e8f)}
+        /* the deeper views: the Markets pages' own rows (M.rows), their classes given here */
+        .side{flex:1 1 auto;min-height:0;overflow:auto;padding:2px 4px 6px;font-size:11px}
+        .side .muted{color:var(--dim2,#8a7e70)} .side .num{font-family:var(--mono,ui-monospace,monospace)}
+        .side .pos,.side .up,.side .bull{color:var(--ok,#3fd0a4)} .side .neg,.side .dn,.side .bear{color:var(--err,#e0705a)}
+        .side .chip{display:inline-block;padding:0 6px;border-radius:8px;border:1px solid var(--bd,rgba(127,127,127,.3))}
+        .side .condRow{display:flex;align-items:center;gap:6px;margin:4px 0;flex-wrap:wrap;padding:5px 7px;border:1px solid var(--bd,rgba(127,127,127,.2));border-radius:7px}
+        .side .macroRow{padding:4px 0;border-bottom:1px dashed var(--bd,rgba(127,127,127,.2))} .side .macroRow a{--ink:var(--t1,#e8e0d4)}
+        .side table{border-collapse:collapse;width:100%} .side th,.side td{padding:2px 5px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--bd,rgba(127,127,127,.15))}
+        .side th{color:var(--dim2,#8a7e70);font-weight:normal} .side h5{margin:8px 0 3px;font-size:10px;color:var(--dim2,#8a7e70);font-weight:normal;text-transform:uppercase;letter-spacing:.4px}
+        .side [data-btid]:hover,.side tr[data-hk]:hover td{background:var(--bg3,rgba(127,127,127,.12))}
+        .side .pbar{height:6px;background:rgba(127,127,127,.2);border-radius:3px;overflow:hidden} .side .pbar i{display:block;height:100%}
       </style>
-      <div class="wrap"><div class="hd"><button class="bk" data-a="back" title="Back to the asset before" hidden>←</button><b class="sym"></b><vera-mkt-lookup class="lk" placeholder="Search assets…"></vera-mkt-lookup><span class="px"></span><span class="ch"></span><span class="rd"></span></div>
+      <div class="wrap"><div class="hd"><button class="bk" data-a="back" title="Back to the asset before" hidden>←</button><b class="sym"></b><vera-mkt-lookup class="lk" placeholder="Search assets…"></vera-mkt-lookup><span class="px"></span><span class="ch"></span>
+        <span class="vw">${VIEWS.map((x) => `<button data-a="view" data-v="${x.id}" title="${esc(x.tip)}" class="${x.id === 'chart' ? 'on' : ''}">${esc(x.label)}</button>`).join('')}</span><span class="rd"></span></div>
       <div class="bar"><span class="tfs"></span><span class="sp"></span><span class="inds"></span><span class="sp"></span><button data-a="vol" title="Volume under the candles">Vol</button><button data-a="fit" title="Fit the whole history">Fit</button><span class="note"></span></div>
-      <div class="stack"><div class="pane main"></div></div></div>`;
-      this.shadowRoot.addEventListener('click', (ev) => { const b = ev.target.closest && ev.target.closest('button[data-a]'); if (!b) return; ev.stopPropagation(); this._act(b.dataset.a, b.dataset.v); });
+      <div class="stack"><div class="pane main"></div></div><div class="side" hidden></div></div>`;
+      this.shadowRoot.addEventListener('click', (ev) => { const bt = ev.target.closest && ev.target.closest('[data-btid]'); if (bt) { ev.stopPropagation(); this._openBt(bt.dataset.btid); return; }
+        if (ev.target.closest && ev.target.closest('.side tr[data-hk]')) { ev.stopPropagation(); this._view('chart'); return; }   /* the holding's row: its candles */
+        const b = ev.target.closest && ev.target.closest('button[data-a]'); if (!b) return; ev.stopPropagation(); this._act(b.dataset.a, b.dataset.v); });
       this.shadowRoot.addEventListener('mkt-pick', (ev) => { ev.stopPropagation(); const d = ev.detail || {}; if (!d.symbol) return; this._go(d.provider, d.symbol, true); });
       /* live only while seen: a chart scrolled away, behind a tab or in a pill does not poll */
       this._io = new IntersectionObserver((es) => { this._seen = es.some((e) => e.isIntersecting); this._livePlan(); }); this._io.observe(this);
@@ -276,11 +433,14 @@
     /* another asset in this chart (the search, or Back): history kept; the host hears 'mkt-symbol' {provider, symbol} so it may keep it */
     _go(prov, sym, push) { if (!sym || (sym === this._sym && prov === this._prov)) return;
       if (push) (this._hist = this._hist || []).push({ provider: this._prov, symbol: this._sym });
-      this._tfsOf = null; this._mkt = null; this.setAttribute('provider', prov || 'yahoo'); this.setAttribute('symbol', sym);
+      /* a backtest's trades belong to the asset it ran on */
+      this._tfsOf = null; this._mkt = null; this._entries = []; this._exits = []; this._btNote = ''; this.setAttribute('provider', prov || 'yahoo'); this.setAttribute('symbol', sym);
       const bk = this.shadowRoot.querySelector('.bk'); if (bk) bk.hidden = !(this._hist && this._hist.length);
+      if (this._vw && this._vw !== 'chart') this._side();   /* the deeper view open stays open, for the new asset */
       this.dispatchEvent(new CustomEvent('mkt-symbol', { bubbles: true, composed: true, detail: { provider: prov, symbol: sym } })); }
     _act(a, v) {
       if (a === 'back') { const h = (this._hist || []).pop(); if (h) this._go(h.provider, h.symbol, false); return; }
+      if (a === 'view') { this._view(v); return; }
       if (a === 'tf') { this.setAttribute('tf', v); return; }
       if (a === 'ind') { if (this._on.has(v)) this._on.delete(v); else this._on.add(v); try { localStorage.setItem(ON_KEY, JSON.stringify([...this._on])); } catch (e) { /* this page only */ } this._draw(false); return; }
       if (a === 'vol') { this._vol = !this._vol; this._draw(false); return; }
@@ -304,7 +464,10 @@
           /* a timeframe whose probe failed is not known to be empty: none settled until every probe answered */
           if (got.some((g) => g === undefined)) { this._tfsOf = undefined; } else
           { if (seq !== this._seq) return; const have = got.filter(Boolean); this._tfsOf = have.length ? have : null; } }
-        if (wFailed) this._tfsOf = undefined; }
+        if (wFailed) this._tfsOf = undefined;
+        /* ANOTHER ASSET WITHOUT THIS TIMEFRAME (18 Oct, the design mirror: BTC-USD on 1h, then ETH-USD, which has no 1h bars - the
+           chart said "No stored bars" for good): it opens on a timeframe the asset has - the daily, else its first */
+        if (Array.isArray(this._tfsOf) && !this._tfsOf.includes(this._tf)) { this.setAttribute('tf', this._tfsOf.includes('1d') ? '1d' : this._tfsOf[0]); return; } }
       /* not known yet (a read failed): only the timeframe on show - offering every one the provider has led to presses with nothing behind them */
       const tfs = this._tfsOf || (this._tfsOf === undefined ? [...new Set([this._goodTf || this._tf, this._tf])] : (this._prov === 'yahoo' ? M.YAHOO_TFS : (this._prov === 'custom' ? ['1d'] : M.TFS)));
       sr.querySelector('.sym').textContent = this._sym; sr.querySelector('.tfs').innerHTML = tfs.map((tf) => `<button data-a="tf" data-v="${tf}" class="${tf === this._tf ? 'on' : ''}">${tf}</button>`).join('');
@@ -347,7 +510,7 @@
          420 px the panes of their own (RSI, MACD) wait for room; the overlays on the price stay */
       this._small = (this.clientHeight || 0) < 420; const PANE = { rsi: 1, macd: 1 };
       const want = IND.filter((d) => this._on.has(d.id) && !(this._small && PANE[d.kind])).map((d) => ({ id: d.id, kind: d.kind, params: d.params }));
-      const noteEl = sr.querySelector('.note'); if (noteEl) noteEl.textContent = this._small && IND.some((d) => this._on.has(d.id) && PANE[d.kind]) ? 'panes when larger' : '';
+      const noteEl = sr.querySelector('.note'); if (noteEl) noteEl.textContent = [this._btNote, this._small && IND.some((d) => this._on.has(d.id) && PANE[d.kind]) ? 'panes when larger' : ''].filter(Boolean).join(' · ');
       const r = want.length ? await api('/markets/indicators', { dataset_id: M.dsId(this._prov, this._sym, this._tf), indicators: want, limit: 2000 }) : null;
       if (seq !== this._seq) return;
       const keep = this._main ? this._main.timeScale().getVisibleLogicalRange() : null;
@@ -392,14 +555,68 @@
     }
     /* signals from a backtest or a strategy: entries and exits as unix times */
     setSignals(entries, exits) { this._entries = entries || []; this._exits = exits || []; if (this._candle) this._markers = M.setMarkers(this._candle, this._entries, this._exits, this._markers, this._mkt && this._mkt.markers); }
+    /* a read-only capability through the same /mcp/call the desk uses: the answer's content, or null. Tagged with the surface it
+       came from (DO-0.5: the desk, a canvas panel or the Markets page) and whether a person's action started it */
+    async _call(name, args) {
+      const surf = (() => { try { const h = this.getRootNode && this.getRootNode().host; return h && /^VERA-CANVAS$/i.test(h.tagName) ? (h.deskAlign && h.deskAlign() ? 'desk' : 'panel:canvas') : 'panel:markets'; } catch (e) { return 'panel:markets'; } })();
+      try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vera-Surface': surf + '; trigger=' + (root.navigator && root.navigator.userActivation && root.navigator.userActivation.isActive ? 'person' : 'auto') }, body: JSON.stringify({ name, arguments: args || {} }) });
+        const j = await r.json(); return j && j.type === 'tool_result' ? j.content : j; } catch (e) { return null; } }
+    /* GOING DEEPER (owner 2026-10-18: "navigate a bit deeper"; the redesign plan section 4): the asset's news, position, alerts and
+       backtests as tabs of the chart. Each is read when its tab is opened or the asset changes under it (never on a timer) and drawn
+       by the Markets pages' own rows (M.rows). A backtest picked puts its trades on the candles. */
+    _view(v) { this._vw = VIEWS.some((x) => x.id === v) ? v : 'chart'; const sr = this.shadowRoot, chart = this._vw === 'chart';
+      sr.querySelectorAll('.vw button').forEach((b) => b.classList.toggle('on', b.dataset.v === this._vw));
+      sr.querySelector('.bar').hidden = !chart; sr.querySelector('.stack').hidden = !chart; sr.querySelector('.side').hidden = chart;
+      if (!chart) this._side(); }
+    async _side() {
+      const v = this._vw, prov = this._prov, sym = this._sym, key = prov + ':' + sym, dsp = 'mkt.' + prov + '.' + M.slug(sym) + '.';
+      const side = this.shadowRoot.querySelector('.side'), want = v + '|' + key; this._sideId = want;
+      side.innerHTML = `<div class="msg">${v === 'news' ? 'Searching headlines for ' + esc(sym) + '…' : 'Reading…'}</div>`;
+      const none = (t) => `<div class="msg">${esc(t)}</div>`; let html = '', after = null;
+      if (v === 'news') {
+        let r = newsSeen.get(key); if (!r || Date.now() - r.at > NEWS_TTL) { r = await this._call('markets.news.feed', { symbol_key: key, limit: 8 }); if (r && r.headlines) newsSeen.set(key, Object.assign({ at: Date.now() }, r)); }
+        html = r && r.headlines && r.headlines.length ? M.rows.news(r.headlines, F) + (r.query ? `<div class="muted" style="font-size:9.5px;margin-top:5px">searched: ${esc(r.query)}</div>` : '')
+          : none((r && r.error) || 'No headlines found for ' + sym);
+      } else if (v === 'pos') {
+        const [p, tx] = await Promise.all([this._call('markets.portfolio.positions', {}), this._call('markets.portfolio.tx_list', { symbol_key: key, limit: 50 })]);
+        /* the real book's row for this asset, as the Quant Studio's Portfolio page maps and draws it */
+        const mine = ((p && p.positions) || []).filter((x) => x.symbol_key === key).map((x) => ({ symbol_key: x.symbol_key, qty: x.qty, avg_cost: x.avg_cost, last: x.last,
+          value: x.market_value, unrealized: x.unrealized_pnl, unrealized_pct: x.unrealized_pct, realized: x.realized_pnl, alloc: x.allocation_pct }));
+        const txs = ((tx && tx.transactions) || []).filter((x) => !x.symbol_key || x.symbol_key === key);
+        if (mine.length) after = (host) => M.fillHoldings(host, { fmtPx: F.fmtPx, fmtPct: F.fmtPct, spark: (cv, vals, up) => M.drawSpark(cv, vals, up, this._sparkCol()),
+          closes: async (k) => { const r = await api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(prov, sym, '1d')) + '&limit=300'); return r && r.c && r.c.length ? r : null; },
+          sent: async () => { const r = await this._call('markets.sentiment.map', {}); const idx = {}; ((r && r.tracked) || []).concat((r && r.benchmarks) || []).forEach((x) => { if (x && x.key) idx[x.key] = x; }); return idx; } });
+        html = (mine.length ? `<div style="overflow-x:auto"><table>${M.rows.holdings(mine, F, true)}</table></div>` : none('No position in ' + sym + ' in the real book'))
+          + (txs.length ? '<h5>recorded trades</h5><table><tr><th>when</th><th>side</th><th>qty</th><th>price</th></tr>' + txs.map((x) => `<tr><td>${esc(String(x.ts || x.created_at || '').slice(0, 16).replace('T', ' '))}</td><td class="${String(x.side || '').toLowerCase() === 'sell' ? 'dn' : 'up'}">${esc(x.side || '')}</td><td>${esc(x.qty)}</td><td>${F.fmtPx(Number(x.price))}</td></tr>`).join('') + '</table>' : '');
+      } else if (v === 'alerts') {
+        const [al, mon] = await Promise.all([this._call('markets.alerts.list', { limit: 500 }), this._call('markets.monitor.status', {})]);
+        const mine = ((al && al.alerts) || []).filter((x) => String(x.dataset_id || '').startsWith(dsp));
+        const mons = ((mon && mon.monitors) || []).filter((m) => String(m.dataset_id || '').startsWith(dsp));
+        html = (mons.length ? `<h5>monitored by</h5><div>${mons.map((m) => `<span class="chip">${esc(m.name || m.id)} · ${esc(String(m.dataset_id || '').split('.').pop())}</span>`).join(' ')}</div>` : '')
+          + (mine.length ? '<h5>signals</h5>' + M.rows.alerts(mine, F) : none('No alerts for ' + sym + (mons.length ? ' yet' : ' - no strategy monitors it')));
+      } else if (v === 'bt') {
+        const r = await this._call('markets.backtest.list', { limit: 200 });
+        const mine = ((r && r.backtests) || []).filter((b) => String(b.dataset_id || '').startsWith(dsp));
+        html = mine.length ? M.rows.backtests(mine, F) + '<div class="muted" style="font-size:9.5px;margin-top:5px">pick one to put its trades on the candles</div>' : none('No backtests run on ' + sym + ' (of the latest 200)');
+      }
+      if (this._sideId !== want) return; side.innerHTML = html; if (after) after(side); }
+    /* the sparkline in the desk's theme colours */
+    _sparkCol() { const cs = getComputedStyle(this); const g = (n, fb) => plainColor(cs.getPropertyValue(n).trim() || fb, fb);
+      return { up: g('--ok', '#3fd0a4'), dn: g('--err', '#e0705a'), hexA: (c, a) => (/^rgba\(/.test(c) ? c.replace(/,[^,]*\)$/, ',' + a + ')') : M.hexA(c, a)) }; }
+    /* a backtest's trades on the candles, on the timeframe it ran on */
+    async _openBt(id) {
+      const r = await this._call('markets.backtest.get', { id }); if (!r || r.error) return;
+      const tr = r.trades || []; const tf = String(r.dataset_id || '').split('.').pop();
+      this._entries = tr.map((t) => t.entry_t).filter((t) => t != null); this._exits = tr.map((t) => t.exit_t).filter((t) => t != null);
+      this._view('chart');
+      if (tf && tf !== this._tf && M.TFS.includes(tf)) this.setAttribute('tf', tf);   /* the markers go on with the new bars */
+      else this.setSignals(this._entries, this._exits);
+      this._btNote = 'backtest ' + M.shortText(r.name, 24) + ': ' + tr.length + ' trades'; const n = this.shadowRoot.querySelector('.note'); if (n) n.textContent = this._btNote; }
     /* the market's own markers (M.marketMarkers): read once a minute per asset and timeframe, then drawn with the signals */
     async _mktLoad(seq) {
       const B = this._B; if (!B || !this._candle) return; const id = this._prov + ':' + this._sym + ':' + this._tf;
       if (!this._mkt || this._mkt.id !== id || Date.now() - this._mkt.at > 60000) {
-        const surf = (() => { try { const h = this.getRootNode && this.getRootNode().host; return h && /^VERA-CANVAS$/i.test(h.tagName) ? (h.deskAlign && h.deskAlign() ? 'desk' : 'panel:canvas') : 'panel:markets'; } catch (e) { return 'panel:markets'; } })();
-        const call = async (name, args) => { try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vera-Surface': surf + '; trigger=' + (root.navigator && root.navigator.userActivation && root.navigator.userActivation.isActive ? 'person' : 'auto') }, body: JSON.stringify({ name, arguments: args || {} }) });
-          const j = await r.json(); return j && j.type === 'tool_result' ? j.content : j; } catch (e) { return null; } };
-        let got = null; try { got = await M.marketMarkers(call, this._prov, this._sym, B.t.slice()); } catch (e) { got = null; }
+        let got = null; try { got = await M.marketMarkers((n, a) => this._call(n, a), this._prov, this._sym, B.t.slice()); } catch (e) { got = null; }
         if (seq !== this._seq || !got) return; this._mkt = Object.assign({ id, at: Date.now() }, got); }
       if (!this._candle) return;
       this._markers = M.setMarkers(this._candle, this._entries, this._exits, this._markers, this._mkt.markers);

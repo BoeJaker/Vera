@@ -2039,13 +2039,9 @@ function btStatsHtml(s){
     (s.sqn!=null?cell(s.sqn,'SQN',cls(s.sqn)):cell(s.sortino??'—','sortino',cls(s.sortino)))+
     cell(esc(s.engine||'native'),'engine');
 }
+/* the rows are the shared ones (markets/chart.js VeraMktChart.rows): the desk chart's Backtests tab draws the same */
 function btTradesRows(trades){
-  return (trades||[]).slice(-40).reverse().map(t=>{
-    const d1=new Date(t.entry_t*1000).toISOString().slice(0,10);
-    const d2=t.exit_t?new Date(t.exit_t*1000).toISOString().slice(0,10):'—';
-    return `<tr><td>${d1}</td><td>${d2}</td>
-      <td class="${t.ret_pct>0?'pos':'neg'}">${fmtPct(t.ret_pct)}</td><td class="tx">${esc(t.reason||'')}</td></tr>`;
-  }).join('')||'<tr><td colspan="4" class="tx muted">no trades</td></tr>';
+  return VeraMktChart.rows.trades(trades,{esc,fmtPct});
 }
 function btShowResult(r){
   $('btResCard').style.display='block';
@@ -2058,15 +2054,7 @@ async function btLoadList(){
   const r=await api('/markets/backtest/list?limit=15');
   const el=$('btList');
   if(!r||!(r.backtests||[]).length){ el.innerHTML='<span class="muted">No results yet.</span>'; return; }
-  el.innerHTML=r.backtests.map(b=>{
-    const s=b.stats||{};
-    return `<div style="display:flex;gap:6px;align-items:center;padding:3px 0;font-size:10.5px;cursor:pointer"
-      data-btid="${b.id}">
-      <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-        <b>${esc(b.name)}</b> <span class="muted">${esc(b.dataset_id)}</span></span>
-      <span class="${(s.total_return_pct||0)>=0?'pos':'neg'}" style="font-family:var(--mono)">${fmtPct(s.total_return_pct)}</span>
-    </div>`;
-  }).join('');
+  el.innerHTML=VeraMktChart.rows.backtests(r.backtests,{esc,fmtPct});
   el.querySelectorAll('[data-btid]').forEach(x=>x.onclick=()=>btOpen(x.dataset.btid));
 }
 async function btOpen(id){
