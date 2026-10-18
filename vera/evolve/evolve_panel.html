@@ -222,6 +222,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="tests" onclick="nav('tests')" title="Four-minds' tests on the schedule &mdash; each one's health (failed, interrupted, missed, recovering, running), its last runs and what it found"><span class="ic">&#10003;</span>Tests</button>
   <button class="btn" data-sec="models" onclick="nav('models')" title="Every model Vera uses - which jobs it serves, how fast it runs on real traffic, its benchmarks, and the students scored in shadow"><span class="ic">&#9672;</span>Models</button>
   <button class="btn" data-sec="performance" onclick="nav('performance')" title="How well things run - Loop Lab (censuses, gates, releases, the background queue) beside Vera's normal use (chat reply time, the chat corpus, services), each number with its source"><span class="ic">&#9889;</span>Performance</button>
+  <button class="btn" data-sec="compare" onclick="nav('compare')" title="Line things up: pin lanes and items from any page, then see them stacked, layered or side by side on one axis, aligned on an event with what changed before and after"><span class="ic">&#8646;</span>Compare</button>
   <button class="btn" data-sec="settings" data-vera-settings="#sec-settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
 
@@ -500,6 +501,15 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="olv-lanes" id="olv-lanes"></div>
     <div id="olv-tl-host"><div class="hint">loading the timeline&hellip;</div></div>
     <vera-drill class="olv-drill" id="olv-drill" url></vera-drill>
+  </div>
+</div>
+
+<div class="sec" id="sec-compare" style="display:none">
+  <!-- Compare (looplab-control §9 K4): THE compare workspace (/ui/vera-compare.js) - pins from any page, on THE
+       timeline, stacked / layered / side by side, aligned on an event with insight rows. -->
+  <div class="card">
+    <div class="card-h"><span class="card-t">Compare</span><span class="hint">pin a lane or an item from the Overview's drill panel &middot; stack, layer or set side by side &middot; &#9875; aligns on a pinned item and shows what changed before and after it</span></div>
+    <vera-compare id="cmp" mode="stack"></vera-compare>
   </div>
 </div>
 
@@ -1157,7 +1167,7 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={overview:loadOverviewPage,work:loadWork,ship:loadShip,agents:agentsPoll,mission:missionPoll,
+  const f={overview:loadOverviewPage,compare:loadComparePage,work:loadWork,ship:loadShip,agents:agentsPoll,mission:missionPoll,
     tests:()=>{const fr=document.getElementById('tests-frame');if(fr&&!fr.getAttribute('src'))fr.setAttribute('src',(window._veraBase||'')+fr.dataset.src);},
     // Pages Mission control absorbed (slice 7): the compose form is a modal,
     // the theatres the live panel, the rest its table.
@@ -1207,6 +1217,7 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'tests', label:'Tests', icon:'\u2713', desc:'Scheduled tests and their health', desc_long:'Every scheduled test (four-minds matrix, claims, tool shortlist, memory census, chat corpus, census arms) - its schedule entries, next fire, health (failed / interrupted / missed / recovering / running / ok), last runs and report headline.'},
   {id:'models', label:'Models', icon:'\u25c8', desc:'Every model: speed, jobs, benchmarks', desc_long:'Every model Vera uses - which jobs it serves, how fast it runs on real traffic, its benchmarks, and the students scored in shadow.'},
   {id:'performance', label:'Performance', icon:'\u26a1', desc:'Loop Lab and Vera use, side by side', desc_long:'How well things run - Loop Lab (censuses, gates, releases, the background queue) beside Vera\'s normal use (chat reply time, the chat corpus, services), each number with its source.'},
+  {id:'compare', label:'Compare', icon:'\u21c6', desc:'Line things up on one axis', desc_long:'Pin lanes and items from any page, then see them stacked, layered or side by side on one axis, aligned on an event with what changed before and after it.'},
   {id:'settings', label:'Settings', icon:'\u2699', desc:'Loop Lab settings', desc_long:'Loop Lab settings.'},
 ]);
 
@@ -1240,6 +1251,27 @@ function _olvLoad(){try{const s=JSON.parse(localStorage.getItem('looplab-overvie
 function _olvSave(){try{localStorage.setItem('looplab-overview',JSON.stringify({r:_olvRange,on:[..._olvOn]}))}catch(_){}}
 function _olvLib(name,ready){return new Promise((ok,no)=>{if(ready())return ok();
   const sc=document.createElement('script');sc.src=(window._veraBase||'')+'/ui/'+name;sc.onload=()=>ok();sc.onerror=()=>no(new Error(name));document.head.appendChild(sc)})}
+async function loadComparePage(){
+  try{await Promise.all([_olvScript(),_olvLib('vera-compare.js',()=>window.VeraCompare&&customElements.get('vera-compare'))])}
+  catch(e){const c=$('cmp');if(c)c.innerHTML='<div class="hint">compare did not load: '+esc(e.message)+'</div>';return}
+  if(_olvOn==null)_olvLoad();OLV_LANES.forEach(L=>VeraTimeline.registerLane(_olvSpec(L)));_olvKit();   // pinned lane ids resolve
+}
+/* pin to Compare (K4): a pin carries its lane RECORD, so Compare re-reads it from its own source after a reload */
+async function olvPin(kind,laneId,item){
+  try{await _olvLib('vera-compare.js',()=>window.VeraCompare)}catch(e){toast('compare did not load');return}
+  const L=OLV_LANES.find(x=>x.lane===laneId);if(!L)return;
+  const spec=_olvSpec(L);
+  const p=kind==='lane'?{kind:'lane',lane:spec,label:L.label,color:L.c}
+    :{kind:'item',lane:spec,t:item.start||item.ts,end:item.end||'',label:String(item.title||item.summary||item.branch||L.label).replace(/^[▶▲]\s*/,''),
+      drill:laneId==='ll.tests'?'test-run:'+item.ts:'event:'+item.id,color:item.color||L.c};
+  const n=VeraCompare.addPin(p);toast(n?'pinned to Compare: '+n.label.slice(0,40):'could not pin that');
+}
+let _olvPinN=0;const _OLV_PIN_ITS={};
+function _olvPinBar(laneId,it){
+  const k='p'+(++_olvPinN);_OLV_PIN_ITS[k]=it;          // one key per bar: two drills side by side pin their own item
+  return '<div style="display:flex;gap:6px;margin-top:6px"><button class="btn" onclick="olvPin(\'item\',\''+laneId+'\',_OLV_PIN_ITS[\''+k+'\'])" title="pin this item to Compare">&#128204; pin to Compare</button>'+
+    '<button class="btn" onclick="olvPin(\'lane\',\''+laneId+'\')" title="pin the whole lane to Compare">&#8801; pin the lane</button><button class="btn" onclick="nav(\'compare\')">open Compare</button></div>';
+}
 function _olvScript(){return Promise.all([_olvLib('vera-timeline.js',()=>window.VeraTimeline&&customElements.get('vera-timeline')),
   _olvLib('vera-kit.js',()=>window.VeraDrill&&customElements.get('vera-drill'))])}
 async function loadOverviewPage(){
@@ -1306,7 +1338,8 @@ function _olvKit(){
       const sec=OLV_SRC_SEC[e.source]||'schedule';
       return _olvRow('what',e.title)+_olvRow('when',_olvWhen(e.start)+(e.end?' → '+_olvWhen(e.end):''))+_olvRow('detail',e.detail)+_olvRow('kind',e.kind)+
         _olvRow('result',e.result||e.grade||e.status)+_olvRow('pass rate',e.pass_rate!=null?Math.round(100*e.pass_rate)+'%':'')+
-        (e.schedule_id?'<div><span class="dk">schedule</span><a href="#" data-drill="schedule:'+esc(e.schedule_id)+'">'+esc(e.schedule_id)+' ›</a></div>':'')+open(sec);
+        (e.schedule_id?'<div><span class="dk">schedule</span><a href="#" data-drill="schedule:'+esc(e.schedule_id)+'">'+esc(e.schedule_id)+' ›</a></div>':'')+open(sec)+
+        ((OLV_LANES.find(x=>x.where===e.source)||{}).lane?_olvPinBar(OLV_LANES.find(x=>x.where===e.source).lane,e):'');
     }});
   VeraDrill.registerKind('schedule',{label:'Schedule',
     load:(id,ctx)=>ctx.call('evolve.schedule.get',{id}).then(a=>{if(!a||!a.schedule)throw new Error((a&&a.error)||'no such schedule');return a.schedule}),
@@ -1328,7 +1361,7 @@ function _olvKit(){
     tabs:[{id:'detail',label:'Detail'},{id:'failures',label:'Failures'}],
     render:(r,tab)=>{
       if(tab==='failures')return (r.failures||[]).length?'<pre>'+esc((r.failures||[]).map(f=>typeof f==='string'?f:JSON.stringify(f)).join('\n'))+'</pre>':'';
-      return _olvRow('branch',r.branch)+_olvRow('pipeline',r.pipeline_id||'(a run of its own)')+_olvRow('summary',r.summary)+_olvRow('paths',r.paths)+_olvRow('when',_olvWhen(r.ts))+open('ship');
+      return _olvRow('branch',r.branch)+_olvRow('pipeline',r.pipeline_id||'(a run of its own)')+_olvRow('summary',r.summary)+_olvRow('paths',r.paths)+_olvRow('when',_olvWhen(r.ts))+open('ship')+_olvPinBar('ll.tests',r);
     }});
   const live=$('olv-live');live.setRecords(OLV_LIVE);
   live.addEventListener('live:select',e=>{const d=e.detail;

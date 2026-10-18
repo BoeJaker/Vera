@@ -23,6 +23,7 @@
      itemsOf(spec, answer)    -> the source's answer through spec.map: [{t, end, value, label, color, tip, track, raw}]
      scale(range, width)      -> {x(t), t(x), from, to}
      render(model)            -> html string: {range:{from,to,now}, width, lanes:[{spec, items}], selected?, overlay?}
+                                 overlay = guide lines across every lane: [{t, end?, color, label, anchor?}]
      problems(spec)           -> why a spec is not a lane ([] when it is)
 
    <vera-timeline lanes="errors,code" from="-24h" to="+12h" height="34">: reads each lane's source, draws, re-reads on
@@ -186,7 +187,15 @@
     var nx = s.x(now), fut = now < s.to ? '<rect x="' + nx.toFixed(1) + '" y="16" width="' + (LABEL_W + s.w - nx).toFixed(1) + '" height="' + (y - 16) + '" fill="url(#vt-hatch)" pointer-events="none"/>' : '';
     var nowl = now >= s.from && now <= s.to ? '<line class="vt-now" x1="' + nx.toFixed(1) + '" x2="' + nx.toFixed(1) + '" y1="14" y2="' + y + '" stroke="#e0a458" stroke-width="2"/><text x="' + (nx + 4).toFixed(1) + '" y="12" font-size="10" fill="#e0a458" font-weight="600">now</text>' : '';
     var sel = model.selected && model.selected.t ? '<line x1="' + s.x(msOf(model.selected.t)).toFixed(1) + '" x2="' + s.x(msOf(model.selected.t)).toFixed(1) + '" y1="16" y2="' + y + '" stroke="#7aa2f7" stroke-width="1.5"/>' : '';
-    return '<svg class="vt" viewBox="0 0 ' + W + ' ' + (y + 2) + '" width="100%" style="display:block;font-family:inherit"><defs>' + defs + '</defs>' + ticks + rows + fut + sel + nowl + '</svg>';
+    /* model.overlay: guide lines across every lane - [{t, end?, color, label, anchor?}] (Compare's pinned items);
+       labels step up in three rows so pins close together stay readable */
+    var ov = (model.overlay || []).map(function (o, i) {
+      var t = msOf(o.t); if (t == null || t < s.from || t > s.to) return '';
+      var x = s.x(t), c = esc(o.color || '#a78bfa'), band = o.end && msOf(o.end) > t ? '<rect x="' + x.toFixed(1) + '" y="16" width="' + Math.max(1, s.x(msOf(o.end)) - x).toFixed(1) + '" height="' + (y - 16) + '" fill="' + c + '" fill-opacity=".07" pointer-events="none"/>' : '';
+      return band + '<line class="vt-guide" x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" y1="16" y2="' + y + '" stroke="' + c + '" stroke-width="' + (o.anchor ? 2.2 : 1.2) + '"' + (o.anchor ? '' : ' stroke-dasharray="4 3"') + ' pointer-events="none"/>' +
+        '<text x="' + (x + 3).toFixed(1) + '" y="' + (y - 4 - (i % 3) * 11) + '" font-size="9.5" fill="' + c + '" pointer-events="none">' + esc(String(o.label || '').slice(0, 28)) + '</text>';
+    }).join('');
+    return '<svg class="vt" viewBox="0 0 ' + W + ' ' + (y + 2) + '" width="100%" style="display:block;font-family:inherit"><defs>' + defs + '</defs>' + ticks + rows + fut + ov + sel + nowl + '</svg>';
   }
 
   var api = { registerLane: registerLane, lanes: lanes, lane: lane, registerLaneType: registerLaneType, types: function () { return Object.keys(TYPES).sort(); },
