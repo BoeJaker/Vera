@@ -122,3 +122,13 @@ def test_overnight_window():
     assert (e - s).total_seconds() == 4 * 3600
     with pytest.raises(ValueError):
         _rec(start="02:00", end="02:00")
+
+
+def test_scheduled_cap_may_take_an_argument_called_name():
+    """18 Oct 2026 live run: evolve.script.run {name: ...} failed with "_call() got multiple values for
+    argument 'name'". The scheduler's capability parameter is positional-only."""
+    import ast
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "evolve", "schedule_capabilities.py"),
+               encoding="utf-8").read()
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_call")
+    assert fn.args.posonlyargs and not any(a.arg == "name" for a in fn.args.args + fn.args.kwonlyargs)
