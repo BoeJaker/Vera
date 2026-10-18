@@ -100,7 +100,7 @@
                   memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines', cores: 'cellmap', 'core-matrix': 'cellmap', cpumap: 'cellmap' };
   // (status-matrix is the Loop Lab's picture - DRAWN below - not the cell map: its alias here was dead, DRAWN won, DO-0.3)
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
-  const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
+  const DRAWN = { lanes: 'events', trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
                   calendar: 'calendar', string: 'string', kv: 'values', form: 'values', pipes: 'graph', context_graph: 'graph', structgraph: 'graph', scatter: 'points', panel: 'panel', composite: 'composite',
                   // the Widgets board's still forms, drawn in their own right
@@ -1577,7 +1577,7 @@
     document.head.appendChild(sc);
   }
   // the face a lanes timeline has before its script or its lanes arrive: three lanes of sample marks, said so
-  const LANES_FACE = () => '<svg viewBox="0 0 300 66" width="100%" style="display:block"><g font-size="8" fill="#8a93a0">' +
+  const LANES_FACE = () => '<svg viewBox="0 0 300 66" width="100%" style="display:block"><g class="vw-svgt" fill="#8a93a0">' +
     ['code', 'runs', 'errors'].map((n, i) => '<text x="2" y="' + (14 + i * 20) + '">' + n + '</text><line x1="40" x2="298" y1="' + (11 + i * 20) + '" y2="' + (11 + i * 20) + '" stroke="#252c36"/>').join('') +
     '</g>' + [[60, 0, 30], [120, 0, 18], [200, 1, 60], [90, 1, 24], [150, 2, 6], [230, 2, 6], [250, 2, 6]].map((b) => '<rect x="' + b[0] + '" y="' + (6 + b[1] * 20) + '" width="' + b[2] + '" height="9" rx="2" fill="' + ['#7aa2f7', '#c9a35a', '#f87171'][b[1]] + '" opacity=".75"/>').join('') +
     '<line x1="210" x2="210" y1="2" y2="64" stroke="#e0a458" stroke-width="1.5"/></svg>';

@@ -216,7 +216,7 @@
   var api = { parse: parse, wordDiff: wordDiff, tokens: tokens, fold: fold, pairs: pairs, render: render, lintSummary: lintSummary, langOf: langOf };
   root.VeraDiff = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  if (root.VeraItem && typeof root.VeraItem.registerBody === 'function') root.VeraItem.registerBody('diff', { views: ['code'], fit: 'fill', minSize: 'm' });
+  /* registered in vera/ui/vera_item.js's element registry (DO-0.2), not here: a bare registerBody under a block's name replaced that block's body */
   if (!root.HTMLElement || !root.customElements) return;
 
   var CSS = 'vera-diff{display:block;outline:none;font-size:12px}.vd-bar{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}' +

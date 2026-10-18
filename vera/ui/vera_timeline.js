@@ -204,9 +204,7 @@
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 
   /* the item contract (the desk's ADR): THE timeline is a body every surface can host */
-  if (root.VeraItem && typeof root.VeraItem.registerBody === 'function') {
-    root.VeraItem.registerBody('timeline', { views: ['chart'], fit: 'fill', minSize: 'm' });
-  }
+  /* registered in vera/ui/vera_item.js's element registry (DO-0.2), not here: a bare registerBody under a block's name replaced that block's body */
 
   if (typeof root.customElements === 'undefined' || typeof root.HTMLElement === 'undefined') return;
 
