@@ -38,12 +38,12 @@ def _section(src, sec):
 # -- eight pages (Schedule joined the five on 2026-09-21; Releases + Tests on 2026-10-18)
 def test_loop_lab_is_eight_pages(src):
     secs = re.findall(r'<div class="sec" id="sec-([a-z]+)"', src)
-    assert sorted(secs) == ["agents", "mission", "models", "overview", "performance", "releases", "schedule", "settings", "ship", "tests", "work"], secs   # + Releases, + Tests, + Models, + Performance, + Overview (owner, 18 Oct 2026)
+    assert sorted(secs) == ["agents", "compare", "mission", "models", "overview", "performance", "releases", "schedule", "settings", "ship", "tests", "work"], secs   # + Releases, + Tests, + Models, + Performance, + Overview, + Compare (owner, 18 Oct 2026)
     rail = re.findall(r'data-sec="([a-z]+)"', src)
-    assert rail == ["overview", "work", "ship", "agents", "mission", "releases", "schedule", "tests", "models", "performance", "settings"], rail
+    assert rail == ["overview", "work", "ship", "agents", "mission", "releases", "schedule", "tests", "models", "performance", "compare", "settings"], rail
     for sec in ("master", "test", "watch", "errors", "activity"):
         assert 'id="sec-%s"' % sec not in src, "section %s still in the DOM" % sec
-    assert 'class="rail-grp"' not in src[src.index('id="nav"'):src.index("</div>", src.index('id="nav"'))], "eleven pages need no groups"
+    assert 'class="rail-grp"' not in src[src.index('id="nav"'):src.index("</div>", src.index('id="nav"'))], "twelve pages need no groups"
     nav = src[src.index("VeraPanelBridge.registerNav(["):]
     nav = nav[:nav.index("]);")]
     assert "{id:'mission', label:'Mission control'," in nav
