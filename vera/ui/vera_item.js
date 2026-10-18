@@ -476,6 +476,56 @@
     surfaces: ['chat'],
     note: "the chat's Explode; vera-graph's Exploded mode draws it too. The desk's explode item is the canvas's own body (plan §1.3: shared in Wave 4)." });
 
+  /* the shared kit (looplab-control §9 Phase K, vera-44; agreed with the desk 19 Oct - backbone §12): THE timeline, matrix,
+     drill panel / live strip / states, compare workspace and diff viewer. Each draws records it is handed or reads its own
+     caps through /mcp/call; Loop Lab's sections are built from them, and the desk's Wave 5 timelines land on vera-timeline. */
+  registerBody('vera-timeline', { role: 'element', element: 'vera-timeline', src: 'vera/ui/vera_timeline.js', label: 'Timeline (lanes)',
+    contract: [{ kind: 'lanes', by: 'api', reads: ['lanes', 'from', 'to'], how: 'lane RECORDS ({lane, label, group, type band|bar|mark|strip|tiles|chip|graph, source {cap, args}, map, live}) a family registers once; the element reads each lane\'s source, one read per shared source' },
+      { kind: 'lanes', by: 'api', reads: ['draw.lanes', 'draw.lane_specs', 'draw.from', 'draw.to'], how: "the dashboard's 'lanes' widget form (VeraWidget R.lanes): lane ids, lane records it carries, and the range" }],
+    faces: VIEWED, sizes: ['m', 'l', 'xl'],
+    controls: [],
+    navigation: [{ to: 'element', args: { element: 'vera-drill', kind: '<lane drill kind>', id: '<item id>' }, how: 'timeline:select {lane, item} - the host opens the item in its drill; timeline:brush {from, to} zooms' }],
+    search: null,
+    live: { route: '/mcp/call', every_s: 60, how: "each lane's own live seconds; a failed read (an unknown capability) is shown on the lane as an error, never as an empty lane" },
+    surfaces: ['dashboard', 'panel:evolve'],
+    note: 'No controls on its face (range, lane chips and drill belong to the host). model.overlay draws guide lines across every lane (Compare\'s pins). THE timeline: other timelines migrate onto it (desk Wave 5).' });
+  registerBody('vera-matrix', { role: 'element', element: 'vera-matrix', src: 'vera/ui/vera_matrix.js', label: 'Matrix (tiles)',
+    contract: [{ kind: 'matrix', by: 'api', reads: ['map.cells', 'map.row', 'map.col', 'map.value', 'colour', 'ok', 'group', 'sort', 'window'], how: 'a matrix RECORD over a cap answer (source) or handed cells (data): rows x columns, a value map or a numeric scale, row % and column totals when ok says what green is' }],
+    faces: VIEWED, sizes: ['m', 'l', 'xl'],
+    controls: [],
+    navigation: [{ to: 'element', args: { element: 'vera-drill', kind: '<host kind>', id: '<cell>' }, how: 'matrix:select {row, col, cell} - the host opens the cell' }],
+    search: null,
+    live: { route: '/mcp/call', every_s: 0, how: 'read once from its source, or redrawn when the host sets a new record' },
+    surfaces: ['panel:evolve'],
+    note: 'Loop Lab: tests race to green, candidate matrix (applications x candidates), release stages. Grouping, sorting and the window are the record\'s, set by the host.' });
+  registerBody('vera-drill', { role: 'element', element: 'vera-drill', src: 'vera/ui/vera_kit.js', label: 'Drill panel',
+    contract: [{ kind: 'drill', by: 'api', reads: ['kind', 'id', 'tab'], how: 'a path of frames; a KIND is a record a family registers (load, title, tabs, render); <a data-drill="kind:id"> inside a body opens a deeper frame' }],
+    faces: VIEWED, sizes: ['m', 'l', 'xl'],
+    controls: [{ id: 'crumbs', label: 'Breadcrumbs' }, { id: 'back', label: 'Back' }, { id: 'tabs', label: 'Tabs' }, { id: 'close', label: 'Close' }],
+    navigation: [{ to: 'element', args: { element: 'vera-drill', kind: '<kind>', id: '<id>' }, how: 'a deeper frame on the same path; the path rides in the hash (drill=kind:id@tab/...), so a link or a reload reopens it' }],
+    search: null,
+    live: null,
+    surfaces: ['panel:evolve'],
+    note: 'The same file has <vera-live-strip> (what is running now, from live records) and VeraStates (loading, empty, error, stale, broken - one look). Its own controls are the drill\'s chrome: it IS the control area.' });
+  registerBody('vera-compare', { role: 'element', element: 'vera-compare', src: 'vera/ui/vera_compare.js', label: 'Compare',
+    contract: [{ kind: 'pins', by: 'api', reads: ['pins'], how: 'pins are records (a lane, or an item with its time, carrying its lane record) kept per viewer; drawn with vera-timeline and vera-drill' }],
+    faces: ['window', 'full'], sizes: ['l', 'xl'],
+    controls: [{ id: 'mode', label: 'Stacked / layered / side by side' }, { id: 'window', label: '± window' }, { id: 'anchor', label: 'Align on a pin' }, { id: 'unpin', label: 'Unpin' }, { id: 'clear', label: 'Clear pins' }],
+    navigation: [{ to: 'element', args: { element: 'vera-drill', kind: '<pin drill kind>', id: '<pin id>' }, how: 'side by side opens each pinned item in its drill' }],
+    search: null,
+    live: { route: '/mcp/call', every_s: 0, how: 'each pinned lane is re-read from its own source when the pins change' },
+    surfaces: ['panel:evolve'],
+    note: 'Aligned on an item: equal windows before / after, cut to now, with the nearest items as evidence; a host can align it (setAnchor).' });
+  registerBody('vera-diff', { role: 'element', element: 'vera-diff', src: 'vera/ui/vera_diff.js', label: 'Diff viewer',
+    contract: [{ kind: 'diff', by: 'api', reads: ['pipeline'], how: 'evolve.pipeline.diff + evolve.pipeline.lint for a pipeline id, or a unified diff and findings a host hands it (setDiff)' }],
+    faces: VIEWED, sizes: ['m', 'l', 'xl'],
+    controls: [{ id: 'view', label: 'Unified / side by side', title: 'u' }, { id: 'fold', label: 'Unfold', title: 'e, or click a fold' }, { id: 'keys', label: 'Hunk and file keys', title: 'j / k hunk, n / p file' }],
+    navigation: [{ to: 'element', args: { element: 'vera-diff', path: '<path>', line: '<line>' }, how: 'diff:select {path, line} when a line number is clicked' }],
+    search: null,
+    live: null,
+    surfaces: ['panel:evolve'],
+    note: 'Word-level marks, syntax by file type (offline tokenizer), file tree with +/- and lint counts; lint shown on its line, a checker that could not run listed as absent. vera/ide/ide_changes_panel.html can adopt it.' });
+
   var api = { STATES: STATES, FACES: FACES, SIZES: SIZES, LAYERS: LAYERS, VIEWS: VIEWS, BACKS: BACKS, DOCKS: DOCKS, SETTABLE: SETTABLE, Z: Z, z: z,
             ROW: ROW, ROW_NARROW: ROW_NARROW, MENU: MENU, MENU_ALL: MENU_ALL, faceOf: faceOf, normalise: normalise, applySet: applySet,
             registerBody: registerBody, body: body, bodies: bodies, controls: controls, menu: menu, action: action,

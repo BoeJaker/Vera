@@ -697,7 +697,9 @@
       + '<button class="ib" data-act="tblcopy" title="Copy the rows shown (tab-separated)">copy</button><button class="ib" data-act="tblcsv" title="Download the rows shown as CSV">CSV</button></div>'
       + (ui.cols ? '<div class="vc-tcols">' + cols.map((h, j) => '<label><input type="checkbox" data-act="tblcol" data-col="' + j + '"' + (shown[j] ? ' checked' : '') + '>' + esc(h) + '</label>').join('') + '</div>' : '');
     const head = cols.length ? '<thead><tr>' + cols.map((h, j) => shown[j] ? '<th><button class="vc-tsort' + (ui.sort === j ? ' on' : '') + '" data-act="tblsort" data-col="' + j + '" title="Sort by ' + esc(h) + '">' + esc(h) + (ui.sort === j ? (ui.dir > 0 ? ' ▲' : ' ▼') : '') + '</button></th>' : '').join('') + '</tr></thead>' : '';
-    const body = '<tbody>' + rows.slice(0, LIM).map(([, r]) => '<tr>' + r.map((v, j) => shown[j] === false ? '' : '<td>' + mark(v) + '</td>').join('') + '</tr>').join('') + '</tbody>';
+    /* a row that is an estate thing (c.refs, from the shared reading) opens it - the estate's entity drawer (Wave 1) */
+    const refs = Array.isArray(c.refs) ? c.refs : [];
+    const body = '<tbody>' + rows.slice(0, LIM).map(([i, r]) => '<tr' + (refs[i] ? ' class="vc-tref" data-act="tblref" data-ref="' + esc(refs[i]) + '" title="open ' + esc(refs[i]) + '"' : '') + '>' + r.map((v, j) => shown[j] === false ? '' : '<td>' + mark(v) + '</td>').join('') + '</tr>').join('') + '</tbody>';
     return '<div class="vc-tablewrap vc-tbarwrap">' + bar + '<table class="vc-table">' + head + body + '</table>'
       + (rows.length > LIM ? '<div class="j-more">… ' + (rows.length - LIM) + ' more rows - the filter narrows them</div>' : '') + (q && !rows.length ? '<div class="vc-dim">no row has "' + esc(ui.q) + '"</div>' : '') + '</div>';
   }
@@ -1379,7 +1381,9 @@
       if (view === 'graph' && tableCats(c).length) return graphSlot(key) + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : '');
       const cell = (v) => esc(v == null ? '' : String(v));
       if (view === 'cards' || view === 'list') {
-        return `<div class="vc-tv vc-tv-${view}">` + rows.filter(Array.isArray).map((r) => `<div class="vc-tv-r"><b class="vc-tv-t">${cell(r[0])}</b>`
+        /* a row that is an estate thing (c.refs) opens it here too (Wave 1) */
+        const refs = Array.isArray(c.refs) ? c.refs : [];
+        return `<div class="vc-tv vc-tv-${view}">` + rows.map((r, i) => (Array.isArray(r) ? [r, i] : null)).filter(Boolean).map(([r, i]) => `<div class="vc-tv-r${refs[i] ? ' vc-tref" data-act="tblref" data-ref="' + esc(refs[i]) + '" title="open ' + esc(refs[i]) : ''}"><b class="vc-tv-t">${cell(r[0])}</b>`
           + (view === 'cards' ? `<dl>${r.slice(1).map((v, j) => `<dt>${cell(cols[j + 1] || '')}</dt><dd>${cell(v)}</dd>`).join('')}</dl>` : `<span class="vc-tv-s">${r.slice(1).map((v, j) => (cols[j + 1] ? `<i>${cell(cols[j + 1])}</i> ` : '') + cell(v)).join(' · ')}</span>`)
           + `</div>`).join('') + `</div>` + (c.caption ? `<div class="vc-cap">${esc(c.caption)}</div>` : '');
       }
@@ -2439,6 +2443,7 @@
   .vc-app-fc{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;white-space:nowrap}
   .vc-app-fc > .vc-app-f{flex:none;min-width:0;width:14px;height:14px;padding:0}
   /* an app's list (DA-05c): the filter row, the rows (a table or cards), the drawer of the row opened */
+  .vc-table tr.vc-tref{cursor:pointer} .vc-table tr.vc-tref:hover td{background:color-mix(in srgb,var(--acc,#5a9e8f) 10%,transparent)} .vc-tv-r.vc-tref{cursor:pointer} .vc-tv-r.vc-tref:hover{background:color-mix(in srgb,var(--acc,#5a9e8f) 10%,transparent)}
   .vc-app-rowsapp{display:flex;flex-direction:column;min-height:0;height:100%;gap:6px}
   .vc-app-tb{display:flex;align-items:center;gap:8px;flex:0 0 auto}
   .vc-app-q{flex:1 1 auto;min-width:0;height:24px;padding:0 8px;border-radius:6px;border:1px solid var(--border,#2a2f37);background:var(--bg0,#0e0f12);color:var(--fg,#dce1e8);font:11.5px var(--f-ui,var(--sans,system-ui,sans-serif))}
@@ -7512,6 +7517,10 @@
         if (this._doc) this.render(this._doc); this._mdAgain(); return; }
       /* the table bar (DU-E-table): sort by a header (again: the other way; a third time: the answer's order), the column
          picker and a column in it, copy (tab-separated) and CSV of the rows shown */
+      if (act === 'tblref') { const ref = btn.dataset.ref || ''; if (!ref) return;
+        const go = () => { try { window.veraEntityDrawer.open(ref); } catch (e) { /* no drawer on this page */ } };
+        if (window.veraEntityDrawer) go(); else ensureLib(((window._veraBase || '').replace(/\/$/, '')) + '/ui/vera-entity-drawer.js').then(() => { if (window.veraEntityDrawer) go(); });
+        return; }
       if (act === 'tblsort' || act === 'tblcols' || act === 'tblcol' || act === 'tblcopy' || act === 'tblcsv') { const ui = tblUi(this, key); const c = this._contentOf(key) || {};
         if (act === 'tblsort') { const j = +btn.dataset.col; if (ui.sort !== j) { ui.sort = j; ui.dir = 1; } else if (ui.dir > 0) ui.dir = -1; else { ui.sort = -1; ui.dir = 1; } }
         else if (act === 'tblcols') ui.cols = !ui.cols;

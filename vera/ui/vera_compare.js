@@ -107,7 +107,15 @@
     }).join('') + '</table>';
   }
 
-  var api = { problems: problems, normPin: normPin, pins: pins, addPin: addPin, removePin: removePin, clearPins: clearPins,
+  /* an item record dropped on Compare (the desk's item format: {kind:'widget', content:{record}}) -> pins, and why when none */
+  function pinsFromItem(item) {
+    var rec = item && item.content && item.content.record;
+    if (!rec) return { pins: [], why: 'not a widget record' };
+    var specs = (rec.draw && Array.isArray(rec.draw.lane_specs)) ? rec.draw.lane_specs : [];
+    if (rec.form === 'lanes' && specs.length) return { pins: specs.map(function (s) { return { kind: 'lane', lane: s, label: s.label || s.lane }; }).filter(function (p) { return !problems(p).length; }), why: '' };
+    return { pins: [], why: 'only timeline lanes can be pinned so far - this is a ' + (rec.form || 'widget') + ' widget' };
+  }
+  var api = { problems: problems, normPin: normPin, pinsFromItem: pinsFromItem, pins: pins, addPin: addPin, removePin: removePin, clearPins: clearPins,
               composite: composite, insights: insights, spanFor: spanFor, overlay: overlay, insightRows: insightRows, KEY: KEY };
   root.VeraCompare = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
@@ -121,7 +129,7 @@
     '.vc-ins{border-collapse:collapse;width:100%;font-size:12px;margin-top:10px}.vc-ins th{text-align:left;color:var(--muted,#8b93a1);font-weight:500;padding:3px 6px;border-bottom:1px solid var(--border,#2a313c)}' +
     '.vc-ins td{padding:4px 6px;border-bottom:1px solid var(--border,#2a313c);vertical-align:top}.vc-ins i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:6px}' +
     '.vc-ins td:nth-child(-n+4){white-space:nowrap}.vc-d.up{color:var(--ok,#6db87a)}.vc-d.down{color:var(--err,#c96b6b)}.vc-ev{display:inline-block;border-left:3px solid;padding:0 6px;margin:1px 4px 1px 0;font-size:11px}.vc-mut{color:var(--muted,#8b93a1)}' +
-    '.vc-empty{color:var(--muted,#8b93a1);font-size:12px;padding:14px 4px}';
+    '.vc-empty{color:var(--muted,#8b93a1);font-size:12px;padding:14px 4px}vera-compare.vc-drop{outline:2px dashed var(--accent,#7aa2f7);outline-offset:4px}';
   function ensureCss() { if (root.document.getElementById('vera-compare-css')) return; var st = root.document.createElement('style'); st.id = 'vera-compare-css'; st.textContent = CSS; root.document.head.appendChild(st); }
   function call(cap, args) {
     if (root.VeraDrill && root.VeraDrill.call) return root.VeraDrill.call(cap, args);
@@ -138,6 +146,16 @@
       root.addEventListener('compare:pins', this._onPins);
       if (!this._wired) {
         this._wired = true;
+        // a dragged ITEM RECORD (a dashboard tile's head, P-SUMMON): a lanes widget's lane records become lane pins
+        this.addEventListener('dragover', (ev) => { if (ev.dataTransfer && Array.prototype.indexOf.call(ev.dataTransfer.types || [], 'application/x-vera-item') >= 0) { ev.preventDefault(); this.classList.add('vc-drop'); } });
+        this.addEventListener('dragleave', () => this.classList.remove('vc-drop'));
+        this.addEventListener('drop', (ev) => {
+          this.classList.remove('vc-drop');
+          var raw = ev.dataTransfer && ev.dataTransfer.getData('application/x-vera-item'); if (!raw) return; ev.preventDefault();
+          var r = pinsFromItem(JSON.parse(raw));
+          r.pins.forEach(addPin);
+          this.dispatchEvent(new CustomEvent('compare:dropped', { bubbles: true, composed: true, detail: r }));
+        });
         this.addEventListener('click', (ev) => {
           var b = ev.target.closest('[data-vc]'); if (!b || !this.contains(b)) return;
           var a = b.getAttribute('data-vc'), v = b.getAttribute('data-v');

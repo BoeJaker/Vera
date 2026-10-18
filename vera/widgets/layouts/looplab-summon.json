@@ -1,0 +1,23 @@
+{
+ "v": 2,
+ "dashboard": "looplab-summon",
+ "layout": "default",
+ "key": "looplab-summon",
+ "user": "",
+ "grid": {
+  "cols": 12,
+  "row": 58,
+  "gap": 10,
+  "widths": [
+   2,
+   3,
+   4,
+   6,
+   8,
+   12
+  ]
+ },
+ "name": "Summon",
+ "note": "P-SUMMON (looplab-control W1): an empty tray on the Overview - type a widget into its search (board, commit graph, census ...) and the best match comes in as a temporary tile; clear the search and it goes; pin one to keep it.",
+ "widgets": []
+}
