@@ -55,11 +55,25 @@ def test_the_tests_lane_is_there_and_off_until_asked(src):
 
 def test_controls_sit_on_the_page_and_the_drill_links_to_the_owner(src):
     sec = _section(src, "overview")
-    assert 'id="olv-range"' in sec and 'id="olv-lanes"' in sec and 'id="olv-drill"' in sec
+    assert 'id="olv-range"' in sec and 'id="olv-lanes"' in sec
     js = _block(src)
     assert "addEventListener('timeline:select',e=>olvDrill(e.detail))" in js
     assert "addEventListener('timeline:brush'" in js
-    assert "open in '+esc(name)" in js
+    assert "open in '+esc(OLV_SEC_NAME[sec]||sec)" in js
+
+
+def test_the_drill_and_the_live_strip_are_the_kit_not_the_page(src):
+    # looplab-control §9 K3: one drill panel, one live strip, one set of states - every section uses them
+    sec = _section(src, "overview")
+    assert '<vera-drill class="olv-drill" id="olv-drill" url></vera-drill>' in sec, "the path rides in the hash"
+    assert '<vera-live-strip id="olv-live"' in sec
+    js = _block(src)
+    assert "'vera-kit.js'" in js
+    for k in ("'event'", "'schedule'", "'test-run'"):
+        assert "VeraDrill.registerKind(" + k in js, k
+    assert "live.setRecords(OLV_LIVE)" in js
+    assert "addEventListener('live:select'" in js
+    assert 'data-drill="schedule:' in js, "an event links one level deeper"
 
 
 def test_the_overview_has_its_own_loader_beside_the_old_suite_one(src):

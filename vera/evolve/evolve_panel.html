@@ -144,7 +144,10 @@ html.vpb-nav-hosted body{padding-left:0}
 .olv-lanes button.on{color:inherit;border-color:currentColor}
 .olv-lanes button i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 .olv-drill{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px}
-.olv-drill .dk{color:var(--muted);display:inline-block;min-width:70px}
+.olv-drill .dk{color:var(--muted);display:inline-block;min-width:80px}
+.olv-drill pre{white-space:pre-wrap;max-height:320px;overflow:auto;font-size:11px;background:var(--bg2,var(--bg1));padding:6px 8px;border-radius:6px}
+.olv-drill table{border-collapse:collapse;width:100%}.olv-drill td{padding:2px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+.olv-live{display:flex;align-items:center;gap:8px;margin-bottom:10px}.olv-live-k{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
 .seg button{border:none;background:var(--bg2);color:var(--dim2);padding:5px 12px;font-size:11px;cursor:pointer}
 .seg button.on{background:var(--acc);color:var(--on-acc,#12100e);font-weight:600}
@@ -492,10 +495,11 @@ html.vpb-nav-hosted body{padding-left:0}
       <div class="seg" id="olv-range" style="margin-left:10px"><button data-r="12h" onclick="olvRange('12h')" title="the last 12 hours and the next 2">12 h</button><button data-r="day" onclick="olvRange('day')" title="the last day and the next">day &plusmn; 1</button><button data-r="7d" onclick="olvRange('7d')" title="the last 7 days and tomorrow">7 d</button></div>
       <span class="hint" id="olv-hint" style="margin-left:auto">drag across the timeline to zoom &middot; click an item for its detail</span>
     </div>
+    <div class="olv-live"><span class="olv-live-k">live</span><vera-live-strip id="olv-live" none="nothing running right now"></vera-live-strip></div>
     <div class="olv-tiles" id="olv-tiles"></div>
     <div class="olv-lanes" id="olv-lanes"></div>
     <div id="olv-tl-host"><div class="hint">loading the timeline&hellip;</div></div>
-    <div class="olv-drill" id="olv-drill" style="display:none"></div>
+    <vera-drill class="olv-drill" id="olv-drill" url></vera-drill>
   </div>
 </div>
 
@@ -1234,12 +1238,15 @@ function _olvSpec(L){
 function _olvLoad(){try{const s=JSON.parse(localStorage.getItem('looplab-overview')||'null');if(s&&OLV_RANGES[s.r])_olvRange=s.r;if(s&&Array.isArray(s.on))_olvOn=new Set(s.on)}catch(_){}
   if(!_olvOn)_olvOn=new Set(OLV_LANES.filter(l=>l.on).map(l=>l.lane))}
 function _olvSave(){try{localStorage.setItem('looplab-overview',JSON.stringify({r:_olvRange,on:[..._olvOn]}))}catch(_){}}
-function _olvScript(){return new Promise((ok,no)=>{if(window.VeraTimeline&&customElements.get('vera-timeline'))return ok();
-  const sc=document.createElement('script');sc.src=(window._veraBase||'')+'/ui/vera-timeline.js';sc.onload=()=>ok();sc.onerror=()=>no(new Error('vera-timeline.js'));document.head.appendChild(sc)})}
+function _olvLib(name,ready){return new Promise((ok,no)=>{if(ready())return ok();
+  const sc=document.createElement('script');sc.src=(window._veraBase||'')+'/ui/'+name;sc.onload=()=>ok();sc.onerror=()=>no(new Error(name));document.head.appendChild(sc)})}
+function _olvScript(){return Promise.all([_olvLib('vera-timeline.js',()=>window.VeraTimeline&&customElements.get('vera-timeline')),
+  _olvLib('vera-kit.js',()=>window.VeraDrill&&customElements.get('vera-drill'))])}
 async function loadOverviewPage(){
   if(_olvOn==null)_olvLoad();
   try{await _olvScript()}catch(e){$('olv-tl-host').innerHTML='<div class="hint">the timeline did not load: '+esc(e.message)+'</div>';return}
   OLV_LANES.forEach(L=>VeraTimeline.registerLane(_olvSpec(L)));
+  _olvKit();
   document.querySelectorAll('#olv-range button').forEach(b=>b.classList.toggle('on',b.dataset.r===_olvRange));
   $('olv-lanes').innerHTML=OLV_LANES.map(L=>'<button class="'+(_olvOn.has(L.lane)?'on':'')+'" onclick="olvLane(\''+L.lane+'\')" title="show or hide the '+esc(L.label.toLowerCase())+' lane"><i style="background:'+L.c+'"></i>'+esc(L.label)+'</button>').join('');
   const r=OLV_RANGES[_olvRange],ids=OLV_LANES.filter(L=>_olvOn.has(L.lane)).map(L=>L.lane).join(',');
@@ -1271,16 +1278,66 @@ async function olvTiles(){
     T('Releases',rel.length,prom+' promotion(s)'+(rel.length?' · last: '+String(rel[rel.length-1].title||'').replace(/^▲\s*/,''):''),'releases')+
     T('Next window',next?new Date(next.start).toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'}):'–',next?next.title:'none booked','schedule');
 }
+/* THE drill panel (/ui/vera-kit.js, K3): a click on a lane, a live chip or a link inside a drill opens a frame; the
+   path rides in the hash (drill=...), so a reload or a shared link reopens it. Each kind loads its own record, so a
+   frame never depends on what the timeline happened to hold. */
+const OLV_SEC_NAME={schedule:'Schedule',work:'Work',releases:'Releases',agents:'Agents',ship:'Ship'};
+const OLV_SRC_SEC={'loop-lab':'schedule','loop-lab-run':'schedule',results:'work',releases:'releases','agents-work':'agents'};
+const OLV_LIVE=[
+  {live:'runs',label:'Runs',source:{cap:'evolve.schedule.events',args:{mode:'windows',include_agents:false,include_releases:false}},every:20,
+   map:{items:'events',where:{running:true},id:'id',label:'title',sub:'{kind}',started:'start',color:{field:'color'},drill:'event'}},
+  {live:'census',label:'Census',source:{cap:'evolve.work.live',args:{}},every:15,
+   map:{items:'census.harness',one:true,where:{live:true},id:'census_run',label:'census_run',sub:'{current_goal}',started:'started_at',progress:{done:'goals_done',total:'goals_total'},color:'#c9a35a'}},
+  {live:'gates',label:'Gates',source:{cap:'evolve.test_pool.status',args:{}},every:20,
+   map:{items:'queue',id:'gate',label:'gate',sub:'place {place} · {chunks_waiting} chunk(s) waiting',color:'#a78bfa'}},
+];
+let _olvKitDone=false;
+function _olvRow(k,v){return v==null||v===''?'':'<div><span class="dk">'+esc(k)+'</span>'+esc(String(v))+'</div>'}
+function _olvWhen(v){return v?new Date(v).toLocaleString():''}
+function _olvKit(){
+  if(_olvKitDone)return;_olvKitDone=true;
+  const open=(sec)=>'<button class="btn" style="margin-top:6px" onclick="nav(\''+sec+'\')">open in '+esc(OLV_SEC_NAME[sec]||sec)+'</button>';
+  VeraDrill.registerKind('event',{label:'Event',
+    load:(id,ctx)=>ctx.call('evolve.schedule.events',_olvArgs()).then(a=>{const e=((a&&a.events)||[]).find(x=>x.id===id);if(!e)throw new Error('not in the range shown - widen the range');return e}),
+    title:(e,id)=>(e&&e.title)||id,
+    tabs:[{id:'detail',label:'Detail'},{id:'raw',label:'Record'}],
+    render:(e,tab)=>{
+      if(tab==='raw')return '<pre>'+esc(JSON.stringify(e,null,2))+'</pre>';
+      const sec=OLV_SRC_SEC[e.source]||'schedule';
+      return _olvRow('what',e.title)+_olvRow('when',_olvWhen(e.start)+(e.end?' → '+_olvWhen(e.end):''))+_olvRow('detail',e.detail)+_olvRow('kind',e.kind)+
+        _olvRow('result',e.result||e.grade||e.status)+_olvRow('pass rate',e.pass_rate!=null?Math.round(100*e.pass_rate)+'%':'')+
+        (e.schedule_id?'<div><span class="dk">schedule</span><a href="#" data-drill="schedule:'+esc(e.schedule_id)+'">'+esc(e.schedule_id)+' ›</a></div>':'')+open(sec);
+    }});
+  VeraDrill.registerKind('schedule',{label:'Schedule',
+    load:(id,ctx)=>ctx.call('evolve.schedule.get',{id}).then(a=>{if(!a||!a.schedule)throw new Error((a&&a.error)||'no such schedule');return a.schedule}),
+    title:(s,id)=>(s&&(s.title||s.label))||id,
+    tabs:[{id:'detail',label:'Detail'},{id:'runs',label:'Runs'},{id:'raw',label:'Record'}],
+    render:(s,tab,ctx)=>{
+      if(tab==='raw')return '<pre>'+esc(JSON.stringify(s,null,2))+'</pre>';
+      if(tab==='runs')return ctx.call('evolve.schedule.history',{limit:200}).then(a=>{
+        const runs=((a&&a.runs)||[]).filter(r=>r.schedule_id===s.id);
+        if(!runs.length)return ctx.states.html('empty','no runs of this schedule in the recent history');
+        return '<table>'+runs.slice(0,40).map(r=>'<tr><td>'+esc(_olvWhen(r.started_at))+'</td><td>'+esc(r.result||'')+'</td><td>'+esc(r.detail||r.reason||'')+'</td></tr>').join('')+'</table>'});
+      const days=(s.days||[]).map(d=>['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]||d).join(' ');
+      return _olvRow('title',s.title)+_olvRow('kind',s.kind)+_olvRow('window',(days?days+' ':'')+(s.start||'')+'–'+(s.end||''))+_olvRow('repeat',s.repeat)+
+        _olvRow('enabled',s.enabled?'yes':'no')+_olvRow('notes',s.notes)+open('schedule');
+    }});
+  VeraDrill.registerKind('test-run',{label:'Test run',
+    load:(id,ctx)=>ctx.call('evolve.unittest.history',{limit:200}).then(a=>{const r=((a&&a.runs)||[]).find(x=>x.ts===id);if(!r)throw new Error('no longer in the history');return r}),
+    title:(r,id)=>r?(r.branch||'')+' · '+(r.ok?'green':'red'):id,
+    tabs:[{id:'detail',label:'Detail'},{id:'failures',label:'Failures'}],
+    render:(r,tab)=>{
+      if(tab==='failures')return (r.failures||[]).length?'<pre>'+esc((r.failures||[]).map(f=>typeof f==='string'?f:JSON.stringify(f)).join('\n'))+'</pre>':'';
+      return _olvRow('branch',r.branch)+_olvRow('pipeline',r.pipeline_id||'(a run of its own)')+_olvRow('summary',r.summary)+_olvRow('paths',r.paths)+_olvRow('when',_olvWhen(r.ts))+open('ship');
+    }});
+  const live=$('olv-live');live.setRecords(OLV_LIVE);
+  live.addEventListener('live:select',e=>{const d=e.detail;
+    if(d.drill==='event')$('olv-drill').open('event',d.id,{rec:d.item,root:true});else nav(d.record==='gates'?'releases':'work')});
+}
 function olvDrill(d){
-  const L=OLV_LANES.find(x=>x.lane===d.lane),it=d.item||{},box=$('olv-drill');if(!L)return;
-  const row=(k,v)=>v==null||v===''?'':'<div><span class="dk">'+k+'</span>'+esc(String(v))+'</div>';
-  const t=it.start||it.ts,sec=L.sec,name={schedule:'Schedule',work:'Work',releases:'Releases',agents:'Agents',ship:'Ship'}[sec]||sec;
-  box.style.display='';
-  box.innerHTML='<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px"><b>'+esc(L.label)+'</b><span class="hint">'+esc(t?new Date(t).toLocaleString():'')+'</span>'+
-    '<button class="btn" style="margin-left:auto" onclick="nav(\''+sec+'\')">open in '+esc(name)+'</button><button class="btn" onclick="$(\'olv-drill\').style.display=\'none\'" title="close">&times;</button></div>'+
-    row('what',it.title||it.summary)+row('detail',it.detail)+row('kind',it.kind)+row('result',it.result||it.grade||it.status)+
-    row('pass rate',it.pass_rate!=null?Math.round(100*it.pass_rate)+'%':'')+row('branch',it.branch)+row('pipeline',it.pipeline_id)+
-    row('ends',it.end?new Date(it.end).toLocaleString():'');
+  const it=d.item||{};
+  if(d.lane==='ll.tests')$('olv-drill').open('test-run',it.ts,{rec:it,root:true});
+  else if(it.id)$('olv-drill').open('event',it.id,{rec:it,root:true});
 }
 
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
