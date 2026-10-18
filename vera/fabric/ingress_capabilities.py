@@ -201,6 +201,21 @@ async def lookup_record(content_hash: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+async def host_yields(hosts: List[str]) -> Dict[str, Optional[float]]:
+    """{host: novel_yield or None} for a batch of hosts, one indexed read; {} when the map is not reachable."""
+    pool = _pool()
+    hs = sorted({ic.host_of("https://" + h) or h for h in (hosts or []) if h})[:500]
+    if pool is None or not hs:
+        return {}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(rc.SELECT_HOST_YIELDS, hs)
+        return {r[0]: (float(r[1]) if r[1] is not None else None) for r in rows}
+    except Exception as e:  # noqa: BLE001
+        log.debug("ingress host yields: %s", e)
+        return {}
+
+
 def note_record(content_hash: str, record_id: str, key: str = "") -> bool:
     """Tell the map which fabric record holds a content hash (queued; the writer upserts it)."""
     if mode() == "off" or not content_hash or not record_id:

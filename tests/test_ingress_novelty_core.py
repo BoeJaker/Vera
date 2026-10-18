@@ -196,3 +196,26 @@ def test_a_failing_novelty_update_keeps_the_receipts():
     manys = [c[1] for c in pool.calls if c[0] == "many"]
     assert "web_hosts" in manys and "web_urls" in manys and "web_fetches" in manys
     assert w.stats["flushed"] == 1 and w.stats["errors"] == 0 and w.stats["novelty_errors"] == 1
+
+
+
+def test_frontier_adjust_and_the_collect_decision():
+    assert nc.frontier_adjust(None) == 0.0
+    assert nc.frontier_adjust(1.0) == 0.15 and nc.frontier_adjust(0.5) == 0.0
+    assert nc.frontier_adjust(0.05) == -0.12 and nc.frontier_adjust(0.2) == -0.09
+    from vera.fabric import discovery_ledger_core as DL
+    d = DL.collect_decision("https://h.example/a", True, crawl_id="c1", score=0.82,
+                            parts={"before_novelty": 0.67, "novelty": 0.15, "host_yield": 1.0}, rank=0, depth=2)
+    assert d["question_id"] == "discovery.collect_worth" and d["answer"] == "collect"
+    assert d["detail"]["parts"]["novelty"] == 0.15 and d["detail"]["rank"] == 0 and d["state_ref"]["kind"] == "crawl_link"
+
+
+def test_the_crawl_uses_novelty_only_behind_its_switch():
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    i = src.index('_nf = _ingress_switch("discovery.novelty_frontier") == "on"')
+    block = src[i:i + 3500]
+    assert "_ingress_host_yields" in block and "frontier_adjust" in block and "_record_collect" in block
+    assert block.index("if _nf:") < block.index("frontier_adjust")
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["discovery.novelty_frontier"].default == "off"

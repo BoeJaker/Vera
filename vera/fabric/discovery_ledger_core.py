@@ -55,3 +55,22 @@ def page_inputs(topic: str, title: str, text: str, url: str, *, relevance: Any =
     return {"topic": str(topic or ""), "title": str(title or "")[:300], "url": str(url or "")[:500],
             "excerpt": str(text or "")[:EXCERPT_CHARS], "relevance": _r(relevance), "coverage": _r(coverage),
             "neg_hit": bool(neg_hit), "depth": int(depth or 0)}
+
+
+# ── discovery.collect_worth (four-minds FM-7.5 scout/collect; web-ingress WI-8b) ──
+COLLECT_QUESTION = "discovery.collect_worth"
+COLLECT_LABELS = ["collect", "skip"]
+COLLECT_RULE = "rule:frontier"
+
+
+def collect_decision(url: str, collect: bool, *, crawl_id: str = "", score: Any = None, parts: Any = None,
+                     rank: int = 0, depth: int = 0, origin: str = "discovery") -> Dict[str, Any]:
+    """The frontier's choice for one link: what its score was made of (topic, authority, novelty...), its rank on
+    the page, and whether it was queued - the Decision v0 a System 1 student can learn the frontier from."""
+    detail = {"score": _r(score), "rank": int(rank or 0), "depth": int(depth or 0),
+              "parts": {str(k): _r(v) for k, v in dict(parts or {}).items()}}
+    return LC.make_decision(
+        COLLECT_QUESTION, "collect" if collect else "skip", origin=origin, surface="discovery", qtype="binary",
+        labels=list(COLLECT_LABELS), state=dict(detail), state_ref={"kind": "crawl_link", "id": page_ref(url)},
+        decider="rule", implementation=COLLECT_RULE, mode="rule", run_id=str(crawl_id or "")[:80] or None,
+        detail=detail)

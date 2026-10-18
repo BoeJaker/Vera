@@ -64,3 +64,19 @@ def summarise(scores: Iterable[Mapping[str, Any]]) -> Dict[str, int]:
         k = str(s.get("kind") or "new")
         out[k] = out.get(k, 0) + 1
     return out
+
+
+FRONTIER_WEIGHT = 0.3
+SATURATED_YIELD = 0.1
+
+
+def frontier_adjust(novel_yield: Optional[float]) -> float:
+    """What a host's novel yield adds to a link's crawl score (PLAN §3.4: expected novelty). Unknown hosts are neutral;
+    a host whose fetches keep coming back known is pushed down, one that keeps yielding new content is pulled up.
+    Range about -0.15 .. +0.15, small beside topic relevance (0..1) so it orders ties rather than overriding them."""
+    if novel_yield is None:
+        return 0.0
+    y = max(0.0, min(1.0, float(novel_yield)))
+    if y < SATURATED_YIELD:
+        return round(-FRONTIER_WEIGHT * 0.4, 3)
+    return round(FRONTIER_WEIGHT * (y - 0.5), 3)
