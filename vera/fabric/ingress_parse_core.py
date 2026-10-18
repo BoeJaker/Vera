@@ -172,6 +172,26 @@ def dedupe_decision(content_hash: str, known: Optional[Dict[str, Any]], ds_id: s
 # ── deferred enrichment (T3) ──────────────────────────────────────────────────
 
 T3_KIND = "discovery.t3"
+T3_MEDIA_KIND = "discovery.t3media"
+MEDIA_MAX_BYTES = 25 * 1024 * 1024
+MEDIA_DESCRIBE_PROMPT = ("Describe this image for a search index: what it shows, any text, numbers or labels in it, "
+                         "and what kind of image it is (photo, chart, diagram, screenshot, map).")
+
+
+def t3_media_job(ds_id: str, rid: str, url: str, op: str, reader: str, *, title: str = "") -> Dict[str, Any]:
+    """One idle-queue job per media file: describe an image or transcribe audio, then put the text on the record."""
+    return {"kind": T3_MEDIA_KIND, "title": f"discovery: {op} {(title or url)[:80]}"[:120],
+            "dedupe_key": f"{T3_MEDIA_KIND}:{url}",
+            "payload": {"dataset_id": ds_id, "rid": rid, "url": url, "op": op, "reader": reader}, "total": 1}
+
+
+def media_text(op: str, result: Dict[str, Any]) -> str:
+    """The text a media model gave back ('' when it gave none or failed)."""
+    if not isinstance(result, dict) or result.get("error"):
+        return ""
+    t = result.get("text") or result.get("transcript") or result.get("description") or ""
+    t = " ".join(str(t).split())
+    return (("Image: " if op == "describe" else "Transcript: ") + t) if t else ""
 
 
 def t3_job(ds_id: str, items: Sequence[Dict[str, Any]], *, crawl_id: str = "", llm_ent: bool = False,

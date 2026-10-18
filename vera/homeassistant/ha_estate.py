@@ -203,3 +203,51 @@ def summarise_plan(plan: Dict[str, Any]) -> str:
     c = plan.get("counts") or {}
     return (f"{c.get('create', 0)} to add, {c.get('update', 0)} to refresh, "
             f"{c.get('remove', 0)} to remove, {c.get('skipped', 0)} skipped")
+
+
+# ── health that means "it works", not "the port answers" (web-ingress WI-16b) ──
+#: A service can keep its port open while it is useless: on 18 Oct SearXNG answered every request with zero results
+#: (its container had lost outbound network) and cadvisor showed the same symptom, while both estate sensors read
+#: "connected". Each entry: which integration (by label), how to ask it a known question - a Vera capability whose
+#: answer is checked with a rule, or an HTTP path whose body must contain a string - and why.
+HEALTH_PROBES: Dict[str, Dict[str, Any]] = {
+    "searxng": {"cap": "web.searxng.heal.status", "args": {},
+                "rule": [("status.reachable", "==", True), ("status.last_count", ">", 0)],
+                "why": "a search that comes back with results (the self-healer's last probe)"},
+    "cadvisor": {"path": "/healthz", "expect": "ok", "why": "cadvisor's own health endpoint answers ok"},
+}
+
+
+def health_probe_for(integration: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The registry entry for an integration (matched on its label, case-insensitive), or None (port check)."""
+    label = str(integration.get("label") or integration.get("id") or "").strip().lower()
+    return HEALTH_PROBES.get(label)
+
+
+def _path_get(obj: Any, path: str) -> Any:
+    for part in str(path or "").split("."):
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(part)
+    return obj
+
+
+def healthy_from(result: Any, rule: Sequence[Tuple[str, str, Any]]) -> Optional[bool]:
+    """Whether a probe capability's answer passes every (path, op, value) check; None when the answer is an error
+    or not a dict (the health is unknown, not bad)."""
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    for path, op, want in rule or ():
+        got = _path_get(result, path)
+        try:
+            ok = {"==": got == want, "!=": got != want, ">": got is not None and got > want,
+                  ">=": got is not None and got >= want, "<": got is not None and got < want}[op]
+        except (KeyError, TypeError):
+            return None
+        if not ok:
+            return False
+    return True
+
+
+def healthy_body(status: int, body: str, expect: str) -> bool:
+    return 200 <= int(status or 0) < 300 and str(expect or "").lower() in str(body or "").lower()

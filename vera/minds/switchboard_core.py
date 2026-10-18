@@ -213,6 +213,16 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "After a web.search, read its top 3 results into the reader cache in the background, one at a time (a URL "
        "already cached costs nothing): the fetch or read that usually follows a search is then instant. 'off' "
        "(default) = no prefetch.", owner="web-ingress"),
+    _f("discovery.media_t3", ("off", "on"), "discovery", "WI-7b",
+       "Media files a crawl reads (images, audio): 'off' (default) = recorded as files with no text; 'on' = each "
+       "queues a background job that describes the image (vision.describe) or transcribes the audio (stt.transcribe, "
+       "25 MB cap) and puts the text on its record. Both models run on the GPU node, in background windows only.",
+       owner="web-ingress"),
+    _f("ingress.semantic_novelty", ("off", "shadow"), "fabric", "WI-5b",
+       "Semantic novelty of crawled pages: 'off' (default) = not measured; 'shadow' = after each page is stored, its own "
+       "vector is read back from Chroma and compared with its nearest records (no where filter); 1 - the highest cosine "
+       "is recorded on the web map (web_urls.semantic_novelty, the closest record as semantic_twin). Acts on nothing.",
+       owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),

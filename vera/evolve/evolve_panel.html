@@ -1168,8 +1168,11 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'ship', label:'Ship', icon:'\u2197', desc:'Every branch and its pipeline', desc_long:'Every branch - its pipeline, review, sandbox and tests - in one table, with the commit graph, race lanes, authorship and gate strip below it.'},
   {id:'agents', label:'Agents', icon:'\u2609', desc:'Every agent session', desc_long:'Every agent session - Claude Code, Codex, a Vera loop, an edit-queue agent - with its board items, pipelines and sandboxes, and the board by lane.'},
   {id:'mission', label:'Mission control', icon:'\u25c9', desc:'Every event; what needs a person', desc_long:'Every event - actions, errors, gates - in one table, with what is live and what needs a person above it.'},
+  {id:'releases', label:'Releases', icon:'\u25b2', desc:'Gating, promotions and releases', desc_long:'What is being gated, promoted to bleeding-edge and released to prod - each pipeline\'s stages and tests, the release in flight, and what every release carried.'},
   {id:'schedule', label:'Schedule', icon:'\u25a6', desc:'A calendar of Loop Lab work', desc_long:'A calendar of Loop Lab work - censuses, suites, tasks, pipeline steps, board items - started by the scheduler only when the box is free.'},
   {id:'tests', label:'Tests', icon:'\u2713', desc:'Scheduled tests and their health', desc_long:'Every scheduled test (four-minds matrix, claims, tool shortlist, memory census, chat corpus, census arms) - its schedule entries, next fire, health (failed / interrupted / missed / recovering / running / ok), last runs and report headline.'},
+  {id:'models', label:'Models', icon:'\u25c8', desc:'Every model: speed, jobs, benchmarks', desc_long:'Every model Vera uses - which jobs it serves, how fast it runs on real traffic, its benchmarks, and the students scored in shadow.'},
+  {id:'performance', label:'Performance', icon:'\u26a1', desc:'Loop Lab and Vera use, side by side', desc_long:'How well things run - Loop Lab (censuses, gates, releases, the background queue) beside Vera\'s normal use (chat reply time, the chat corpus, services), each number with its source.'},
   {id:'settings', label:'Settings', icon:'\u2699', desc:'Loop Lab settings', desc_long:'Loop Lab settings.'},
 ]);
 
@@ -1313,10 +1316,10 @@ async function loadModels(){
     +kpTile('Last benchmark',lb?String(lb.at).slice(0,10):'never',lb?(lb.broken?'broken: nothing passed':(lb.accuracy!=null?Math.round(lb.accuracy*100)+'% · ':'')+kpShort(lb.model)):'',!lb||lb.broken||(lb.age_days||0)>14);
   const allRows=d.models||[], rows=_mdlAll?allRows:allRows.filter(r=>r.calls>=MDL_MIN_CALLS||r.key===_mdlSel), maxT=Math.max(1,...rows.map(r=>r.tps||0));
   $('mdl-table').innerHTML=rows.length?'<table class="kp-tbl"><thead><tr><th>model</th><th>node</th><th>jobs it serves</th><th style="text-align:right">calls</th><th>live tok/s</th><th style="text-align:right">avg wall</th><th>benchmark</th><th>now</th></tr></thead><tbody>'
-    +rows.map((r,i)=>{const b=r.bench;return '<tr class="'+(_mdlSel===r.key?'sel':'')+'" style="cursor:pointer" onclick="mdlOpen('+i+')"><td><b>'+esc(kpShort(r.model))+'</b></td><td class="mono">'+esc(r.node)+'</td><td>'+esc((r.jobs||[]).slice(0,3).map(j=>j.job.replace(/_/g,' ')).join(' · ')||(r.job_types||[]).slice(0,3).join(' · '))+'</td>'
+    +rows.map((r,i)=>{const b=r.bench;return '<tr class="'+(_mdlSel===r.key?'sel':'')+(r.stale?' stale':'')+'" style="cursor:pointer" onclick="mdlOpen('+i+')"'+(r.stale?' title="not called since '+esc(String(r.last).slice(0,10))+' - history, not a live path"':'')+'><td><b>'+esc(kpShort(r.model))+'</b></td><td class="mono">'+esc(r.node)+'</td><td>'+esc((r.jobs||[]).slice(0,3).map(j=>j.job.replace(/_/g,' ')).join(' · ')||(r.job_types||[]).slice(0,3).join(' · '))+'</td>'
       +'<td class="mono" style="text-align:right">'+kpN(r.calls)+'</td><td class="mono">'+kpN(r.tps,1)+' '+kpBar(100*(r.tps||0)/maxT,(r.tps||0)<2?'#f87171':'#7aa2f7')+'</td><td class="mono" style="text-align:right'+((r.wall_s||0)>120?';color:#f87171':'')+'">'+kpS(r.wall_s)+'</td>'
       +'<td>'+(b?(b.broken?'<span style="color:#f87171" title="'+esc(b.broken)+'">broken · '+esc(String(b.at).slice(5,10))+'</span>':(b.accuracy!=null?Math.round(b.accuracy*100)+'%':'-')+' · '+esc(String(b.at).slice(5,10))):'<span class="hint">never</span>')+'</td>'
-      +'<td>'+(r.warm?'<span style="color:#4ade80">warm</span>':'<span class="hint">cold</span>')+'</td></tr>'}).join('')+'</tbody></table>'
+      +'<td>'+(r.stale?'<span class="hint">unused since '+esc(String(r.last).slice(5,10))+'</span>':r.warm?'<span style="color:#4ade80">warm</span>':'<span class="hint">cold</span>')+'</td></tr>'}).join('')+'</tbody></table>'
     +(allRows.length>rows.length||_mdlAll?'<a class="hint" style="cursor:pointer" onclick="_mdlAll=!_mdlAll;loadModels()">'+(_mdlAll?'show only models with '+MDL_MIN_CALLS+'+ calls':'show all '+allRows.length+' (another '+(allRows.length-rows.length)+' with under '+MDL_MIN_CALLS+' calls)')+'</a>':''):'<div class="empty">no model calls on record</div>';
   const mx=d.matrix||{}, ms=(mx.models||[]).slice(0,4);
   $('mdl-matrix').innerHTML=ms.length?'<div style="overflow-x:auto"><table class="kp-mx"><thead><tr><th>job type</th>'+ms.map(k=>'<th title="'+esc(k)+'">'+esc(kpShort(k).replace('@',' @ '))+'</th>').join('')+'</tr></thead><tbody>'
@@ -1340,9 +1343,10 @@ async function loadModels(){
   $('mdl-nodes').innerHTML=(d.nodes||[]).length?'<table class="kp-tbl"><thead><tr><th>node</th><th>hardware</th><th>warm now</th><th style="text-align:right">ping</th></tr></thead><tbody>'
     +(d.nodes||[]).map(n=>{const hw=n.hw||{};return '<tr><td class="mono">'+esc(n.id)+' <span style="color:'+(n.status==='online'?'#4ade80':'#f87171')+'">'+esc(n.status||'')+'</span></td><td>'+esc(hw.gpu_name||((hw.cpu_cores?hw.cpu_cores+' cores':'')+(hw.ram_gb?' · '+hw.ram_gb+' GB':'')))+'</td><td>'+esc((n.loaded||[]).map(kpShort).join(' · ')||'-')+'</td><td class="mono" style="text-align:right">'+(n.ping_ms!=null?Math.round(n.ping_ms)+' ms':'-')+'</td></tr>'}).join('')+'</tbody></table>':'<span class="hint">no nodes</span>';
   if(_mdlSel){const i=rows.findIndex(r=>r.key===_mdlSel);if(i>=0)mdlOpen(i,true)}
+  // the table's rows are the filtered list: mdlOpen(i) indexes the same list
 }
 function mdlOpen(i,keep){
-  const r=((_mdl||{}).models||[])[i]; if(!r)return;
+  const all=((_mdl||{}).models||[]), shown=_mdlAll?all:all.filter(x=>x.calls>=MDL_MIN_CALLS||x.key===_mdlSel), r=shown[i]; if(!r)return;
   if(!keep&&_mdlSel===r.key){_mdlSel=null;$('mdl-detail').innerHTML='';loadModels();return}
   _mdlSel=r.key; const b=r.bench, maxN=Math.max(1,...(r.jobs||[]).map(j=>j.n));
   document.querySelectorAll('#mdl-table tr.sel').forEach(t=>t.classList.remove('sel'));
@@ -1394,7 +1398,7 @@ async function loadPerformance(){
     pfKpi('Pipeline time',g.gate_min!=null?kpN(g.gate_min,1)+' min':'-','median adopt → last stage, gated pipelines','evolve.releases.view · stages'),
     pfKpi('Adopt → prod',g.lead_h!=null?kpN(g.lead_h,1)+' h':'-',g.lead_n?'median of '+g.lead_n+' released change(s) · most of it waits for census goals':'no released change in the window','evolve.releases.view · releases carried'),
     pfKpi('Waiting to release',String((g.on_edge||0)+(g.ready||0)),(g.on_edge||0)+' on an edge, '+(g.ready||0)+' passed, not promoted'+(g.edge_ahead!=null?' · bleeding-edge '+g.edge_ahead+' commit(s) ahead of main':''),'evolve.releases.view'),
-    pfKpi('Background queue',q.depth!=null?q.depth+' job(s)':'-',(q.oldest_h!=null?'oldest waiting '+q.oldest_h+' h':'')+(q.running?' · running: '+q.running.title:'')+(q.stranded?' · '+q.stranded+' stranded':''),q.source,(q.oldest_h||0)>12)].join('');
+    pfKpi('Background queue',q.depth!=null?q.depth+' job(s)':'-',(q.oldest_h!=null?'oldest waiting '+q.oldest_h+' h':'')+(q.running?' · running: '+q.running.title:'')+(q.stranded?' · '+q.stranded+' stranded':'')+(q.min_quiet_s?' · runs in the booked Background-work windows (outside them it waits for '+Math.round(q.min_quiet_s/60)+' min of quiet)':''),q.source,(q.oldest_h||0)>12)].join('');
   $('pf-vera').innerHTML=[
     pfKpi('Chat reply time',kpS(ch.wall_s),'average of the recent replies'+(ch.tokens?' · '+kpN(ch.tokens)+' tokens at '+kpN(ch.tps,1)+' tok/s':''),ch.source,(ch.wall_s||0)>30),
     pfKpi('Chat replies',kpN(ch.replies),(ch.by_model||[]).slice(0,2).map(m=>kpShort(m.model)+' @ '+m.node+' '+kpN(m.n)).join(' · '),'ollama.route_stats · n'),
@@ -6662,7 +6666,7 @@ vera-agent-loop-output.alo-fill{display:block;height:max(360px,calc(100vh - 230p
 .kp-note{padding:8px 10px;border-radius:8px;margin:6px 0;font-size:12.5px;border:1px solid}
 .kp-note.warn{background:rgba(224,164,88,.08);border-color:rgba(224,164,88,.35)}.kp-note.bad{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.4)}.kp-note.info{background:rgba(122,162,247,.08);border-color:rgba(122,162,247,.35)}
 .kp-tbl{width:100%;border-collapse:collapse;font-size:12.5px}.kp-tbl th{text-align:left;font-weight:500;opacity:.7;padding:6px 8px}.kp-tbl td{padding:6px 8px;border-top:1px solid var(--border)}
-.kp-tbl tr.sel td{background:rgba(122,162,247,.10)}.kp-tbl tr.lead td{background:rgba(74,222,128,.06)}
+.kp-tbl tr.sel td{background:rgba(122,162,247,.10)}.kp-tbl tr.stale td{opacity:.5}.kp-tbl tr.lead td{background:rgba(74,222,128,.06)}
 .kp-bar{display:inline-block;width:70px;height:6px;border-radius:3px;background:rgba(127,127,127,.2);vertical-align:middle}.kp-bar i{display:block;height:100%;border-radius:3px}
 .kp-mx{border-collapse:separate;border-spacing:3px;font-size:12px}.kp-mx th{font-weight:500;opacity:.7;text-align:left;padding:4px 8px}.kp-mx td{padding:6px 8px;border-radius:4px;font-family:var(--mono,monospace)}
 .kp-mx td span{opacity:.7;font-size:11px}.kp-mx td.g{background:rgba(74,222,128,.12)}.kp-mx td.a{background:rgba(224,164,88,.14)}.kp-mx td.r{background:rgba(248,113,113,.14)}.kp-mx td.none{opacity:.3;text-align:center}

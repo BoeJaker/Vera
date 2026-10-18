@@ -140,6 +140,9 @@ FORMS: List[Dict[str, Any]] = [
     _F("conveyor", "stages", ("iso",), glyph="conveyor", motion=True, options=("belt", "work"), name="Conveyor", boards=("motion",)),
     _F("approvals", "stages", ("iso",), glyph="approvals", name="Approvals", boards=("iso",)),
     _F("timeline", "events", glyph="timeline", options=("now",), name="Timeline", boards=("widgets",)),
+    # THE timeline (looplab-control §9 K1): lanes are records each family registers; draw.lanes = lane ids,
+    # draw.lane_specs = lane records carried in the widget record, draw.from / draw.to = "-24h" / "+12h" / ISO
+    _F("lanes", "events", glyph="timeline", options=("lanes", "from", "to"), name="Timeline · lanes", boards=("widgets",)),
     _F("calendar", "calendar", ("flat", "iso"), glyph="calendar", options=("weeks",), name="Calendar", boards=("widgets", "iso")),
     _F("agenda", "calendar", ("flat", "iso"), glyph="agenda", options=("window", "now"), name="Agenda", boards=("widgets", "motion")),
     _F("comet", "events", glyph="comet", motion=True, options=("window", "hours"), name="Comet ring", boards=("motion",)),

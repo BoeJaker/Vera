@@ -123,3 +123,26 @@ def test_map_search_runs_the_legs_concurrently_and_never_filters_chroma():
     ms = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_map_search")
     seg = ast.get_source_segment(src, ms)
     assert "ensure_future(_text())" in seg and "sc.fuse(" in seg and '"nlp.rerank"' in seg and "RERANK_TIMEOUT_S" in seg
+
+
+def test_retention_curves():
+    rev = [{"bucket": "first", "n": 60}, {"bucket": "<1d", "n": 20, "unchanged": 15, "comparable": 20},
+           {"bucket": "7-30d", "n": 20, "unchanged": 4, "comparable": 10}]
+    rec = [{"bucket": "<1d", "n": 3}, {"bucket": "30-60d", "n": 1}]
+    r = sc.retention_curves(rev, rec, {"web_fetches": 1000, "web_links": 500, "web_urls": 500},
+                            {"web_fetches": 100, "web_links": 50}, 2.0)
+    assert r["fetches"] == 100 and r["first_fetches"] == 60
+    assert r["by_age"]["<1d"] == {"revisits": 20, "revisit_rate": 0.2, "unchanged_rate": 0.75}
+    assert r["by_age"]["7-30d"]["unchanged_rate"] == 0.4 and r["by_age"][">90d"]["revisit_rate"] == 0.0
+    assert r["recall_by_age"]["<1d"] == 0.75 and r["recall_by_age"]["30-60d"] == 0.25 and r["cited"] == 4
+    assert r["cost"] == {"map_bytes": 2000, "bytes_per_day": 1000, "bytes_per_receipt": 10, "bytes_per_link": 10}
+    e = sc.retention_curves([], [], {}, {}, 0)
+    assert e["by_age"]["<1d"]["revisit_rate"] is None and e["cost"]["bytes_per_day"] is None
+
+
+def test_fetch_receipts_carry_their_content_hash():
+    from vera.fabric import ingress_receipts_core as rc
+    assert "content_hash) VALUES" in rc.INSERT_FETCH and "$11" in rc.INSERT_FETCH
+    assert any("web_fetches ADD COLUMN IF NOT EXISTS content_hash" in s for s in rc.DDL)
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert '@capability("fabric.map.retention"' in caps and 'm["retention"]' in caps

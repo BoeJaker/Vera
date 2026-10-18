@@ -222,3 +222,40 @@ def record_page(rid: str, dataset_id: str, text: str, data: Any, score: float) -
         return None
     return {"url": url, "title": str(d.get("title") or "")[:200], "full_text": str(text or d.get("text") or ""),
             "dataset_id": dataset_id or "", "rank": float(score or 0.0), "record_id": rid}
+
+
+# ── is longer retention worth it (PLAN §14.2) ────────────────────────────────
+
+AGE_BUCKETS = ("<1d", "1-7d", "7-30d", "30-60d", "60-90d", ">90d")
+AGE_SQL = ("CASE WHEN {d} < interval '1 day' THEN '<1d' WHEN {d} < interval '7 days' THEN '1-7d' "
+           "WHEN {d} < interval '30 days' THEN '7-30d' WHEN {d} < interval '60 days' THEN '30-60d' "
+           "WHEN {d} < interval '90 days' THEN '60-90d' ELSE '>90d' END")
+
+
+def retention_curves(revisits: Iterable[Mapping[str, Any]], recall: Iterable[Mapping[str, Any]],
+                     sizes: Mapping[str, int], counts: Mapping[str, int], span_days: float) -> Dict[str, Any]:
+    """The §14.2 curves from bucketed rows. revisits: {bucket ('first' or an age bucket), n, unchanged,
+    comparable}; recall: {bucket, n} for the pages index answers cited, by their age; sizes: table -> bytes;
+    counts: table -> rows; span_days: how many days of receipts there are.
+    - revisit rate per bucket = fetches whose previous fetch of the URL was that old / all fetches;
+    - unchanged rate per bucket = same content hash (or 304) / revisits with a hash on both sides;
+    - recall by age = share of cited pages first seen that long before the answer;
+    - cost per day kept = bytes of the map tables / days of receipts, and bytes per receipt / link."""
+    rv = {str(r.get("bucket")): r for r in revisits or ()}
+    total = sum(int(r.get("n") or 0) for r in rv.values())
+    curve = {}
+    for b in AGE_BUCKETS:
+        r = rv.get(b) or {}
+        n, comp = int(r.get("n") or 0), int(r.get("comparable") or 0)
+        curve[b] = {"revisits": n, "revisit_rate": round(n / total, 4) if total else None,
+                    "unchanged_rate": round(int(r.get("unchanged") or 0) / comp, 4) if comp else None}
+    rc_rows = {str(r.get("bucket")): int(r.get("n") or 0) for r in recall or ()}
+    cited = sum(rc_rows.values())
+    total_bytes = sum(int(v or 0) for v in (sizes or {}).values())
+    per = lambda t: round(int((sizes or {}).get(t) or 0) / int((counts or {}).get(t) or 1)) if (counts or {}).get(t) else None
+    return {"fetches": total, "first_fetches": int((rv.get("first") or {}).get("n") or 0), "by_age": curve,
+            "recall_by_age": {b: (round(rc_rows.get(b, 0) / cited, 4) if cited else None) for b in AGE_BUCKETS},
+            "cited": cited, "span_days": round(float(span_days or 0), 2),
+            "cost": {"map_bytes": total_bytes,
+                     "bytes_per_day": round(total_bytes / span_days) if span_days and span_days > 0 else None,
+                     "bytes_per_receipt": per("web_fetches"), "bytes_per_link": per("web_links")}}

@@ -255,6 +255,30 @@ async def _host_release(token: str) -> None:
         pass
 
 
+def _impact_files(wt: str, files: List[str], changed: List[str]):
+    """Read the worktree's vera sources and tests once, then core.impact_select (P0-6)."""
+    srcs: Dict[str, str] = {}
+    vroot = os.path.join(wt, "vera")
+    for d, _dirs, fs in os.walk(vroot):
+        for f in fs:
+            if f.endswith(".py"):
+                p = os.path.join(d, f)
+                try:
+                    with open(p, encoding="utf-8", errors="replace") as fh:
+                        srcs[os.path.relpath(p, wt).replace(os.sep, "/")] = fh.read()
+                except OSError:
+                    continue
+    texts: Dict[str, str] = {}
+    for f in files:
+        try:
+            with open(os.path.join(wt, f) if f.startswith("tests/") else os.path.join(wt, "tests", f),
+                      encoding="utf-8", errors="replace") as fh:
+                texts[f] = fh.read()
+        except OSError:
+            texts[f] = ""
+    return core.impact_select(files, changed, texts, core.importers_index(srcs))
+
+
 async def _q_join(token: str, t0: float) -> None:
     r = _orch.REDIS
     if r is None:
@@ -395,6 +419,13 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
     files = core.test_files(os.listdir(os.path.join(wt, "tests")))
     if len(files) < cfg["min_files"]:
         return None
+    impact_why = ""
+    if cfg.get("impact", True) and rec.get("adopted") and rec.get("changed_files"):
+        # P0-6: an adopt gate runs the files that touch its change; the full tier stays for promote-to-main / nightly
+        try:
+            files, impact_why = await asyncio.to_thread(_impact_files, wt, files, list(rec.get("changed_files") or []))
+        except Exception as e:                              # a selection that fails runs everything
+            impact_why = f"full tier: selection failed ({str(e)[:120]})"
     rid = rec.get("id", "") or "manual"
     token = f"{rid}:{branch}:pool"
     t0 = time.time()
@@ -469,7 +500,7 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
                 "seconds": round(time.time() - t, 1)}
 
     await note(f"{len(files)} test files in {len(chunks)} chunks over the host and the nodes "
-               f"as they free up")
+               f"as they free up" + (f" - {impact_why}" if impact_why else ""))
     await _q_join(token, t0)                 # P0-5: one fair queue for every gate
     last_pos = None
     try:
