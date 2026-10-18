@@ -57,6 +57,11 @@ JOB_IDX_MAX      = int(os.getenv("VERA_JOB_IDX_MAX", 5000))
 PROMPT_FULL_MAX  = int(os.getenv("VERA_JOB_PROMPT_FULL_MAX", 16000))  # full-prompt cap
 RECOVERY_IDLE_MS = int(os.getenv("VERA_RECOVERY_IDLE_MS", 120_000))  # 2 min
 ARCHIVE_TO_PG    = os.getenv("VERA_JOB_ARCHIVE_PG", "1") == "1"
+# Capability-call recording is opt-in per group (D15-2, backbone 18 Oct): every non-silent call emits cap.call and
+# cap.ok - hundreds of thousands a day - and each would become a Redis hash and a Postgres row. Default: none (worker
+# tasks and Ollama requests only). "*" records every group.
+CAP_GROUPS       = {g.strip() for g in os.getenv("VERA_JOB_PERSIST_CAP_GROUPS", "").split(",") if g.strip()}
+OLLAMA_LOG_MAX   = int(os.getenv("VERA_OLLAMA_LOG_MAX", 600))       # vera:ollama_log entries kept, newest first
 # Above this many consumers, /jobs/stats skips enumerating them (the redis
 # client parses the whole reply on the event loop — thousands of stale
 # consumers blocked it >1s). The periodic prune keeps the real count low.
@@ -83,6 +88,14 @@ _RUNNING: Dict[str, dict] = {}  # id → {start, cap, worker, ...}
 # ─────────────────────────────────────────────────────────────────────────────
 #  PERSIST: write/update a job record in Redis + optional PG
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _record_cap(ev: dict) -> bool:
+    """Whether a cap.call/ok/error event is recorded as a job (its group is opted in)."""
+    if not CAP_GROUPS:
+        return False
+    group = str(ev.get("group") or str(ev.get("name") or "").split(".")[0])
+    return "*" in CAP_GROUPS or group in CAP_GROUPS
+
 
 async def _persist(
     job_id: str,
@@ -174,10 +187,11 @@ async def _persist(
     if ARCHIVE_TO_PG and status in ("done", "failed") and _orch.PG_POOL:
         try:
             async with _orch.PG_POOL.acquire() as conn:
+                # the archive is permanent: it keeps the preview, never the full prompt (D15-9)
                 await conn.execute(
                     "INSERT INTO vera_task_results(task_id, result, ts) "
                     "VALUES($1, $2::jsonb, NOW()) ON CONFLICT DO NOTHING",
-                    job_id, json.dumps(rec),
+                    job_id, json.dumps({k: v for k, v in rec.items() if k != "prompt_full"}),
                 )
         except Exception as e:
             log.debug("persist pg: %s", e)
@@ -188,7 +202,10 @@ async def _persist(
 # ─────────────────────────────────────────────────────────────────────────────
 
 async def _event_listener():
-    """Subscribe to vera:events and persist every job state change."""
+    """Subscribe to vera:events:live and persist every job state change.
+
+    It subscribed to vera:events - the STREAM key - while emit_event publishes to the vera:events:live CHANNEL, so
+    nothing ever arrived and job history, the Ollama log and the archive were never written (S3 / D15-2)."""
     r = _orch.REDIS
     if not r:
         while not _orch.REDIS:
@@ -196,7 +213,7 @@ async def _event_listener():
         r = _orch.REDIS
 
     ps = r.pubsub()
-    await ps.subscribe("vera:events")
+    await ps.subscribe("vera:events:live")
     log.info("job_persist: event listener active")
 
     async for msg in ps.listen():
@@ -344,7 +361,7 @@ async def _event_listener():
 
             # ── Capability calls (cap.call / cap.ok / cap.error) ──
             # These catch direct HTTP calls that don't go through the stream
-            elif etype == "cap.call":
+            elif etype == "cap.call" and _record_cap(ev):
                 cname = ev.get("name", "")
                 tid = ev.get("trace_id", ev.get("id", ""))
                 if tid and cname:
@@ -353,7 +370,7 @@ async def _event_listener():
                                    extra={"source": "direct_call",
                                           "args_preview": ev.get("args_preview", "")})
 
-            elif etype == "cap.ok":
+            elif etype == "cap.ok" and _record_cap(ev):
                 tid = ev.get("trace_id", ev.get("id", ""))
                 run = _RUNNING.pop(tid, {})
                 if tid:
@@ -361,7 +378,7 @@ async def _event_listener():
                     await _persist(tid, run.get("cap", ev.get("name", "")), "done",
                                    elapsed_s=elapsed)
 
-            elif etype == "cap.error":
+            elif etype == "cap.error" and _record_cap(ev):
                 tid = ev.get("trace_id", ev.get("id", ""))
                 run = _RUNNING.pop(tid, {})
                 if tid:
@@ -587,6 +604,16 @@ async def _hydrate_completed_jobs():
 #  CLEANUP: periodic trim of expired entries
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _oldest_ollama_keys(entries: dict, n: int) -> list:
+    """The n oldest request ids of the ollama log hash, by each entry's ts (unreadable entries count as oldest)."""
+    def ts(v):
+        try:
+            return float(json.loads(v if isinstance(v, str) else v.decode("utf-8")).get("ts") or 0)
+        except Exception:
+            return 0.0
+    return [k for k, _v in sorted((entries or {}).items(), key=lambda kv: ts(kv[1]))[:max(0, int(n))]]
+
+
 async def _cleanup():
     r = _orch.REDIS
     if not r:
@@ -601,12 +628,11 @@ async def _cleanup():
             excess = total - JOB_IDX_MAX
             await r.zremrangebyrank(K_IDX, 0, excess - 1)
 
-        # Trim ollama log hash
+        # Trim the ollama log hash to OLLAMA_LOG_MAX, OLDEST first (it dropped whichever keys came first)
         try:
             count = await r.hlen(K_OLLAMA)
-            if count > 600:
-                all_keys = await r.hkeys(K_OLLAMA)
-                to_del = all_keys[:100]
+            if count > OLLAMA_LOG_MAX:
+                to_del = _oldest_ollama_keys(await r.hgetall(K_OLLAMA), count - OLLAMA_LOG_MAX)
                 if to_del:
                     await r.hdel(K_OLLAMA, *to_del)
         except Exception:
