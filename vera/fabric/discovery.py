@@ -2809,6 +2809,16 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
             except Exception as e:
                 log.warning("ingest page %s: %s", page_url, e)
                 return
+            if _ingress_switch("discovery.media_t3") == "on":      # WI-7c: a YouTube page's captions, later
+                try:
+                    from Vera.vera.fabric import ingress_readers_core as _irc
+                except ImportError:  # pragma: no cover
+                    from vera.fabric import ingress_readers_core as _irc
+                if _irc.youtube_id(page_url):
+                    try:
+                        await _submit_t3_media(ds_id, rid, page_url, "captions", "youtube", title=title)
+                    except Exception as e:  # noqa: BLE001
+                        log.debug("t3 captions %s: %s", page_url, e)
             _sem_m = _ingress_mod()                # WI-5b: semantic novelty, shadow only, off the crawl's path
             if _sem_m is not None and hasattr(_sem_m, "semantic_note"):
                 _sem_t = asyncio.ensure_future(_sem_m.semantic_note(page_url, ds_id, rid))
@@ -3488,6 +3498,39 @@ async def _submit_t3(ds_id: str, items: List[Dict], *, crawl_id: str = "", llm_e
                             total=job["total"])
 
 
+def _youtube_captions(url: str) -> str:
+    """A YouTube video's captions (manual or automatic, English first) as one text; raises when it has none."""
+    from youtube_transcript_api import YouTubeTranscriptApi
+    try:
+        from Vera.vera.fabric import ingress_readers_core as _ir
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_readers_core as _ir
+    vid = _ir.youtube_id(url)
+    if not vid:
+        raise ValueError("not a YouTube video url")
+    return _pc.captions_text(YouTubeTranscriptApi().fetch(vid, languages=["en", "en-GB", "en-US"]))
+
+
+def _video_audio(url: str):
+    """(bytes, mime) of a video's audio stream under MEDIA_MAX_BYTES, fetched by yt-dlp without converting (no
+    ffmpeg on the host; the media node decodes it), or None."""
+    import os
+    import tempfile
+    import yt_dlp
+    with tempfile.TemporaryDirectory(prefix="vera-media-") as d:
+        opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "format": _pc.AUDIO_FORMAT,
+                "max_filesize": _pc.MEDIA_MAX_BYTES, "outtmpl": os.path.join(d, "a.%(ext)s")}
+        with yt_dlp.YoutubeDL(opts) as y:
+            info = y.extract_info(url, download=True)
+        files = [os.path.join(d, f) for f in os.listdir(d)]
+        if not files or os.path.getsize(files[0]) > _pc.MEDIA_MAX_BYTES:
+            return None
+        ext = (info or {}).get("ext") or files[0].rsplit(".", 1)[-1]
+        with open(files[0], "rb") as f:
+            return f.read(), {"m4a": "audio/mp4", "webm": "audio/webm", "mp3": "audio/mpeg",
+                              "opus": "audio/ogg", "ogg": "audio/ogg"}.get(ext, "audio/" + ext)
+
+
 def _record_row(ds_id: str, rid: str):
     """A crawl record by the id the crawl gave it. fabric_records.id is the store's own id (a uuid); the crawl's id
     ("p_..." / "f_...") is inside data.id - so the deferred passes looked up by the wrong one and found no text
@@ -3542,8 +3585,8 @@ async def _submit_t3_media(ds_id: str, rid: str, url: str, op: str, reader: str,
 
 async def _t3_media_handler(job: Dict, should_continue) -> Dict:
     """Describe an image (vision.describe, by URL) or transcribe an audio file (fetched through the ingress client,
-    25 MB cap, stt.transcribe), then re-ingest the record with that text so it is embedded and searchable. Video
-    needs its sound extracted first: not done yet."""
+    25 MB cap, stt.transcribe), or a YouTube video's captions (else, like any video, its audio via yt-dlp to
+    stt.transcribe), then re-ingest the record with that text so it is embedded and searchable."""
     p = job.get("payload") or {}
     ds_id, rid, url, op, reader = (str(p.get(k) or "") for k in ("dataset_id", "rid", "url", "op", "reader"))
     if should_continue is not None:
@@ -3570,8 +3613,22 @@ async def _t3_media_handler(job: Dict, should_continue) -> Dict:
             return {"ok": False, "error": f"HTTP {r.status_code}, {len(r.content)} bytes"}
         result = await _cap("stt.transcribe")(audio_b64=base64.b64encode(r.content).decode(),
                                                mime_type=r.headers.get("content-type", "audio/mpeg"))
+    elif op in ("captions", "transcribe") and reader in ("youtube", "video"):
+        result = {}
+        if op == "captions":
+            try:
+                result = {"text": await asyncio.to_thread(_youtube_captions, url)}
+            except Exception as e:  # noqa: BLE001 - no captions (or blocked): its sound, below
+                log.debug("captions %s: %s", url, e)
+        if not result.get("text") and _cap("stt.transcribe"):
+            import base64
+            got = await asyncio.to_thread(_video_audio, url)
+            if not got:
+                return {"ok": False, "error": "no audio stream under the 25 MB cap"}
+            data, mime = got
+            result = await _cap("stt.transcribe")(audio_b64=base64.b64encode(data).decode(), mime_type=mime)
     else:
-        return {"ok": False, "skipped": f"{op} {reader}: not handled yet (video needs its sound extracted)"}
+        return {"ok": False, "skipped": f"{op} {reader}: not handled"}
     text = _pc.media_text(op, result)
     if not text:
         return {"ok": False, "error": str((result or {}).get("error") or "no text")[:200]}

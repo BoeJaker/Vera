@@ -137,3 +137,24 @@ def test_media_files_become_t3_jobs_behind_a_switch():
     assert "should_continue" in seg and "MEDIA_MAX_BYTES" in seg and "hooked_client" in seg
     from vera.minds import switchboard_core as SB
     assert SB.REGISTRY["discovery.media_t3"].default == "off"
+
+
+
+def test_captions_and_video_sound_are_media_jobs_too():
+    class S:
+        def __init__(self, t):
+            self.text = t
+    assert pc.captions_text([S("[Music]"), S("We're no  strangers"), {"text": "to love"}, S("")]) == "We're no strangers to love"
+    assert "25M" in pc.AUDIO_FORMAT
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    h = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_t3_media_handler")
+    seg = ast.get_source_segment(src, h)
+    assert "_youtube_captions" in seg and "_video_audio" in seg and "needs its sound extracted" not in seg
+    va = ast.get_source_segment(src, next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_video_audio"))
+    assert "max_filesize" in va and "noplaylist" in va and "TemporaryDirectory" in va
+    i = src.index("WI-7c: a YouTube page's captions")
+    assert '_submit_t3_media(ds_id, rid, page_url, "captions", "youtube"' in src[i:i + 700]
+    req = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert "youtube-transcript-api==1.2.4" in req and "yt-dlp==2026.8.19" in req

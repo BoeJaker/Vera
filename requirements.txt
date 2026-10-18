@@ -56,4 +56,6 @@ onnxruntime>=1.18        # CPU inference engine for ml.onnx.run / per-model caps
 esprima  # JS syntax validation for code.author's HTML <script> checks (optional; graceful if absent)
 tree-sitter>=0.23            # code.explode: parses BROKEN and partial code (an LLM snippet, a scraped fence); ast / patterns stand in without it
 tree-sitter-language-pack>=0.7  #   the grammars (python, javascript, typescript, …) prebuilt — no compiler, no runtime
+youtube-transcript-api==1.2.4  # web-ingress media jobs: a YouTube video's captions (MIT); owner 18 Oct
+yt-dlp==2026.8.19            # web-ingress media jobs: a video's audio when it has no captions (Unlicense); owner 18 Oct
 pypdf==6.21.1                # web-ingress readers: PDF text per page (pure Python, BSD); a PDF with no text layer is marked for OCR
