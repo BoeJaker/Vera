@@ -1304,7 +1304,7 @@ if _CAP_AVAILABLE:
         from Vera.vera import delivery as _delivery
         _delivery.register_channel(
             "printer", label="Thermal printer", cap="print.notify",
-            default_format="text", needs_target=False, source="print")
+            default_format="plain", needs_target=False, source="print")
     except Exception:                              # pragma: no cover
         pass
 
