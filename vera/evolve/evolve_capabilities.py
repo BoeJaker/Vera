@@ -11677,6 +11677,7 @@ async def evolve_sandbox_logs(container: str = "", limit: int = 200, level: str 
 
 
 @capability("evolve.sandbox.metrics", memory="off", silent=True,
+            contract={"presentation": {"kind": "series", "map": {"points": "metrics", "keyed": True, "t": "ts", "v": "cpu_pct"}, "title": "Sandbox CPU %", "empty": "No sandbox samples yet"}},
             http_method="GET", http_path="/evolve/sandbox/metrics", http_tags=["evolve"],
             description="Recent CPU%/mem% samples for loop-lab sandbox container(s), "
                         "oldest→newest (for sparklines). Inputs: container (str — blank "

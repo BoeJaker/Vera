@@ -49,7 +49,7 @@ PRESENTATION_KINDS: dict[str, dict[str, tuple[str, ...]]] = {
     "document": {"keys": ("body", "title", "sources"), "row": (), "views": ("document", "outline")},
     "status": {"keys": ("verdict", "checks"), "row": (), "views": ("status", "table")},
     "metric": {"keys": ("value", "max", "unit", "trend"), "row": (), "views": ("hero", "ring", "trace")},
-    "series": {"keys": ("points", "t", "v", "split"), "row": ("t", "v"), "views": ("trace", "area", "column", "table")},
+    "series": {"keys": ("points", "t", "v", "split", "keyed"), "row": ("t", "v"), "views": ("trace", "area", "column", "table")},
     "graph": {"keys": ("nodes", "edges", "node_id", "edge_from", "edge_to", "label", "type"), "row": ("node_id", "label", "type"),
               "views": ("graph", "table")},
     "log": {"keys": ("events", "t", "text", "kind", "level"), "row": ("t", "text", "kind", "level"), "views": ("log", "table", "pareto")},
@@ -71,6 +71,9 @@ _PRESENTATION_NEEDS = {"table": ("rows",), "records": ("rows",), "reading": ("ro
                        "log": ("events",), "progress": ("steps",), "terminal": ("stdout",), "media": ("url", "b64"),
                        "code": ("code",), "diff": ("diff",), "kv": ("fields",), "calendar": ("events",),
                        "entities": ("groups", "entities"), "job": ("job_id",)}
+# series keyed by name (DA-01e): map.keyed true reads map.points as {name: [{t, v}, ...]} (or {name: {t: [...], v: [...]}})
+# - one line per key, map.t / map.v the fields inside each point. A flag, not a path.
+_PRESENTATION_FLAGS = {"series": ("keyed",)}
 _PRESENTATION_FIELDS = ("kind", "map", "views", "title", "refresh", "live", "detail", "empty", "parts", "form", "draw")
 # A declaration may name the widget FORM that draws its kind (DA-01d - the Loop Lab pictures, candles, temps, pills ...):
 # then its map is in that form's own words (VeraWidget.applyMap: rows, series, values, pick, count, split ...) and is
@@ -128,9 +131,19 @@ def presentation_problems(presentation: Any, output_schema: Any = None) -> list[
     for key in (sorted(set(str(k) for k in mapping) - set(spec["keys"])) if mapping is not None else []):
         out.append(("presentation.map_key_unknown", "error", f"presentation.map.{key}",
                     f"kind '{kind}' does not read '{key}' (it reads {', '.join(spec['keys'])})"))
+    flags = _PRESENTATION_FLAGS.get(kind, ())
     for key, path in sorted((mapping or {}).items()):
+        if key in flags:
+            continue
         if not isinstance(path, str) or not path.strip():
             out.append(("presentation.map_path_invalid", "error", f"presentation.map.{key}", "a map value is a path string"))
+    keyed = mapping is not None and kind == "series" and "keyed" in mapping
+    if keyed and mapping.get("keyed") is not True:
+        out.append(("presentation.map_keyed_invalid", "error", "presentation.map.keyed",
+                    "keyed is true: map.points is a dict of series keyed by name"))
+    if keyed and mapping.get("split") is not None:
+        out.append(("presentation.map_keyed_split", "error", "presentation.map.keyed",
+                    "keyed draws one line per key; split goes without it"))
     needs = _PRESENTATION_NEEDS.get(kind, ())
     if mapping is not None and needs and not any(k in mapping for k in needs) and kind != "composite":
         out.append(("presentation.map_missing", "error", "presentation.map",
@@ -175,6 +188,10 @@ def presentation_problems(presentation: Any, output_schema: Any = None) -> list[
     if isinstance(output_schema, Mapping) and output_schema.get("properties") and isinstance(mapping, Mapping) and mapping:
         content = next((k for k in spec["keys"] if k in mapping), None)
         content_node = _schema_at(output_schema, mapping[content]) if content and isinstance(mapping.get(content), str) else None
+        if keyed and isinstance(content_node, Mapping):
+            # the rows are one level down: the series under each name
+            each = content_node.get("additionalProperties")
+            content_node = each if isinstance(each, Mapping) else None
         for key, path in sorted(mapping.items()):
             if not isinstance(path, str) or not path.strip():
                 continue
