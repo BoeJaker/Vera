@@ -56,14 +56,15 @@ FABRIC_PAGE_UPSERT = (
     "ON CONFLICT(id) DO UPDATE SET dataset_id=excluded.dataset_id, crawl_id=excluded.crawl_id, url=excluded.url, "
     "title=excluded.title, full_text=excluded.full_text, tags=excluded.tags, headings=excluded.headings, "
     "word_count=excluded.word_count, created_at=excluded.created_at "
-    "WHERE length(excluded.full_text) >= length(coalesce(fabric_pages.full_text, ''))"
+    "WHERE excluded.crawl_id != '' OR length(excluded.full_text) >= length(coalesce(fabric_pages.full_text, ''))"
 )
 
 
 def fabric_page_row(ds_id: str, crawl_id: str, url: str, title: str, full_text: str, tags: Sequence[str],
                     headings: Sequence[Any], word_count: Any) -> Tuple[str, Tuple[Any, ...]]:
-    """The one way a page reaches fabric_pages (crawls never wrote it: B1). The upsert keeps the longer text, so a
-    search snippet can no longer overwrite a full page (B18)."""
+    """The one way a page reaches fabric_pages (crawls never wrote it: B1). A crawl (crawl_id set) always writes the
+    page as it is now, even when it got shorter; a write from no crawl (a search snippet) only replaces a shorter
+    text, so it can no longer overwrite a full page (B18; review 18 Oct: a page that shrank was stuck)."""
     return FABRIC_PAGE_UPSERT, (
         page_id(url), ds_id or "", crawl_id or "", url or "", (title or "")[:500], full_text or "",
         ",".join(str(t) for t in list(tags or [])[:20]), json.dumps(list(headings or [])[:40]),
