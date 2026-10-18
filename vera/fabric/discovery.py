@@ -2188,6 +2188,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     # WI-4: the second-order pass (entities, LLM tags) runs after the crawl, on the idle queue, when the switch
     # discovery.defer_enrichment is on and the caller did not ask for it inline (want_tiers includes "t3")
     _defer_t3 = (_ingress_defer_on() and "t3" not in set(config.get("want_tiers") or ()))
+    _node_fetch = _ingress_switch("discovery.node_fetch") == "on"      # WI-12d: pages through the crawl class
     _host_yield: Dict[str, Optional[float]] = {}          # WI-8b: novel yield per host, read once per crawl
     _deferred_t3: List[Dict] = []
     min_relevance = float(config.get("min_relevance", 0.0) or 0.0)
@@ -2493,8 +2494,10 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                         _ph = _browser_headers(custom_ua=_ua_for(urlparse(page_url).netloc),
                                                referer=parent_url or page_url)
                     _t_get = time.monotonic()
-                    resp = await client.get(page_url, headers=_ph) if _ph else await client.get(page_url)
-                    _ingress_receipt(page_url, resp, int((time.monotonic() - _t_get) * 1000), "fabric.discover.crawl")
+                    resp = await _node_get(page_url) if _node_fetch else None
+                    if resp is None:            # the host's own fetch: switch off, no node answer, or a binary body
+                        resp = await client.get(page_url, headers=_ph) if _ph else await client.get(page_url)
+                        _ingress_receipt(page_url, resp, int((time.monotonic() - _t_get) * 1000), "fabric.discover.crawl")
                 if resp.status_code >= 400:
                     return
                 ct = resp.headers.get("content-type", "").lower()
@@ -3529,6 +3532,42 @@ def _video_audio(url: str):
         with open(files[0], "rb") as f:
             return f.read(), {"m4a": "audio/mp4", "webm": "audio/webm", "mp3": "audio/mpeg",
                               "opus": "audio/ogg", "ogg": "audio/ogg"}.get(ext, "audio/" + ext)
+
+
+class _NodeResponse:
+    """The part of an httpx response the crawl reads, from an ingress.fetch.batch row (WI-12d)."""
+
+    def __init__(self, row: Dict):
+        self.status_code = int(row.get("status") or 0)
+        self.headers = {"content-type": str(row.get("content_type") or "")}
+        self.text = str(row.get("html") or row.get("text") or "")
+        self.content = self.text.encode("utf-8", "replace")
+        self.url = str(row.get("final_url") or row.get("url") or "")
+
+
+async def _node_get(url: str) -> "Optional[_NodeResponse]":
+    """One page through the crawl worker class: an idle crawl node fetches it behind the shared per-host slot (or
+    the host, when none is free), the receipt is written here. None - so the caller fetches it itself - when the
+    gateway is not loaded, the fetch failed, or the body is not text (files are read from their bytes)."""
+    m = _ingress_mod()
+    if m is None or not hasattr(m, "record_fetch_result"):
+        return None
+    try:
+        try:
+            from Vera.vera.fabric import ingress_crawl_core as _icc
+        except ImportError:  # pragma: no cover
+            from vera.fabric import ingress_crawl_core as _icc
+        r = await m._call("ingress.fetch.batch", urls=[url], _timeout=_icc.batch_timeout_s(1))
+        row = ((r or {}).get("results") or [None])[0]
+    except Exception as e:  # noqa: BLE001
+        log.debug("node fetch %s: %s", url, e)
+        return None
+    if not row or not int(row.get("status") or 0):
+        return None
+    if int(row["status"]) < 400 and not (row.get("html") or row.get("text")):
+        return None
+    m.record_fetch_result(row, caller="fabric.discover.crawl", purpose="page")
+    return _NodeResponse(row)
 
 
 def _record_row(ds_id: str, rid: str):

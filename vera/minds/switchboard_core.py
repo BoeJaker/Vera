@@ -228,6 +228,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "distinct body the recorder sees in full is stored once in the fabric's object store (Garage, zstd, keyed by "
        "content hash), and the crawl class revisits with If-None-Match / If-Modified-Since - an unchanged page "
        "answers 304 and its body comes from the store.", owner="web-ingress"),
+    _f("discovery.node_fetch", ("off", "on"), "discovery", "WI-12d",
+       "Where a discovery crawl fetches its pages: 'off' (default) = the host, as before; 'on' = through the crawl "
+       "worker class - an idle crawl node (cpu-246/247) fetches each page behind the shared per-host slot, the host "
+       "writes the receipt; files (non-text bodies) and failed node fetches still come from the host.",
+       owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),
