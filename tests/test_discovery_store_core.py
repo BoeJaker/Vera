@@ -69,6 +69,10 @@ def test_fabric_page_row_writes_and_a_shorter_text_never_overwrites_a_longer_one
     row = conn.execute("SELECT * FROM fabric_pages").fetchone()
     assert row["crawl_id"] == "crawl2" and row["title"] == "A2"
     assert row["id"] == dsc.page_id("https://h/a") and json.loads(row["headings"]) == []
+    sql4, p4 = dsc.fabric_page_row("topic.x", "crawl3", "https://h/a", "A3", "shrunk page " * 5, ["web"], [], 10)
+    conn.execute(sql4, p4)                                                # a re-crawl of a page that got shorter
+    row = conn.execute("SELECT * FROM fabric_pages").fetchone()
+    assert row["crawl_id"] == "crawl3" and row["title"] == "A3" and row["word_count"] == 10
 
 
 # ── B3 / B4: fabric_records as it is ──────────────────────────────────────────

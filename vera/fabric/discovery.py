@@ -209,7 +209,7 @@ def _write_fabric_page(ds_id: str, crawl_id: str, url: str, title: str, full_tex
         conn.commit()
         return True
     except Exception as e:  # noqa: BLE001
-        log.debug("fabric_pages %s: %s", url, e)
+        log.warning("fabric_pages %s: %s", url, e)          # B1 was this write failing silently
         return False
 
 def _get_graph(name: str = "fabric"):
