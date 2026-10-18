@@ -53,6 +53,7 @@ def _state(enabled: bool) -> Dict[str, Any]:
 
 @capability(
     "ui.tabs.retired",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "tabs"}, "draw": {"columns": ["name", "panel", "pane", "sub", "section"]}}},
     http_method="GET", http_path="/ui/tabs/retired", http_tags=["ui", "estate"],
     memory="off", silent=True,
     description="Whether the top-level tabs folded into a broader tab are retired, and which "
@@ -88,6 +89,7 @@ async def cap_tabs_retired_set(enabled: bool = True, trace_id=None) -> Dict[str,
 
 @capability(
     "ui.places",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "places"}, "draw": {"columns": ["name", "panel", "pane", "sub"]}}},
     http_method="GET", http_path="/ui/places", http_tags=["ui"],
     memory="off", silent=True,
     description="Where a reading lives in the UI: every place a drill-through can open "

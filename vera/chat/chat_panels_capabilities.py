@@ -89,6 +89,7 @@ def _all_themes_css() -> str:
 
 @capability(
     "ui.themes",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "themes"}, "draw": {"columns": ["name", "label", "type", "accent", "builtin"]}}},
     http_method="GET", http_path="/ui/themes", http_tags=["ui"],
     memory="off", silent=True,
     description="List all available themes with their CSS variables and metadata.",
@@ -113,6 +114,7 @@ async def cap_themes(trace_id=None):
 
 @capability(
     "ui.theme.get",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "vars"}}},
     http_method="GET", http_path="/ui/theme", http_tags=["ui"],
     memory="off", silent=True,
     description="Get current active theme ID and its CSS variables.",
@@ -560,6 +562,7 @@ DYNAMIC_PANELS: Dict[str, dict] = {}
 
 @capability(
     "ui.panel.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "panels"}, "draw": {"columns": ["label", "id", "mode", "tab_order", "dynamic", "has_html", "has_js", "ui_caps"]}, "empty": "No panels registered"}},
     http_method="GET", http_path="/ui/panel/list", http_tags=["ui"],
     memory="off", silent=True,
     description="List all registered UI panels with metadata. "
@@ -824,6 +827,7 @@ async def cap_acl(scope: str, whitelist: str = "", blacklist: str = "",
 
 @capability(
     "ui.caps.scopes",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "scopes"}, "draw": {"columns": ["name", "label", "whitelist_count", "blacklist_count", "effective_count"]}}},
     http_method="GET", http_path="/ui/caps/scopes", http_tags=["ui"],
     memory="off", silent=True,
     description="List all capability scopes and their access control settings.",

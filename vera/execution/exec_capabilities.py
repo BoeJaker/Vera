@@ -1468,6 +1468,7 @@ async def artifact_download(session_id: str = "", rel: str = ""):
 
 @capability(
     "exec.sandbox.get",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "policy"}}},
     http_method="GET", http_path="/exec/sandbox", http_tags=["exec"],
     memory="off", silent=True,
     description="Return the active exec sandbox policy (allow/deny paths, "
@@ -1919,6 +1920,7 @@ cap_lua_run    = _make_lang_cap("lua",    "Lua")
 
 @capability(
     "exec.code.langs",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "languages"}, "draw": {"columns": ["id", "available", "allowed", "bin", "ext"]}}},
     http_method="GET", http_path="/exec/code/langs", http_tags=["exec"],
     memory="off", silent=True,
     description="List supported code-execution languages and whether each "
@@ -2217,6 +2219,7 @@ async def cap_ssh_run(
 
 @capability(
     "exec.ssh.hosts.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "hosts"}, "draw": {"columns": ["label", "host", "port", "user", "auth", "tags", "updated_at"]}, "empty": "No SSH hosts stored"}},
     http_method="GET", http_path="/exec/ssh/hosts", http_tags=["exec"],
     memory="off", silent=True,
     description="List all stored SSH host credentials (secrets redacted).",
@@ -4403,6 +4406,7 @@ async def cap_netscan_map_save(
 
 @capability(
     "netscan.map.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "maps"}, "draw": {"columns": ["name", "node_count", "edge_count", "description", "updated_at", "map_id"]}, "empty": "No saved network maps"}},
     http_method="GET", http_path="/netscan/map/list", http_tags=["netscan"],
     memory="off", silent=True,
     description="List saved network map snapshots. "
@@ -4569,6 +4573,7 @@ async def cap_netscan_fabric_load_web(
 
 @capability(
     "exec.llm.models",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "instances"}, "draw": {"columns": ["label", "status", "latency_ms", "has_gpu", "backend", "url"]}, "title": "Instances"}, {"kind": "table", "form": "table", "map": {"rows": "models"}, "draw": {"columns": ["name", "instance_label", "parameter_size", "family", "quantization", "size_bytes", "backend"]}, "title": "Models"}]}},
     http_method="GET", http_path="/exec/llm/models", http_tags=["llm"],
     memory="off", silent=True,
     description="List LLM models available across all online Ollama instances. "
@@ -6761,6 +6766,7 @@ async def _osint_write_campaign(rec: Dict) -> None:
 
 @capability(
     "netscan.osint.campaign.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "campaigns"}, "draw": {"columns": ["name", "hit_count", "query_count", "description", "updated_at", "campaign_id"]}, "empty": "No OSINT campaigns"}},
     http_method="GET", http_path="/netscan/osint/campaign/list",
     http_tags=["netscan", "osint"], memory="off", silent=True,
     description="List saved OSINT campaigns (durable, additive buckets of "
