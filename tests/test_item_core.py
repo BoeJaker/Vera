@@ -164,3 +164,50 @@ def test_every_view_a_body_offers_is_written_and_an_unknown_one_refused():
     _add("note:vx")
     r = _run(C.cap_canvas_item_set(session_id=SID, key="note:vx", view="radar"))
     assert not r["ok"] and "view must be one of" in r["error"]
+
+
+# ── WSU-58 S7: max, layers, groups and kept windows live in the item record ─────────────────────────────────────
+def test_s7_the_four_states_round_trip_through_canvas_item_set_and_canvas_items():
+    _fresh()
+    for k in ("note:m", "note:w", "records:g", "records:j", "panel:l"):
+        _add(k)
+    r = _run(C.cap_canvas_item_set(session_id=SID, key="note:m", face="full", back="tile"))
+    assert r["ok"] and r["item"]["face"] == "full" and r["item"]["back"] == "tile"
+    r = _run(C.cap_canvas_item_set(session_id=SID, key="note:w", face="window", dock="tile",
+                                   place={"fx": 0.4, "fy": 0.4, "w": 640, "h": 420, "by": "person"}))
+    assert r["ok"] and r["item"]["dock"] == "tile" and r["item"]["place"]["w"] == 640
+    r = _run(C.cap_canvas_item_set(session_id=SID, key="records:g", group={"sep": True, "at": 1760000000123}))
+    assert r["ok"] and r["item"]["group"] == {"front": False, "at": 1760000000123, "sep": True}
+    r = _run(C.cap_canvas_item_set(session_id=SID, key="records:j", group='{"id": "records:g", "front": true, "at": 5}'))
+    assert r["ok"] and r["item"]["group"] == {"id": "records:g", "front": True, "at": 5}
+    r = _run(C.cap_canvas_item_set(session_id=SID, key="panel:l", place={"layer": "behind"}))
+    assert r["ok"] and r["item"]["place"]["layer"] == "behind"
+    items = {i["key"]: i for i in _run(C.cap_canvas_items(session_id=SID))["items"]}
+    assert (items["note:m"]["face"], items["note:m"]["back"]) == ("full", "tile")
+    assert (items["note:w"]["face"], items["note:w"]["dock"]) == ("window", "tile")
+    assert items["records:g"]["group"]["sep"] is True and items["records:j"]["group"]["id"] == "records:g"
+    assert items["panel:l"]["place"]["layer"] == "behind"
+    # restored: the face it came back to, back cleared - and the raw block says so (a reader can tell "restored" from "never set")
+    r = _run(C.cap_canvas_item_set(session_id=SID, key="note:m", face="tile", back=""))
+    assert r["ok"] and r["item"]["face"] == "tile" and r["item"]["back"] == "" and r["changed"] == {"face": "tile", "back": ""}
+    doc = _run(C.cap_canvas_add(session_id=SID, key="note:m"))
+    assert doc["item"]["back"] == ""
+    # sent back to the desk's own grouping
+    r = _run(C.cap_canvas_item_set(session_id=SID, key="records:g", group={}))
+    assert r["ok"] and r["item"]["group"] == {}
+
+
+def test_s7_bad_back_dock_and_groups_are_refused_and_write_nothing():
+    _fresh()
+    rev = _add("note:x")["revision"]
+    for kw in ({"back": "sideways"}, {"dock": "full"}, {"group": {"front": True}}, {"group": {"sep": True, "at": "soon"}}, {"group": "loose"}):
+        r = _run(C.cap_canvas_item_set(session_id=SID, key="note:x", **kw))
+        assert not r["ok"], kw
+    assert _run(C.cap_canvas_items(session_id=SID))["revision"] == rev
+
+
+def test_s7_a_parked_full_item_reads_as_a_pill_with_no_back():
+    rec = IC.normalise({"key": "k", "face": "full", "back": "window", "dock": "tile", "state": "parked"})
+    assert (rec["face"], rec["back"], rec["dock"]) == ("pill", "", "")
+    assert IC.face_state({"face": "full", "back": "window", "dock": "tile"}) == {
+        "face": "full", "state": "now", "locked": False, "back": "window", "dock": "tile", "pilled": False}

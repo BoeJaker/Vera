@@ -68,7 +68,8 @@ function desk(kind) {
   el._deskGeo = { W: 1200, H: 800 };
   /* the layout and its history (another session's code), the network and the paint: not what this test is about */
   ['render', '_placeNow', '_holdStart', '_histPush', '_histBack', '_pillCard', '_chipPeek', '_revealSoon', 'refresh'].forEach((m) => { el[m] = () => {}; });
-  el.writes = []; el._itemSet = (k, f) => { el.writes.push(Object.assign({ key: k }, f)); };
+  /* what _itemSet would send: the element's own translation for a full item (_itemRec, WSU-58 S7) applied */
+  el.writes = []; el._itemSet = (k, f) => { el.writes.push(Object.assign({ key: k }, el._itemRec(k, f))); };
   el.call = (name, args) => { const b = el._doc.blocks[0];
     if (name === 'canvas.park') b.state = 'parked'; else if (name === 'canvas.pin') b.state = 'pinned'; else if (name === 'canvas.add') b.state = 'now';
     card.classList.toggle('pinned', b.state === 'pinned'); return Promise.resolve({ ok: true }); };
@@ -135,9 +136,11 @@ t('every BLOCK kind, driven through the faces on the element: the desk shows wha
       d.el.writes = [];
       DO[ev](d); rule = I.transition(rule, ev); const got = shown(d);
       assert.deepStrictEqual(got, rule, kind + ' step ' + i + ' ' + ev + ': ' + JSON.stringify(got) + ' rule ' + JSON.stringify(rule));
-      /* what goes up to the item record (canvas.item.set) is the face shown - or, under a full item (max is not in the record yet,
-         S7), the face it returns to */
-      d.el.writes.filter((w) => w.face).forEach((w) => assert.strictEqual(w.face, rule.face === 'full' ? rule.back : rule.face, kind + ' step ' + i + ' ' + ev + ' writes face ' + w.face));
+      /* what goes up to the item record (canvas.item.set) is the face shown - and, for a full item (WSU-58 S7), the face it
+         returns to as back */
+      const fw = d.el.writes.filter((w) => w.face);
+      fw.forEach((w) => assert.strictEqual(w.face, rule.face, kind + ' step ' + i + ' ' + ev + ' writes face ' + w.face));
+      if (fw.length && rule.face === 'full') assert.strictEqual(fw[fw.length - 1].back, rule.back, kind + ' step ' + i + ' ' + ev + ' writes back ' + fw[fw.length - 1].back);
       seen.push(T(got)); });
     runs[kind] = seen;
   });
