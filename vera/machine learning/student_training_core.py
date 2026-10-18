@@ -15,8 +15,10 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-#: The questions trained each night, in order. Single-class questions
-#: (loop.step_verify, loop.prestep_needed on 2026-10-12) are never trainable.
+#: Trained first each night; every other two-label decision question
+#: (judge_core.QUESTIONS, the candidate matrix's applications included) follows,
+#: each trained once its gold passes trainable() (owner 18 Oct: more questions
+#: are coming online).
 QUESTIONS: Tuple[str, ...] = ("loop.step_done",)
 
 #: Local hours a training run may start in (MONITOR-STUDENT-TRAINING.md:
@@ -40,19 +42,25 @@ def in_window(hour: int, window: Tuple[int, int] = WINDOW) -> bool:
     return a <= int(hour) < b
 
 
-def guard(*, hour: int, busy_reason: str = "", disk_pct: Optional[float] = None,
-          force: bool = False) -> Tuple[bool, str]:
-    """May a training run start now? (ok, why). `force` skips the window and
-    the busy check only - never the disk rule."""
+def guard(*, hour: int, disk_pct: Optional[float] = None, force: bool = False) -> Tuple[bool, str]:
+    """May a training run start now? (ok, why). `force` skips the window only -
+    never the disk rule. There is no busy-box check: the box is never quiet
+    (owner, 18 Oct - background work is scheduled, not left waiting for an idle
+    box), and a student needs no quiet anyway - it trains on a CPU node, never
+    a GPU host, and the node scheduler admits it only where there is room."""
     if disk_pct is not None and disk_pct > DISK_MAX_PCT:
         return False, f"data disk at {disk_pct:.0f}% (> {DISK_MAX_PCT:.0f}%): nothing is written"
     if force:
-        return True, "forced (window and busy checks skipped)"
+        return True, "forced (window check skipped)"
     if not in_window(hour):
         return False, f"outside the training window {WINDOW[0]:02d}:00-{WINDOW[1]:02d}:00"
-    if busy_reason:
-        return False, f"the box is busy: {busy_reason}"
     return True, "ok"
+
+
+def order_questions(binary: Iterable[str]) -> List[str]:
+    """QUESTIONS first, then every other two-label question, sorted."""
+    have = {str(q) for q in binary}
+    return [q for q in QUESTIONS if q in have] + sorted(have - set(QUESTIONS))
 
 
 def label_of(row: Mapping[str, Any]) -> Optional[str]:

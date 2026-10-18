@@ -75,12 +75,10 @@ def _mod(*names):
     return None
 
 
-async def _busy_reason() -> str:
-    ev = _mod("evolve_capabilities", "Vera.vera.evolve.evolve_capabilities")
-    try:
-        return str(await ev._box_busy_reason()) if ev is not None else ""
-    except Exception as e:
-        return f"busy check failed: {type(e).__name__}"
+def _questions() -> List[str]:
+    """Every two-label decision question, loop.step_done first."""
+    JC = _imports()["JC"]
+    return core.order_questions(q for q in JC.QUESTIONS if JC.positive_label(q) is not None)
 
 
 def _disk_pct() -> Optional[float]:
@@ -248,8 +246,7 @@ async def train_student(question_id: str, *, dry_run: bool = True, force: bool =
     positive = JC.positive_label(q)
     if positive is None:
         return {"ok": False, "error": f"{q} is not a binary question (a logistic head needs two labels)"}
-    ok, why = core.guard(hour=datetime.now().hour, busy_reason=await _busy_reason(),
-                         disk_pct=_disk_pct(), force=force)
+    ok, why = core.guard(hour=datetime.now().hour, disk_pct=_disk_pct(), force=force)
     rec["guard"] = why
     if not ok and not dry_run:
         rec.update(state="skipped", why=why)
@@ -406,8 +403,8 @@ async def train_student(question_id: str, *, dry_run: bool = True, force: bool =
         "EvaluationReport from stratified 5-fold cross-validation (accuracy must match the "
         "majority-label rate, AUC >= 0.7) -> bound with questions + tier 3 ONLY if it passes "
         "(a failing student is unbound; package and report stay). SHADOW ONLY. "
-        "Runs only 01:00-06:00 and not while a census or loop runs, unless force=true (the "
-        "disk rule always applies). Inputs: question_id (str='loop.step_done'), dry_run "
+        "Runs only 01:00-06:00 unless force=true (the disk rule always applies); it does not wait "
+        "for a quiet box - it trains on a CPU node where the node scheduler finds room. Inputs: question_id (str='loop.step_done'), dry_run "
         "(bool=true: check the guard, data and features, train nothing), force (bool). Output: "
         "{ok, state, counts, metrics, package_id, report_id, cap} or {skipped / not_trainable, why}."
     ),
@@ -440,8 +437,8 @@ async def cap_decide_student_status(limit: int = 20, trace_id=None) -> Dict[str,
             enabled = (await r.get(ENABLED_KEY)) not in (b"0", "0")
         except Exception:
             pass
-    ok, why = core.guard(hour=datetime.now().hour, busy_reason=await _busy_reason(), disk_pct=_disk_pct())
-    return {"enabled": enabled, "questions": list(core.QUESTIONS), "window": core.WINDOW,
+    ok, why = core.guard(hour=datetime.now().hour, disk_pct=_disk_pct())
+    return {"enabled": enabled, "questions": _questions(), "window": core.WINDOW,
             "guard": {"ok": ok, "why": why, "disk_pct": _disk_pct()}, "runs": runs}
 
 
@@ -460,37 +457,42 @@ async def cap_decide_student_enable(enabled: bool = True, trace_id=None) -> Dict
 
 
 async def nightly_pass() -> Dict[str, Any]:
-    """One pass of the nightly training: in the window, train each question once per night when the
-    box is not busy; a busy box retries on a later pass, and so does an error (no node with room, a
-    lost job - e.g. workers restarting after a Redis drop, 17 Oct) up to core.ATTEMPTS times a night."""
+    """One pass of the nightly training: in the window, train each two-label question once per night
+    (a not-trainable answer counts - its gold is checked again tomorrow). An error (no node with room,
+    a lost job - e.g. workers restarting after a Redis drop, 17 Oct) is tried again on a later pass, up
+    to core.ATTEMPTS times a night, and does not hold up the other questions. No waiting for a quiet
+    box (owner, 18 Oct): the pass is booked by its Loop Lab schedule."""
     if not core.in_window(datetime.now().hour):
         return {"ok": True, "skipped": True, "why": "outside the %s window" % (core.WINDOW,)}
     r = getattr(_orch, "REDIS", None)
     if r is None or (await r.get(ENABLED_KEY)) in (b"0", "0"):
         return {"ok": True, "skipped": True, "why": "student training is switched off"}
     day = datetime.now().strftime("%Y-%m-%d")
-    done, trained = [], []
-    for q in core.QUESTIONS:
+    done, trained, failed = [], [], []
+    for q in _questions():
         key = DONE_KEY.format(q=q, day=day)
         if await r.get(key):
             done.append(q)
             continue
         res = await cap_decide_student_train(question_id=q, dry_run=False)
-        if res.get("skipped"):
-            return {"ok": True, "skipped": True, "why": res.get("why") or "busy", "trained": trained}
+        if res.get("skipped"):                       # the disk rule: nothing is written tonight
+            return {"ok": True, "skipped": True, "why": res.get("why") or "skipped", "trained": trained}
         if res.get("error"):
             tries = int(await r.incr(TRIES_KEY.format(q=q, day=day)) or 0)
             await r.expire(TRIES_KEY.format(q=q, day=day), 86400)
             if tries < core.ATTEMPTS:
-                log.info("students: %s failed (%d of %d tonight), retrying next tick: %s",
+                log.info("students: %s failed (%d of %d tonight), retrying next pass: %s",
                          q, tries, core.ATTEMPTS, res["error"])
-                return {"ok": False, "error": "%s: %s (try %d of %d)" % (q, res["error"], tries, core.ATTEMPTS),
-                        "trained": trained}
+                failed.append("%s: %s (try %d of %d)" % (q, res["error"], tries, core.ATTEMPTS))
+                continue
         await r.set(key, json.dumps({"state": res.get("state") or ("error" if res.get("error") else "done")}),
                     ex=86400)
         trained.append(q)
-    return {"ok": True, "trained": trained, "already": done,
-            "summary": "trained %d, %d already done tonight" % (len(trained), len(done))}
+    out = {"ok": not failed, "trained": trained, "already": done,
+           "summary": "trained %d, %d already done tonight, %d to retry" % (len(trained), len(done), len(failed))}
+    if failed:
+        out["error"] = "; ".join(failed)
+    return out
 
 
 @capability(
