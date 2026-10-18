@@ -1328,7 +1328,8 @@
       state.editing = !state.editing;
       grid.classList.toggle('editing', state.editing);
       if (state.editing) gridVars();
-      widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); sampleGate(w); recordChip(w); });
+      widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); sampleGate(w); recordChip(w);
+        var hd = w.querySelector('.w-title[data-vd-item]'); if (hd) hd.setAttribute('draggable', state.editing ? 'false' : 'true'); });   // editing: the title reorders the tile
       var b = $(opts.editBtn);
       if (b) {
         b.textContent = state.editing ? '✓ Done' : '⚙ Configure';
@@ -1966,12 +1967,21 @@
       var w = addRecord(rec, { temp: true, silent: true }); if (!w) return null;
       var wid = w.dataset.wid;
       grid.insertBefore(w, grid.firstChild);                                    // summoned tiles come in at the top
-      mcp('widget.template.instantiate', { id: t.id, where: 'dashboard', host: key, config: { temporary: true, summoned_by: 'search' } })
-        .then(function (r) { var inst = r && r.instance && r.instance.id; if (inst && state.temp[wid]) state.temp[wid].instance = inst; else if (inst) mcp('widget.instance.remove', { id: inst }); }, function () {});
+      // placed on the server only once it has been shown a moment (or kept): typing through matches does not churn instances
+      state.temp[wid].placeT = setTimeout(function () { placeInstance(wid, t); }, SUMMON_PLACE_MS);
       return landed(w);
+    }
+    var SUMMON_PLACE_MS = 3000;
+    function placeInstance(wid, t) {
+      var tmp = (state.temp || {})[wid]; if (!tmp || tmp.instance || tmp.placing) return;
+      tmp.placing = true; clearTimeout(tmp.placeT);
+      mcp('widget.template.instantiate', { id: t.id, where: 'dashboard', host: key, config: { temporary: true, summoned_by: 'search' } })
+        .then(function (r) { var inst = r && r.instance && r.instance.id; var cur = (state.temp || {})[wid] || (state.dynamic[wid] && state.dynamic[wid]);
+          if (inst && cur && cur.record === tmp.record) cur.instance = inst; else if (inst) mcp('widget.instance.remove', { id: inst }); }, function () {});
     }
     function unsummon(wid) {
       var tmp = (state.temp || {})[wid]; if (!tmp) return;
+      clearTimeout(tmp.placeT);
       var w = grid.querySelector(':scope > [data-wid="' + wid + '"]'); if (w) w.remove();
       if (tmp.instance) mcp('widget.instance.remove', { id: tmp.instance }).catch(function () {});
       delete state.temp[wid]; delete state.meta[wid];
@@ -1982,14 +1992,17 @@
       var tmp = (state.temp || {})[wid]; if (!tmp) return;
       var w = grid.querySelector(':scope > [data-wid="' + wid + '"]');
       if (w) { delete w.dataset.temp; w.classList.remove('vd-temp'); var tg = w.querySelector('.vd-temp-tag'), kb = w.querySelector('[data-vd-keep]'); if (tg) tg.remove(); if (kb) kb.remove(); }
+      if (!tmp.instance && !tmp.placing) { var tpl = tmp.record; state.temp[wid] = tmp; placeInstance(wid, { id: tpl.id }); }   // kept before its moment: place it now
       state.dynamic[wid] = { record: tmp.record, wid: wid }; delete state.temp[wid];
       state.order = widgets().map(function (x) { return x.dataset.wid; }); save();
     }
     // a tile's head drags as an ITEM RECORD (the desk's item-contract format), so any surface can take it
     function itemDrag(widget, wid) {
       var head = widget.querySelector('.w-title'); if (!head) return;
-      head.setAttribute('draggable', 'true'); head.title = 'drag me onto Compare, the Schedule or another surface';
+      head.setAttribute('data-vd-item', ''); head.setAttribute('draggable', state.editing ? 'false' : 'true');
+      head.title = (head.textContent || '').trim() + ' - drag onto Compare or another surface';   // the full name stays on hover
       head.addEventListener('dragstart', function (e) {
+        if (state.editing) return;                     // editing: the tile's own drag (reorder) takes the event
         var rec = recordOf(wid); if (!rec || !e.dataTransfer) return;
         var item = { kind: 'widget', title: rec.title || rec.name || rec.form || 'widget', content: { record: rec }, source: { dashboard: key, wid: wid, temporary: !!widget.dataset.temp } };
         try { e.dataTransfer.setData('application/x-vera-item', JSON.stringify(item)); e.dataTransfer.setData('text/plain', item.title); e.dataTransfer.effectAllowed = 'copy'; } catch (err) {}

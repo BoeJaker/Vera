@@ -31,6 +31,7 @@ t('summoned tiles are never saved with the layout, and clearing the search remov
   const sm = DASH.slice(DASH.indexOf('function summon(q, o2)'), DASH.indexOf('function removeDynamic('));
   assert.ok(sm.indexOf('clearSummoned();') < sm.indexOf('templates().then'), 'what the search brought before goes first');
   assert.ok(sm.includes("mcp('widget.template.instantiate', { id: t.id, where: 'dashboard'") && sm.includes('temporary: true'));
+  assert.ok(sm.includes('setTimeout(function () { placeInstance(wid, t); }, SUMMON_PLACE_MS)'), 'placed on the server only once shown a moment');
   assert.ok(sm.includes("mcp('widget.instance.remove', { id: tmp.instance })"), 'its placed instance is removed with it');
   assert.ok(sm.includes('state.dynamic[wid] = { record: tmp.record, wid: wid }; delete state.temp[wid];') && sm.includes('save();'), 'keep makes it an ordinary tile');
 });
@@ -45,5 +46,11 @@ t('a tile head drags as an item record; Compare turns a lanes widget into lane p
 t('the summon box belongs to the dashboard element, so every dashboard can have it', () => {
   assert.ok(DASH.includes("self.hasAttribute('summon') ? '<input type=\"search\" class=\"vdb-summon\""));
   assert.ok(DASH.includes("if (e.key === 'Escape') { sIn.value = ''; go(); }"), 'Esc clears it, and what it brought goes');
+});
+t("no item drag while editing: the title is the tile's reorder handle then (vera-d0's review)", () => {
+  const dr = DASH.slice(DASH.indexOf('function itemDrag('), DASH.indexOf('function removeDynamic('));
+  assert.ok(dr.indexOf('if (state.editing) return;') < dr.indexOf('e.stopPropagation()'), 'editing returns before the item drag stops the event');
+  assert.ok(dr.includes("head.setAttribute('draggable', state.editing ? 'false' : 'true')"));
+  assert.ok(DASH.includes("if (hd) hd.setAttribute('draggable', state.editing ? 'false' : 'true');"), 'toggling edit toggles the head');
 });
 if (fails) { console.log(fails + ' FAILED'); process.exit(1); } else console.log('all passed');
