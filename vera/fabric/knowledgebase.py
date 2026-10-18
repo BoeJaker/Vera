@@ -657,6 +657,7 @@ async def cap_kb_build(
 # ── Read / query ─────────────────────────────────────────────────────────────
 @capability(
     "fabric.kb.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "knowledgebases"}, "draw": {"columns": ["subject", "status", "article_count", "fact_count", "updated_at", "kb_id"]}, "empty": "No knowledgebases"}},
     http_method="GET", http_path="/fabric/kb/list", http_tags=["fabric", "kb"],
     memory="off", silent=True,
     description="List knowledgebases. Output: {knowledgebases:[{kb_id,subject,"

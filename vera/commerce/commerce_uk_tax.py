@@ -575,6 +575,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.tax.summary", http_method="GET",
+        contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "Tax year"}, {"kind": "kv", "map": {"fields": "income"}, "title": "Income"}, {"kind": "kv", "map": {"fields": "expenses"}, "title": "Expenses"}, {"kind": "kv", "map": {"fields": "vat"}, "title": "VAT"}]}},
         http_path="/business/tax/summary", http_tags=["commerce"],
         memory="off", silent=True,
         description="UK tax estimate for a tax year (6 Apr → 5 Apr): gross trading "

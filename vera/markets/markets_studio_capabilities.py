@@ -3236,6 +3236,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.baseline.list", http_method="GET", http_path="/markets/baseline",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "assets"}, "draw": {"columns": ["name", "symbol", "group", "provider", "tracked", "last_bar"]}}},
         http_tags=["markets"], memory="off", silent=True,
         description="The curated baseline estate (indices, all SPDR sectors, rates, "
                     "FX, commodities, BTC/ETH) with tracked/bar status. "
@@ -3661,6 +3662,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.macro.catalog", http_method="GET", http_path="/markets/macro/catalog",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "series"}, "draw": {"columns": ["name", "group", "unit", "source", "last", "fetched"]}}},
         http_tags=["markets"], memory="off", silent=True,
         description="Catalog of layerable macro / on-chain series (FRED rates & "
                     "inflation & money supply, BTC hash rate / transactions / "
@@ -3925,6 +3927,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.sim.list", http_method="GET", http_path="/markets/sim/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "accounts"}, "draw": {"columns": ["name", "value", "cash", "ret_pct", "start_cash", "currency"]}, "empty": "No sim accounts"}},
         http_tags=["markets"], memory="off", silent=True,
         description="List sim accounts with live valuation, P&L and positions — "
                     "the paper-trading leaderboard. Output: {accounts:[{id,name,"

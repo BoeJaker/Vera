@@ -1872,6 +1872,7 @@ PIPELINE_TEMPLATES: Dict[str, Dict[str, Any]] = {
 
 @capability(
     "dream.templates.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "templates"}, "draw": {"columns": ["name", "label", "mode", "depth", "max_steps", "description"]}}},
     http_method="GET", http_path="/dream/templates", http_tags=["dream"],
     description="List available pipeline templates for dream triggers.",
 )
@@ -2703,6 +2704,7 @@ async def _run_oneshot_analysis(*, goal: str, state: Dict[str, Any],
 
 @capability(
     "dream.loop.settings.get", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "map": {"fields": "settings"}}},
     http_method="GET", http_path="/dream/loop/settings", http_tags=["dream"],
     description="Get the global dream agent-loop settings (defaults merged with "
                 "stored overrides). Output: {settings, defaults, fields}.",
@@ -2966,6 +2968,7 @@ async def dream_journal_read(
 
 @capability(
     "dream.journal.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "journals"}, "draw": {"columns": ["journal_id", "entries", "updated", "created"]}, "empty": "No dream journals"}},
     http_method="GET", http_path="/dream/journal/list", http_tags=["dream"],
     description="List known dream journals with entry counts and last-updated. "
                 "Output: {ok, journals: [{journal_id, entries, created, updated}]}.",
@@ -3855,6 +3858,7 @@ async def dream_sensor_topic_research(subject: str = "", use_fabric: bool = True
 
 @capability(
     "dream.sensor.syslog_errors", memory="off", silent=True,
+    contract={"presentation": {"kind": "log", "map": {"events": "sample", "t": "ts", "text": "message", "kind": "category", "level": "level"}, "empty": "No recent errors"}},
     http_method="GET", http_path="/dream/sensor/syslog_errors",
     http_tags=["dream", "sensor"],
     description="Recent errors from the Vera syslog feed.",
@@ -3887,6 +3891,7 @@ async def dream_sensor_syslog_errors(limit: int = 40, trace_id=None):
 
 @capability(
     "dream.sensor.bus_events", memory="off", silent=True,
+    contract={"presentation": {"kind": "log", "map": {"events": "sample", "t": "ts", "text": "name", "kind": "via"}, "empty": "No recent capability events"}},
     http_method="GET", http_path="/dream/sensor/bus_events",
     http_tags=["dream", "sensor"],
     description="Recent entries from the vera:cap:recent event bus.",
@@ -12769,6 +12774,7 @@ async def _director_loop():
 
 @capability(
     "dream.director.status", memory="off", silent=True,
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "last_thought"}, "title": "Last thought"}, {"kind": "table", "map": {"rows": "queue"}, "title": "Queued"}, {"kind": "kv", "map": {"fields": "config"}, "title": "Config"}]}},
     http_method="GET", http_path="/dream/director/status", http_tags=["dream"],
     description="Dream director (ambient thought orchestrator) status: running, config, "
                 "last thought, queued dream candidates, CPU-pressure backoff state.",
@@ -13185,6 +13191,7 @@ async def dream_director_journal(limit: int = 50, trace_id=None):
 
 @capability(
     "dream.director.queue", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "queue"}, "draw": {"columns": ["topic", "kind", "mode", "goal", "why", "source", "created"]}, "empty": "The director has nothing queued"}},
     http_method="GET", http_path="/dream/director/queue", http_tags=["dream"],
     description="List queued dream candidates the director has proposed (the dream "
                 "scheduler consumes these first when the system goes idle).",
@@ -13545,6 +13552,7 @@ async def dream_background_allowed() -> Dict[str, Any]:
 
 @capability(
     "dream.background.status", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/dream/background/status", http_tags=["dream"],
     description="Whether ambient BACKGROUND work (v8 program loops, director "
                 "handovers) may run now under the dream activity gate, and how many "
@@ -13661,6 +13669,7 @@ async def dream_scheduler_stop(trace_id=None):
 
 @capability(
     "dream.scheduler.status", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/dream/scheduler/status", http_tags=["dream"],
     description="Dream scheduler status — running, current cycle, idle minutes.",
 )
@@ -13885,6 +13894,7 @@ async def dream_cycle_cancel(trace_id=None):
 
 @capability(
     "dream.trigger.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "triggers"}, "draw": {"columns": ["label", "name", "enabled", "mode", "hours_start", "hours_end", "min_idle_minutes", "min_interval_minutes", "last_run"]}, "empty": "No dream triggers"}},
     http_method="GET", http_path="/dream/triggers", http_tags=["dream"],
     description="List all configured dream triggers.",
 )
@@ -14204,6 +14214,7 @@ async def dream_think_create(
 
 @capability(
     "dream.think.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "thoughts"}, "draw": {"columns": ["name", "subject", "project", "enabled", "idle_minutes", "interval_minutes", "last_run", "goal"]}, "empty": "No thinking loops"}},
     http_method="GET", http_path="/dream/think/list", http_tags=["dream", "think"],
     description="List all thinking loops (triggers using the think pipeline) with "
                 "their subject, source, cadence and last run. Optional project_slug "
@@ -14444,6 +14455,7 @@ async def _save_pipeline(p: Dict[str, Any]):
 
 @capability(
     "dream.pipeline.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "pipelines"}, "draw": {"columns": ["label", "name", "kind", "mode", "depth", "max_steps", "description"]}, "empty": "No composite pipelines"}},
     http_method="GET", http_path="/dream/pipelines", http_tags=["dream"],
     description="List registered composite pipelines. "
                 "Output: {pipelines: [{name, label, description, kind, stages, ...}]}.",
@@ -15215,6 +15227,7 @@ async def _run_deep_review(styles: List[str], area: str, files: List[str],
 
 @capability(
     "dream.review.styles", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "styles"}, "draw": {"columns": ["label", "id"]}}},
     http_method="GET", http_path="/dream/review/styles", http_tags=["dream", "review"],
     description="List the available deep-review styles (docs, critique, "
                 "improvement, integration, architecture).",
@@ -15304,6 +15317,7 @@ async def dream_review_snapshots(trace_id=None):
 
 @capability(
     "dream.review.status", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/dream/review/status", http_tags=["dream", "review"],
     description="Live progress of the current/last deep review run "
                 "(running, done, total, current file, generated, by_area).",
@@ -15372,6 +15386,7 @@ async def dream_review_resume(start: bool = True, trace_id=None):
 
 @capability(
     "dream.review.runs", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "runs"}, "draw": {"columns": ["ts", "review_type", "files_reviewed", "reports_generated", "remaining", "stopped_reason", "incomplete", "snapshot_id"]}, "empty": "No review runs"}},
     http_method="GET", http_path="/dream/review/runs", http_tags=["dream", "review"],
     description="History of past deep-review runs (most recent first): snapshot, "
                 "styles, files reviewed, reports generated, by_area, ts.",
@@ -15502,6 +15517,7 @@ async def dream_review_areas(trace_id=None):
 
 @capability(
     "dream.review.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "reports"}, "draw": {"columns": ["file", "area", "style", "label", "chars", "truncated", "ts", "snapshot_id"]}, "empty": "No stored review reports"}},
     http_method="GET", http_path="/dream/review/list", http_tags=["dream", "review"],
     description="List stored review reports (metadata only). Input: area (str), "
                 "style (str), both optional filters. Output: {reports: [{file, "
@@ -15922,6 +15938,7 @@ async def dream_whitelist_set(caps: List[str], trace_id=None):
 
 @capability(
     "dream.config.get", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "map": {"fields": "config"}}},
     http_method="GET", http_path="/dream/config", http_tags=["dream"],
     description="Get global dream config.",
 )
@@ -16010,6 +16027,7 @@ async def dream_history(
 
 @capability(
     "dream.last", memory="off", silent=True,
+    contract={"presentation": {"kind": "document", "map": {"body": "report", "title": "title"}}},
     http_method="GET", http_path="/dream/last", http_tags=["dream"],
     description="Most recent dream cycle record.",
 )
@@ -16584,6 +16602,7 @@ async def dream_stage_agent_loop(
 
 @capability(
     "dream.sensors.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sensors"}, "draw": {"columns": ["label", "id", "cap", "description"]}}},
     http_method="GET", http_path="/dream/sensors", http_tags=["dream"],
     description="List all registered dream sensors with metadata and configurable parameters.",
 )
@@ -16653,6 +16672,7 @@ async def dream_sensor_preview(sensor: str, params: Optional[Dict[str, Any]] = N
 
 @capability(
     "dream.stages.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "stages"}, "draw": {"columns": ["label", "phase", "optional", "cap", "description"]}}},
     http_method="GET", http_path="/dream/stages", http_tags=["dream"],
     description="List all registered pipeline stages with metadata and configurable parameters.",
 )
@@ -17286,6 +17306,7 @@ async def dream_director_assess(auto_fire: bool = False, trace_id=None):
 
 @capability(
     "dream.timeline", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "triggers"}, "draw": {"columns": ["label", "fires_in", "hours_window", "mode", "idle_met", "cooldown_until", "last_run", "trigger"]}, "empty": "No triggers to project"}},
     http_method="GET", http_path="/dream/timeline", http_tags=["dream"],
     description="Project when each trigger will next fire, based on schedule, "
                 "cooldown, current idle, and current time. Returns a list of "
@@ -17417,6 +17438,7 @@ DREAM_EVENT_COLOR = "#a78bfa"
 
 @capability(
     "dream.schedule.events", memory="off", silent=True,
+    contract={"presentation": {"kind": "calendar", "map": {"events": "events", "start": "start", "end": "end", "title": "title"}, "empty": "No dream fires in the window"}},
     http_method="GET", http_path="/dream/schedule/events", http_tags=["dream"],
     description="Project scheduled dream fires as discrete calendar/timeline EVENTS "
                 "(vs dream.timeline's hourly bars). Each event: "

@@ -429,6 +429,7 @@ async def _get_config() -> Dict[str, Any]:
 
 
 @capability("evolve.config.get", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "map": {"fields": "config"}}},
             http_method="GET", http_path="/evolve/config", http_tags=["evolve"],
             description="Loop Lab global config: critic/editor providers, target "
                         "score, rounds, allow_code_edits, default profile.")
@@ -1238,6 +1239,7 @@ async def _save_task(task: Dict[str, Any]):
 
 
 @capability("evolve.tasks", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "tasks"}, "draw": {"columns": ["label", "type", "profile", "enabled", "timeout_s", "id"]}}},
             http_method="GET", http_path="/evolve/tasks", http_tags=["evolve"],
             description="List benchmark tasks (loop-type goals + cap-type smoke "
                         "tests). Query: tag (str filter).")
@@ -1370,6 +1372,7 @@ async def _get_census_templates() -> List[Dict[str, Any]]:
 
 
 @capability("evolve.census.templates", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "templates"}, "draw": {"columns": ["name", "tag", "goals_n", "wall_cap_s", "model", "description"]}}},
             http_method="GET", http_path="/evolve/census/templates",
             http_tags=["evolve", "census"],
             description="List census templates — named goal sets. Each one's "
@@ -2791,6 +2794,7 @@ async def _evolve_authors_uncached(hours: int, branch: str):
 
 
 @capability("evolve.runs", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "runs"}, "draw": {"columns": ["label", "template", "status", "ok", "pass_rate", "combined", "elapsed_s", "source", "ts"]}, "empty": "No benchmark runs"}},
             http_method="GET", http_path="/evolve/runs", http_tags=["evolve"],
             description="Recent benchmark runs (compact, newest first), each "
                         "correlated against this repo's git log for its own "
@@ -3559,6 +3563,7 @@ async def evolve_suite_status(trace_id=None):
 
 
 @capability("evolve.suites", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "suites"}, "draw": {"columns": ["suite_id", "template", "tasks_n", "done", "pass_rate", "avg_combined", "source", "ts"]}, "empty": "No suite scoreboards"}},
             http_method="GET", http_path="/evolve/suites", http_tags=["evolve"],
             description="Recent suite scoreboards (newest first). Query: limit, "
                         "tag (str — only runs of THAT tag, which is how a census "
@@ -3591,6 +3596,7 @@ async def evolve_suites(limit: int = 12, tag: str = "", trace_id=None):
 
 
 @capability("evolve.report", memory="off", silent=True,
+            contract={"presentation": {"kind": "document", "map": {"body": "text"}}},
             http_method="GET", http_path="/evolve/report", http_tags=["evolve"],
             description="Markdown QA report: latest suite scoreboard + trend over "
                         "recent suites + regressions vs the previous suite. Used "
@@ -3995,6 +4001,7 @@ async def _editq_worker():
 
 
 @capability("evolve.editq.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "queue"}, "draw": {"columns": ["label", "kind", "status", "model", "provider", "error", "created_at", "ended_at"]}, "empty": "The edit queue is empty"}},
             http_method="GET", http_path="/evolve/editq", http_tags=["evolve"],
             description="The background edit queue — actions synthesised on the "
                         "pinned CPU model (gpt-oss:20b), newest first. Query: limit, "
@@ -4533,6 +4540,7 @@ async def evolve_improve_status(session_id: str = "", trace_id=None):
 
 
 @capability("evolve.improve.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sessions"}, "draw": {"columns": ["profile", "status", "phase", "rounds_done", "max_rounds", "best_score", "error", "started_at", "id"]}, "empty": "No improvement sessions"}},
             http_method="GET", http_path="/evolve/improve/list", http_tags=["evolve"],
             description="Recent improvement sessions (compact, newest first).")
 async def evolve_improve_list(limit: int = 20, trace_id=None):
@@ -5201,6 +5209,7 @@ async def _commit_attribution_map(limit: int = 500) -> Dict[str, Dict[str, Any]]
 
 
 @capability("evolve.git.graph", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "commits"}, "draw": {"columns": ["subject", "author", "date", "refs", "hash"]}}},
             http_method="GET", http_path="/evolve/git/graph", http_tags=["evolve"],
             description="Real commit graph for a repo — every commit (across ALL "
                         "branches) with its parents and ref decorations, newest-"
@@ -7279,6 +7288,7 @@ async def evolve_errors_suggest(id: str = "", provider: str = "", trace_id=None)
 
 
 @capability("evolve.errors.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "log", "map": {"events": "items", "t": "last_seen", "text": "title", "kind": "source", "level": "state"}, "empty": "No errors in the queue"}},
             http_method="GET", http_path="/evolve/errors", http_tags=["evolve"],
             description="The errors work-queue, newest first — for the errors→edits→"
                         "commits board. Query: state (str filter — new|suggested|"
@@ -7678,6 +7688,7 @@ async def cap_worktree_release(path: str = "", trace_id=None) -> Dict[str, Any]:
 
 
 @capability("evolve.worktree.claims", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "claims"}, "draw": {"columns": ["path", "owner", "state", "note", "claimed_at", "exists"]}, "empty": "No worktree claims"}},
             http_method="GET", http_path="/evolve/worktree/claims", http_tags=["evolve"],
             description="List worktree claims — who has declared they are working "
                         "where, and which claims have gone stale. Output: "
@@ -8276,6 +8287,7 @@ async def _refresh_standing_bleeding_edge_container(edge: str = "") -> Dict[str,
 
 
 @capability("evolve.bleeding_edge.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "edges"}, "draw": {"columns": ["name", "branch", "base", "main_state", "head", "mirror", "preferred_port", "exists"]}}},
             http_method="GET", http_path="/evolve/bleeding_edge/list", http_tags=["evolve"],
             description="The registered bleeding edges (integration branches) with their live "
                         "state: whether the branch exists, its tip, its standing against main "

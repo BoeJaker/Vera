@@ -649,6 +649,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.product.list", http_method="GET", http_path="/business/product/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "products"}, "draw": {"columns": ["name", "sku", "category", "qty_on_hand", "price", "cost", "reorder_point", "updated_at"]}, "empty": "No products"}},
         http_tags=["commerce"], memory="off", silent=True,
         description="List inventory products. Input: q (str — match sku/name/upc), "
                     "category (str), store_id (str — scope to one store), limit (int "
@@ -744,6 +745,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.product.low_stock", http_method="GET",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "products"}, "draw": {"columns": ["name", "sku", "qty_on_hand", "reorder_point", "reorder_qty", "supplier"]}, "empty": "No products are low on stock"}},
         http_path="/business/product/low_stock", http_tags=["commerce"],
         memory="off", silent=True,
         description="Products at or below their reorder point (need restocking). "
