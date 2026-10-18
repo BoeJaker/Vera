@@ -23,6 +23,10 @@ EVIDENCE_TOOLS = ("info.seek", "web.research", "web.fetch")
 MAX_CLAIMS = 8
 CLAIM_CHARS = 400
 PASSAGE_CHARS = 1200
+#: a claim's evidence: the best EVIDENCE_K windows of everything the run read, up to EVIDENCE_CHARS (18 Oct: one
+#: 600-char window often missed the part of the page that settles the claim; the run itself read up to 12000)
+EVIDENCE_K, EVIDENCE_CHARS = 3, 2000
+EVIDENCE_VERSION = "top3"
 WINDOW, STRIDE = 600, 400
 #: the baseline rule: a claim is "supported" when this share of its content words is in the best passage
 OVERLAP_SUPPORTED = 0.6
@@ -113,12 +117,14 @@ def passages(events: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for e in events:
         if not str(e.get("type") or "").endswith("tool_done") or e.get("tool") not in EVIDENCE_TOOLS or not e.get("ok"):
             continue
-        for it in evidence_items(e.get("preview") or ""):
+        for n, it in enumerate(evidence_items(e.get("preview") or "")):
             text = " ".join(str(it.get("text") or it.get("content") or it.get("snippet") or "").split())
             for k in range(0, max(1, len(text)), STRIDE):
                 w = text[k:k + WINDOW]
                 if w.strip():
-                    out.append({"text": w, "url": str(it.get("url") or "")[:300], "title": str(it.get("title") or "")[:200]})
+                    out.append({"text": w, "url": str(it.get("url") or "")[:300], "title": str(it.get("title") or "")[:200],
+                                "at": k,
+                                "src": (id(e), n)})
     return out
 
 
@@ -135,6 +141,33 @@ def best_passage(claim: str, ps: Sequence[Dict[str, Any]]) -> Tuple[Optional[Dic
     return best, round(max(0.0, share), 3)
 
 
+def top_passages(claim: str, ps: Sequence[Dict[str, Any]], k: int = EVIDENCE_K) -> List[Tuple[Dict[str, Any], float]]:
+    """The k passages sharing most of the claim's content words, best first, never two overlapping windows of one
+    source text."""
+    cw = words(claim)
+    if not cw or not ps:
+        return []
+    ranked = sorted(((p, len(cw & words(p["text"])) / len(cw)) for p in ps), key=lambda x: -x[1])
+    out: List[Tuple[Dict[str, Any], float]] = []
+    for p, s in ranked:
+        if any(q.get("src") == p.get("src") and abs(int(q.get("at") or 0) - int(p.get("at") or 0)) < WINDOW
+               for q, _ in out):
+            continue
+        out.append((p, round(max(0.0, s), 3)))
+        if len(out) >= k:
+            break
+    return out
+
+
+def evidence_text(top: Sequence[Tuple[Dict[str, Any], float]], limit: int = EVIDENCE_CHARS) -> str:
+    """The chosen passages as one text, each headed by its source, cut at limit."""
+    parts = []
+    for p, _ in top:
+        head = p.get("title") or p.get("url") or "source"
+        parts.append(f"[{head}] {p['text']}")
+    return "\n\n".join(parts)[:limit]
+
+
 def deliverable_of(events: Iterable[Dict[str, Any]]) -> str:
     for e in reversed(list(events)):
         if str(e.get("type") or "").endswith(".done") and "tool" not in str(e.get("type")) and e.get("summary"):
@@ -149,16 +182,18 @@ def pairs(events: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         return []
     out = []
     for c in claims(deliverable_of(events)):
-        p, share = best_passage(c, ps)
-        if p is None:
+        top = top_passages(c, ps)
+        if not top:
             continue
-        out.append({"claim": c, "evidence": p["text"][:PASSAGE_CHARS], "url": p["url"], "title": p["title"],
-                    "overlap": share})
+        p, share = top[0]                    # the baseline rule still reads the single best window
+        out.append({"claim": c, "evidence": evidence_text(top), "url": p["url"], "title": p["title"],
+                    "overlap": share, "sources": len({q.get("url") for q, _ in top}),
+                    "version": EVIDENCE_VERSION})
     return out
 
 
 def claim_ref(session_id: str, claim: str) -> str:
-    return hashlib.sha1(f"{session_id}|{claim}".encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha1(f"{session_id}|{claim}|{EVIDENCE_VERSION}".encode("utf-8")).hexdigest()[:16]
 
 
 def baseline(pair: Dict[str, Any]) -> str:

@@ -34,9 +34,11 @@ def test_the_registered_judges_give_the_old_list_exactly():
     got = SP.plan(SP.judge_bindings(J._orch.CAPABILITY_REGISTRY), list(JC.QUESTIONS), MODELS, 40)
     old = _old_list(40)
     assert [(c, a, k) for c, _t, a, k in got][:len(old)] == old
-    # the candidate matrix (17 Oct) adds the NLP-node judges after them, one job per model
+    # the candidate matrix (17 Oct) adds the NLP-node judges after them, one job per model; the direct-entailment
+    # NLI judge (18 Oct, claims against their evidence) joins them through its own binding
     assert [(c, a.get("family"), k) for c, _t, a, k in got][len(old):] == [
-        ("decide.shadow.heads", None, "heads"), ("decide.shadow.nlp", "nli", "nlp-nli"), ("decide.shadow.nlp", "rerank", "nlp-rerank"),
+        ("decide.shadow.heads", None, "heads"), ("decide.shadow.nlp", "nli", "nlp-nli"),
+        ("decide.shadow.nlp", "nli_direct", "nlp-nli_direct"), ("decide.shadow.nlp", "rerank", "nlp-rerank"),
         ("decide.shadow.nlp", "zeroshot", "nlp-zeroshot")]
 
 
