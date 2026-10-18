@@ -386,6 +386,7 @@ def _report_url(rid: str, *, public: bool = False) -> str:
 # ── topics ───────────────────────────────────────────────────────────────────
 
 @capability("intel.topic.list", http_method="GET", http_path="/intel/topic/list", http_tags=["intel"],
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["name", "status", "depth", "cadence", "signals_24h", "signals_total", "confidence", "headline", "last_sweep"]}, "empty": "No topics tracked"}},
             memory="off", silent=True,
             description="List tracked intelligence topics with live stats (signals in 24h, latest headline, due). "
                         "Input: status (active|paused|archived, blank = all). Output: {rows:[topic+stats], count}.")
@@ -515,6 +516,7 @@ async def _ensure_think_loop(t: Dict[str, Any]) -> None:
 # ── signals and the timeline ─────────────────────────────────────────────────
 
 @capability("intel.signal.list", http_method="GET", http_path="/intel/signal/list", http_tags=["intel"],
+            contract={"presentation": {"kind": "records", "map": {"rows": "rows", "title": "title", "url": "url", "snippet": "snippet", "when": "seen", "score": "score", "domain": "site", "id": "id"}, "empty": "No signals in the window"}},
             memory="off", silent=True,
             description="Signals for one topic or all, newest first (or by score). Input: topic_id, hours "
                         "(window, default 168), min_score, limit, order (seen|score). Output: {events:[feed rows], "
@@ -559,6 +561,7 @@ async def cap_signal_add(topic_id: str = "", url: str = "", title: str = "", not
 
 
 @capability("intel.timeline.get", http_method="GET", http_path="/intel/timeline/get", http_tags=["intel"],
+            contract={"presentation": {"kind": "series", "map": {"points": "days", "t": "date", "v": "signals"}, "title": "Signals a day"}},
             memory="off", silent=True,
             description="A topic's timeline (or every topic's): day buckets over the window plus the signals, "
                         "assessments and reports as point events, newest first. Input: topic_id, days "
@@ -578,6 +581,7 @@ async def cap_timeline_get(topic_id: str = "", days: int = 90, trace_id=None):
 
 
 @capability("intel.activity", http_method="GET", http_path="/intel/activity", http_tags=["intel"],
+            contract={"presentation": {"kind": "log", "map": {"events": "events", "t": "ts", "text": "title", "kind": "kind", "level": "status"}, "empty": "No intel activity in the window"}},
             memory="off", silent=True,
             description="Intel's own events for Vera's activity timeline: assessments, alerts, briefs built and where "
                         "they went, actions people ran, the last night batch. Input: topic_id (blank = all topics), "
@@ -597,6 +601,7 @@ async def cap_activity(topic_id: str = "", days: int = 14, limit: int = 60, trac
 
 
 @capability("intel.stories.get", http_method="GET", http_path="/intel/stories/get", http_tags=["intel"],
+            contract={"presentation": {"kind": "records", "map": {"rows": "stories", "title": "title", "url": "url", "snippet": "summary", "when": "first_seen", "score": "score", "domain": "topic", "id": "id"}, "empty": "No stories carried by several sources"}},
             memory="off", silent=True,
             description="Stories: the same news carried by several sources, as one item - first seen, how many sources "
                         "and distinct sites carry it, when the last joined and momentum (sources joined in the last 48 h). "
@@ -636,6 +641,7 @@ async def cap_asof_get(topic_id: str = "", when: str = "", trace_id=None):
 
 
 @capability("intel.summary", http_method="GET", http_path="/intel/summary", http_tags=["intel"],
+            contract={"presentation": {"kind": "kv", "form": "numbers", "map": {"pick": {"topics": "topics", "signals 24h": "signals_24h", "reports 7d": "reports_7d", "actions open": "actions_open"}}}},
             memory="off", silent=True,
             description="Intelligence at a glance: topics followed, signals in 24h, reports this week, actions "
                         "waiting, last refresh. Output: {values:[{name,value}], ...} for the numbers widget.")
@@ -1999,6 +2005,7 @@ async def cap_geo_lookup(name: str = "", cc: str = "", trace_id=None):
 
 
 @capability("intel.places.get", http_method="GET", http_path="/intel/places/get", http_tags=["intel", "geo"],
+            contract={"presentation": {"kind": "table", "form": "globe", "map": {}, "empty": "No places named yet"}},
             memory="off", silent=True,
             description="Where a topic's stories happen: the places its signals name, as globe pins (one per place, "
                         "sized by how many signals name it, the strongest story as detail, lit when named in the "
@@ -2039,6 +2046,7 @@ async def cap_corpus_export(since: str = "", topics: Any = None, max_share: floa
 
 
 @capability("intel.indicator.list", http_method="GET", http_path="/intel/indicator/list", http_tags=["intel"],
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "indicators"}, "title": "Watched numbers"}, {"kind": "log", "map": {"events": "changes", "t": "found", "text": "text", "kind": "kind"}, "title": "Changes"}]}},
             memory="off", silent=True,
             description="The numbers a topic watches (blank topic = all) with their latest value, 7/30-day change "
                         "and recent changes, plus resolved prediction markets with how the market and intel's "
@@ -2194,6 +2202,7 @@ async def cap_report_build(topic_ids: Any = None, period_hours: int = 24, title:
 
 
 @capability("intel.report.list", http_method="GET", http_path="/intel/report/list", http_tags=["intel"],
+            contract={"presentation": {"kind": "records", "map": {"rows": "rows", "title": "title", "url": "url", "when": "ts", "id": "id"}, "empty": "No reports yet"}},
             memory="off", silent=True,
             description="Recent intelligence reports. Input: topic_id, limit. Output: {rows:[{id,ts,title,url,counts}]}.")
 async def cap_report_list(topic_id: str = "", limit: int = 30, trace_id=None):
@@ -2545,6 +2554,7 @@ async def cap_deliver(report_id: str = "", channels: Any = None, target: str = "
 
 
 @capability("intel.channel.list", http_method="GET", http_path="/intel/channel/list", http_tags=["intel"],
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["label", "id", "render", "needs_target", "available"]}}},
             memory="off", silent=True,
             description="Where intelligence reports can be delivered, and whether each is available now. "
                         "Output: {rows:[{id,label,render,needs_target,available}]}.")
@@ -2560,6 +2570,7 @@ async def cap_channel_list(trace_id=None):
 # ── actions: what a report's buttons do ──────────────────────────────────────
 
 @capability("intel.action.list", http_method="GET", http_path="/intel/action/list", http_tags=["intel"],
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["label", "kind", "status", "cap", "created", "expires", "report_id"]}, "empty": "No actions offered"}},
             memory="off", silent=True,
             description="Actions reports have offered (get repo, research further, track, read) and what became "
                         "of them. Input: status (offered|running|done|failed). Output: {rows}.")
@@ -2687,6 +2698,7 @@ async def cap_repo_get(url: str = "", topic_id: str = "", trace_id=None):
 # ── dream / narrator / director ──────────────────────────────────────────────
 
 @capability("intel.brief", http_method="GET", http_path="/intel/brief", http_tags=["intel"],
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "topics"}, "draw": {"columns": ["name", "new_24h", "headline", "depth"]}, "empty": "No topics tracked"}},
             memory="off", silent=True,
             description="A compact brief of what intelligence is following - each active topic's latest headline, "
                         "new signals and open questions. Read by the dream director and the narrator. Input: limit. "
@@ -3336,6 +3348,7 @@ async def cap_files_run(queue: bool = True, trace_id=None):
 
 
 @capability("intel.notes.list", http_method="GET", http_path="/intel/notes/list", http_tags=["intel"],
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["title", "summary", "updated", "size", "path"]}, "empty": "The drop folders hold no notes"}},
             memory="off", silent=True,
             description="Notes the drop folders hold, with what intelligence made of them (summary, action items, "
                         "questions, search terms). Output: {rows}.")
@@ -3413,6 +3426,7 @@ async def cap_advise(queue: bool = True, trace_id=None):
 
 
 @capability("intel.proposals.list", http_method="GET", http_path="/intel/proposals/list", http_tags=["intel"],
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["title", "category", "risk", "effort", "trigger", "date", "error"]}, "empty": "No automation proposals"}},
             memory="off", silent=True, description="Automation proposals made so far. Output: {rows}.")
 async def cap_proposals_list(trace_id=None):
     rows = list(reversed(store().get_kv("proposals", []) or []))
@@ -3521,6 +3535,7 @@ async def cap_command(text: str = "", trace_id=None):
 
 
 @capability("intel.session.status", http_method="GET", http_path="/intel/session/status", http_tags=["intel"],
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "alerts"}, "title": "Recent alerts"}, {"kind": "table", "map": {"rows": "wanted"}, "title": "Wanted searches"}, {"kind": "kv", "map": {"fields": "night"}, "title": "Last night"}]}},
             memory="off", silent=True,
             description="Intelligence sessions: the windows configured, whether one is open now and when it ends, what "
                         "has been planned into it, and research waiting for one. Output: {sessions, active, runs, wanted}.")
@@ -3537,6 +3552,7 @@ async def cap_session_status(trace_id=None):
 
 
 @capability("intel.config.get", http_method="GET", http_path="/intel/config", http_tags=["intel"],
+            contract={"presentation": {"kind": "kv", "map": {"fields": "config"}}},
             memory="off", silent=True,
             description="Intelligence settings: schedule, delivery, persona, competitors, drop folders, sessions, NLP "
                         "and model gates. Output: {config, schedule, profile}.")
@@ -3799,6 +3815,7 @@ async def cap_feedback(signal_id: str = "", verdict: str = "useful", trace_id=No
 
 
 @capability("intel.decisions.stats", http_method="GET", http_path="/intel/decisions/stats", http_tags=["intel"],
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "questions"}, "draw": {"columns": ["name", "decisions", "with_outcome", "correct", "precision"]}}},
             memory="off", silent=True,
             description="How intelligence's gates are doing: per question (signal_relevant, page_genre, enrich_worth, "
                         "material_change) the decisions taken, how many got an outcome from you, and how often the "

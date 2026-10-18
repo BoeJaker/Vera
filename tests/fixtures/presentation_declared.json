@@ -746,6 +746,63 @@
    "rows": "services"
   }
  },
+ "dream.background.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "dream.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "config"
+  }
+ },
+ "dream.director.queue": {
+  "draw": {
+   "columns": [
+    "topic",
+    "kind",
+    "mode",
+    "goal",
+    "why",
+    "source",
+    "created"
+   ]
+  },
+  "empty": "The director has nothing queued",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "queue"
+  }
+ },
+ "dream.director.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "last_thought"
+    },
+    "title": "Last thought"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "queue"
+    },
+    "title": "Queued"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
  "dream.history": {
   "draw": {
    "columns": [
@@ -759,6 +816,259 @@
   "kind": "table",
   "map": {
    "rows": "history"
+  }
+ },
+ "dream.journal.list": {
+  "draw": {
+   "columns": [
+    "journal_id",
+    "entries",
+    "updated",
+    "created"
+   ]
+  },
+  "empty": "No dream journals",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "journals"
+  }
+ },
+ "dream.last": {
+  "kind": "document",
+  "map": {
+   "body": "report",
+   "title": "title"
+  }
+ },
+ "dream.loop.settings.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "settings"
+  }
+ },
+ "dream.pipeline.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "name",
+    "kind",
+    "mode",
+    "depth",
+    "max_steps",
+    "description"
+   ]
+  },
+  "empty": "No composite pipelines",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "pipelines"
+  }
+ },
+ "dream.review.list": {
+  "draw": {
+   "columns": [
+    "file",
+    "area",
+    "style",
+    "label",
+    "chars",
+    "truncated",
+    "ts",
+    "snapshot_id"
+   ]
+  },
+  "empty": "No stored review reports",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "reports"
+  }
+ },
+ "dream.review.runs": {
+  "draw": {
+   "columns": [
+    "ts",
+    "review_type",
+    "files_reviewed",
+    "reports_generated",
+    "remaining",
+    "stopped_reason",
+    "incomplete",
+    "snapshot_id"
+   ]
+  },
+  "empty": "No review runs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "runs"
+  }
+ },
+ "dream.review.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "dream.review.styles": {
+  "draw": {
+   "columns": [
+    "label",
+    "id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "styles"
+  }
+ },
+ "dream.schedule.events": {
+  "empty": "No dream fires in the window",
+  "kind": "calendar",
+  "map": {
+   "end": "end",
+   "events": "events",
+   "start": "start",
+   "title": "title"
+  }
+ },
+ "dream.scheduler.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "dream.sensor.bus_events": {
+  "empty": "No recent capability events",
+  "kind": "log",
+  "map": {
+   "events": "sample",
+   "kind": "via",
+   "t": "ts",
+   "text": "name"
+  }
+ },
+ "dream.sensor.syslog_errors": {
+  "empty": "No recent errors",
+  "kind": "log",
+  "map": {
+   "events": "sample",
+   "kind": "category",
+   "level": "level",
+   "t": "ts",
+   "text": "message"
+  }
+ },
+ "dream.sensors.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "cap",
+    "description"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sensors"
+  }
+ },
+ "dream.stages.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "phase",
+    "optional",
+    "cap",
+    "description"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "stages"
+  }
+ },
+ "dream.templates.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "mode",
+    "depth",
+    "max_steps",
+    "description"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "templates"
+  }
+ },
+ "dream.think.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "subject",
+    "project",
+    "enabled",
+    "idle_minutes",
+    "interval_minutes",
+    "last_run",
+    "goal"
+   ]
+  },
+  "empty": "No thinking loops",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "thoughts"
+  }
+ },
+ "dream.timeline": {
+  "draw": {
+   "columns": [
+    "label",
+    "fires_in",
+    "hours_window",
+    "mode",
+    "idle_met",
+    "cooldown_until",
+    "last_run",
+    "trigger"
+   ]
+  },
+  "empty": "No triggers to project",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "triggers"
+  }
+ },
+ "dream.trigger.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "name",
+    "enabled",
+    "mode",
+    "hours_start",
+    "hours_end",
+    "min_idle_minutes",
+    "min_interval_minutes",
+    "last_run"
+   ]
+  },
+  "empty": "No dream triggers",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "triggers"
   }
  },
  "estate.health": {
@@ -1722,6 +2032,261 @@
   "kind": "table",
   "map": {
    "rows": "integrations"
+  }
+ },
+ "intel.action.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "status",
+    "cap",
+    "created",
+    "expires",
+    "report_id"
+   ]
+  },
+  "empty": "No actions offered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "intel.activity": {
+  "empty": "No intel activity in the window",
+  "kind": "log",
+  "map": {
+   "events": "events",
+   "kind": "kind",
+   "level": "status",
+   "t": "ts",
+   "text": "title"
+  }
+ },
+ "intel.brief": {
+  "draw": {
+   "columns": [
+    "name",
+    "new_24h",
+    "headline",
+    "depth"
+   ]
+  },
+  "empty": "No topics tracked",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "topics"
+  }
+ },
+ "intel.channel.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "render",
+    "needs_target",
+    "available"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "intel.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "config"
+  }
+ },
+ "intel.decisions.stats": {
+  "draw": {
+   "columns": [
+    "name",
+    "decisions",
+    "with_outcome",
+    "correct",
+    "precision"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "questions"
+  }
+ },
+ "intel.indicator.list": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "indicators"
+    },
+    "title": "Watched numbers"
+   },
+   {
+    "kind": "log",
+    "map": {
+     "events": "changes",
+     "kind": "kind",
+     "t": "found",
+     "text": "text"
+    },
+    "title": "Changes"
+   }
+  ]
+ },
+ "intel.notes.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "summary",
+    "updated",
+    "size",
+    "path"
+   ]
+  },
+  "empty": "The drop folders hold no notes",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "intel.places.get": {
+  "empty": "No places named yet",
+  "form": "globe",
+  "kind": "table",
+  "map": {}
+ },
+ "intel.proposals.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "category",
+    "risk",
+    "effort",
+    "trigger",
+    "date",
+    "error"
+   ]
+  },
+  "empty": "No automation proposals",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "intel.report.list": {
+  "empty": "No reports yet",
+  "kind": "records",
+  "map": {
+   "id": "id",
+   "rows": "rows",
+   "title": "title",
+   "url": "url",
+   "when": "ts"
+  }
+ },
+ "intel.session.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "alerts"
+    },
+    "title": "Recent alerts"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "wanted"
+    },
+    "title": "Wanted searches"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "night"
+    },
+    "title": "Last night"
+   }
+  ]
+ },
+ "intel.signal.list": {
+  "empty": "No signals in the window",
+  "kind": "records",
+  "map": {
+   "domain": "site",
+   "id": "id",
+   "rows": "rows",
+   "score": "score",
+   "snippet": "snippet",
+   "title": "title",
+   "url": "url",
+   "when": "seen"
+  }
+ },
+ "intel.stories.get": {
+  "empty": "No stories carried by several sources",
+  "kind": "records",
+  "map": {
+   "domain": "topic",
+   "id": "id",
+   "rows": "stories",
+   "score": "score",
+   "snippet": "summary",
+   "title": "title",
+   "url": "url",
+   "when": "first_seen"
+  }
+ },
+ "intel.summary": {
+  "form": "numbers",
+  "kind": "kv",
+  "map": {
+   "pick": {
+    "actions open": "actions_open",
+    "reports 7d": "reports_7d",
+    "signals 24h": "signals_24h",
+    "topics": "topics"
+   }
+  }
+ },
+ "intel.timeline.get": {
+  "kind": "series",
+  "map": {
+   "points": "days",
+   "t": "date",
+   "v": "signals"
+  },
+  "title": "Signals a day"
+ },
+ "intel.topic.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "depth",
+    "cadence",
+    "signals_24h",
+    "signals_total",
+    "confidence",
+    "headline",
+    "last_sweep"
+   ]
+  },
+  "empty": "No topics tracked",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
   }
  },
  "loop.ci.board": {
@@ -2761,6 +3326,148 @@
    "fields": "$"
   }
  },
+ "research.agents.status": {
+  "draw": {
+   "columns": [
+    "id",
+    "tier",
+    "status",
+    "model",
+    "job_id",
+    "tokens",
+    "elapsed"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "slots"
+  }
+ },
+ "research.config.instances.get": {
+  "draw": {
+   "columns": [
+    "name",
+    "tier",
+    "model",
+    "host",
+    "port",
+    "ctx_size",
+    "enabled",
+    "enable_thinking"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "research.db.stats": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "research.health": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "research.history": {
+  "draw": {
+   "columns": [
+    "query",
+    "mode",
+    "status",
+    "citation_count",
+    "token_count",
+    "created_at",
+    "finished_at",
+    "error",
+    "id"
+   ]
+  },
+  "empty": "No research jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
+ "research.models": {
+  "draw": {
+   "columns": [
+    "instance",
+    "tier",
+    "host",
+    "current_model",
+    "enabled"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "research.notebook.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "description",
+    "project_id",
+    "updated_at",
+    "id"
+   ]
+  },
+  "empty": "No notebooks",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "research.recall.datasets": {
+  "draw": {
+   "columns": [
+    "dataset_id",
+    "record_count",
+    "updated_at",
+    "has_children"
+   ]
+  },
+  "empty": "No research datasets",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "datasets"
+  }
+ },
+ "research.sources": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "type",
+    "enabled",
+    "status"
+   ]
+  },
+  "empty": "No research sources",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "research.websearch.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
  "sandbox.config.get": {
   "kind": "kv",
   "map": {
@@ -2871,5 +3578,115 @@
  "workshop.agent_loop.trace": {
   "form": "status-matrix",
   "kind": "status"
+ },
+ "worldview.concepts": {
+  "draw": {
+   "columns": [
+    "idx",
+    "label",
+    "population"
+   ]
+  },
+  "empty": "No concepts yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "concepts"
+  }
+ },
+ "worldview.config": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "worldview.health": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Verdict"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "metrics"
+    },
+    "title": "Metrics"
+   }
+  ]
+ },
+ "worldview.landscape": {
+  "draw": {
+   "columns": [
+    "idx",
+    "label",
+    "population"
+   ]
+  },
+  "empty": "No concepts yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "concepts"
+  }
+ },
+ "worldview.loss_history": {
+  "kind": "series",
+  "map": {
+   "keyed": true,
+   "points": "$",
+   "t": "epoch",
+   "v": "loss"
+  },
+  "title": "Loss per epoch"
+ },
+ "worldview.retrieval.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "worldview.stats": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "model"
+    },
+    "title": "Model"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "index"
+    },
+    "title": "Index"
+   }
+  ]
+ },
+ "worldview.stream.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "worldview.subview.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "updated_at"
+   ]
+  },
+  "empty": "No sub-worldviews saved",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "subviews"
+  }
  }
 }
