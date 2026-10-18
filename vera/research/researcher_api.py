@@ -1474,6 +1474,24 @@ async def gather_web_search(query: str, job_id: str) -> list[Citation]:
         if txt:
             cit.full_text = txt
 
+    # Observe the result set Research already produced. This is deliberately
+    # best-effort and post-collection: it performs no second search/fetch,
+    # changes no citations, and cannot fail the native research path.
+    try:
+        try:
+            from Vera.vera.research.discovery_shadow import record_research_citations_shadow
+            from Vera.vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
+        except ImportError:  # pragma: no cover - isolated test package spelling
+            from vera.research.discovery_shadow import record_research_citations_shadow
+            from vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
+        record_research_citations_shadow(
+            query, citations, DISCOVERY_OPERATOR_LEDGER.record_research_shadow,
+            on_error=lambda error: log.debug(
+                "research discovery shadow observation failed: %s", error),
+        )
+    except Exception as exc:
+        log.debug("research discovery shadow hook unavailable: %s", exc)
+
     return citations
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import deque
 from copy import deepcopy
 import math
+import re
 from threading import RLock
 from typing import Any, Mapping
 
@@ -13,6 +14,10 @@ try:  # the test path's spelling first; the app has only Vera.vera, so it takes 
     from vera.discovery_benchmark import SCHEMA as BENCHMARK_SCHEMA
 except ImportError:  # pragma: no cover - the running app
     from Vera.vera.discovery_benchmark import SCHEMA as BENCHMARK_SCHEMA
+try:
+    from vera.research.discovery_shadow import SHADOW_SCHEMA
+except ImportError:  # pragma: no cover - the running app
+    from Vera.vera.research.discovery_shadow import SHADOW_SCHEMA
 
 
 READMODEL_SCHEMA = "vera.discovery-operator-readmodel/v1"
@@ -140,6 +145,75 @@ def project_benchmark_comparison(comparison: Mapping[str, Any]) -> dict[str, Any
     }
 
 
+def project_research_shadow(observation: Any) -> dict[str, Any]:
+    value = observation.to_dict() if hasattr(observation, "to_dict") else observation
+    if not isinstance(value, Mapping) or value.get("schema") != SHADOW_SCHEMA:
+        raise ValueError("research shadow schema is invalid")
+    required = {
+        "observation_id", "producer", "query_digest", "native_result_count",
+        "portable_context_count", "excluded_count", "full_text_count",
+        "screenshot_count", "portable_item_ids", "portable_revision_digests",
+        "execution_authority", "worker_evidence_available",
+        "route_evidence_available", "consumer_routing_changed",
+        "duplicate_provider_calls", "payloads_included",
+    }
+    if not required.issubset(value):
+        raise ValueError("research shadow is incomplete")
+    counts = {name: value[name] for name in (
+        "native_result_count", "portable_context_count", "excluded_count",
+        "full_text_count", "screenshot_count")}
+    if any(isinstance(count, bool) or not isinstance(count, int) or count < 0
+           for count in counts.values()):
+        raise ValueError("research shadow counts are invalid")
+    if counts["portable_context_count"] + counts["excluded_count"] \
+            != counts["native_result_count"]:
+        raise ValueError("research shadow coverage is inconsistent")
+    if counts["full_text_count"] > counts["native_result_count"] \
+            or counts["screenshot_count"] > counts["native_result_count"]:
+        raise ValueError("research shadow enrichment counts are inconsistent")
+    if not isinstance(value["portable_item_ids"], (list, tuple)) \
+            or not isinstance(value["portable_revision_digests"], (list, tuple)):
+        raise ValueError("research shadow identities must be sequences")
+    item_ids = tuple(value["portable_item_ids"])
+    revisions = tuple(value["portable_revision_digests"])
+    if len(item_ids) != counts["portable_context_count"] or len(revisions) != len(item_ids):
+        raise ValueError("research shadow identities are inconsistent")
+    if not re.fullmatch(r"rdso_[0-9a-f]{64}", str(value["observation_id"])) \
+            or not re.fullmatch(r"[0-9a-f]{64}", str(value["query_digest"])):
+        raise ValueError("research shadow digests are invalid")
+    if any(not re.fullmatch(r"research_web_[0-9a-f]{32}", str(item))
+           for item in item_ids) or any(
+               not re.fullmatch(r"sha256:[0-9a-f]{64}", str(revision))
+               for revision in revisions):
+        raise ValueError("research shadow portable identities are invalid")
+    if value["producer"] != "research.gather_web_search" \
+            or value["execution_authority"] != "research.native":
+        raise ValueError("research shadow authority is invalid")
+    flags = ("worker_evidence_available", "route_evidence_available",
+             "consumer_routing_changed", "duplicate_provider_calls",
+             "payloads_included")
+    if any(not isinstance(value[name], bool) for name in flags):
+        raise ValueError("research shadow flags must be boolean")
+    if any(value[name] for name in flags):
+        raise ValueError("research shadow must remain payload-free and non-authoritative")
+    return {
+        "schema": SHADOW_SCHEMA,
+        "observation_id": _bounded(value["observation_id"], "observation"),
+        "producer": _bounded(value["producer"], "producer"),
+        "query_digest": _bounded(value["query_digest"], "query digest"),
+        **counts,
+        "portable_item_ids": [_bounded(item, "portable item") for item in item_ids],
+        "portable_revision_digests": [
+            _bounded(revision, "portable revision") for revision in revisions],
+        "execution_authority": _bounded(value["execution_authority"], "authority"),
+        "worker_evidence_available": False,
+        "route_evidence_available": False,
+        "consumer_routing_changed": False,
+        "duplicate_provider_calls": False,
+        "payloads_included": False,
+    }
+
+
 class DiscoveryOperatorLedger:
     def __init__(self, capacity: int = MAX_ENTRIES):
         if isinstance(capacity, bool) or not isinstance(capacity, int) \
@@ -147,6 +221,7 @@ class DiscoveryOperatorLedger:
             raise ValueError(f"capacity must be between 1 and {MAX_ENTRIES}")
         self._routes: deque[dict[str, Any]] = deque(maxlen=capacity)
         self._benchmarks: deque[dict[str, Any]] = deque(maxlen=capacity)
+        self._research_shadows: deque[dict[str, Any]] = deque(maxlen=capacity)
         self._lock = RLock()
 
     def record_route(self, report: Any) -> dict[str, Any]:
@@ -161,16 +236,25 @@ class DiscoveryOperatorLedger:
             self._benchmarks.append(value)
         return deepcopy(value)
 
+    def record_research_shadow(self, observation: Any) -> dict[str, Any]:
+        value = project_research_shadow(observation)
+        with self._lock:
+            self._research_shadows.append(value)
+        return deepcopy(value)
+
     def snapshot(self, limit: int = 20) -> dict[str, Any]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_ENTRIES:
             raise ValueError(f"limit must be between 1 and {MAX_ENTRIES}")
         with self._lock:
             routes = list(self._routes)[-limit:][::-1]
             benchmarks = list(self._benchmarks)[-limit:][::-1]
+            research_shadows = list(self._research_shadows)[-limit:][::-1]
             counts = {"routes": len(self._routes),
-                      "benchmarks": len(self._benchmarks)}
+                      "benchmarks": len(self._benchmarks),
+                      "research_shadows": len(self._research_shadows)}
         return {"schema": READMODEL_SCHEMA, "routes": deepcopy(routes),
                 "benchmarks": deepcopy(benchmarks),
+                "research_shadows": deepcopy(research_shadows),
                 "counts": counts,
                 "payloads_included": False, "control_authority": False}
 
