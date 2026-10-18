@@ -17,7 +17,7 @@ pytestmark = pytest.mark.critical
 
 def test_decision_and_event_carry_applied():
     assert "_lower_applied = bool(_lower) and heur != _v7_tier_heuristic(goal)" in DWC
-    assert '"tier_lower_applied": _lower_applied}' in DWC
+    assert '"tier_lower_applied": _lower_applied' in DWC
     assert '"tier_lower_applied": bool(tier_info.get("tier_lower_applied"))})' in DWC
 
 

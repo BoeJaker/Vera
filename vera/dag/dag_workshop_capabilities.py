@@ -23429,6 +23429,16 @@ async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, 
               f"A cheap heuristic suggests: {heuristic_tier}.\n"
               f"AVAILABLE CAPABILITIES (sample):\n{catalog_brief[:1400]}\n\n"
               "Which tier best fits this goal?")
+    # ── The System 1 student for loop.tier (switchboard decide.student.tier; four-minds request, compute-roles
+    # 18 Oct 2026). inputs = what the ledger records for this decision, so a kNN student embeds the text its
+    # index was built from. 'first': a confident answer stands (the heuristic floor in _v7_decide_tier still
+    # applies to it); 'shadow': it runs beside the model and is recorded as the decision's shadow.
+    _stu_hook = await _StudentHook.start("loop.tier", sys, prompt, inputs={"goal": goal})
+    _stu = _stu_hook.decided
+    if _stu is not None and str(_stu.get("answer") or "").strip().lower() in _V7_TIERS:
+        return {"tier": str(_stu["answer"]).strip().lower(), "by": "student", "student": _stu,
+                "reason": "the student (%s) classed the goal at confidence %.3f"
+                          % (_stu.get("model") or "System 1", float(_stu.get("confidence") or 0))}
     try:
         try:
             await _emit_stage_context(
@@ -23445,10 +23455,11 @@ async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, 
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         tier = str(obj.get("tier") or "").strip().lower()
         if tier in _V7_TIERS:
-            return {"tier": tier, "reason": str(obj.get("reason") or "")[:300]}
+            return {"tier": tier, "reason": str(obj.get("reason") or "")[:300], "by": "llm",
+                    "student": await _stu_hook.result()}
     except Exception as e:
         log.debug("v7 tier classify failed: %s", e)
-    return {"tier": heuristic_tier, "reason": ""}
+    return {"tier": heuristic_tier, "reason": "", "by": "rule", "student": await _stu_hook.result()}
 
 
 async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
@@ -23475,11 +23486,13 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
     _lower_applied = bool(_lower) and heur != _v7_tier_heuristic(goal)
     llm = ""
     reason = ""
+    _by, _student_ans = "rule", None
     if use_llm:
         c = await _v7_classify_tier(goal, heur, catalog_brief, model=model,
                                     instance_id=instance_id, prefer_gpu=prefer_gpu,
                                     session_id=session_id)
         llm = c["tier"]; reason = c["reason"]
+        _by, _student_ans = c.get("by") or "llm", c.get("student")
     suggested = heur if _v7_tier_rank(heur) >= _v7_tier_rank(llm or heur) else llm
     tier = suggested
     suppressed = False
@@ -23488,7 +23501,7 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
         suppressed = True
     return {"tier": tier, "suggested": suggested, "heuristic": heur, "llm": llm,
             "reason": reason, "escalation_suppressed": suppressed, "tier_lower": _lower,
-            "tier_lower_applied": _lower_applied}
+            "tier_lower_applied": _lower_applied, "by": _by, "student": _student_ans}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -25498,7 +25511,8 @@ async def cap_dag_agent_loop_v6(
                           "tier_lower": bool(tier_info.get("tier_lower")),
                           "tier_lower_applied": bool(tier_info.get("tier_lower_applied"))})
         if _dl is not None:
-            _dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal})
+            _dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal},
+                     by=str(tier_info.get("by") or ""), student=tier_info.get("student"))
         # GOAL INTENT (build/research/action/mixed) — the KIND of work, which
         # drives the plan SHAPE (direct-authoring vs research-first) and the
         # phase/HITL tuning below. Same cheap LLM budget as the tier pass.
