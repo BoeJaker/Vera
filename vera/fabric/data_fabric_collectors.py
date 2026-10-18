@@ -2098,6 +2098,15 @@ def _stealth_save(domain: str, strategy: str, delay_s: float, fail_count: int = 
     except Exception as e:
         log.debug("stealth_save: %s", e)
 
+def _accept_encoding() -> str:
+    """Only what httpx can decode here: 'br' without a brotli decoder came back as compressed bytes read as text."""
+    try:
+        from Vera.vera.fabric import ingress_core as _icm
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_core as _icm
+    return _icm.accept_encoding()
+
+
 def _chrome_headers(ua: str = None) -> dict:
     ua = ua or random.choice(_STEALTH_UA_POOL[:3])  # Chrome UA
     is_ff = "Firefox" in ua
@@ -2105,7 +2114,7 @@ def _chrome_headers(ua: str = None) -> dict:
         "User-Agent":                ua,
         "Accept":                    _STEALTH_ACCEPT_FF if is_ff else _STEALTH_ACCEPT,
         "Accept-Language":           _STEALTH_LANG,
-        "Accept-Encoding":           "gzip, deflate, br",
+        "Accept-Encoding":           _accept_encoding(),
         "Cache-Control":             "max-age=0",
         "Sec-Ch-Ua":                 '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"' if not is_ff else "",
         "Sec-Ch-Ua-Mobile":          "?0",

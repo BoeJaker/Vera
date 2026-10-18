@@ -143,6 +143,32 @@ def normalise_text(text: str) -> str:
     return _WS.sub(" ", str(text or "")).strip()
 
 
+def accept_encoding() -> str:
+    """The Accept-Encoding to send: only what this httpx can decode. The crawl headers said 'gzip, deflate, br' while
+    prod's httpx had no brotli decoder, so every server that chose br had its compressed body read as text and stored
+    (18 Oct: 1,234 of 9,068 fabric_pages, 5,087 records)."""
+    try:
+        from httpx._decoders import SUPPORTED_DECODERS
+        have = set(SUPPORTED_DECODERS)
+    except Exception:  # noqa: BLE001
+        have = {"gzip", "deflate"}
+    return ", ".join(e for e in ("gzip", "deflate", "br", "zstd") if e in have) or "identity"
+
+
+BINARY_SAMPLE = 2000
+BINARY_SHARE = 0.05
+
+
+def looks_binary(text: str) -> bool:
+    """True when decoded text is really bytes: replacement characters or control characters (other than whitespace)
+    are more than 5 % of its first 2,000 characters. Readable text in any script stays well under."""
+    s = str(text or "")[:BINARY_SAMPLE]
+    if not s:
+        return False
+    bad = sum(1 for ch in s if ch == "\ufffd" or (ord(ch) < 32 and ch not in "\t\n\r\f\v"))
+    return bad / len(s) > BINARY_SHARE
+
+
 def content_hash(text: str) -> str:
     """sha256 of the whitespace-normalised text: the same words in the same order hash the same."""
     return hashlib.sha256(normalise_text(text).encode("utf-8", "replace")).hexdigest()
