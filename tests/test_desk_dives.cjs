@@ -43,7 +43,7 @@ t('document: key terms, stop words out, links not counted as words', byId(dd, 't
 t('document: links by site', byId(dd, 'links') && byId(dd, 'links').data['huggingface.co'] === 2 && byId(dd, 'links').data['ollama.com'] === 1);
 
 t('the menu lists them, lit when open; the row toggles a bound widget item',
-  SRC.includes("return dv.length ? '<hr><div class=\"hd-lbl\">Deep dive</div>'")   /* WSU-58 S6: the menu's dive entry */ && SRC.includes("const dk = 'dive:' + d.id + ':' + key;")
+  SRC.includes("return dv.length || mv.length ? '<hr><div class=\"hd-lbl\">Deep dive</div>'")   /* WSU-58 S6: the menu's dive entry */ && SRC.includes("const dk = 'dive:' + d.id + ':' + key;")
   && SRC.includes("return this.call('canvas.remove', { key: dk });") && SRC.includes("content: { form: d.form, title: d.title, data: d.data, binds: key, source: 'deep dive · ' + d.label } }); }"));
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

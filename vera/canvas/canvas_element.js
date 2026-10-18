@@ -1931,6 +1931,12 @@
   .vc-note{border-left:2px solid var(--acc,#5a9e8f);padding:3px 0 3px 8px;
     color:var(--fg2,#c3cad4);white-space:pre-wrap}
   .vc-by{color:var(--dim,#6b7480);font-size:11px;margin-left:5px}
+  /* a model dive's line (DA-09): what ran on what; running, failed, cut */
+  .vc-dive{font-size:11px;color:var(--dim,#6b7480);padding:2px 0 5px}
+  .vc-dive.run{color:var(--fg2,#c3cad4)}.vc-dive.bad{color:var(--err,#f7768e)}
+  .vc-dive-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--acc,#5a9e8f);animation:vcDivePulse 1.2s ease-in-out infinite}
+  @keyframes vcDivePulse{50%{opacity:.25}}
+  .vc-dive-cut{font-size:11px;color:var(--warn,#d6b25e);padding:0 0 5px}
   .vc-fig{margin:.3em 0}.vc-fig img{max-width:100%;border-radius:6px;display:block}
   .vc-fig figcaption,.vc-cap{font-size:10.5px;color:var(--dim,#6b7480);margin-top:3px}
   .vc-tablewrap{overflow-x:auto}
@@ -3864,6 +3870,60 @@
       if (n(hosts) >= 2) dive('links', 'Links', 'ranked', top(hosts, 12), 'links per site');
     }
     return out; };
+  /* DEEP DIVES BY A MODEL (DA-09): beside the ones read off the item, two that a model works out from the item's TEXT -
+     a summary (llm.summarize, the local LLM) and the names in it (fabric.entity_graph.extract_text, the CPU NER). ONLY ON
+     DEMAND: one runs when the person picks it from the menu - never on load, on hover or in the background (owner: background
+     inference only at night). Each opens as an item of its own beside its source (dive:<id>:<source key>), a markdown or an
+     entities item, that says while it runs that it is running, shows a failure in itself, and says when the text was cut to
+     what the dive sends (max). A dive card is not offered dives of its own. */
+  const MODEL_DIVES = [
+    { id: 'summary', label: 'Summarise', cap: 'llm.summarize', kind: 'markdown', max: 6000, note: 'a short summary by the local model',
+      args: (text) => ({ text, max_words: 150, style: 'concise' }),
+      read: (r) => { const s = String((r && r.summary) || '').trim(); return s ? { md: s } : null; } },
+    { id: 'nlp-ents', label: 'Entities', cap: 'fabric.entity_graph.extract_text', kind: 'entities', max: 20000, note: 'the names in it, by the NER model (CPU)',
+      args: (text, key) => ({ items: [{ id: String(key || 'text'), text }], content_type: 'text' }),
+      read: (r) => { if (!r || !Array.isArray(r.nodes)) return null;
+        const ents = r.nodes.filter((x) => x && x.name).map((x) => ({ text: String(x.name), type: String(x.type || 'other'), count: +((x.props && x.props.mention_count) || 1) }))
+          .sort((a, b2) => b2.count - a.count).slice(0, 60);
+        return { groups: ents.length ? [{ group: 'named in it', entities: ents }] : [] }; } },
+  ];
+  /* the text a model dive reads: a document's, a note's, a page's, a research report's; a records item's open record (its
+     text as read) or, none open, the list's titles and snippets. { text, of } - of says which part it was. */
+  const diveText = (b, el) => {
+    const c = (b && b.content) || {}, ty = String((b && b.type) || ''), key = String((b && b.key) || '');
+    const s = (v) => (typeof v === 'string' ? v : '');
+    if (ty === 'markdown' || ty === 'note') return { text: s(c.md) || s(c.text) || s(c.markdown), of: ty === 'note' ? 'the note' : 'the document' };
+    if (ty === 'source') return { text: s(c.reader && c.reader.markdown) || s(c.text) || s(c.snippet), of: 'the page' };
+    if (ty === 'research') return { text: s(c.report), of: 'the report' };
+    if (ty === 'records') {
+      const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object');
+      const st = el && el._recUi && el._recUi[key]; const open = st && st.open ? items.filter((r) => st.open[r.id]) : [];
+      const opened = open.map((r) => { const cur = (st.body && st.body[r.id]) || {};
+        return s(cur.reader && cur.reader.markdown) || s(cur.text) || s(r.text) || s(r.snippet); }).filter((t) => t.trim());
+      if (opened.length) return { text: opened.join('\n\n'), of: opened.length > 1 ? 'the open records' : 'the open record' };
+      return { text: items.map((r) => [s(r.title), s(r.snippet)].filter(Boolean).join(' - ')).filter((t) => t.trim()).join('\n'), of: 'the list' };
+    }
+    return { text: '', of: '' };
+  };
+  const modelDivesOf = (b, el) => {
+    const c = (b && b.content) || {}; if (!b || (c.dive && typeof c.dive === 'object')) return [];
+    if (!/^(markdown|note|source|research|records)$/.test(String(b.type || ''))) return [];
+    const src = diveText(b, el); if (String(src.text || '').trim().length < 80) return [];
+    return MODEL_DIVES.map((d) => Object.assign({}, d, { model: true, of: src.of, title: d.label + ' · ' + String(blockTitle(b) || b.type || '').slice(0, 60) }));
+  };
+  /* what a model dive card says above its body: running (and since when), failed (and why), the text cut, what ran */
+  const diveStrip = (d) => {
+    if (!d || typeof d !== 'object') return '';
+    const n = (x) => Number(x || 0).toLocaleString('en-GB');
+    const cut = d.cut ? `<div class="vc-dive-cut" data-dive-cut="1">The text was cut: the first ${n(d.chars)} of ${n(d.total)} characters of ${esc(d.of || 'it')} were sent.</div>` : '';
+    const what = `<span class="mono">${esc(d.cap || '')}</span>`;
+    if (d.state === 'running') {
+      const stale = d.started && Date.now() - +d.started > 10 * 60 * 1000;
+      return `<div class="vc-dive run" data-dive-state="${stale ? 'stale' : 'running'}">${stale ? 'This dive did not finish - pick it again from the menu.' : '<i class="vc-dive-dot"></i>Running'} ${what} on ${n(d.chars)} characters of ${esc(d.of || 'it')}…</div>${cut}`;
+    }
+    if (d.state === 'error') return `<div class="vc-dive bad" data-dive-state="error">Failed: ${esc(String(d.error || 'no answer'))} <span class="vc-dim">(${what})</span></div>${cut}`;
+    return `<div class="vc-dive" data-dive-state="done">${what} · ${esc(d.of || '')} · ${d.ms != null ? (d.ms < 1000 ? d.ms + ' ms' : (d.ms / 1000).toFixed(1) + ' s') : ''}</div>${cut}`;
+  };
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
      does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
   /* the person's behind / front / among pick per panel item, kept in this browser for every canvas and frame */
@@ -4440,8 +4500,12 @@
         layer: () => '<hr>' + row('layer-behind', 'Full size, behind', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'Full size, in front', 'Fill the free desk, over the other items', L === 'front' || this._max === key),
         /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
         dive: () => { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
-          return dv.length ? '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
-            return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-layer-key="${k}" title="${esc((on ? 'Close ' : 'Open ') + d.label.toLowerCase() + (d.note ? ' - ' + d.note : '') + ' (a widget beside it)')}">${esc(d.label)}</button>`; }).join('') : ''; },
+          /* ...and the model's (DA-09): run only when picked here */
+          const mv = modelDivesOf(b, this);
+          return dv.length || mv.length ? '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
+            return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-layer-key="${k}" title="${esc((on ? 'Close ' : 'Open ') + d.label.toLowerCase() + (d.note ? ' - ' + d.note : '') + ' (a widget beside it)')}">${esc(d.label)}</button>`; }).join('')
+            + mv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
+              return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-dive-model="1" data-layer-key="${k}" title="${esc(on ? 'Close ' + d.label.toLowerCase() : d.label + ' ' + d.of + ' - ' + d.note + ', run now (' + d.cap + '), beside it')}">${esc(d.label)} <span class="vc-dim">· model</span></button>`; }).join('') : ''; },
       };
       let h = VI.menu(b.type, { source: src }, o).map((id) => (R[id] ? R[id]() : '')).join('');
       /* the body's own: what it declared as it was drawn, or the kit's actions for its card - never one the menu has above */
@@ -5800,6 +5864,8 @@
         else {
           try { inner = fn(c, b.size, key, this); }
           catch (e) { inner = `<div class="err">Could not render a ${esc(b.type)} block.</div>`; }
+          /* a model dive's card (DA-09): what ran, running / failed, the text cut - its body only once it is done */
+          if (c.dive && typeof c.dive === 'object') inner = diveStrip(c.dive) + (c.dive.state === 'done' ? inner : '');
           // a decision draws its ask above its own body; a bare question (a note that is only its question) is the ask alone
           if (dec) { const keep = b.type === 'loop' || c[textFieldOf(b.type)]; if (!keep) this._kitNow = null; inner = askHtml(dec) + (keep ? inner : ''); }
         }
@@ -7320,6 +7386,8 @@
       }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
+      if (act === 'dive' && btn.dataset.diveModel) { try { const pop = btn.closest('.hd-pop'); if (pop) pop.remove(); } catch (e) { /* closed anyway */ }
+        return this._modelDive(key, btn.dataset.dive); }
       if (act === 'dive') { const b = this._blockOf(key); const d = b && divesOf(b, this).find((x) => x.id === btn.dataset.dive); if (!d) return;
         const dk = 'dive:' + d.id + ':' + key; try { const pop = btn.closest('.hd-pop'); if (pop) pop.remove(); } catch (e) { /* closed anyway */ }
         if (((this._doc && this._doc.blocks) || []).some((x) => String(x.key || '') === dk)) return this.call('canvas.remove', { key: dk });
@@ -7911,6 +7979,30 @@
       const base = (window._veraBase || '').replace(/\/$/, '');
       try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name, arguments: args || {} }, opts && opts.trace ? { trace_id: opts.trace } : {})) }); const j = await r.json(); return unwrap(j); }
       catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    }
+    /* A MODEL DIVE, PICKED (DA-09; MODEL_DIVES): its card goes up at once saying it is running, the cap is called once with
+       the item's text (cut to the dive's max) on a desk trace, and the card is written again with the answer or the error.
+       Picked again it closes - a run still going is let go (its answer is not written). Nothing here runs unless picked. */
+    async _modelDive(key, id) {
+      const b = this._blockOf(key); const d = b && modelDivesOf(b, this).find((x) => x.id === id); if (!d) return;
+      const dk = 'dive:' + d.id + ':' + key; const runs = this._diveRuns || (this._diveRuns = {});
+      if (((this._doc && this._doc.blocks) || []).some((x) => String(x.key || '') === dk) || runs[dk]) { delete runs[dk]; return this.call('canvas.remove', { key: dk }); }
+      const src = diveText(b, this); const all = String(src.text || ''); const cut = all.length > d.max; const text = cut ? all.slice(0, d.max) : all;
+      const dive = { cap: d.cap, of: src.of, state: 'running', started: Date.now(), chars: text.length, total: all.length, cut };
+      const base = { title: d.title, binds: key, source: 'deep dive · ' + d.label };
+      const empty = d.kind === 'entities' ? { groups: [] } : { md: '' };
+      const tok = runs[dk] = {};
+      await this.call('canvas.add', { kind: d.kind, key: dk, at: b.state === 'pinned' ? 'pinned' : 'now', size: 'm', content: Object.assign({}, base, empty, { dive }) });
+      const tr = await this._traceSteps(() => { /* the card says running; the steps are on the trace */ });
+      const t0 = Date.now(); let r = null;
+      try { r = await this.callResult(d.cap, d.args(text, key), { trace: tr.tid }); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+      finally { tr.close(); }
+      if (runs[dk] !== tok) return null;   /* closed while it ran */
+      delete runs[dk];
+      const err = !r ? 'no answer' : (r.ok === false || r.error) ? String(r.error || 'it failed') : '';
+      const got = err ? null : d.read(r);
+      const fin = Object.assign({}, dive, { state: err || !got ? 'error' : 'done', error: err || (got ? '' : 'the model gave nothing back'), ms: Date.now() - t0 });
+      return this.call('canvas.update', { key: dk, content: Object.assign({}, base, got || empty, { dive: fin }) });
     }
     /* the bridge asked from an item: the readout on the item, the reply to the host */
     async _bridge(key, id, name, args) {
@@ -8626,7 +8718,7 @@
     }
   }
 
-  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
+  const api = { divesOf, modelDivesOf, diveText, diveStrip, MODEL_DIVES, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {
