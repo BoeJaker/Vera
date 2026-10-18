@@ -5227,7 +5227,7 @@
       const out = [];
       plan.forEach((it) => {
         /* a card in the pill strip IS a pill, whatever size it was given (a resized card sent there was drawn as a card 150 x 34) */
-        const c = it.c, key = it.id, s = it.strip && it.h <= 40 ? { w: it.w, h: it.h, face: it.face0 === 'icon' ? 'icon' : 'chip', nd: 0 } : it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 } : it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
+        let c = it.c, key = it.id, s = it.strip && it.h <= 40 ? { w: it.w, h: it.h, face: it.face0 === 'icon' ? 'icon' : 'chip', nd: 0 } : it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 } : it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
           : it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 }
           /* grown into the free desk: that size, its face from it (a card grown past a full card's size is a full card) */
           : it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) })
@@ -5238,6 +5238,10 @@
           : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.h <= 40 ? 'chip' : (it.face0 || 'chip') })   /* at a pill's height it IS a pill: a held card kept a pill's size with a card's face - a sliver with only its icons */
           : it.maxH ? (() => { const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); if (s0.face === 'chip' || s0.face === 'icon') return s0; const hh = Math.min(s0.h, it.maxH); return Object.assign({}, s0, { h: hh, face: D.faceOf(s0.w, hh) === 'chip' ? 'card' : D.faceOf(s0.w, hh) }); })()
           : D.sizeAt(R, it.x, it.y, it.so, desk);
+        /* A CARD DRAWN AS A PILL IS DRAWN IN THE STRIP (WSU-95: the pills moved once, x 1061 -> 1081, at the first touch after a load): a card that
+           turns out a pill only here - pushed towards the border by the separation, a pill there by its distance - was drawn where it ended,
+           beside the strip, and the next pass slotted it. It goes to its slot in this pass. */
+        if ((s.face === 'chip' || s.face === 'icon') && !it.strip && !it.win && !it.board && !it.fixed && !it.stay && stripFn) { stripFn(it); s = { w: it.w, h: it.h, face: it.face0 === 'icon' ? 'icon' : 'chip', nd: 0 }; }
         const isChip = s.face === 'chip' || s.face === 'icon';
         const w = Math.min(W - 16, s.w, isChip ? Infinity : (it.maxW || Infinity)), h = Math.max(isChip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h));
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
