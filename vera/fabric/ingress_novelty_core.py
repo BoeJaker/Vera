@@ -80,3 +80,29 @@ def frontier_adjust(novel_yield: Optional[float]) -> float:
     if y < SATURATED_YIELD:
         return round(-FRONTIER_WEIGHT * 0.4, 3)
     return round(FRONTIER_WEIGHT * (y - 0.5), 3)
+
+
+# ── step 3: semantic novelty (PLAN §3.4; WI-5b, shadow) ──────────────────────
+
+SEMANTIC_KNOWN = 0.95
+
+
+def semantic(hits: Iterable[Tuple[str, float]], self_ids: Iterable[str]) -> Tuple[Optional[float], str]:
+    """(novelty, closest record id) from a vector search's (id, cosine) hits for a page's own vector: 1 - the
+    highest cosine to any record that is not this page (`self_ids`: its own record ids). None when nothing else
+    came back. A novelty at or below 1 - SEMANTIC_KNOWN means the fabric already holds this content."""
+    mine = set(self_ids or ())
+    best, twin = None, ""
+    for rid, cos in hits or ():
+        if rid in mine:
+            continue
+        c = max(0.0, min(1.0, float(cos)))
+        if best is None or c > best:
+            best, twin = c, str(rid)
+    if best is None:
+        return None, ""
+    return round(1.0 - best, 4), twin
+
+
+def semantic_known(novelty: Optional[float]) -> bool:
+    return novelty is not None and novelty <= round(1.0 - SEMANTIC_KNOWN, 4)

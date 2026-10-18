@@ -25,6 +25,7 @@ try:
     from Vera.vera.fabric import ingress_topic_core as tc
     from Vera.vera.fabric import ingress_search_core as sc
     from Vera.vera.fabric import ingress_crawl_core as cc
+    from Vera.vera.fabric import ingress_novelty_core as nc
     from Vera.vera.fabric import ingress_writer as iw
     from Vera.vera.web import web_client as _wc
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
@@ -33,6 +34,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.fabric import ingress_topic_core as tc
     from vera.fabric import ingress_search_core as sc
     from vera.fabric import ingress_crawl_core as cc
+    from vera.fabric import ingress_novelty_core as nc
     from vera.fabric import ingress_writer as iw
     from vera.web import web_client as _wc
 
@@ -888,6 +890,8 @@ METRIC_SQL = {
               "count(DISTINCT date_trunc('hour', f.ts)) AS hours FROM web_fetches f LEFT JOIN web_urls u USING (url_key) "
               "WHERE f.ts > NOW() - make_interval(days => $1) AND f.caller LIKE 'fabric.discover%'"),
     "fetches": "SELECT count(*) FROM web_fetches WHERE ts > NOW() - make_interval(days => $1)",
+    "semantic": ("SELECT count(*) AS n, count(*) FILTER (WHERE semantic_novelty <= 0.05) AS known, "
+                 "avg(semantic_novelty) AS mean FROM web_urls WHERE semantic_at > NOW() - make_interval(days => $1)"),
     "store": ("INSERT INTO web_metrics_daily (day, metrics) VALUES (CURRENT_DATE, $1::jsonb) "
               "ON CONFLICT (day) DO UPDATE SET metrics = EXCLUDED.metrics, ts = NOW()"),
 }
@@ -915,6 +919,7 @@ async def cap_map_metrics(days: int = 1, sample: int = 20, store: bool = False, 
             fresh = [dict(r) for r in await conn.fetch(METRIC_SQL["fresh"])]
             crawl = dict(await conn.fetchrow(METRIC_SQL["crawl"], d) or {})
             fetches = int(await conn.fetchval(METRIC_SQL["fetches"], d) or 0)
+            sem = dict(await conn.fetchrow(METRIC_SQL["semantic"], d) or {})
     except Exception as e:  # noqa: BLE001
         return {"error": str(e)[:200]}
     overlaps = []
@@ -923,6 +928,12 @@ async def cap_map_metrics(days: int = 1, sample: int = 20, store: bool = False, 
         overlaps.append(sc.overlap_at([x.get("key") for x in r.get("results") or []], list(srow["result_keys"] or [])))
     m = sc.daily_metrics(purposes, overlaps, fresh, crawl, fetches)
     m["days"] = d
+    try:
+        m["retention"] = (await cap_map_retention(days=90)).get("retention")
+    except Exception as e:  # noqa: BLE001
+        m["retention"] = {"error": str(e)[:120]}
+    m["semantic_shadow"] = {"pages": int(sem.get("n") or 0), "known": int(sem.get("known") or 0),
+                            "mean_novelty": round(float(sem["mean"]), 3) if sem.get("mean") is not None else None}
     out: Dict[str, Any] = {"metrics": m}
     try:
         async with pool.acquire() as conn:
@@ -935,3 +946,99 @@ async def cap_map_metrics(days: int = 1, sample: int = 20, store: bool = False, 
     except Exception as e:  # noqa: BLE001
         out["store_error"] = str(e)[:160]
     return out
+
+
+# ── semantic novelty in shadow (WI-5b, PLAN §3.4 step 3) ─────────────────────
+
+_SEM_SEM: Optional[asyncio.Semaphore] = None
+SEMANTIC_TOP_K = 4
+
+
+def _semantic_ids(ds_id: str, rid: str) -> List[str]:
+    """The fabric_records ids (Chroma's ids) of a crawl record, whose own id is inside its data."""
+    df = _data_fabric()
+    if df is None:
+        return []
+    rows = df._sqlite_conn().execute("SELECT id FROM fabric_records WHERE dataset_id = ? AND json_extract(data, '$.id') = ?",
+                                     (ds_id, rid)).fetchall()
+    return [r[0] for r in rows]
+
+
+async def semantic_note(url: str, ds_id: str, rid: str) -> Optional[float]:
+    """With `ingress.semantic_novelty` = shadow: read the page's own vector back from Chroma (no second embedding),
+    search its nearest records with no where filter, and record 1 - max cosine to anything else on web_urls. Acts
+    on nothing. Never raises; at most two run at once."""
+    global _SEM_SEM
+    mode()
+    if str((_SW.get("modes") or {}).get("ingress.semantic_novelty") or "off") != "shadow":
+        return None
+    df = _data_fabric()
+    store = getattr(df, "FABRIC_CHROMA", None) if df else None
+    pool = _pool()
+    if store is None or pool is None or not url:
+        return None
+    if _SEM_SEM is None:
+        _SEM_SEM = asyncio.Semaphore(2)
+    try:
+        async with _SEM_SEM:
+            ids = await asyncio.to_thread(_semantic_ids, ds_id, rid)
+            if not ids or not store._ready():
+                return None
+            loop = asyncio.get_running_loop()
+            got = await loop.run_in_executor(None, lambda: store._col.get(ids=ids[:1], include=["embeddings"]))
+            embs = (got or {}).get("embeddings")
+            if embs is None or len(embs) == 0:
+                return None
+            emb = [float(x) for x in embs[0]]
+            hits = await loop.run_in_executor(None, lambda: store.search(emb, top_k=SEMANTIC_TOP_K + len(ids)))
+            nov, twin = nc.semantic(hits, ids)
+            if nov is None:
+                return None
+            async with pool.acquire() as conn:
+                await conn.execute(rc.UPDATE_URL_SEMANTIC, ic.url_key(url), nov, twin)
+            return nov
+    except Exception as e:  # noqa: BLE001
+        log.debug("semantic novelty %s: %s", url, e)
+        return None
+
+
+# ── the retention experiment (PLAN §14.2) ────────────────────────────────────
+
+RETENTION_SQL = {
+    "revisits": ("WITH f AS (SELECT ts, status, content_hash, lag(ts) OVER w AS pts, lag(content_hash) OVER w AS phash "
+                 "FROM web_fetches WHERE ts > NOW() - make_interval(days => $1) WINDOW w AS (PARTITION BY url_key ORDER BY ts)) "
+                 "SELECT CASE WHEN pts IS NULL THEN 'first' ELSE " + sc.AGE_SQL.format(d="ts - pts") + " END AS bucket, "
+                 "count(*) AS n, count(*) FILTER (WHERE pts IS NOT NULL AND (status = 304 OR (content_hash IS NOT NULL "
+                 "AND content_hash = phash))) AS unchanged, count(*) FILTER (WHERE pts IS NOT NULL AND (status = 304 OR "
+                 "(content_hash IS NOT NULL AND phash IS NOT NULL))) AS comparable FROM f GROUP BY 1"),
+    "recall": ("SELECT " + sc.AGE_SQL.format(d="q.ts - u.first_seen") + " AS bucket, count(*) AS n FROM web_queries q "
+               "CROSS JOIN LATERAL unnest(q.result_keys) AS k(url_key) JOIN web_urls u ON u.url_key = k.url_key "
+               "WHERE q.purpose = 'index_hit' AND q.ts > NOW() - make_interval(days => $1) GROUP BY 1"),
+    "span": "SELECT EXTRACT(EPOCH FROM (NOW() - min(ts))) / 86400 FROM web_fetches",
+    "counts": "SELECT (SELECT count(*) FROM web_fetches) AS f, (SELECT count(*) FROM web_links) AS l",
+}
+
+
+@capability("fabric.map.retention", http_method="POST", http_path="/fabric/map/retention", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="Is keeping a longer web history worth it (the retention experiment): over the last `days` of "
+                        "receipts, by the age of the previous fetch of the same URL (<1d, 1-7d, 7-30d, 30-60d, 60-90d, "
+                        ">90d) - how many fetches were revisits and how many of those came back unchanged; by the age "
+                        "of the pages index answers cited - how much recall comes from old pages; and what a day of "
+                        "history costs in bytes. Input: days (int, default 90). Output: {retention}.")
+async def cap_map_retention(days: int = 90, trace_id=None):
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected"}
+    d = max(1, min(int(days or 90), 365))
+    try:
+        async with pool.acquire() as conn:
+            rev = [dict(r) for r in await conn.fetch(RETENTION_SQL["revisits"], d)]
+            rec = [dict(r) for r in await conn.fetch(RETENTION_SQL["recall"], d)]
+            span = float(await conn.fetchval(RETENTION_SQL["span"]) or 0.0)
+            cnt = await conn.fetchrow(RETENTION_SQL["counts"])
+            sizes = {r[0]: int(r[1]) for r in await conn.fetch(rc.SIZE_SQL, list(rc.MAP_TABLES))}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+    return {"retention": sc.retention_curves(rev, rec, sizes, {"web_fetches": int(cnt[0] or 0),
+                                                                 "web_links": int(cnt[1] or 0)}, span)}

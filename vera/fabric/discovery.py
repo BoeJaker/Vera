@@ -2809,6 +2809,11 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
             except Exception as e:
                 log.warning("ingest page %s: %s", page_url, e)
                 return
+            _sem_m = _ingress_mod()                # WI-5b: semantic novelty, shadow only, off the crawl's path
+            if _sem_m is not None and hasattr(_sem_m, "semantic_note"):
+                _sem_t = asyncio.ensure_future(_sem_m.semantic_note(page_url, ds_id, rid))
+                _PAGE_LEDGER_TASKS.add(_sem_t)
+                _sem_t.add_done_callback(_PAGE_LEDGER_TASKS.discard)
             # the page index too (recall, discover.query/compile, the KB): crawls never wrote it (B1)
             await asyncio.to_thread(_write_fabric_page, ds_id, crawl_id, page_url, title, full_text,
                                     extra_tags + ["web", "discovery"] + llm_tags,
