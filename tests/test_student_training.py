@@ -1,7 +1,7 @@
 """System 1 students trained by the ML Workshop (ml-workshop-compute MW-6,
 four-minds FM-2.4; owner authorised 2026-10-11, "yes start" 2026-10-12).
 
-Pins the guard rails (night window, busy box, the 90% disk rule), the
+Pins the guard rails (night window, the 90% disk rule - no busy-box wait), the
 trainability rules, the features / metrics, and the whole W2 path end to end:
 decide.export -> state vectors -> MLWorkshopCapabilityBridge / Runtime ->
 ml.train -> ONNX ModelPackage -> EvaluationReport -> a binding with
@@ -44,7 +44,6 @@ def _rows(n_pos=40, n_neg=20, n_test=8):
 def test_guard_rails():
     assert core.guard(hour=2)[0]
     assert not core.guard(hour=14)[0] and "window" in core.guard(hour=14)[1]
-    assert not core.guard(hour=2, busy_reason="census goal running")[0]
     ok, why = core.guard(hour=2, disk_pct=93.0)
     assert not ok and "93%" in why
     assert core.guard(hour=14, force=True)[0]
@@ -179,8 +178,6 @@ def test_the_whole_w2_path_with_faked_capabilities(tmp_path, monkeypatch, signal
     monkeypatch.setitem(sys.modules, "Vera.vera.capability_orchestration", orch)
     monkeypatch.setitem(sys.modules, "ml_onnx", fake_onnx)
     monkeypatch.setitem(sys.modules, "ml_training", types.SimpleNamespace(_WEIGHTS={}))
-    monkeypatch.setitem(sys.modules, "evolve_capabilities",
-                        types.SimpleNamespace(_box_busy_reason=lambda: asyncio.sleep(0, result="")))
     monkeypatch.setenv("VERA_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("VERA_MODEL_PACKAGE_DB", str(tmp_path / "state" / "packages.sqlite3"))
     st_mod = _load("student_training")
@@ -265,6 +262,7 @@ def test_the_nightly_tick_retries_an_error_but_not_forever(monkeypatch):
         seen.append(question_id)
         return results[len(seen) - 1]
     monkeypatch.setattr(st, "cap_decide_student_train", train)
+    monkeypatch.setattr(st, "_questions", lambda: ["loop.step_done"])
     for _ in range(5):
         asyncio.run(st._nightly())
     assert len(seen) == core.ATTEMPTS, "three errors, then the night is over"
@@ -276,3 +274,50 @@ def test_the_nightly_tick_retries_an_error_but_not_forever(monkeypatch):
     for _ in range(3):
         asyncio.run(st._nightly())
     assert len(seen) == 2, "an error, then a finished run ends the night"
+
+
+
+def test_every_two_label_question_is_trained_and_the_box_is_never_waited_for(monkeypatch):
+    """Owner 18 Oct: the box is never quiet - a pass does not skip for a census
+    or a held GPU; and the candidate matrix's new two-label applications get
+    students as soon as their gold allows. One question's error does not hold
+    up the next."""
+    assert core.guard(hour=2) == (True, "ok")
+    assert "busy_reason" not in core.guard.__code__.co_varnames
+    assert core.order_questions(["output.claim_supported", "loop.step_done", "intel.signal_relevant"]) == [
+        "loop.step_done", "intel.signal_relevant", "output.claim_supported"]
+    orch = types.ModuleType("Vera.vera.capability_orchestration")
+
+    class R:
+        def __init__(self): self.kv = {}
+        async def get(self, k): return self.kv.get(k)
+        async def set(self, k, v, ex=None): self.kv[k] = v
+        async def incr(self, k):
+            self.kv[k] = int(self.kv.get(k) or 0) + 1
+            return self.kv[k]
+        async def expire(self, k, s): pass
+
+    orch.CAPABILITY_REGISTRY, orch.REDIS, orch.PG_POOL, orch.OLLAMA_INSTANCES = {}, R(), None, {}
+    orch.capability = lambda *a, **k: (lambda f: f)
+    orch.schedule = lambda *a, **k: None
+    orch.emit_event = lambda e: asyncio.sleep(0)
+    monkeypatch.setitem(sys.modules, "Vera.vera.capability_orchestration", orch)
+    st = _load("student_training")
+    monkeypatch.setattr(st, "_orch", orch)
+    monkeypatch.setattr(st.core, "in_window", lambda h, w=None: True)
+    monkeypatch.setattr(st, "_questions", lambda: ["loop.step_done", "intel.signal_relevant", "output.claim_supported"])
+    answers = {"loop.step_done": {"ok": False, "error": "no node had room"},
+               "intel.signal_relevant": {"ok": False, "not_trainable": True, "why": "0 gold examples (< 50)"},
+               "output.claim_supported": {"ok": True, "state": "trained"}}
+    seen = []
+
+    async def train(question_id, dry_run):
+        seen.append(question_id)
+        return answers[question_id]
+    monkeypatch.setattr(st, "cap_decide_student_train", train)
+    out = asyncio.run(st.nightly_pass())
+    assert seen == ["loop.step_done", "intel.signal_relevant", "output.claim_supported"], "an error holds nothing up"
+    assert out["trained"] == ["intel.signal_relevant", "output.claim_supported"] and "loop.step_done" in out["error"]
+    seen.clear()
+    asyncio.run(st.nightly_pass())
+    assert seen == ["loop.step_done"], "the rest are done tonight; the failed one is tried again"
