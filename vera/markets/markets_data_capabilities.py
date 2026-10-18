@@ -652,7 +652,8 @@ if _CAP_AVAILABLE:
                 ts = _iso_to_ms(d.get("ts") or "")
             if ts is None:
                 continue
-            t.append(int(ts // 1000) if ts > 1e12 else int(ts))
+            # ms above 1e11: the old 1e12 kept every pre-Sep-2001 bar (in ms) as seconds (S19 / D23-2 B2)
+            t.append(int(ts // 1000) if ts > 1e11 else int(ts))
             o.append(d.get("open")); h.append(d.get("high"))
             l.append(d.get("low"));  c.append(d.get("close"))
             v.append(d.get("volume") or 0)

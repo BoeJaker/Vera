@@ -892,6 +892,43 @@ def position_series(n: int, t: "np.ndarray", trades: List[dict]) -> List[int]:
     return pos.tolist()
 
 
+def sim_write_order(conn, *, oid: str, account_id: str, symbol_key: str, side: str, qty: float, price: float,
+                    fees: float, note: str, source: str, ts: str) -> Optional[str]:
+    """Write one sim order and its cash change as ONE serialized transaction; returns an error string, or None.
+
+    cap_sim_order read the cash, awaited three times, then wrote the absolute new value, so two concurrent orders
+    (monitor, trader, optimizer, UI) each spent the same cash and the later write erased the earlier spend
+    (S19 / D23-2 B4). Now the cash moves by a delta guarded by what is there, and a sell is checked against the
+    position the orders hold at that moment."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if side == "buy":
+            need = qty * price + fees
+            cur = conn.execute("UPDATE mkt_sim_accounts SET cash = cash - ? WHERE id=? AND cash >= ?",
+                               (need, account_id, need - 1e-9))
+            if cur.rowcount == 0:
+                conn.rollback()
+                return "insufficient cash (another order spent it first)"
+        else:
+            held = conn.execute(
+                "SELECT COALESCE(SUM(CASE side WHEN 'buy' THEN qty ELSE -qty END), 0) FROM mkt_sim_orders "
+                "WHERE account_id=? AND symbol_key=?", (account_id, symbol_key)).fetchone()[0]
+            if float(held or 0) < qty - 1e-9:
+                conn.rollback()
+                return f"no {symbol_key} position left to sell (another order sold it first)"
+            conn.execute("UPDATE mkt_sim_accounts SET cash = cash + ? WHERE id=?",
+                         (qty * price - fees, account_id))
+        conn.execute(
+            "INSERT INTO mkt_sim_orders (id,account_id,symbol_key,side,qty,"
+            "price,fees,note,source,ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (oid, account_id, symbol_key, side, qty, price, fees, note, source, ts))
+        conn.commit()
+        return None
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Capabilities
 # ─────────────────────────────────────────────────────────────────────────────
@@ -3800,12 +3837,13 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         finally:
             conn.close()
 
-    def _sim_orders_sync(aid: str, limit: int = 500) -> List[dict]:
+    def _sim_orders_sync(aid: str, limit: Optional[int] = 500) -> List[dict]:
+        """The account's orders, newest first; limit=None reads them all (positions need every order)."""
         conn = _sqlite_conn()
         try:
             rows = conn.execute(
                 "SELECT * FROM mkt_sim_orders WHERE account_id=? "
-                "ORDER BY ts DESC LIMIT ?", (aid, limit)).fetchall()
+                "ORDER BY ts DESC LIMIT ?", (aid, -1 if limit is None else limit)).fetchall()
             return [dict(r) for r in rows]
         finally:
             conn.close()
@@ -3867,7 +3905,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         """Account valuation: cash + Σ position × latest stored price."""
         md = _md()
         orders = await asyncio.get_running_loop().run_in_executor(
-            None, _sim_orders_sync, acct["id"], 2000)
+            None, _sim_orders_sync, acct["id"], None)    # every order: positions (S19 / D23-2 B5)
         pos = _sim_positions_from_orders(orders)
         sleeves = _sim_sleeves_from_orders(orders)
         out_pos, total = [], float(acct["cash"])
@@ -4099,7 +4137,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         fee_rate = float(meta.get("fee_bps", 10)) / 10_000.0
         cash = float(acct["cash"])
         orders = await loop.run_in_executor(None, _sim_orders_sync,
-                                            account_id, 2000)
+                                            account_id, None)   # every order (B5)
         pos = _sim_positions_from_orders(orders).get(symbol_key,
                                                      {"qty": 0.0})
         q = float(qty or 0)
@@ -4133,17 +4171,14 @@ if _CAP_AVAILABLE and HAS_NUMPY:
         def _ins():
             conn = _sqlite_conn()
             try:
-                conn.execute(
-                    "INSERT INTO mkt_sim_orders (id,account_id,symbol_key,side,qty,"
-                    "price,fees,note,source,ts) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                    (oid, account_id, symbol_key, side, q, px, fees,
-                     note or "", source or "user", now_iso()))
-                conn.execute("UPDATE mkt_sim_accounts SET cash=? WHERE id=?",
-                             (new_cash, account_id))
-                conn.commit()
+                return sim_write_order(conn, oid=oid, account_id=account_id, symbol_key=symbol_key, side=side,
+                                       qty=q, price=px, fees=fees, note=note or "", source=source or "user",
+                                       ts=now_iso())
             finally:
                 conn.close()
-        await loop.run_in_executor(None, _ins)
+        err = await loop.run_in_executor(None, _ins)
+        if err:
+            return {"error": err}
         await _sim_snapshot(account_id)
         order = {"id": oid, "account_id": account_id, "symbol_key": symbol_key,
                  "side": side, "qty": round(q, 10), "price": px,
