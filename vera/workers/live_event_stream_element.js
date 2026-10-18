@@ -216,10 +216,11 @@ input:focus{outline:none;border-color:var(--acc,#5a9e8f)}
       return s;
     }
 
-    ingest(ev) {
+    /* at: the time to show (an event read from history); a live one is shown at its arrival */
+    ingest(ev, at) {
       if (this._paused) return;
       ev._cat = this._categorise(ev);
-      ev._ts = new Date().toISOString().slice(11, 19);
+      ev._ts = at || new Date().toISOString().slice(11, 19);
       this._events.push(ev);
       if (this._events.length > MAX) this._events.shift();
       this.dispatchEvent(new CustomEvent('ves:event', {detail: ev}));
@@ -228,6 +229,13 @@ input:focus{outline:none;border-color:var(--acc,#5a9e8f)}
       if (q && !JSON.stringify(ev).toLowerCase().includes(q)) { this._updateCount(); return; }
       this._renderRow(ev, true);
       this._updateCount();
+    }
+
+    /* the events an answer held (obs.events: newest first), shown before the live ones - oldest first, each at its own time */
+    seed(list) {
+      const evs = (Array.isArray(list) ? list : (list && Array.isArray(list.events) ? list.events : [])).filter((x) => x && typeof x === 'object');
+      const tsOf = (x) => String(x.ts || x.timestamp || x.time || '');
+      evs.slice().sort((a, b) => tsOf(a).localeCompare(tsOf(b))).slice(-MAX).forEach((x) => { const t = tsOf(x); this.ingest(Object.assign({}, x), /T\d\d:\d\d:\d\d/.test(t) ? t.slice(11, 19) : ''); });
     }
 
     _renderRow(ev, prepend) {
