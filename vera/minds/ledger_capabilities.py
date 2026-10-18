@@ -21,6 +21,12 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+# ONE module object (as data_fabric and training_state; D10-2, 18 Oct 2026): the loader loads this file as `ledger_capabilities`,
+# while other modules import `Vera.vera.minds.ledger_capabilities` - a second copy with its own _STATS counters, its capabilities registered
+# over the first and the drain and sweep jobs scheduled twice. Both names point at this object before anything else runs.
+for _alias in ("ledger_capabilities", "Vera.vera.minds.ledger_capabilities"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
+
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, schedule
 

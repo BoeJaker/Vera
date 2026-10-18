@@ -17,6 +17,12 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+# ONE module object (as data_fabric and training_state; D10-2, 18 Oct 2026): the loader loads this file as `tool_shortlist`,
+# while other modules import `Vera.vera.minds.tool_shortlist` - a second copy with its own _INDEX (the shortlist vectors, loaded twice), its capabilities registered
+# over the first. Both names point at this object before anything else runs.
+for _alias in ("tool_shortlist", "Vera.vera.minds.tool_shortlist"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
+
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability, schedule
 
