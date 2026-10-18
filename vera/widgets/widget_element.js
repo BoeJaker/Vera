@@ -3924,19 +3924,24 @@ span.vw-sampled{opacity:.85}
         bd.appendChild(g); }
       const rw = diveRows(rec, d);
       const t = document.createElement('div'); t.className = 'vw-dive-sec'; t.innerHTML = '<h4>Every row · ' + rw.length + '</h4>' + (rw.length ? '' : '<i style="color:var(--dim)">nothing read yet</i>');
-      if (rw.length) { const tw = document.createElement('vera-widget'); tw.setAttribute('size', 'xl'); tw.setAttribute('bare', ''); tw.style.height = '360px'; tw.setAttribute('record', JSON.stringify({ form: 'table', title: 'Every row', data: rw, draw: { search: true } })); t.appendChild(tw); }
+      if (rw.length) { const tw = document.createElement('vera-widget'); tw.setAttribute('size', 'xl'); tw.setAttribute('bare', ''); tw.setAttribute('item-drawer', ''); tw.style.height = '360px'; tw.setAttribute('record', JSON.stringify({ form: 'table', title: 'Every row', data: rw, draw: { search: true } })); t.appendChild(tw); }
       const j = document.createElement('div'); j.className = 'vw-dive-sec'; let raw = ''; try { raw = JSON.stringify(d, null, 2); } catch (_) { raw = String(d); }
       j.innerHTML = '<h4>What ' + esc(rec.source || 'the record') + ' answered</h4><pre>' + esc(String(raw == null ? '—' : raw).slice(0, 60000)) + '</pre>';
       bd.appendChild(t); bd.appendChild(j);
     };
     fill(data);
+    // the rows table, re-drawn with only the brushed rows (VeraDive's brush)
+    const setRows = (rw) => { const sec = bd.querySelector('.vw-dive-sec'), tw = sec && sec.querySelector('vera-widget'), h = sec && sec.querySelector('h4');
+      if (h) h.textContent = 'Every row · ' + rw.length; if (tw) tw.setAttribute('record', JSON.stringify({ form: 'table', title: 'Every row', data: rw, draw: { search: true } })); };
+    const dx = (window.VeraDive && typeof window.VeraDive.enhance === 'function') ? window.VeraDive.enhance({ sc, bd, rec, data, rows: (d) => diveRows(rec, d), setRows,
+      call: (cap, args) => call((host && host.base) || '', cap, args), refresh: () => { const b = sc.querySelector('[data-dv="refresh"]'); if (b && !b.disabled) b.click(); } }) : null;
     const close = () => { sc.remove(); document.removeEventListener('keydown', onKey, true); };
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     document.addEventListener('keydown', onKey, true);
     sc.addEventListener('click', (e) => { if (e.target === sc) close(); const b = e.target.closest && e.target.closest('[data-dv]'); if (!b) return;
       if (b.dataset.dv === 'close') close();
       else if (b.dataset.dv === 'place') { if (typeof window.openPlace === 'function' && window.openPlace(place)) { close(); return; } postTop({ type: 'vera:place:open', place }); close(); }
-      else if (b.dataset.dv === 'refresh' && rec.source && readable(rec.source)) { b.disabled = true; call((host && host.base) || '', rec.source, (rec.read && rec.read.args) || {}).then((v) => { fill(v); try { big.refresh && big.refresh(); } catch (_) {} }, () => {}).then(() => { b.disabled = false; }); } });
+      else if (b.dataset.dv === 'refresh' && rec.source && readable(rec.source)) { b.disabled = true; call((host && host.base) || '', rec.source, (rec.read && rec.read.args) || {}).then((v) => { fill(v); if (dx) dx.answered(v); try { big.refresh && big.refresh(); } catch (_) {} }, () => {}).then(() => { b.disabled = false; }); } });
     document.body.appendChild(sc);
     return sc;
   }
