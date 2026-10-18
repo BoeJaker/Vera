@@ -8,16 +8,20 @@ Pure: no I/O.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 OWNER = "four-minds"
 
 
 def contract(canonical_task: str, *, effects: Sequence[str], idempotency: str, resources: Sequence[str] = ("cpu",),
              network: str = "not_required", filesystem: str = "not_required", approval: str = "not_required",
-             lifecycle: str = "active", owner: str = OWNER) -> Dict[str, Any]:
-    """A full v2 contract: what the call does (effects), whether repeating it is safe (idempotency), what it uses."""
-    return {
+             lifecycle: str = "active", owner: str = OWNER,
+             presentation: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """A full v2 contract: what the call does (effects), whether repeating it is safe (idempotency), what it uses.
+
+    `presentation` (optional) is how the answer is drawn - the DA-01 {kind, map, form?, draw?, empty?} the desk,
+    dashboard and chat read (capability_contract_core). Left out, the contract is exactly as before."""
+    out = {
         "canonical_task": canonical_task,
         "lifecycle": lifecycle,
         "effects": list(effects),
@@ -34,3 +38,6 @@ def contract(canonical_task: str, *, effects: Sequence[str], idempotency: str, r
         "resources": {"status": "declared", "classes": list(resources)},
         "owner": owner,
     }
+    if presentation is not None:
+        out["presentation"] = dict(presentation)
+    return out
