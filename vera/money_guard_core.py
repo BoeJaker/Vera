@@ -32,22 +32,26 @@ from __future__ import annotations
 from typing import Sequence, Tuple
 
 TAG = "money"
+# Tags this guard applies, with what the refusal says the caller cannot do. "direct" is for capabilities that
+# must only run when the owner asks in person, without moving money (issuing and revoking caller tokens).
+TAGS = {"money": "move money", "direct": "do this"}
 
 
 def allowed(*, name: str, running_caps: Sequence[str] = (), http_cap: str = "",
-            mcp_call: bool = False, caller_kind: str = "", background: str = "") -> Tuple[bool, str]:
+            mcp_call: bool = False, caller_kind: str = "", background: str = "",
+            what: str = "move money", where: str = "the Markets panel") -> Tuple[bool, str]:
     """(True, "") when a person asked for ``name`` directly, else (False, reason)."""
     if running_caps:
-        return False, (f"called from inside {running_caps[-1]}: a money capability runs "
+        return False, (f"called from inside {running_caps[-1]}: this capability runs "
                        "only when a person asks for it directly")
     if background:
-        return False, f"background work ({background}) cannot move money"
+        return False, f"background work ({background}) cannot {what}"
     if caller_kind:
-        return False, f"caller {caller_kind!r} cannot move money; the owner does it from the Markets panel"
+        return False, f"caller {caller_kind!r} cannot {what}; the owner does it from {where}"
     if mcp_call:
         return False, ("not through /mcp/call (chat and copilot tool calls use it): "
-                       "use the Markets panel")
+                       f"use {where}")
     if http_cap == name:
         return True, ""
     return False, ("not a direct request from the UI: schedules, triggers, widgets, loops "
-                   "and agents cannot move money")
+                   f"and agents cannot {what}")

@@ -57,11 +57,13 @@ def parse_surface(header: Optional[str]) -> Tuple[str, str]:
 
 
 def actor_kind(*, name: str, running_caps: Sequence[str] = (), http_cap: str = "", mcp_call: bool = False,
-               caller_kind: str = "", background: str = "") -> str:
+               caller_kind: str = "", background: str = "", token_kind: str = "") -> str:
     """One word for who drove this call.
 
     nested            inside another capability (a loop, an agent turn, a DAG step, a panel's composite)
     background:<x>    a background driver (dream, v8, fabric, idle ...), from BACKGROUND_LLM's label
+    token:<kind>      a caller that sent a valid caller token (B0.3b): what the server checked, so it beats
+                      the body's caller_kind
     bridge:<kind>     an MCP bridge (caller_kind claude / codex / mcp)
     caller:<kind>     another self-declared caller_kind
     ui:mcp            the browser's /mcp/call: a person, or the chat's cap-in-chat and copilots acting for one
@@ -72,6 +74,8 @@ def actor_kind(*, name: str, running_caps: Sequence[str] = (), http_cap: str = "
         return "nested"
     if background:
         return "background:" + (_clean(str(background).split(":", 1)[0], 24) or "other")
+    if token_kind:
+        return "token:" + (_clean(token_kind, 24) or "other")
     if caller_kind:
         ck = _clean(caller_kind, 24) or "other"
         return ("bridge:" if ck in BRIDGE_KINDS else "caller:") + ck
