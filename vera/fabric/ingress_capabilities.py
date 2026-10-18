@@ -733,7 +733,7 @@ def _discovery_mod():
                         "pages_per_result (int, default 2). Output: {ok, filled:[{query, urls, pages}], skipped, "
                         "minutes, reason}.")
 async def cap_map_gaps_fill(minutes: int = 45, max_gaps: int = 10, days: int = 7, search_limit: int = 4,
-                            pages_per_result: int = 2, trace_id=None):
+                            pages_per_result: int = 2, concepts: bool = True, concept_cap: int = 10, trace_id=None):
     disc = _discovery_mod()
     if disc is None or not hasattr(disc, "discover_crawl_urls"):
         return {"ok": False, "error": "the discovery module is not loaded"}
@@ -763,8 +763,90 @@ async def cap_map_gaps_fill(minutes: int = 45, max_gaps: int = 10, days: int = 7
                 log.warning("gap fill crawl [%s]: %s", q[:60], e)
         record_query(q, engine="crawl", caller="fabric.map.gaps.fill", result_urls=urls, purpose="gap_fill")
         filled.append({"query": q, "urls": len(urls), "pages": pages})
-    return {"ok": True, "filled": filled, "skipped": max(0, len(plan) - len(filled)),
+    seeded: List[Dict[str, Any]] = []
+    if concepts and reason != "time is up":
+        seeded = await _seed_concepts(disc, budget - (time.monotonic() - t0), int(concept_cap or 0),
+                                      int(search_limit or 4), int(pages_per_result or 2))
+    return {"ok": True, "filled": filled, "skipped": max(0, len(plan) - len(filled)), "concepts": seeded,
             "minutes": round((time.monotonic() - t0) / 60, 1), "reason": reason}
+
+
+CONCEPT_DATASET = "web.worldview_seeds"
+
+
+async def _seed_concepts(disc, budget_s: float, cap: int, search_limit: int, ppr: int) -> List[Dict[str, Any]]:
+    """WI-15 (agreed with vera-62): crawl for worldview concepts with 3-19 records - read-only on worldview; the
+    pages land in the fabric, and worldview's own count (worldview.concepts) judges whether it helped."""
+    if cap <= 0 or budget_s <= 0 or not _has("worldview.concepts"):
+        return []
+    pool = _pool()
+    t0 = time.monotonic()
+    try:
+        wc = await asyncio.wait_for(_call("worldview.concepts"), 60)
+        last: Dict[int, Any] = {}
+        if pool is not None:
+            async with pool.acquire() as conn:
+                last = {int(r[0]): r[1] for r in await conn.fetch(
+                    "SELECT concept_idx, max(ts) FROM web_concept_seeds GROUP BY concept_idx")}
+    except Exception as e:  # noqa: BLE001
+        log.debug("concept seeds: %s", e)
+        return []
+    out = []
+    for seed in sc.concept_seeds(wc.get("concepts") or [], last, cap):
+        if time.monotonic() - t0 >= budget_s:
+            break
+        s = await _call("web.search", query=seed["query"], limit=max(1, min(search_limit, 10)), discover="off")
+        urls = [r.get("url") for r in (s or {}).get("results") or [] if r.get("url")]
+        pages = 0
+        if urls:
+            try:
+                p = max(1, min(ppr, 5))
+                cr = await disc.discover_crawl_urls(urls, dataset_id=CONCEPT_DATASET, topic=seed["label"], max_depth=1,
+                                                    breadth=p, max_pages=len(urls) * (p + 1), same_domain=False,
+                                                    reconcile=False, tags="web,discovery,worldview_seed")
+                pages = int((cr or {}).get("pages_fetched") or 0)
+            except Exception as e:  # noqa: BLE001
+                log.warning("concept seed crawl [%s]: %s", seed["label"][:60], e)
+        record_query(seed["query"], engine="crawl", caller="worldview:%d" % seed["idx"], result_urls=urls,
+                     purpose="concept_seed")
+        if pool is not None:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.execute("INSERT INTO web_concept_seeds (concept_idx, label, population_at, query, urls, "
+                                       "pages) VALUES ($1, $2, $3, $4, $5, $6)", seed["idx"], seed["label"],
+                                       seed["population"], seed["query"], len(urls), pages)
+            except Exception as e:  # noqa: BLE001
+                log.debug("concept seed row: %s", e)
+        out.append({"idx": seed["idx"], "label": seed["label"], "population": seed["population"], "urls": len(urls),
+                    "pages": pages})
+    return out
+
+
+@capability("fabric.map.concept_seeds", http_method="GET", http_path="/fabric/map/concept_seeds",
+            http_tags=["fabric", "ingress"], memory="off", silent=True,
+            description="Whether crawling for thin worldview concepts helps: per concept the nightly gap fill seeded "
+                        "(population 3-19, agreed with four-minds), its record count at the first seeding, now "
+                        "(worldview.concepts), the change, how often it was seeded and how many pages that fetched. "
+                        "Input: days (int, default 30). Output: {concepts:[{idx, label, population_at_first_seed, "
+                        "population_now, change, seedings, pages}], next:[the seeds tonight would pick]}.")
+async def cap_map_concept_seeds(days: int = 30, trace_id=None):
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected"}
+    try:
+        async with pool.acquire() as conn:
+            rows = [dict(r) for r in await conn.fetch(
+                "SELECT concept_idx, label, population_at, pages, ts FROM web_concept_seeds "
+                "WHERE ts > NOW() - make_interval(days => $1) ORDER BY ts", max(1, min(int(days or 30), 365)))]
+            last = {int(r[0]): r[1] for r in await conn.fetch(
+                "SELECT concept_idx, max(ts) FROM web_concept_seeds GROUP BY concept_idx")}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+    wc = await _call("worldview.concepts") if _has("worldview.concepts") else {}
+    cs = wc.get("concepts") or []
+    current = {int(c.get("idx")): int(c.get("population") or 0) for c in cs}
+    return {"concepts": sc.seed_effect(rows, current),
+            "next": [{k: s[k] for k in ("idx", "label", "population")} for s in sc.concept_seeds(cs, last)]}
 
 
 # ── the node crawl class (WI-12a, PLAN §13.2) ─────────────────────────────────

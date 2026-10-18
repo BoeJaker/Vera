@@ -138,6 +138,16 @@ DDL: Tuple[str, ...] = (
         source     TEXT,
         PRIMARY KEY (topic_key, url_key))""",
     "CREATE INDEX IF NOT EXISTS web_topic_members_url ON web_topic_members(url_key)",
+    """CREATE TABLE IF NOT EXISTS web_concept_seeds (
+        id            BIGSERIAL PRIMARY KEY,
+        ts            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        concept_idx   INT NOT NULL,
+        label         TEXT,
+        population_at INT,
+        query         TEXT,
+        urls          INT,
+        pages         INT)""",
+    "CREATE INDEX IF NOT EXISTS web_concept_seeds_idx ON web_concept_seeds(concept_idx, ts)",
     """CREATE TABLE IF NOT EXISTS web_metrics_daily (
         day     DATE PRIMARY KEY,
         metrics JSONB NOT NULL,
@@ -146,7 +156,7 @@ DDL: Tuple[str, ...] = (
 )
 
 MAP_TABLES = ("web_hosts", "web_urls", "web_fetches", "web_links", "web_content", "web_queries", "web_topic",
-              "web_topic_members", "web_metrics_daily")
+              "web_topic_members", "web_metrics_daily", "web_concept_seeds")
 
 #: Upserts, in the order the writer runs them. $n placeholders (asyncpg).
 UPSERT_HOST = """INSERT INTO web_hosts (host, fetches, errors, bytes) VALUES ($1, 1, $2, $3)
