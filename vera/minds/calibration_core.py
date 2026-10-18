@@ -101,23 +101,34 @@ def gold_of(live_row: Dict[str, Any], outcomes: Iterable[Dict[str, Any]]) -> Opt
     return s.get("label") if s else None
 
 
-def alerts(question_id: str, impl: str, cur: Dict[str, Any], prev: Dict[str, Any],
-           esc: Optional[Dict[str, Any]] = None, drift_value: Optional[float] = None) -> List[str]:
-    """The FM-2.5 revert triggers for one implementation, plus ECE and drift - only with enough rows."""
-    out: List[str] = []
+def alert_records(question_id: str, impl: str, cur: Dict[str, Any], prev: Dict[str, Any],
+                  esc: Optional[Dict[str, Any]] = None, drift_value: Optional[float] = None) -> List[Dict[str, Any]]:
+    """The FM-2.5 revert triggers for one implementation, plus ECE and drift - only with enough rows - as records
+    {question, impl, kind: precision_drop | ece | escalation | drift, text} (FM-11 auto-revert reads the kind)."""
+    out: List[Dict[str, Any]] = []
+
+    def add(kind: str, text: str, who: str = impl) -> None:
+        out.append({"question": question_id, "impl": who, "kind": kind, "text": text})
+
     cg, pg = (cur or {}).get("vs_gold") or {}, (prev or {}).get("vs_gold") or {}
     if (cg.get("n") or 0) >= MIN_N and (pg.get("n") or 0) >= MIN_N:
         a, b = cg.get("precision_at_tau"), pg.get("precision_at_tau")
         if a is not None and b is not None and b - a >= PRECISION_DROP:
-            out.append(f"{question_id} {impl}: precision at tau fell {b:.3f} -> {a:.3f}")
+            add("precision_drop", f"{question_id} {impl}: precision at tau fell {b:.3f} -> {a:.3f}")
     if (cg.get("n") or 0) >= MIN_N and (cg.get("ece") or 0) > ECE_MAX:
-        out.append(f"{question_id} {impl}: ECE {cg['ece']:.3f} > {ECE_MAX}")
+        add("ece", f"{question_id} {impl}: ECE {cg['ece']:.3f} > {ECE_MAX}")
     if esc and esc.get("rate") is not None and (esc.get("took", 0) + esc.get("handed", 0)) >= MIN_N \
             and esc["rate"] > ESCALATION_MAX:
-        out.append(f"{question_id}: escalation {esc['rate']:.0%} > {ESCALATION_MAX:.0%}")
+        add("escalation", f"{question_id}: escalation {esc['rate']:.0%} > {ESCALATION_MAX:.0%}", "")
     if drift_value is not None and drift_value > DRIFT_MAX:
-        out.append(f"{question_id}: live answers drifted (TVD {drift_value:.2f} > {DRIFT_MAX})")
+        add("drift", f"{question_id}: live answers drifted (TVD {drift_value:.2f} > {DRIFT_MAX})", "")
     return out
+
+
+def alerts(question_id: str, impl: str, cur: Dict[str, Any], prev: Dict[str, Any],
+           esc: Optional[Dict[str, Any]] = None, drift_value: Optional[float] = None) -> List[str]:
+    """The FM-2.5 revert triggers for one implementation, plus ECE and drift - only with enough rows."""
+    return [r["text"] for r in alert_records(question_id, impl, cur, prev, esc, drift_value)]
 
 
 def report(shadows_cur: List[Dict[str, Any]], shadows_prev: List[Dict[str, Any]], live_cur: List[Dict[str, Any]],
@@ -125,7 +136,7 @@ def report(shadows_cur: List[Dict[str, Any]], shadows_prev: List[Dict[str, Any]]
     """The whole calibration: shadows rows {question_id, impl, answer, p, would_take, live (answer or None when
     the live decision is missing), gold}; live rows {question_id, decision_id, run_id, decider, answer, stored
     (bool | None when the surface keeps no inputs)}."""
-    out: Dict[str, Any] = {"questions": {}, "alerts": []}
+    out: Dict[str, Any] = {"questions": {}, "alerts": [], "alert_items": []}
     cosigned = {r.get("for") for r in shadows_cur if r.get("would_take")}
     esc = escalation(live_cur, cosigned)
     qs = sorted({r["question_id"] for r in shadows_cur + shadows_prev + live_cur})
@@ -145,7 +156,11 @@ def report(shadows_cur: List[Dict[str, Any]], shadows_prev: List[Dict[str, Any]]
             cur = implementation_stats(q, [r for r in sc if r["impl"] == impl and r.get("live") is not None], tau)
             prev = implementation_stats(q, [r for r in sp if r["impl"] == impl and r.get("live") is not None], tau)
             qo["implementations"][impl] = {"current": cur, "previous": prev}
-            out["alerts"] += alerts(q, impl, cur, prev)
-        out["alerts"] += alerts(q, "", {}, {}, esc.get(q), dv)
+            items = alert_records(q, impl, cur, prev)
+            out["alerts"] += [r["text"] for r in items]
+            out["alert_items"] += items
+        items = alert_records(q, "", {}, {}, esc.get(q), dv)
+        out["alerts"] += [r["text"] for r in items]
+        out["alert_items"] += items
         out["questions"][q] = qo
     return out
