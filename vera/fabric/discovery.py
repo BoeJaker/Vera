@@ -2560,6 +2560,13 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                     if _fdoc.get("text"):
                         await asyncio.to_thread(_write_fabric_page, ds_id, crawl_id, page_url, _frec["title"],
                                                 _fdoc.get("text") or "", _ftags, [], _fdoc.get("word_count", 0))
+                    _t3m = _fdoc.get("t3") or {}
+                    if _t3m.get("op") and _ingress_switch("discovery.media_t3") == "on":
+                        try:            # WI-7b: a media file is described / transcribed later, never inline
+                            await _submit_t3_media(ds_id, _frid, page_url, _t3m["op"], _t3m.get("reader") or "",
+                                                   title=_frec.get("title") or "")
+                        except Exception as e:  # noqa: BLE001
+                            log.debug("t3 media %s: %s", page_url, e)
                     _record_edge(crawl_id, ds_id, (parent_url or ds_id), page_url,
                                  ("LINKS_TO" if parent_url else "HAS_PAGE"), "File")
                     _kids = _file_child_urls(_fdoc, page_url)
@@ -3508,10 +3515,64 @@ async def _t3_handler(job: Dict, should_continue) -> Dict:
     return {"ok": True, "items": len(recs), "entities": found}
 
 
+async def _submit_t3_media(ds_id: str, rid: str, url: str, op: str, reader: str, *, title: str = "") -> Dict:
+    job = _pc.t3_media_job(ds_id, rid, url, op, reader, title=title)
+    svc = _idle_svc()
+    if svc is None:
+        return {"queued": False, "id": ""}
+    return await svc.submit(job["kind"], job["title"], dedupe_key=job["dedupe_key"], payload=job["payload"], total=1)
+
+
+async def _t3_media_handler(job: Dict, should_continue) -> Dict:
+    """Describe an image (vision.describe, by URL) or transcribe an audio file (fetched through the ingress client,
+    25 MB cap, stt.transcribe), then re-ingest the record with that text so it is embedded and searchable. Video
+    needs its sound extracted first: not done yet."""
+    p = job.get("payload") or {}
+    ds_id, rid, url, op, reader = (str(p.get(k) or "") for k in ("dataset_id", "rid", "url", "op", "reader"))
+    if should_continue is not None:
+        why = await should_continue()
+        if why:
+            return {"yielded": f"pre-empted: {why}", "items": 0}
+    try:
+        from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _REG
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "error": "no capability registry"}
+
+    def _cap(n):
+        return (_REG.get(n) or {}).get("func")
+    result: Dict = {}
+    if op == "describe" and _cap("vision.describe"):
+        result = await _cap("vision.describe")(image_url=url, prompt=_pc.MEDIA_DESCRIBE_PROMPT)
+    elif op == "transcribe" and reader == "audio" and _cap("stt.transcribe"):
+        import base64
+        m = _ingress_mod()
+        client = m.hooked_client(caller="discovery.t3media", purpose="file", timeout=60.0) if m else httpx.AsyncClient(timeout=60.0)
+        async with client as c:
+            r = await c.get(url, follow_redirects=True)
+        if r.status_code >= 400 or len(r.content) > _pc.MEDIA_MAX_BYTES:
+            return {"ok": False, "error": f"HTTP {r.status_code}, {len(r.content)} bytes"}
+        result = await _cap("stt.transcribe")(audio_b64=base64.b64encode(r.content).decode(),
+                                               mime_type=r.headers.get("content-type", "audio/mpeg"))
+    else:
+        return {"ok": False, "skipped": f"{op} {reader}: not handled yet (video needs its sound extracted)"}
+    text = _pc.media_text(op, result)
+    if not text:
+        return {"ok": False, "error": str((result or {}).get("error") or "no text")[:200]}
+    row = _sqlite_conn().execute("SELECT data FROM fabric_records WHERE id=?", (rid,)).fetchone()
+    rec = json.loads(row["data"]) if row and row["data"] else {"id": rid, "url": url, "title": url.rsplit("/", 1)[-1]}
+    rec.update(id=rid, text=text, word_count=len(text.split()), t3_done=op)
+    await _ingest()(ds_id, [rec], source="fabric_discovery", tags=list(rec.get("tags") or []) + ["media", op])
+    await asyncio.to_thread(_write_fabric_page, ds_id, "", url, rec.get("title") or "", text,
+                            list(rec.get("tags") or []), [], len(text.split()))
+    return {"ok": True, "items": 1, "chars": len(text)}
+
+
 try:
     _svc_t3 = _idle_svc()
     if _svc_t3 is not None and not _svc_t3.has_handler(_pc.T3_KIND):
         _svc_t3.register_handler(_pc.T3_KIND, _t3_handler)
+    if _svc_t3 is not None and not _svc_t3.has_handler(_pc.T3_MEDIA_KIND):
+        _svc_t3.register_handler(_pc.T3_MEDIA_KIND, _t3_media_handler)
 except Exception as _e:  # noqa: BLE001
     log.debug("t3 handler not registered: %s", _e)
 
