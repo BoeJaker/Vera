@@ -316,6 +316,7 @@ def _parse_kv(text: str) -> Dict[str, str]:
 
 @capability(
     "ide.remote.instances",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "instances"}, "draw": {"columns": ["label", "kind", "status", "last_seen", "auth_pool", "workdir"]}, "empty": "No remote IDE instances"}},
     http_method="GET", http_path="/ide/remote/instances", http_tags=["ide", "remote"],
     memory="off", silent=True,
     description="List registered remote IDE instances (code-server / tunnel / ssh). "
@@ -1446,6 +1447,7 @@ async def ide_remote_queue_add(
 
 @capability(
     "ide.remote.queue.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "items"}, "draw": {"columns": ["task", "status", "engine", "agent", "summary", "created_at", "finished_at"]}, "empty": "The work queue is empty"}},
     http_method="GET", http_path="/ide/remote/queue/list", http_tags=["ide", "remote"],
     memory="off", silent=True,
     description="List work-queue items. Input: status (str — filter, optional). "

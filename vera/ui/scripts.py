@@ -444,6 +444,7 @@ if not any(t.get("name") == "ui.scripts.tick" for t in getattr(_orch, "SCHEDULED
 # ── capabilities ──────────────────────────────────────────────────────────────
 @capability(
     "ui.script.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "scripts"}, "draw": {"columns": ["name", "state", "by", "version", "doc", "runs", "last_run", "shipped"]}, "empty": "No UI scripts"}},
     http_method="GET", http_path="/ui/scripts", http_tags=["ui", "control"],
     description="Every UI script - the shipped ones and yours: {name, version, by, state (on . off . asked), on:{event, match}, "
                 "if, do:[{name,args}], else, doc, runs, last_run}. Output: {ok, scripts, triggers}.")

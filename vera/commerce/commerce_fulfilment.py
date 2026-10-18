@@ -342,6 +342,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.ship.carriers", http_method="GET",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "services"}, "draw": {"columns": ["carrier", "service", "format", "tracked", "signed", "comp"]}}},
         http_path="/business/ship/carriers", http_tags=["commerce"],
         memory="off", silent=True,
         description="The UK carrier rate card (Royal Mail / Evri / Yodel / InPost) with "

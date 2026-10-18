@@ -2348,6 +2348,7 @@ async def fabric_graphs_unregister(name: str, trace_id=None) -> Dict:
 
 @capability(
     "fabric.graphs.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "graphs"}, "draw": {"columns": ["name", "kind", "available", "uri", "description"]}}},
     http_method="GET", http_path="/fabric/graphs", http_tags=["fabric","graph"],
     memory="off", silent=True,
     description="List registered graph adapters with availability status. "
@@ -5831,6 +5832,7 @@ def _datasets_with_children(ids) -> set:
 
 @capability(
     "fabric.datasets", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "datasets"}, "draw": {"columns": ["dataset_id", "record_count", "updated_at", "has_children"]}, "empty": "No datasets"}},
     http_method="GET", http_path="/fabric/datasets", http_tags=["fabric"],
     description="List datasets stored in the data fabric with record counts. "
                 "WARNING: there can be THOUSANDS of datasets — NEVER call this without parent= to 'see everything'. "
@@ -6338,6 +6340,7 @@ async def cap_fabric_aux_query(cypher: str, params: Dict = None, trace_id=None) 
 
 @capability(
     "fabric.sources",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sources"}, "draw": {"columns": ["label", "source_type", "dataset_id", "enabled", "interval", "pull_count", "last_pulled", "id"]}, "empty": "No sources registered"}},
     http_method="GET", http_path="/fabric/sources", http_tags=["fabric"],
     memory="off", silent=True,
     description="List all registered data fabric sources. "
@@ -6648,6 +6651,7 @@ async def _obj_run(fn, *a, **k):
 
 @capability(
     "fabric.objects.status", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/fabric/objects/status", http_tags=["fabric", "objects"],
     description="Object store (Garage/Ceph/S3) status. Output: "
                 "{enabled, available, mode, endpoint, default_bucket, has_boto, "
@@ -6810,6 +6814,7 @@ async def cap_objects_presign(key: str, method: str = "get", bucket: str = "",
 
 @capability(
     "fabric.health",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/fabric/health", http_tags=["fabric"],
     memory="off", silent=True,
     description="Diagnostic snapshot of fabric subsystem. Output: "
@@ -7154,6 +7159,7 @@ async def fabric_loom_run(
 
 @capability(
     "fabric.skills.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "skills"}, "draw": {"columns": ["name", "description", "dataset_ids", "updated_at", "id"]}, "empty": "No skills"}},
     http_method="GET", http_path="/fabric/skills", http_tags=["fabric","skills"],
     memory="off",
     description="List all skills. Output: {skills:[{id,name,description,dataset_ids,...}]}.",

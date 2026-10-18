@@ -461,6 +461,7 @@ def _cap_brief(name: str) -> str:
 
 @capability(
     "cap_ontology.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "relations"}, "draw": {"columns": ["from", "relation", "to", "strength", "confidence", "auto", "description", "updated_at"]}, "empty": "No capability relations match"}},
     http_method="GET", http_path="/cap_ontology/list",
     http_tags=["cap_ontology"],
     description="List capability-to-capability relations. Filters: from, to, min_strength, only_auto, only_manual.",
@@ -617,6 +618,7 @@ async def co_delete_all(confirm: str = "", trace_id=None):
 
 @capability(
     "cap_ontology.matrix", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "cells"}, "draw": {"columns": ["from", "relation", "to", "strength", "confidence", "auto", "description"]}, "empty": "No relations among these capabilities"}},
     http_method="GET", http_path="/cap_ontology/matrix",
     http_tags=["cap_ontology"],
     description=(
@@ -1292,6 +1294,7 @@ async def co_jobs(trace_id=None):
 
 @capability(
     "cap_ontology.stats", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "form": "numbers", "map": {"pick": {"relations": "total", "auto": "auto", "manual": "manual", "caps covered": "covered_caps", "caps": "total_caps"}}}},
     http_method="GET", http_path="/cap_ontology/stats",
     http_tags=["cap_ontology"],
     description="Aggregate stats: relation count, auto vs manual, group coverage.",

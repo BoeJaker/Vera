@@ -159,6 +159,7 @@ def _coerce_animations(animations: str) -> Optional[Dict[str, dict]]:
 
 @capability(
     "spritegen.capabilities", memory="off", silent=True,
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "tiers"}, "title": "Tiers"}, {"kind": "kv", "map": {"fields": "style_descriptors"}, "title": "Styles"}]}},
     http_method="GET", http_path="/spritegen/capabilities", http_tags=["spritegen"],
     description="Report which sprite-generation tiers are live on the GPU node "
                 "(txt2img/img2img/rembg/controlnet/ipadapter/upscale) plus the style, "
@@ -364,6 +365,7 @@ async def spritegen_get(char_id: str = "", trace_id=None):
 
 @capability(
     "spritegen.list", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "characters"}, "draw": {"columns": ["name", "char_id", "style", "sprite_size", "colors", "brief", "archived", "created_at"]}, "empty": "No characters defined"}},
     http_method="GET", http_path="/spritegen/list", http_tags=["spritegen"],
     description="List all character definitions. Output: {characters:[...], count}.",
 )

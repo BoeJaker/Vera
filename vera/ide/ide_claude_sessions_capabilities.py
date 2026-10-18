@@ -879,6 +879,7 @@ async def _query_records_for_recent_sessions(max_sessions: int, per_session_limi
 
 @capability(
     "ide.claude_sessions.list_sessions",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sessions"}, "draw": {"columns": ["title", "agent", "turns", "last_ts", "last_role", "project_dir", "claude_session_id"]}, "empty": "No Claude Code sessions ingested"}},
     http_method="GET", http_path="/ide/claude_sessions/list_sessions", http_tags=["ide", "claude_sessions"],
     memory="off", silent=True,
     description="Group ingested Claude Code turns into a session list for the "

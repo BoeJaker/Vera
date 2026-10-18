@@ -596,6 +596,7 @@ def _launch_python(comp: Dict[str, Any], install_deps: bool, venv: str = "") -> 
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "provision.components",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "components"}, "draw": {"columns": ["label", "key", "port", "python", "heavy", "needs_vera_url", "desc"]}}},
     http_method="GET", http_path="/provision/components", http_tags=["provision"],
     memory="off", silent=True,
     description="List Vera's bundled edge components that can be deployed to a host "

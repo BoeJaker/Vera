@@ -249,6 +249,7 @@ async def _record_save(host_id: str, store: str, rec: Dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 @capability(
     "provision.stores",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "stores"}, "draw": {"columns": ["label", "key", "image", "desc", "gpus_hint", "special"]}}},
     http_method="GET", http_path="/provision/stores", http_tags=["provision"],
     memory="off", silent=True,
     description="Catalog of Vera backing stores provisionable onto a Docker host "
@@ -436,6 +437,7 @@ async def cap_store_deploy(host_id: str = "local", store: str = "",
 
 @capability(
     "provision.store.status",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "stores"}, "draw": {"columns": ["store", "state", "status", "container", "image", "reachable"]}, "empty": "No stores on this host"}},
     http_method="POST", http_path="/provision/store/status", http_tags=["provision"],
     memory="off", silent=True,
     description="State of provisioned stores on a Docker host: container state "

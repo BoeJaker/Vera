@@ -65,6 +65,7 @@ def _truthy(v: Any, default: bool) -> bool:
 
 @capability(
     "evolve.mission.events", memory="off", silent=True,
+    contract={"presentation": {"kind": "log", "map": {"events": "events", "t": "ts", "text": "summary", "kind": "family", "level": "state"}}},
     http_method="GET", http_path="/evolve/mission/events", http_tags=["evolve"],
     description=(
         "Every EVENT Loop Lab knows, in one shape, newest first, open errors first: "
