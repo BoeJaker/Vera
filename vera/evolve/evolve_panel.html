@@ -718,6 +718,18 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
   </div>
 
+  <!-- Changes against the system (looplab-control §9.4 S4; canvas board "Branches", owner 18 Oct: "a better view of the
+       changes (git graph) vs other parts of the system like performance or errors so we can visually see the relation"):
+       THE timeline with what landed (promotions, releases, commits) above what the system did (gates, census, memory,
+       tool choice); a click draws a guide through every lane, and "compare before / after" aligns Compare on the change. -->
+  <div class="card" id="ship-cs-card">
+    <div class="card-h"><span class="card-t">Changes against the system</span>
+      <span class="hint">what landed above what the system did &middot; click a change: a guide through every lane, its pipeline, and compare before / after</span></div>
+    <div class="olv-lanes" id="ship-cs-lanes"></div>
+    <div id="ship-cs-host"></div>
+    <div class="hint" id="ship-cs-note" style="margin-top:4px">errors over time come with the errors / outages layer (X1, backbone - vera-c7); gate and census failures stand in until then</div>
+    <vera-drill class="olv-drill" id="ship-drill" url></vera-drill>
+  </div>
   <div class="card">
     <div class="card-h"><span class="card-t">Commit graph</span>
       <span class="hint">the repo's real history — branches, merges, loop-lab/* highlighted</span></div>
@@ -1602,6 +1614,74 @@ function _tstKit(){
 async function tstRunNow(id){if(!confirm('Start this scheduled test now?'))return;const r=await VeraDrill.call('evolve.schedule.run_now',{id}).catch(e=>({error:e.message}));toast(r&&!r.error?'started':'could not start: '+((r&&r.error)||''));tstRefresh()}
 async function tstEnable(id,on){const r=await VeraDrill.call('evolve.schedule.enable',{id,enabled:on}).catch(e=>({error:e.message}));toast(r&&!r.error?(on?'enabled':'disabled'):'could not change: '+((r&&r.error)||''));tstRefresh()}
 
+/* ═══ SHIP — changes against the system (looplab-control §9.4 S4) ═══ */
+// THE timeline: what landed (promotions to bleeding-edge, releases to prod, every commit) above what the system did (gate
+// results, census pass rate, memory latency and quality, tool-choice hit@5). Each lane reads its own family's cap; the
+// errors / outages layer comes from obs with X1 (backbone).
+const SHIP_LANES=[
+  {lane:'ship.landed',label:'Landed on bleeding-edge',kind:'change',on:1},
+  {lane:'ship.releases',label:'Released to prod',kind:'change',on:1},
+  {lane:'ship.commits',label:'Commits',kind:'change',on:0},
+  {lane:'ship.gates',label:'Gate results',kind:'system',on:1},
+  {lane:'ship.census',label:'Census pass rate',kind:'system',on:1},
+  {lane:'ship.memory',label:'Memory seek p50 (ms)',kind:'system',on:1},
+  {lane:'ship.memq',label:'Memory quality (MRR)',kind:'system',on:0},
+  {lane:'ship.shortlist',label:'Tool choice hit@5',kind:'system',on:0},
+];
+let _shipOn=null,_shipKit=false;
+function _shipSpec(id){
+  const now=Date.now(),start=new Date(now-9*864e5).toISOString(),end=new Date(now+864e5).toISOString();
+  const rel={cap:'evolve.schedule.events',args:{mode:'windows',include_agents:false,include_releases:true,start,end}};
+  const res={cap:'evolve.schedule.events',args:{mode:'results',granularity:'runs',start,end,include_agents:false,include_releases:false}};
+  const L=SHIP_LANES.find(x=>x.lane===id),g={lane:id,label:L.label,group:L.kind==='change'?'Changes':'System'};
+  switch(id){
+    case 'ship.landed':return Object.assign(g,{type:'mark',color:'#7aa2f7',live:60,source:rel,map:{items:'events',t:'start',id:'id',where:{source:'releases',kind:'promotion'},tip:'{title} · {detail}',color:'#7aa2f7'}});
+    case 'ship.releases':return Object.assign(g,{type:'bar',color:'#4ade80',live:60,source:rel,map:{items:'events',t:'start',end:'end',id:'id',where:{source:'releases',kind:'release'},tip:'{title} · {detail}',color:'#4ade80'}});
+    case 'ship.commits':return Object.assign(g,{type:'mark',color:'#8b93a1',live:300,source:{cap:'evolve.git.graph',args:{repo:'vera',limit:400}},map:{items:'commits',t:'date',id:'hash',tip:'{subject} · {author}',color:'#8b93a1'}});
+    case 'ship.gates':return Object.assign(g,{type:'mark',color:'#6db87a',live:120,source:{cap:'evolve.unittest.history',args:{limit:300}},map:{items:'runs',t:'ts',id:'ts',tip:'{branch} · {summary}',color:{field:'ok',map:{'true':'#6db87a','false':'#c96b6b'},else:'#5a6270'}}});
+    case 'ship.census':return Object.assign(g,{type:'strip',color:'#c9a35a',live:300,source:res,map:{items:'events',t:'start',id:'id',value:'pass_rate',where:{source:'results'},tip:'{title} · {grade}',color:'#c9a35a'}});
+    case 'ship.memory':return Object.assign(g,{type:'strip',color:'#e0a458',live:300,source:{cap:'memory.perf.rows',args:{kind:'probe',days:30,limit:200}},map:{items:'rows',t:'ts',value:'extra.latency.ms_p50',tip:'{sha_short} · p50 {extra.latency.ms_p50} ms',color:'#e0a458'}});
+    case 'ship.memq':return Object.assign(g,{type:'strip',color:'#6db87a',live:300,source:{cap:'memory.perf.rows',args:{kind:'probe',days:30,limit:200}},map:{items:'rows',t:'ts',value:'extra.quality.mrr',tip:'{sha_short} · MRR {extra.quality.mrr}',color:'#6db87a'}});
+    case 'ship.shortlist':return Object.assign(g,{type:'strip',color:'#a78bfa',live:300,source:{cap:'caps.shortlist.replay',args:{history:60}},map:{items:'history',t:'ts',value:'loop.hit@5',tip:'{night} · hit@5 {loop.hit@5}',color:'#a78bfa'}});
+  }
+}
+async function shipChanges(){
+  try{await _olvScript()}catch(e){$('ship-cs-host').innerHTML=VeraStates?VeraStates.html('error','the timeline did not load'):'';return}
+  if(!_shipKit){_shipKit=true;_olvKit();if(!_relKitDone){_relKitDone=true;_relKinds()}
+    VeraDrill.registerKind('commit',{label:'Commit',
+      load:(id,ctx)=>ctx.call('evolve.git.graph',{repo:'vera',limit:400}).then(g=>{const c=((g&&g.commits)||[]).find(x=>x.hash===id);if(!c)throw new Error('not in the last 400 commits');return c}),
+      title:(c,id)=>c?String(c.subject||'').slice(0,60):String(id).slice(0,10),
+      render:(c)=>{const m=/\(pipeline ([0-9a-f]{8})\)/.exec(c.subject||'');
+        return _olvRow('commit',c.hash)+_olvRow('when',_olvWhen(c.date))+_olvRow('author',c.author)+_olvRow('subject',c.subject)+_olvRow('refs',(c.refs||[]).join(', '))+_olvRow('parents',(c.parents||[]).map(p=>p.slice(0,10)).join(', '))+
+          (m?'<div><span class="dk">pipeline</span><a href="#" data-drill="pipeline:'+m[1]+'">'+m[1]+' ›</a></div>':'')}});}
+  if(_shipOn==null){try{const s=JSON.parse(localStorage.getItem('looplab-ship-lanes')||'null');if(Array.isArray(s))_shipOn=new Set(s)}catch(_){}
+    if(!_shipOn)_shipOn=new Set(SHIP_LANES.filter(l=>l.on).map(l=>l.lane))}
+  SHIP_LANES.forEach(L=>VeraTimeline.registerLane(_shipSpec(L.lane)));
+  $('ship-cs-lanes').innerHTML=SHIP_LANES.map(L=>{const s=VeraTimeline.lane(L.lane);return '<button class="'+(_shipOn.has(L.lane)?'on':'')+'" onclick="shipLane(\''+L.lane+'\')" title="'+esc(L.kind+' · '+((s.source||{}).cap||''))+'"><i style="background:'+s.color+'"></i>'+esc(L.label)+'</button>'}).join('');
+  let tl=$('ship-tl');
+  if(!tl){$('ship-cs-host').innerHTML='<vera-timeline id="ship-tl" from="-7d" to="+6h"></vera-timeline>';tl=$('ship-tl');
+    tl.addEventListener('timeline:select',e=>{const it=e.detail.item||{},ln=e.detail.lane,dr=$('ship-drill');
+      if(ln==='ship.landed'&&it.pipeline_id)dr.open('pipeline',it.pipeline_id,{root:true});
+      else if(ln==='ship.commits')dr.open('commit',it.hash,{rec:it,root:true});
+      else if(ln==='ship.gates')dr.open('test-run',it.ts,{rec:it,root:true});
+      else if(it.release_id)dr.open('release',it.release_id,{root:true});
+      else if(it.id)dr.open('event',it.id,{rec:it,root:true})});
+    tl.addEventListener('timeline:brush',e=>tl.setRange(new Date(e.detail.from).toISOString(),new Date(e.detail.to).toISOString()))}
+  tl.setAttribute('lanes',SHIP_LANES.filter(L=>_shipOn.has(L.lane)).map(L=>L.lane).join(','));
+}
+function shipLane(id){_shipOn.has(id)?_shipOn.delete(id):_shipOn.add(id);try{localStorage.setItem('looplab-ship-lanes',JSON.stringify([..._shipOn]))}catch(_){}shipChanges()}
+/* compare before / after: the change as an item pin, every system lane shown as a lane pin, Compare aligned on it */
+async function shipCompare(pid,t,label){
+  try{await Promise.all([_olvScript(),_olvLib('vera-compare.js',()=>window.VeraCompare&&customElements.get('vera-compare'))])}catch(e){toast('compare did not load');return}
+  SHIP_LANES.forEach(L=>VeraTimeline.registerLane(_shipSpec(L.lane)));
+  const n=VeraCompare.addPin({kind:'item',lane:_shipSpec('ship.landed'),t,label:'landed: '+label,drill:'pipeline:'+pid,color:'#7aa2f7'});
+  const sys=SHIP_LANES.filter(L=>L.kind==='system'&&(_shipOn==null||_shipOn.has(L.lane)));
+  sys.forEach(L=>VeraCompare.addPin({kind:'lane',lane:_shipSpec(L.lane),label:L.label}));
+  nav('compare');await loadComparePage();
+  const c=$('cmp');if(c&&c.setAnchor&&n)c.setAnchor(n.pin,'1d');
+  toast('Compare: '+label+' against '+sys.length+' system lane(s), aligned on the moment it landed');
+}
+
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
 // Any Loop Lab work on a weekly window or once: a census, a suite, a task, a pipeline step, a board item's dispatch, an
 // agentic loop on a goal, a branch's unit tests, or any capability - and any of them may be FOR a board item (board_id):
@@ -1735,7 +1815,12 @@ function _relKinds(){
     title:(p,id)=>(p&&p.branch)||id,
     tabs:[{id:'stages',label:'Stages'},{id:'tests',label:'Gate runs'},{id:'change',label:'Change'},{id:'record',label:'Record'}],
     render:(p,tab,ctx)=>{
-      const open='<div style="margin-top:6px"><button class="btn" onclick="openPipe(\''+esc(p.id)+'\')">open in Ship</button></div>';
+      // the moment it landed: the releases view's promoted_at, else its ok merge stage (evolve.pipeline.get has no promoted_at)
+      const steps=p.stages||p.steps||[];   // the releases view says stages; evolve.pipeline.get says steps
+      const landed=p.promoted_at||(steps.filter(s=>s.stage==='merge'&&s.ok).pop()||{}).ts||'';
+      const cnt=v=>Array.isArray(v)?v.length+(v.length?' · '+String(v[0]).slice(0,80)+(v.length>1?' …':''):''):v;
+      const open='<div style="margin-top:6px;display:flex;gap:6px"><button class="btn" onclick="openPipe(\''+esc(p.id)+'\')">open in Ship</button>'+
+        (landed?'<button class="btn" onclick="shipCompare(\''+esc(p.id)+'\',\''+esc(landed)+'\',\''+esc(String(p.branch||p.id).replace(/\'/g,''))+'\')" title="pin this change and the system lanes to Compare, aligned on the moment it landed">&#8646; compare before / after</button>':'')+'</div>';
       if(tab==='record')return '<pre>'+esc(JSON.stringify(p,null,2))+'</pre>';
       if(tab==='change')return _olvLib('vera-diff.js',()=>window.VeraDiff&&customElements.get('vera-diff')).then(()=>'<vera-diff pipeline="'+esc(p.id)+'"></vera-diff>');
       if(tab==='tests')return ctx.call('evolve.unittest.history',{limit:300}).then(h=>{
@@ -1743,9 +1828,9 @@ function _relKinds(){
         if(!runs.length)return ctx.states.html('empty','no gate run of this pipeline in the recent history');
         return '<table>'+runs.map(r=>'<tr><td>'+esc(when(r.ts))+'</td><td>'+_relOk(r.ok)+'</td><td><a href="#" data-drill="test-run:'+esc(r.ts)+'">'+esc(r.summary||'')+' ›</a></td></tr>').join('')+'</table>'});
       // stages: the test pool writes a note per wait - one row with the count and the last note
-      const st=[];(p.stages||[]).forEach(s=>{const last=st[st.length-1];if(last&&last.stage===s.stage){last.n++;last.s=s}else st.push({stage:s.stage,n:1,s})});
-      return row('branch',p.branch)+row('into',p.to||'bleeding-edge')+row('commits',p.commits)+row('files',p.changed_files)+
-        row('promoted',p.promoted_at?when(p.promoted_at)+(p.merge_sha?' @ '+p.merge_sha:''):'')+row('took',p.minutes!=null?p.minutes+' min':'')+
+      const st=[];steps.forEach(s=>{const last=st[st.length-1];if(last&&last.stage===s.stage){last.n++;last.s=s}else st.push({stage:s.stage,n:1,s})});
+      return row('branch',p.branch)+row('into',p.to||'bleeding-edge')+row('commits',cnt(p.commits))+row('files',cnt(p.changed_files||p.files))+
+        row('landed',landed?when(landed)+(p.merge_sha?' @ '+p.merge_sha:''):'')+row('took',p.minutes!=null?p.minutes+' min':'')+
         '<table style="margin-top:6px">'+st.map(x=>'<tr><td>'+esc(x.stage)+(x.n>1?' <span class="tst-src">×'+x.n+'</span>':'')+'</td><td>'+_relOk(x.s.ok)+'</td><td class="tst-src">'+esc(when(x.s.ts))+'</td><td>'+esc(String(x.s.detail||'').slice(0,240))+'</td></tr>').join('')+'</table>'+open;
     }});
   VeraDrill.registerKind('release',{label:'Release',
@@ -6225,6 +6310,7 @@ async function shipLoadLogs(name,elId){
 let _shipRows=[],_shipMeta={},_shipOpen={},_shipReveal='',_shipMode='branches';
 const _SHIP_STAGE={live:'var(--acc)',review:'var(--warn)',red:'var(--err)',merged:'var(--ok)',idle:'var(--dim2)'};
 async function loadShip(){
+  shipChanges();
   loadGit();
   const el=$('ship-table');if(!el)return;
   const r=await api('/evolve/ship/branches?limit=300');

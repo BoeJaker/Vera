@@ -11,7 +11,7 @@
      stack  - every pinned lane its own row on one axis; pinned items are guide lines across all of them
      layer  - every pinned lane drawn into ONE composite row, each in its colour
      side   - the pinned items' drill frames in columns
-   anchor - a pinned item: the axis centres on it (± window) and the insight rows say, per lane, what changed
+   anchor - a pinned item (⚓, or a host's el.setAnchor(pin, window)): the axis centres on it (± window) and the insight rows say, per lane, what changed
             before vs after it, with the nearest items as evidence ("a pinned diff, setting, test and usage chart
             line up on one axis").
 
@@ -151,6 +151,7 @@
       this._refresh();
     }
     disconnectedCallback() { root.removeEventListener('compare:pins', this._onPins); }
+    setAnchor(id, win) { this._anchor = String(id || ''); if (win && WINDOWS[win]) this._win = win; this._refresh(); }   // a host aligns on a pin
     _spec(p) { var V = root.VeraTimeline; return isObj(p.lane) ? (V ? V.registerLane(p.lane) || p.lane : p.lane) : (V && V.lane(p.lane)); }
     _refresh() {
       var list = pins(), seen = {};
