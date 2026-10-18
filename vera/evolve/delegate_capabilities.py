@@ -475,6 +475,7 @@ async def cap_evolve_delegate_cancel(job_id: str = "", trace_id=None) -> Dict[st
 
 
 @capability("evolve.delegate.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "jobs"}, "draw": {"columns": ["title", "status", "mode", "effort", "ref", "created_at", "ended_at", "id"]}, "empty": "No delegated jobs"}},
             http_method="GET", http_path="/evolve/delegate/list", http_tags=["evolve", "delegate"],
             description="Recent delegated jobs, newest first. Input: limit (int=20).")
 async def cap_evolve_delegate_list(limit: int = 20, trace_id=None) -> Dict[str, Any]:

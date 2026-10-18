@@ -4372,6 +4372,7 @@ async def cap_web_acquire_status(
 
 @capability(
     "fabric.entity_graph.types",
+    contract={"presentation": {"kind": "table", "form": "ranked", "map": {"values": "types", "count": "type", "sum": "count"}}},
     http_method="GET", http_path="/fabric/entity_graph/types",
     http_tags=["fabric", "graph", "entity"],
     memory="off",

@@ -491,6 +491,7 @@ _orch.TEST_DURATIONS = record_durations
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "evolve.test_pool.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "nodes_now"}, "title": "Nodes now"}, {"kind": "kv", "map": {"fields": "config"}, "title": "Config"}]}},
     http_method="GET", http_path="/evolve/test_pool/status", http_tags=["evolve"],
     memory="off", silent=True,
     description="The gate test pool: config (enabled, max_nodes, min_files), the host "

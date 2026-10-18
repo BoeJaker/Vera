@@ -58,6 +58,7 @@ def _truthy(v: Any, default: bool) -> bool:
 
 @capability(
     "evolve.agents.rows", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sessions"}, "draw": {"columns": ["title", "agent", "state", "items_open", "commit_count", "last_activity", "id"]}, "empty": "No agent sessions"}},
     http_method="GET", http_path="/evolve/agents/rows", http_tags=["evolve", "board"],
     description=(
         "Every AGENT SESSION Loop Lab knows, in one shape: an ingested Claude Code / Codex "
