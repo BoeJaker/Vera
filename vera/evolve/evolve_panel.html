@@ -150,6 +150,8 @@ html.vpb-nav-hosted body{padding-left:0}
 .tst-h.running::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:4px;animation:olvPulse 1.6s infinite}
 .tst-f{display:inline-block;font-size:10px;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:0 5px;margin-right:3px}
 .tst-broken{color:var(--err);font-weight:600}.tst-src{color:var(--muted);font-size:10.5px}
+.rel-lane{margin:8px 0;font-size:12px}.rel-lane .rl-box{border:1px solid var(--border);border-radius:8px;padding:7px 10px}
+.rel-lane .rl-held{border-color:var(--err);background:rgba(201,107,107,.08)}.rel-lane .rl-q{display:flex;gap:8px;align-items:center;padding:3px 0;border-top:1px solid var(--border)}
 .olv-drill .dk{color:var(--muted);display:inline-block;min-width:80px}
 .olv-drill pre{white-space:pre-wrap;max-height:320px;overflow:auto;font-size:11px;background:var(--bg2,var(--bg1));padding:6px 8px;border-radius:6px}
 .olv-drill table{border-collapse:collapse;width:100%}.olv-drill td{padding:2px 6px;border-bottom:1px solid var(--border);vertical-align:top}
@@ -772,11 +774,23 @@ html.vpb-nav-hosted body{padding-left:0}
       <span style="flex:1"></span>
       <select id="rel-days" onchange="loadReleases()" title="how far back"><option value="2">2 days</option><option value="7" selected>7 days</option><option value="14">14 days</option></select>
       <button class="btn sm" onclick="loadReleases()">↻</button>
-      <button class="btn sm ok-btn" onclick="relReleaseNow()" title="release bleeding-edge to prod (asks for confirmation; waits for a census goal)">Release to prod…</button>
+      <button class="btn sm ok-btn" onclick="relRequest()" title="ask the release lane to release bleeding-edge to prod - batched with every session's requests; it still waits for census goals, gates and protected runs">Request a release…</button>
     </div>
     <div id="rel-live"></div>
     <div id="rel-tiles" class="rel-tiles"></div>
+    <div id="rel-lane" class="rel-lane"></div>
     <div id="rel-board" class="rel-board"><span class="hint">loading…</span></div>
+    <vera-drill class="olv-drill" id="rel-drill" url></vera-drill>
+  </div>
+  <!-- the kit (looplab-control §9.4 S3): THE timeline of promotions, releases, lane requests and test runs; THE matrix
+       of every pipeline's stages; THE drill for a pipeline (stages, its gate runs, the change) and a release -->
+  <div class="card">
+    <div class="card-h"><span class="card-t">Over time</span><span class="hint">promotions to bleeding-edge &middot; releases to prod &middot; release-lane requests &middot; test runs &middot; click one for its detail</span></div>
+    <div id="rel-tl-host"></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Stages</span><span class="hint" id="rel-mx-hint">every pipeline's stages, newest first &middot; a cell opens the pipeline</span></div>
+    <div id="rel-mx"></div>
   </div>
   <div class="card">
     <div class="card-h"><span class="card-t">Release history</span><span class="hint">every release, what it waited for, what it carried</span></div>
@@ -1667,7 +1681,7 @@ function relMore(k){_relAll[k]=!_relAll[k];loadReleases()}
 function relStageChip(s){const c=s.ok===false?'#f87171':s.ok?'#4ade80':'#e0a458';return '<span class="rel-chip" style="--c:'+c+'" title="'+esc(s.detail||'')+'">'+esc(s.stage)+(s.ok===false?' ✗':s.ok?' ✓':' …')+'</span>'}
 function relCard(c){
   const t=c.tests||{}; const st=(c.stages||[]).filter(s=>s.stage!=='test-pool'||s===c.stages[c.stages.length-1]);
-  return '<div class="rel-card" onclick="openPipe(\''+esc(c.id)+'\')" title="open the pipeline">'
+  return '<div class="rel-card" onclick="relOpen(\''+esc(c.id)+'\')" title="the pipeline: its stages, gate runs and change">'
     +'<div class="t">'+esc(c.branch||c.id)+'</div>'
     +'<div class="m">→ <b>'+esc(c.to||'bleeding-edge')+'</b> · '+esc(c.id)+(c.commits!=null?' · '+esc(c.commits)+' commit(s)':'')+(c.changed_files!=null?' · '+esc(c.changed_files)+' file(s)':'')+'</div>'
     +'<div class="rel-chips">'+st.slice(-6).map(relStageChip).join('')+'</div>'
@@ -1678,6 +1692,8 @@ async function loadReleases(){
   const days=(($('rel-days')||{}).value||'7');
   const d=await api('/evolve/releases/view?days='+encodeURIComponent(days));
   if(!d||d.error){$('rel-board').innerHTML='<div class="empty">'+esc((d&&d.error)||'releases unavailable')+'</div>';return}
+  _relData=d;_relCards={};Object.values(d.columns||{}).forEach(L=>L.forEach(c=>{_relCards[c.id]=c}));
+  relKit(d);
   const p=d.pending, cs=d.census||{};
   $('rel-live').innerHTML=p?'<div class="rel-live"><b>RELEASING</b> '+esc(p.id||p.release_id||'')+' · '+esc(p.status||'')+' ('+esc(p.mode||'')+')'
     +(p.last_why?' · '+esc(p.last_why):'')+(cs.goal?' · census goal '+esc(cs.goal):'')
@@ -1693,19 +1709,112 @@ async function loadReleases(){
       +(L.length?L.slice(0,_relAll[k]?200:REL_MAX).map(relCard).join(''):'<div class="hint">none</div>')
       +(L.length>REL_MAX?'<a class="hint" style="cursor:pointer" onclick="relMore(\''+k+'\')">'+(_relAll[k]?'show fewer':'show all '+L.length)+'</a>':'')+'</div>'}).join('');
   $('rel-hist').innerHTML=(d.releases||[]).length?'<table><thead><tr><th>release</th><th>requested → done</th><th>waited for</th><th>main @</th><th>carried</th><th>nodes</th></tr></thead><tbody>'
-    +(d.releases||[]).map((r,i)=>'<tr><td>'+esc(r.id)+' <span class="hint">'+esc(r.status)+'</span></td><td class="mono">'+esc(relT(r.requested_at))+' → '+esc(relT(r.finished_at))+(r.minutes!=null?' ('+r.minutes+' min)':'')+'</td><td>'+esc(r.waited_for||'-')+'</td><td class="mono">'+esc(r.commit)+'</td>'
+    +(d.releases||[]).map((r,i)=>'<tr><td><a href="#" onclick="relOpenRelease(\''+esc(r.id)+'\');return false" title="what it carried">'+esc(r.id)+'</a> <span class="hint">'+esc(r.status)+'</span></td><td class="mono">'+esc(relT(r.requested_at))+' → '+esc(relT(r.finished_at))+(r.minutes!=null?' ('+r.minutes+' min)':'')+'</td><td>'+esc(r.waited_for||'-')+'</td><td class="mono">'+esc(r.commit)+'</td>'
       +'<td>'+((r.carried||[]).length?'<details><summary>'+r.carried.length+' change(s)</summary>'+r.carried.map(c=>'<div class="mono" style="font-size:11.5px">'+esc(c.sha)+' '+(c.pipeline?'<a style="cursor:pointer" onclick="openPipe(\''+esc(c.pipeline)+'\')">'+esc(c.branch||c.subject)+'</a>':esc(c.subject))+'</div>').join('')+'</details>':'<span class="hint">-</span>')+'</td><td>'+esc(r.nodes||'')+'</td></tr>').join('')+'</tbody></table>'
     :'<span class="hint">no releases on record</span>';
 }
 function relFocus(col){const el=document.querySelector('.rel-col[data-col="'+col+'"]');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'})}
-async function relReleaseNow(){
-  const f=await askForm('Release bleeding-edge to prod',[
-      {id:'go',type:'check',label:'I have the owner’s explicit go-ahead for this release',required:true},
-      {id:'mode',label:'If a census is in flight',type:'select',value:'goal',options:[['goal','yield: the goal in flight finishes, the census parks, release, resume after'],['finish','wait until the census has ended'],['force','release now (the census goal is paused and re-run)']]}],
-    {ok:'Release'});
+/* ── Releases on the kit (looplab-control §9.4 S3): THE lane, timeline, matrix and drill ── */
+// A release goes through the release lane (evolve.release.submit): one queue every session submits to, batched, waiting
+// for census goals, gates and protected runs - the page no longer releases directly.
+const REL_STAGES=['adopt','begin','preflight','gate','gate-ui','critical-queue','test-pool','gate-resume','critical-tests','perf','merge'];
+let _relData=null,_relCards={},_relKitDone=false;
+async function relKit(d){
+  try{await Promise.all([_olvScript(),_olvLib('vera-matrix.js',()=>window.VeraMatrix&&customElements.get('vera-matrix'))])}catch(e){return}
+  _olvKit();                                  // the Overview's kinds: a test run drills as 'test-run'
+  if(!_relKitDone){_relKitDone=true;_relKinds()}
+  relLane();relTimeline();relMatrix(d);
+}
+function relOpen(id){$('rel-drill').open('pipeline',id,{rec:_relCards[id],root:true})}
+function relOpenRelease(id){$('rel-drill').open('release',id,{root:true})}
+function _relOk(ok){return ok===false?'<b style="color:var(--err)">failed</b>':ok?'<span style="color:var(--ok)">ok</span>':'<span style="color:var(--warn)">pending</span>'}
+function _relKinds(){
+  const row=_olvRow,when=_olvWhen;
+  VeraDrill.registerKind('pipeline',{label:'Pipeline',
+    load:(id,ctx)=>_relCards[id]||ctx.call('evolve.pipeline.get',{id}).then(a=>{const p=a&&a.pipeline;if(!p)throw new Error((a&&a.error)||'no pipeline '+id);return p}),
+    title:(p,id)=>(p&&p.branch)||id,
+    tabs:[{id:'stages',label:'Stages'},{id:'tests',label:'Gate runs'},{id:'change',label:'Change'},{id:'record',label:'Record'}],
+    render:(p,tab,ctx)=>{
+      const open='<div style="margin-top:6px"><button class="btn" onclick="openPipe(\''+esc(p.id)+'\')">open in Ship</button></div>';
+      if(tab==='record')return '<pre>'+esc(JSON.stringify(p,null,2))+'</pre>';
+      if(tab==='change')return _olvLib('vera-diff.js',()=>window.VeraDiff&&customElements.get('vera-diff')).then(()=>'<vera-diff pipeline="'+esc(p.id)+'"></vera-diff>');
+      if(tab==='tests')return ctx.call('evolve.unittest.history',{limit:300}).then(h=>{
+        const runs=((h&&h.runs)||[]).filter(r=>r.pipeline_id===p.id);
+        if(!runs.length)return ctx.states.html('empty','no gate run of this pipeline in the recent history');
+        return '<table>'+runs.map(r=>'<tr><td>'+esc(when(r.ts))+'</td><td>'+_relOk(r.ok)+'</td><td><a href="#" data-drill="test-run:'+esc(r.ts)+'">'+esc(r.summary||'')+' ›</a></td></tr>').join('')+'</table>'});
+      // stages: the test pool writes a note per wait - one row with the count and the last note
+      const st=[];(p.stages||[]).forEach(s=>{const last=st[st.length-1];if(last&&last.stage===s.stage){last.n++;last.s=s}else st.push({stage:s.stage,n:1,s})});
+      return row('branch',p.branch)+row('into',p.to||'bleeding-edge')+row('commits',p.commits)+row('files',p.changed_files)+
+        row('promoted',p.promoted_at?when(p.promoted_at)+(p.merge_sha?' @ '+p.merge_sha:''):'')+row('took',p.minutes!=null?p.minutes+' min':'')+
+        '<table style="margin-top:6px">'+st.map(x=>'<tr><td>'+esc(x.stage)+(x.n>1?' <span class="tst-src">×'+x.n+'</span>':'')+'</td><td>'+_relOk(x.s.ok)+'</td><td class="tst-src">'+esc(when(x.s.ts))+'</td><td>'+esc(String(x.s.detail||'').slice(0,240))+'</td></tr>').join('')+'</table>'+open;
+    }});
+  VeraDrill.registerKind('release',{label:'Release',
+    load:(id)=>{const r=((_relData&&_relData.releases)||[]).find(x=>x.id===id);if(!r)throw new Error('not in the range shown - widen the days');return r},
+    title:(r,id)=>r?id+' · '+r.status:id,
+    tabs:[{id:'carried',label:'Carried'},{id:'record',label:'Record'}],
+    render:(r,tab)=>{
+      if(tab==='record')return '<pre>'+esc(JSON.stringify(r,null,2))+'</pre>';
+      return row('requested',when(r.requested_at))+row('done',when(r.finished_at)+(r.minutes!=null?' ('+r.minutes+' min)':''))+row('waited for',r.waited_for)+row('main @',r.commit)+row('nodes',r.nodes)+row('why',r.reason)+
+        ((r.carried||[]).length?'<table style="margin-top:6px">'+r.carried.map(c=>'<tr><td class="mono">'+esc(c.sha)+'</td><td>'+(c.pipeline?'<a href="#" data-drill="pipeline:'+esc(c.pipeline)+'">'+esc(c.subject||c.branch)+' ›</a>':esc(c.subject||''))+'</td></tr>').join('')+'</table>':'<div class="hint">carried nothing new</div>');
+    }});
+}
+/* the lane: what is queued, when the batch fires and why it waits, and the full-tier hold */
+async function relLane(){
+  const l=await VeraDrill.call('evolve.release.lane',{}).catch(e=>({error:e.message}));
+  const box=$('rel-lane');if(!box)return;
+  if(!l||l.error){box.innerHTML=VeraStates.html('error','could not read the release lane'+(l&&l.error?': '+l.error:''));return}
+  const ft=l.full_tier||{},q=l.queued||[];
+  box.innerHTML='<div class="rl-box'+(ft.held?' rl-held':'')+'"><b>Release lane</b> · '+(q.length?q.length+' request(s) queued · '+esc(l.fires_at?'fires '+_olvWhen(l.fires_at):'')+' · '+esc(l.why||''):'nothing queued')+
+    (ft.held?'<div style="color:var(--err);margin-top:3px"><b>held:</b> '+esc(ft.why||'')+'</div>':(ft.why?'<div class="tst-src" style="margin-top:3px">full tier: '+esc(ft.why)+'</div>':''))+
+    q.map(r=>'<div class="rl-q"><span class="tst-f">'+esc(r.census||'goal')+(r.urgent?' · urgent':'')+'</span><b>'+esc(r.by||'')+'</b><span style="flex:1">'+esc(String(r.reason||'').slice(0,160))+'</span><span class="tst-src">'+esc(_olvWhen(r.at))+'</span>'+
+      '<button class="btn sm" onclick="relWithdraw(\''+esc(r.id)+'\')" title="take this request back out of the lane">withdraw</button></div>').join('')+'</div>';
+}
+async function relRequest(){
+  const f=await askForm('Request a release of bleeding-edge to prod',[
+      {id:'reason',label:'What it carries (every session sees this)',type:'textarea',required:true},
+      {id:'census',label:'If a census is in flight',type:'select',value:'goal',options:[['goal','yield: the goal in flight finishes, the census parks, release, resume after'],['finish','wait until the census has ended']]},
+      {id:'urgent',type:'check',label:'Urgent - do not wait the 15 min between lane releases'}],
+    {ok:'Request'});
   if(!f)return;
-  const r=await post('/evolve/release/prod',{confirm:true,census:f.mode,force:f.mode==='force',reason:'Loop Lab Releases section'});
-  toast(r&&r.held?('release waiting ('+f.mode+'): '+(r.why||'')):r&&r.ok?'releasing':(r&&(r.error||r.refused))||'refused');loadReleases();
+  const r=await post('/evolve/release/submit',{confirm:true,reason:f.reason,by:'Loop Lab Releases (owner)',census:f.census,urgent:!!f.urgent});
+  toast(r&&r.ok?'requested - the lane fires '+(r.fires_at?_olvWhen(r.fires_at):'when due'):(r&&(r.error||r.refused))||'refused');relLane();
+}
+async function relWithdraw(id){
+  if(!confirm('Take request '+id+' back out of the release lane?'))return;
+  const r=await post('/evolve/release/withdraw',{id});toast(r&&r.ok?'withdrawn':(r&&r.error)||'could not withdraw');relLane();
+}
+function relTimeline(){
+  const days=+(($('rel-days')||{}).value||7),now=Date.now(),start=new Date(now-(days+1)*864e5).toISOString(),end=new Date(now+864e5).toISOString();
+  const ev={cap:'evolve.schedule.events',args:{mode:'windows',include_agents:false,include_releases:true,start,end}};
+  const lanes=[
+    {lane:'rel.promotions',label:'Promotions',group:'Releases',type:'mark',color:'#7aa2f7',live:60,source:ev,map:{items:'events',t:'start',id:'id',where:{source:'releases',kind:'promotion'},tip:'{title} · {detail}',color:{field:'color',else:'#7aa2f7'}}},
+    {lane:'rel.releases',label:'Releases to prod',group:'Releases',type:'bar',color:'#4ade80',live:60,source:ev,map:{items:'events',t:'start',end:'end',id:'id',where:{source:'releases',kind:'release'},tip:'{title} · {detail}',color:{field:'color',else:'#4ade80'}}},
+    {lane:'rel.lane',label:'Lane requests',group:'Releases',type:'chip',color:'#a3e4b8',live:60,source:ev,map:{items:'events',t:'start',end:'end',id:'id',label:'title',where:{source:'releases',kind:'release-request'},tip:'{title}',color:'#a3e4b8'}},
+    {lane:'rel.tests',label:'Test runs',group:'Releases',type:'mark',color:'#6db87a',live:120,source:{cap:'evolve.unittest.history',args:{limit:300}},map:{items:'runs',t:'ts',id:'ts',tip:'{branch} · {summary}',color:{field:'ok',map:{'true':'#6db87a','false':'#c96b6b'},else:'#5a6270'}}},
+  ];
+  lanes.forEach(s=>VeraTimeline.registerLane(s));
+  let tl=$('rel-tl');
+  if(!tl){$('rel-tl-host').innerHTML='<vera-timeline id="rel-tl"></vera-timeline>';tl=$('rel-tl');
+    tl.addEventListener('timeline:select',e=>{const it=e.detail.item||{},ln=e.detail.lane;
+      if(ln==='rel.tests')$('rel-drill').open('test-run',it.ts,{rec:it,root:true});
+      else if(it.release_id)relOpenRelease(it.release_id);
+      else if(it.pipeline_id||it.pipeline)relOpen(it.pipeline_id||it.pipeline);
+      else $('rel-drill').open('event',it.id,{rec:it,root:true})})}
+  tl.setAttribute('from','-'+days+'d');tl.setAttribute('to','+6h');tl.setAttribute('lanes',lanes.map(s=>s.lane).join(','));
+}
+function relMatrix(d){
+  const cards=Object.values(_relCards).sort((a,b)=>Date.parse(b.last_at||b.started_at||0)-Date.parse(a.last_at||a.started_at||0)).slice(0,40);
+  const cells=[];
+  cards.forEach(c=>{const last={};(c.stages||[]).forEach(s=>{last[s.stage]=s});
+    Object.keys(last).forEach(k=>{const s=last[k];cells.push({row:(c.branch||c.id)+' · '+c.id,id:c.id,branch:c.branch,stage:k,n:REL_STAGES.indexOf(k)<0?50:REL_STAGES.indexOf(k),
+      v:s.ok===false?'failed':s.ok?'ok':'pending',detail:String(s.detail||'').slice(0,140)})})});
+  const done=cards.filter(c=>c.promoted_at&&c.minutes!=null).map(c=>c.minutes).sort((a,b)=>a-b),med=done.length?done[Math.floor(done.length/2)]:null;
+  $('rel-mx-hint').innerHTML=esc(cards.length+' pipelines, newest first · '+cells.filter(c=>c.v==='failed').length+' failed stage(s)'+(med!=null?' · adopt to promoted: median '+med+' min over '+done.length:''))+' · <code>evolve.releases.view</code>';
+  let el=$('rel-mxel');
+  if(!el){$('rel-mx').innerHTML='<vera-matrix id="rel-mxel"></vera-matrix>';el=$('rel-mxel');
+    el.addEventListener('matrix:select',e=>{const c=e.detail.cell;if(c&&c.id)$('rel-drill').open('pipeline',c.id,{rec:_relCards[c.id],root:true,tab:'stages'})})}
+  el.record={map:{cells:'cells',row:'row',col:'stage',value:'v',cols_order:'n',tip:'{branch} · {stage} · {v} · {detail}'},
+    colour:{ok:'#3fae6c',failed:'#f87171',pending:'#e0a458','*':'#5a6270'},ok:['ok'],data:{cells}};
 }
 /* ═══ MODELS + PERFORMANCE (owner 18 Oct 2026) ═══ */
 let _mdl=null, _mdlSel=null, _mdlAll=false, _mdlStAll=false;
