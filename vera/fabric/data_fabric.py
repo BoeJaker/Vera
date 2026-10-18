@@ -4593,7 +4593,7 @@ async def _pull_topic(src: dict) -> List[dict]:
         from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
     except ImportError:
         return []
-    fn = (CAPABILITY_REGISTRY.get("collector.discover") or {}).get("fn")
+    fn = (CAPABILITY_REGISTRY.get("collector.discover") or {}).get("func")
     if not fn:
         log.warning("collector.discover not registered")
         return []
@@ -4626,7 +4626,7 @@ async def _pull_docs(src: dict) -> List[dict]:
         from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
     except ImportError:
         CAPABILITY_REGISTRY = {}
-    fn = (CAPABILITY_REGISTRY.get("collector.ingest_docs") or {}).get("fn")
+    fn = (CAPABILITY_REGISTRY.get("collector.ingest_docs") or {}).get("func")
     if not fn:
         log.warning("collector.ingest_docs not registered — install collectors module")
         return []
@@ -5144,7 +5144,7 @@ async def _pull_index(src: dict) -> List[dict]:
             from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
         except ImportError:
             CAPABILITY_REGISTRY = {}
-        crawl_fn = (CAPABILITY_REGISTRY.get("fabric.discover.crawl") or {}).get("fn")
+        crawl_fn = (CAPABILITY_REGISTRY.get("fabric.discover.crawl") or {}).get("func")
         if crawl_fn:
             async def _seed():
                 for u in seeds[:200]:

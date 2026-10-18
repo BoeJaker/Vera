@@ -1118,10 +1118,11 @@ async def _ingest_mediawiki(start_url: str, dataset_id: str,
                 }
                 # Send through ingest_fn
                 try:
+                    # ingest_dataset(dataset_id, data): the page used to go in as the dataset id (D05-1)
                     if asyncio.iscoroutinefunction(ingest_fn):
-                        await ingest_fn([rec])
+                        await ingest_fn(dataset_id, [rec])
                     else:
-                        ingest_fn([rec])
+                        ingest_fn(dataset_id, [rec])
                     pages_ingested += 1
                     if pages_ingested % 5 == 0 or pages_ingested == 1:
                         await _emit("page_ingested", title=title,
@@ -1185,7 +1186,7 @@ async def _auto_stitch_hook(dataset_id: str):
     Mirrors the behaviour of the auto_stitch tag in _pull_source."""
     try:
         from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
-        loom_fn = (CAPABILITY_REGISTRY.get("fabric.loom.run") or {}).get("fn")
+        loom_fn = (CAPABILITY_REGISTRY.get("fabric.loom.run") or {}).get("func")
         if not loom_fn:
             return
         await asyncio.sleep(2)  # give ingestion time to settle to disk + chroma
@@ -1257,7 +1258,7 @@ async def collector_url_inspect(url: str, screenshot: bool = True,
     if screenshot:
         try:
             from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
-            shot_fn = (CAPABILITY_REGISTRY.get("browser.screenshot") or {}).get("fn")
+            shot_fn = (CAPABILITY_REGISTRY.get("browser.screenshot") or {}).get("func")
             if shot_fn:
                 sres = await shot_fn(url=url, full_page=False)
                 if sres and isinstance(sres, dict):
@@ -1332,7 +1333,7 @@ async def cap_collector_ingest_docs(
     if rss_hints:
         try:
             from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
-            add_fn = (CAPABILITY_REGISTRY.get("fabric.sources.add") or {}).get("fn")
+            add_fn = (CAPABILITY_REGISTRY.get("fabric.sources.add") or {}).get("func")
             if add_fn:
                 for hint in rss_hints[:5]:
                     try:
@@ -1358,7 +1359,7 @@ async def cap_collector_ingest_docs(
         # Register the wiki itself as a fabric source for re-pulls
         try:
             from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
-            add_fn = (CAPABILITY_REGISTRY.get("fabric.sources.add") or {}).get("fn")
+            add_fn = (CAPABILITY_REGISTRY.get("fabric.sources.add") or {}).get("func")
             if add_fn:
                 await add_fn(
                     url=url, source_type="docs",
@@ -1516,7 +1517,7 @@ async def cap_collector_ingest_docs(
             if len(text) < 200:
                 try:
                     from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
-                    browser_fn = (CAPABILITY_REGISTRY.get("browser.content") or {}).get("fn")
+                    browser_fn = (CAPABILITY_REGISTRY.get("browser.content") or {}).get("func")
                     if browser_fn:
                         bres = await browser_fn(url=page_url, include_links=True, max_chars=20000)
                         if bres and bres.get("ok"):
@@ -1633,7 +1634,7 @@ async def cap_collector_ingest_docs(
     src_id = None
     try:
         from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
-        add_fn = (CAPABILITY_REGISTRY.get("fabric.sources.add") or {}).get("fn")
+        add_fn = (CAPABILITY_REGISTRY.get("fabric.sources.add") or {}).get("func")
         if add_fn:
             src_id = "docs_" + ds_id
             try:
@@ -1819,7 +1820,7 @@ async def cap_collector_discover(
     results = []
     try:
         from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY
-        browser_search = (CAPABILITY_REGISTRY.get("browser.search") or {}).get("fn")
+        browser_search = (CAPABILITY_REGISTRY.get("browser.search") or {}).get("func")
         if browser_search:
             sr = await browser_search(query=query, max_results=max_sources * 3)
             results = sr.get("results", []) or []
@@ -1964,7 +1965,7 @@ async def cap_collector_discover(
         registered_src_id = ""
         try:
             from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _CR
-            add_fn = (_CR.get("fabric.sources.add") or {}).get("fn")
+            add_fn = (_CR.get("fabric.sources.add") or {}).get("func")
             if add_fn:
                 stable_id = "disc_" + hashlib.sha1((url + "|" + ds_id).encode()).hexdigest()[:14]
                 src_type_for_pull = chosen_type if chosen_type in ("rss","scrape","recon") else "scrape"
@@ -2527,7 +2528,7 @@ async def cap_collector_stealth_crawl(
     # Register as a source for future scheduled re-crawls
     try:
         from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY as _CR
-        add_fn = (_CR.get("fabric.sources.add") or {}).get("fn")
+        add_fn = (_CR.get("fabric.sources.add") or {}).get("func")
         if add_fn:
             await add_fn(
                 url=url, source_type="stealth",
