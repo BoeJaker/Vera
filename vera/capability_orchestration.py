@@ -8250,6 +8250,13 @@ def schedule(fn: Callable, interval: float, name: Optional[str] = None,
                             "last": None, "runs": 0, "skip_in_sandbox": skip_in_sandbox,
                             "singleton": singleton})
 
+#: Startup coroutines start_at_import has already started. About ten modules ALSO register the same function with
+#: schedule(..., interval=STARTUP_INTERVAL) - often under another name - and the scheduler then started a second copy:
+#: two cluster pollers, two job listeners, agents re-saved twice per boot (S7 / D01-2, backbone 18 Oct). Matched by
+#: the function object, not the name, because the two registrations rarely share one.
+_STARTED_AT_IMPORT: set = set()
+
+
 def start_at_import(fn: Callable, name: str, queue: bool = False):
     """Run a module's one-time startup NOW when the loop is already running.
 
@@ -8274,7 +8281,9 @@ def start_at_import(fn: Callable, name: str, queue: bool = False):
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running() or queue:
-            return loop.create_task(fn())
+            task = loop.create_task(fn())
+            _STARTED_AT_IMPORT.add(fn)     # the scheduler must not start this one again (S7)
+            return task
     except RuntimeError:
         pass            # no loop yet - the scheduler runs it
     return None
@@ -8404,6 +8413,12 @@ async def scheduler_loop():
                         _SANDBOX_SKIP_LOGGED.add(task["name"])
                         log.info("leech boot: skipping ambient job '%s' in dev sandbox",
                                  task["name"])
+                    continue
+                # Started at import already (start_at_import): a once-only job is marked run, not started twice (S7).
+                if (not task["last"] and task.get("fn") in _STARTED_AT_IMPORT
+                        and (task["int"] <= 0 or task["int"] >= _placement.STARTUP_INTERVAL)):
+                    task["last"] = now; task["runs"] += 1
+                    log.debug("scheduler: %s already started at import - not starting a second copy", task["name"])
                     continue
                 last=task["last"]
                 # interval <= 0 = start ONCE (the job runs its own loop). It used to mean
