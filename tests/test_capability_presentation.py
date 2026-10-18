@@ -310,3 +310,37 @@ def test_the_new_kinds_row_keys_are_checked_where_they_are_read():
     assert [(p[0], p[2]) for p in presentation_problems(off, schema)] == [("presentation.map_unresolved", "presentation.map.value")]
     assert presentation_problems({"kind": "parts", "map": {"parts": "by_type", "value": "size"}}, schema) == []
     assert [p[2] for p in presentation_problems({"kind": "parts", "map": {"parts": "by_type", "value": "bytes"}}, schema)] == ["presentation.map.value"]
+
+
+def test_the_presentation_options_sort_group_by_and_units():
+    # DA-01e (3): draw {sort, group_by, units} - with a row form, or without any form (draw then holds only these)
+    ok = {"kind": "table", "map": {"rows": "quotes"}, "draw": {"sort": "-pct", "group_by": "symbol", "units": {"last": "USD", "pct": "%"}}}
+    assert presentation_problems(ok) == []
+    assert presentation_problems({"kind": "records", "map": {"rows": "hits"}, "draw": {"sort": "title", "units": {"score": "%"}}}) == []
+    assert presentation_problems({"kind": "kv", "map": {"fields": "host"}, "draw": {"units": {"uptime_s": "s"}}}) == []
+    assert presentation_problems({"kind": "table", "form": "table", "map": {"rows": "r"}, "draw": {"columns": ["a"], "sort": "a", "group_by": "b"}}) == []
+    # without a form, draw holds the options only (an empty draw is still a draw without a form)
+    assert "presentation.draw_without_form" in _codes(presentation_problems({"kind": "table", "map": {"rows": "r"}, "draw": {"sort": "a", "columns": ["a"]}}))
+    assert "presentation.draw_without_form" in _codes(presentation_problems({"kind": "table", "map": {"rows": "r"}, "draw": {}}))
+    # each option is read by its kinds only
+    assert "presentation.draw_option_kind" in _codes(presentation_problems({"kind": "series", "map": {"points": "p"}, "draw": {"sort": "t"}}))
+    assert "presentation.draw_option_kind" in _codes(presentation_problems({"kind": "records", "map": {"rows": "r"}, "draw": {"group_by": "a"}}))
+    assert "presentation.draw_option_kind" in _codes(presentation_problems({"kind": "kv", "map": {"fields": "f"}, "draw": {"sort": "a"}}))
+    # each in its own shape
+    for bad in ("", "-", "--a", 3, ["a"]):
+        assert "presentation.draw_sort_invalid" in _codes(presentation_problems({"kind": "table", "map": {"rows": "r"}, "draw": {"sort": bad}})), bad
+    for bad in ("", " ", "-a", 3):
+        assert "presentation.draw_group_by_invalid" in _codes(presentation_problems({"kind": "table", "map": {"rows": "r"}, "draw": {"group_by": bad}})), bad
+    for bad in ("ms", {}, {"a": ""}, {"a": 3}, {"a": "far too long a unit"}, {"": "ms"}):
+        assert "presentation.draw_units_invalid" in _codes(presentation_problems({"kind": "table", "map": {"rows": "r"}, "draw": {"units": bad}})), bad
+    # another form's draw is its own words: not read as options, not checked as them
+    assert presentation_problems({"kind": "kv", "form": "temps", "map": {}, "draw": {"sort": "name"}}) == []
+    # the fields against the declared rows: a warning, like a map path
+    assert presentation_problems(dict(ok, draw={"sort": "-pct", "group_by": "symbol", "units": {"last": "USD"}}), QUOTES_SCHEMA) == []
+    off = {"kind": "table", "map": {"rows": "quotes"}, "draw": {"sort": "-change", "units": {"price": "USD"}}}
+    assert [(p[0], p[1], p[2]) for p in presentation_problems(off, QUOTES_SCHEMA)] == [
+        ("presentation.draw_unresolved", "warning", "presentation.draw.sort"),
+        ("presentation.draw_unresolved", "warning", "presentation.draw.units.price")]
+    # the builders fold them into draw
+    assert P.table("quotes", sort="-pct", units={"pct": "%"}) == {"kind": "table", "map": {"rows": "quotes"}, "draw": {"sort": "-pct", "units": {"pct": "%"}}}
+    assert P.table("quotes", form="table", draw={"columns": ["a"]}, group_by="a")["draw"] == {"columns": ["a"], "group_by": "a"}

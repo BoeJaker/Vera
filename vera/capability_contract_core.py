@@ -83,6 +83,17 @@ _PRESENTATION_NEEDS = {"table": ("rows",), "records": ("rows",), "reading": ("ro
 # - one line per key, map.t / map.v the fields inside each point. A flag, not a path.
 _PRESENTATION_FLAGS = {"series": ("keyed",)}
 _PRESENTATION_FIELDS = ("kind", "map", "views", "title", "refresh", "live", "detail", "empty", "parts", "form", "draw")
+# DA-01e (3): presentation OPTIONS, in draw (with or without a form) - present() reads them on the rows, browser and
+# server alike, before the form draws (so before its row limit):
+#   sort: "field" low first, "-field" high first - numbers by value, strings without case, missing values last
+#   group_by: "field" - the rows by group (in the order the groups first appear), the field the table's first column
+#   units: {field: "ms"} - a number in that field is shown with its unit ("12.5 ms")
+# With a form they are read only when the form draws rows (_OPTION_ROW_FORMS); another form's draw is its own words.
+PRESENTATION_OPTIONS = ("sort", "group_by", "units")
+_OPTION_KINDS = {"sort": ("table", "records", "reading"), "group_by": ("table",),
+                 "units": ("table", "records", "reading", "kv")}
+_OPTION_ROW_FORMS = ("table", "rows", "cards", "list", "reading")
+_UNIT_MAX = 12
 # A declaration may name the widget FORM that draws its kind (DA-01d - the Loop Lab pictures, candles, temps, pills ...):
 # then its map is in that form's own words (VeraWidget.applyMap: rows, series, values, pick, count, split ...) and is
 # handed to the form as it is, and `draw` is the form's drawing options. The kind still says what the answer IS - its
@@ -103,6 +114,64 @@ def _schema_at(schema: Any, path: str) -> Any:
             return None
         node = props[part]
     return node
+
+
+def _option_draw(presentation: Mapping[str, Any], kind: str) -> Mapping[str, Any]:
+    """The draw whose options present() reads ({} when it reads none: no draw, or a form that is not a row form)."""
+    draw = presentation.get("draw")
+    if not isinstance(draw, Mapping):
+        return {}
+    if "form" in presentation and (kind not in ("table", "records", "reading") or presentation.get("form") not in _OPTION_ROW_FORMS):
+        return {}
+    return draw
+
+
+def _option_fields(draw: Mapping[str, Any], kind: str) -> list[tuple[str, str]]:
+    """(path, row field) for each option field a valid draw names, for the kinds that read it."""
+    out: list[tuple[str, str]] = []
+    sort, group, units = draw.get("sort"), draw.get("group_by"), draw.get("units")
+    if kind in _OPTION_KINDS["sort"] and isinstance(sort, str) and sort.strip().lstrip("-").strip():
+        out.append(("presentation.draw.sort", sort.strip()[1:].strip() if sort.strip().startswith("-") else sort.strip()))
+    if kind in _OPTION_KINDS["group_by"] and isinstance(group, str) and group.strip():
+        out.append(("presentation.draw.group_by", group.strip()))
+    if kind in _OPTION_KINDS["units"] and isinstance(units, Mapping):
+        out.extend((f"presentation.draw.units.{k}", str(k)) for k in units if str(k).strip())
+    return out
+
+
+def _option_problems(presentation: Mapping[str, Any], kind: str) -> list[tuple[str, str, str, str]]:
+    """The presentation OPTIONS in draw (DA-01e (3)): each read by its kinds only, each in its own shape."""
+    draw = _option_draw(presentation, kind)
+    out: list[tuple[str, str, str, str]] = []
+    for opt in PRESENTATION_OPTIONS:
+        if draw.get(opt) is not None and kind not in _OPTION_KINDS[opt]:
+            out.append(("presentation.draw_option_kind", "error", f"presentation.draw.{opt}",
+                        f"kind '{kind}' does not read draw.{opt} (it is read by {', '.join(_OPTION_KINDS[opt])})"))
+    sort = draw.get("sort")
+    if sort is not None and kind in _OPTION_KINDS["sort"]:
+        field = sort.strip()[1:].strip() if isinstance(sort, str) and sort.strip().startswith("-") else (sort.strip() if isinstance(sort, str) else "")
+        if not field or field.startswith("-"):
+            out.append(("presentation.draw_sort_invalid", "error", "presentation.draw.sort",
+                        "sort is a row field: 'field' low first, '-field' high first"))
+    group = draw.get("group_by")
+    if group is not None and kind in _OPTION_KINDS["group_by"]:
+        if not isinstance(group, str) or not group.strip() or group.strip().startswith("-"):
+            out.append(("presentation.draw_group_by_invalid", "error", "presentation.draw.group_by",
+                        "group_by is a row field name"))
+    units = draw.get("units")
+    if units is not None and kind in _OPTION_KINDS["units"]:
+        if not isinstance(units, Mapping) or not units:
+            out.append(("presentation.draw_units_invalid", "error", "presentation.draw.units",
+                        "units is {field: unit}, e.g. {'latency_ms': 'ms'}"))
+        else:
+            for field, unit in units.items():
+                if not str(field).strip():
+                    out.append(("presentation.draw_units_invalid", "error", "presentation.draw.units",
+                                "a units key is a row field name"))
+                elif not isinstance(unit, str) or not unit.strip() or len(unit) > _UNIT_MAX:
+                    out.append(("presentation.draw_units_invalid", "error", f"presentation.draw.units.{field}",
+                                f"a unit is a short label ('ms', 's', 'GB', '%'; at most {_UNIT_MAX} characters)"))
+    return out
 
 
 def presentation_problems(presentation: Any, output_schema: Any = None) -> list[tuple[str, str, str, str]]:
@@ -135,7 +204,12 @@ def presentation_problems(presentation: Any, output_schema: Any = None) -> list[
         # the map is the form's own (its words are checked by the form), so the kind's map keys are not asked for
         mapping = None
     elif presentation.get("draw") is not None:
-        out.append(("presentation.draw_without_form", "error", "presentation.draw", "draw goes with a form"))
+        draw = presentation.get("draw")
+        # DA-01e (3): without a form, draw holds the presentation OPTIONS only (sort, group_by, units)
+        if not isinstance(draw, Mapping) or not draw or set(str(k) for k in draw) - set(PRESENTATION_OPTIONS):
+            out.append(("presentation.draw_without_form", "error", "presentation.draw",
+                        f"draw goes with a form (without one it holds only {', '.join(PRESENTATION_OPTIONS)})"))
+    out.extend(_option_problems(presentation, kind))
     for key in (sorted(set(str(k) for k in mapping) - set(spec["keys"])) if mapping is not None else []):
         out.append(("presentation.map_key_unknown", "error", f"presentation.map.{key}",
                     f"kind '{kind}' does not read '{key}' (it reads {', '.join(spec['keys'])})"))
@@ -227,6 +301,15 @@ def presentation_problems(presentation: Any, output_schema: Any = None) -> list[
             if node is None:
                 out.append(("presentation.map_unresolved", "warning", f"presentation.map.{key}",
                             f"'{path}' is not in the declared output_schema"))
+        # the options' fields against the rows (or the kv's fields) - when the schema says what a row holds
+        row_node = content_node
+        if isinstance(row_node, Mapping) and row_node.get("type") == "array" and isinstance(row_node.get("items"), Mapping):
+            row_node = row_node["items"]
+        if isinstance(row_node, Mapping) and isinstance(row_node.get("properties"), Mapping):
+            for opath, field in _option_fields(_option_draw(presentation, kind), kind):
+                if _schema_at(row_node, field) is None:
+                    out.append(("presentation.draw_unresolved", "warning", opath,
+                                f"'{field}' is not a row field in the declared output_schema"))
     return out
 
 

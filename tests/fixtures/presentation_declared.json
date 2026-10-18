@@ -67,7 +67,12 @@
     "loaded_vram_gb",
     "vram_used_pct",
     "version"
-   ]
+   ],
+   "units": {
+    "loaded_vram_gb": "GB",
+    "ping_ms": "ms",
+    "vram_used_pct": "%"
+   }
   },
   "form": "table",
   "kind": "table",
@@ -96,7 +101,11 @@
     "calls",
     "last_ts"
    ],
-   "sort": "calls"
+   "sort": "-calls",
+   "units": {
+    "avg_latency_s": "s",
+    "obs_tps": "tok/s"
+   }
   },
   "empty": "No production traffic seen yet",
   "form": "table",
@@ -2796,7 +2805,8 @@
     "change_pct",
     "live",
     "ts"
-   ]
+   ],
+   "sort": "-change_pct"
   },
   "empty": "No watched assets",
   "form": "table",
@@ -4384,7 +4394,9 @@
     "has_html",
     "has_js",
     "ui_caps"
-   ]
+   ],
+   "group_by": "mode",
+   "sort": "tab_order"
   },
   "empty": "No panels registered",
   "form": "table",

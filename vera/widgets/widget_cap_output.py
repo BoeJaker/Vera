@@ -689,6 +689,148 @@ def parts_of(v: Any, m: dict) -> List[dict]:
     return out
 
 
+# ── DA-01e (3): OPTIONS on a declaration's rows - present.js arrange / optSort / optGroup / optUnits, field for field.
+# draw: {sort, group_by, units}; without them nothing below runs and the answer reads exactly as it did.
+#   sort "field" low first, "-field" high first (numbers by value, then words without case, missing last, ties kept)
+#   group_by 'field' (table): the groups in the order they first appear, no value last, the field the row's FIRST key
+#   units {field: unit}: a number in that field becomes its text with the unit ("12.5 ms", "40%")
+OPT_KEYS = ("sort", "group_by", "units")
+OPT_ROW_FORMS = ("table", "rows", "cards", "list", "reading")
+
+
+def _opt_num(x: Any) -> Any:
+    if isinstance(x, bool):
+        return int(x)
+    if isinstance(x, (int, float)):
+        return x if math.isfinite(x) else None
+    return None
+
+
+def _opt_missing(x: Any) -> bool:
+    return (x is None or x is _MISSING or isinstance(x, (dict, list))
+            or (isinstance(x, float) and not math.isfinite(x)) or (isinstance(x, str) and not x.strip()))
+
+
+def _opt_cmp(a: Any, b: Any) -> int:
+    na, nb = _opt_num(a), _opt_num(b)
+    if na is not None and nb is not None:
+        return -1 if na < nb else 1 if na > nb else 0
+    if na is not None:
+        return -1
+    if nb is not None:
+        return 1
+    sa, sb = str(a).lower(), str(b).lower()
+    return -1 if sa < sb else 1 if sa > sb else 0
+
+
+def _opt_path(p: Any) -> list:
+    return [s for s in re.sub(r"\[(-?\d+)\]", r".\1", re.sub(r"^\$\.?", "", str(p))).split(".") if s]
+
+
+def _opt_set(x: Any, parts: list, v: Any) -> Any:
+    """A copy of x with the value at the path set (each dict or list on the way copied); x itself when it does not reach."""
+    if not parts:
+        return v
+    k, rest = parts[0], parts[1:]
+    if isinstance(x, list) and re.fullmatch(r"-?\d+", k):
+        i = int(k)
+        if i < 0:
+            i += len(x)
+        if i < 0 or i >= len(x):
+            return x
+        y = list(x)
+        y[i] = _opt_set(x[i], rest, v)
+        return y
+    if _is_obj(x) and (not rest or k in x):
+        y = dict(x)
+        y[k] = _opt_set(x.get(k, _MISSING), rest, v)
+        return y
+    return x
+
+
+def _opt_sort(rows: list, spec: str) -> list:
+    import functools
+    desc = spec.startswith("-")
+    f = (spec[1:] if desc else spec).strip()
+    keyed = [(r, pick(r, f) if _is_obj(r) else _MISSING, i) for i, r in enumerate(rows)]
+
+    def cmp(x, y):
+        mx, my = int(_opt_missing(x[1])), int(_opt_missing(y[1]))
+        if mx or my:
+            return (mx - my) or (x[2] - y[2])
+        tx, ty = int(_opt_num(x[1]) is None), int(_opt_num(y[1]) is None)   # numbers before words either way
+        if tx != ty:
+            return tx - ty
+        c = _opt_cmp(x[1], y[1])
+        return (-c if desc else c) or (x[2] - y[2])
+    return [x[0] for x in sorted(keyed, key=functools.cmp_to_key(cmp))]
+
+
+def _opt_group(rows: list, f: str) -> list:
+    order: list = []
+    by: Dict[Any, list] = {}
+    none = []
+    for r in rows:
+        v = pick(r, f) if _is_obj(r) else _MISSING
+        if _opt_missing(v):
+            none.append(r)
+            continue
+        n = _opt_num(v)
+        k = ("n", float(n)) if n is not None else ("s", str(v))
+        if k not in by:
+            by[k] = []
+            order.append(k)
+        by[k].append(dict({f: v}, **{kk: vv for kk, vv in r.items() if kk != f}))   # the group's field first
+    return [r for k in order for r in by[k]] + none
+
+
+def _opt_fmt(x: Any, u: str) -> str:
+    a = abs(x)
+    d = 0 if a >= 100 else 1 if a >= 10 else 2 if a >= 1 else 3
+    k = 10 ** d
+    y = x * k
+    r = math.floor(y)
+    if y - r >= 0.5:   # Math.round: halves up
+        r += 1
+    q = r / k
+    s = str(int(q)) if float(q).is_integer() else repr(q)
+    return s + ("" if re.match(r"^[%°]", u) else " ") + u
+
+
+def _opt_units(r: Any, units: dict) -> Any:
+    if not _is_obj(r):
+        return r
+    for f, u in units.items():
+        v = pick(r, f)
+        if isinstance(u, str) and u and isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
+            r = _opt_set(r, _opt_path(f), _opt_fmt(v, u))
+    return r
+
+
+def _opts_of(P: dict) -> Optional[dict]:
+    d = P.get("draw")
+    return d if _is_obj(d) and any(d.get(k) is not None for k in OPT_KEYS) else None
+
+
+def arrange(rows: list, d: dict, grouped: bool) -> list:
+    """The rows sorted, grouped (a table's) and with their units, as the declaration's draw says - present.js arrange."""
+    rw = rows
+    if isinstance(d.get("sort"), str) and re.sub(r"^-", "", d["sort"]).strip():
+        rw = _opt_sort(rw, d["sort"].strip())
+    if grouped and isinstance(d.get("group_by"), str) and d["group_by"].strip():
+        rw = _opt_group(rw, d["group_by"].strip())
+    if _is_obj(d.get("units")):
+        rw = [_opt_units(r, d["units"]) for r in rw]
+    return rw
+
+
+def _arranged_at(c: Any, path: Any, d: dict, grouped: bool) -> Any:
+    rs = pick(c, path or "")
+    if isinstance(rs, list) or _is_obj(rs):
+        return _opt_set(c, _opt_path(path or ""), arrange(_as_rows(rs), d, grouped))
+    return c
+
+
 def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size: str, max_records: int) -> Dict[str, Any]:
     K = PRESENT_KINDS[P["kind"]]
     m = P.get("map") if _is_obj(P.get("map")) else {}
@@ -707,7 +849,21 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
         return r
 
     # a declaration that names its widget form (DA-01d): the form draws the answer through the map in its own words
+    opts = _opts_of(P)
     if isinstance(P.get("form"), str) and P.get("form"):
+        rows_form = P["kind"] in ("table", "records", "reading") and P["form"] in OPT_ROW_FORMS
+        # a row form with no rows drew its SAMPLE rows, which read as real data: the declaration's empty line instead
+        # (a composite's part drops out, as a plain table part with no rows does)
+        if rows_form and _empty(pick(c, m.get("rows") or "")):
+            return {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+        if opts and P["kind"] in ("table", "records", "reading") and P["form"] in OPT_ROW_FORMS:
+            # DA-01e (3): the options read here, the rest of draw is the form's
+            g = opts["group_by"].strip() if P["kind"] == "table" and isinstance(opts.get("group_by"), str) else ""
+            dr = {k: v for k, v in opts.items() if k not in OPT_KEYS}
+            if g and isinstance(dr.get("columns"), list):
+                dr["columns"] = [g] + [x for x in dr["columns"] if x != g]
+            rec(P["form"], _arranged_at(c, m.get("rows"), opts, P["kind"] == "table"), dict(m), draw=dr or None)
+            return {"records": out[:1]}
         rec(P["form"], c, dict(m), draw=P.get("draw") if _is_obj(P.get("draw")) else None)
         return {"records": out[:1]}
 
@@ -739,12 +895,13 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
 
     kind = P["kind"]
     if kind == "table":
-        rec("table", c, {"rows": m.get("rows")})
+        rec("table", _arranged_at(c, m.get("rows"), opts, True) if opts else c, {"rows": m.get("rows")})
         if m.get("name") and m.get("value"):
             rec("ranked", c, {"values": m.get("rows"), "name": m["name"], "value": m["value"]},
                 t=ttl + " · by " + str(m["value"]).split(".")[-1].replace("_", " "))
     elif kind in ("records", "reading"):
-        rec("reading", renamed(_as_rows(val("rows")), ["id", "title", "url", "snippet", "when", "score", "domain", "text", "cited"]))
+        rows = renamed(_as_rows(val("rows")), ["id", "title", "url", "snippet", "when", "score", "domain", "text", "cited"])
+        rec("reading", arrange(rows, opts, False) if opts else rows)
     elif kind == "document":
         rec("markdown", str(val("body")))
     elif kind == "status":
@@ -811,7 +968,8 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
     elif kind == "diff":
         rec("diff", {"diff": str(val("diff"))})
     elif kind == "kv":
-        rec("kv", val("fields"))
+        f = val("fields")
+        rec("kv", _opt_units(f, opts["units"]) if opts and _is_obj(opts.get("units")) and _is_obj(f) else f)
     elif kind == "calendar":
         rec("schedule", renamed(_as_rows(val("events")), ["start", "end", "title"]))
     elif kind == "entities":

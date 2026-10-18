@@ -1006,7 +1006,7 @@ async def cap_bench_compare(role: str = "all", instance_id: str = "", trace_id=N
 
 
 @capability("bench.passive", memory="off", silent=True,
-            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["model", "node_label", "obs_tps", "avg_latency_s", "calls", "last_ts"], "sort": "calls"}, "empty": "No production traffic seen yet"}},
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["model", "node_label", "obs_tps", "avg_latency_s", "calls", "last_ts"], "sort": "-calls", "units": {"obs_tps": "tok/s", "avg_latency_s": "s"}}, "empty": "No production traffic seen yet"}},
             http_method="GET", http_path="/bench/passive", http_tags=["bench"],
             description="PASSIVE benchmark: per-(model, node) metrics harvested from REAL "
                         "production traffic (the router's rolling per-request stats every "
@@ -1253,7 +1253,7 @@ async def _node_perf_tick() -> None:
 
 
 @capability("bench.node_perf", memory="off", silent=True,
-            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "status", "reachable", "ping_ms", "loaded_vram_gb", "vram_used_pct", "version"]}}},
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "status", "reachable", "ping_ms", "loaded_vram_gb", "vram_used_pct", "version"], "units": {"ping_ms": "ms", "loaded_vram_gb": "GB", "vram_used_pct": "%"}}}},
             http_method="GET", http_path="/bench/node_perf", http_tags=["bench"],
             description="PER-NODE live performance monitor for the Ollama cluster — each "
                         "node with its own setup + workload. Per node: reachability + ping "

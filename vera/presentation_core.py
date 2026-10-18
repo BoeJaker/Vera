@@ -26,6 +26,7 @@ from typing import Any
 from .capability_contract_core import PRESENTATION_KINDS
 
 _OPTIONS = ("views", "title", "empty", "refresh", "live", "detail", "form", "draw")   # form + draw: DA-01d
+_DRAW_OPTIONS = ("sort", "group_by", "units")   # DA-01e (3): folded into draw (capability_contract_core.PRESENTATION_OPTIONS)
 # the key the first argument fills, where it is not the kind's first map key
 _CONTENT = {"terminal": "stdout", "media": "url", "entities": "entities", "receipt": "ok"}
 
@@ -59,6 +60,10 @@ def _builder(kind: str):
             if key in kw and kw[key] is not None:
                 mapping[key] = kw.pop(key)
         out: dict[str, Any] = {"kind": kind, "map": mapping}
+        # DA-01e (3): sort= / group_by= / units= are draw options - P.table("rows", sort="-calls", units={"ping": "ms"})
+        opts = {k: kw.pop(k) for k in _DRAW_OPTIONS if k in kw and kw[k] is not None}
+        if opts:
+            kw["draw"] = dict(kw.get("draw") or {}, **opts) if isinstance(kw.get("draw") or {}, dict) else kw.get("draw")
         # anything left that is neither a map key nor an option stays in the map, so validation names it
         for key in [k for k in kw if k not in _OPTIONS]:
             mapping[key] = kw.pop(key)

@@ -1,0 +1,45 @@
+{
+ "cap": "demo.host",
+ "args": {},
+ "presentation": {
+  "kind": "kv",
+  "map": {
+   "fields": "host"
+  },
+  "draw": {
+   "units": {
+    "uptime_s": "s",
+    "mem.used_gb": "GB",
+    "load": "%"
+   }
+  }
+ },
+ "result": {
+  "host": {
+   "name": "pve01",
+   "uptime_s": 86400,
+   "load": 0.5,
+   "mem": {
+    "used_gb": 41.25,
+    "total_gb": 80
+   }
+  }
+ },
+ "expect": {
+  "element": "kv",
+  "kind": "kv",
+  "title": "demo.host",
+  "forms": [
+   "kv"
+  ],
+  "data": {
+   "name": "pve01",
+   "uptime_s": "86400 s",
+   "load": "0.5%",
+   "mem": {
+    "used_gb": "41.3 GB",
+    "total_gb": 80
+   }
+  }
+ }
+}

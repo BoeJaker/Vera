@@ -562,7 +562,7 @@ DYNAMIC_PANELS: Dict[str, dict] = {}
 
 @capability(
     "ui.panel.list",
-    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "panels"}, "draw": {"columns": ["label", "id", "mode", "tab_order", "dynamic", "has_html", "has_js", "ui_caps"]}, "empty": "No panels registered"}},
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "panels"}, "draw": {"columns": ["label", "id", "mode", "tab_order", "dynamic", "has_html", "has_js", "ui_caps"], "sort": "tab_order", "group_by": "mode"}, "empty": "No panels registered"}},
     http_method="GET", http_path="/ui/panel/list", http_tags=["ui"],
     memory="off", silent=True,
     description="List all registered UI panels with metadata. "
