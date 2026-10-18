@@ -52,6 +52,9 @@ NODE_SAFE: Dict[str, str] = {
     "http":   "stateless outbound requests",
     "memory": "Postgres / Neo4j / Chroma, shared by every process",
     "echo":   "diagnostic",
+    # web-ingress WI-12 (PLAN §13.2): fetch only - each request waits for the host's slot in the shared Redis
+    # bucket, bodies go back to the caller, nothing is stored on the node (receipts and stores stay on the host)
+    "ingress": "outbound fetches behind the shared Redis per-host bucket; results return to the host, no store",
 }
 
 #: Single caps checked to be node-safe in a namespace that, as a whole, is not
@@ -301,6 +304,10 @@ CLASSES: Dict[str, Dict[str, object]] = {
                  "desc": "capabilities proven node-safe by evidence: the static audit and "
                          "the host footprint seen while they ran (nodes.parity)",
                  "namespaces": ()},
+    "crawl":   {"label": "Crawl",
+                "desc": "web fetches for the host's crawls (ingress.*): network only, each host's rate "
+                        "shared through Redis, results returned to the host, no store on the node",
+                "namespaces": ("ingress",)},
     "media":   {"label": "Media (GPU)",
                 "desc": "STT and TTS calls to the gpu_inference server; diffusion "
                         "stays on the host (it archives into the fabric)",

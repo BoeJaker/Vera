@@ -24,6 +24,7 @@ try:
     from Vera.vera.fabric import ingress_receipts_core as rc
     from Vera.vera.fabric import ingress_topic_core as tc
     from Vera.vera.fabric import ingress_search_core as sc
+    from Vera.vera.fabric import ingress_crawl_core as cc
     from Vera.vera.fabric import ingress_writer as iw
     from Vera.vera.web import web_client as _wc
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
@@ -31,6 +32,7 @@ except ImportError:                       # loaded from its file under a stand-i
     from vera.fabric import ingress_receipts_core as rc
     from vera.fabric import ingress_topic_core as tc
     from vera.fabric import ingress_search_core as sc
+    from vera.fabric import ingress_crawl_core as cc
     from vera.fabric import ingress_writer as iw
     from vera.web import web_client as _wc
 
@@ -688,3 +690,113 @@ async def cap_map_gaps_fill(minutes: int = 45, max_gaps: int = 10, days: int = 7
         filled.append({"query": q, "urls": len(urls), "pages": pages})
     return {"ok": True, "filled": filled, "skipped": max(0, len(plan) - len(filled)),
             "minutes": round((time.monotonic() - t0) / 60, 1), "reason": reason}
+
+
+# ── the node crawl class (WI-12a, PLAN §13.2) ─────────────────────────────────
+
+_LOCAL_NEXT: Dict[str, float] = {}
+
+
+async def _host_slot(host: str) -> None:
+    """Wait for this host's turn in the shared bucket (the same record shared_wait uses), whatever the switch: node
+    fetchers exist only because the rate is shared. Without Redis, a per-process record."""
+    if not host:
+        return
+    wait = None
+    try:
+        r = _orch.COORD_REDIS or await _orch._ensure_coord_redis()
+    except Exception:  # noqa: BLE001
+        r = None
+    if r is not None:
+        try:
+            key = THROTTLE_KEY + host
+            stored = await r.get(key)
+            wait, new_next = ic.next_slot(time.time(), float(stored or 0.0), HOST_INTERVAL_S,
+                                          random.uniform(0.0, HOST_JITTER_S))
+            await r.set(key, repr(new_next), ex=120)
+        except Exception as e:  # noqa: BLE001
+            log.debug("crawl slot %s: %s", host, e)
+            wait = None
+    if wait is None:
+        wait, _LOCAL_NEXT[host] = ic.next_slot(time.time(), _LOCAL_NEXT.get(host, 0.0), HOST_INTERVAL_S,
+                                               random.uniform(0.0, HOST_JITTER_S))
+    if wait and wait > 0:
+        await asyncio.sleep(min(wait, 30.0))
+
+
+@capability("ingress.fetch.batch", http_method="POST", http_path="/ingress/fetch/batch", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="Fetch a few web pages, one after another, each after its host's turn in the shared per-host "
+                        "rate record - the work unit of the crawl worker class, run on an idle crawl node or on the "
+                        "host. Fetches only: it records and stores nothing (the caller does). Internal estate hosts "
+                        "are refused. Input: urls (list of str!, at most 10), max_chars (int, default 400000). Output: "
+                        "{ok, results:[{url, final_url, status, content_type, html, text, elapsed_ms, error, etag, "
+                        "last_modified, bytes}], ran_on}.")
+async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY_CHARS, trace_id=None):
+    import socket
+    import httpx
+    us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])][:cc.MAX_BATCH]
+    headers = dict(getattr(_wc, "BROWSER_HEADERS", {}) or {})
+    headers["Accept-Encoding"] = ic.accept_encoding()
+    out: List[Dict[str, Any]] = []
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as c:
+        for u in us:
+            if not u.startswith(("http://", "https://")) or ic.is_internal(u, INTERNAL_HOSTS):
+                out.append(cc.failed_row(u, "refused: not an external http(s) URL"))
+                continue
+            await _host_slot(ic.host_of(u))
+            t0 = time.monotonic()
+            try:
+                resp = await c.get(u)
+                out.append(cc.fetch_row(u, final_url=str(resp.url), status=resp.status_code,
+                                        content_type=resp.headers.get("content-type", ""), body=resp.text,
+                                        elapsed_ms=int((time.monotonic() - t0) * 1000),
+                                        etag=resp.headers.get("etag", ""),
+                                        last_modified=resp.headers.get("last-modified", ""), max_chars=max_chars))
+            except Exception as e:  # noqa: BLE001
+                out.append(cc.fetch_row(u, elapsed_ms=int((time.monotonic() - t0) * 1000), error=str(e)[:200]))
+    return {"ok": True, "results": out, "ran_on": cc.where(socket.gethostname(), bool(getattr(_orch, "_IS_WORKER", False)))}
+
+
+@capability("fabric.crawl.fetch_many", http_method="POST", http_path="/fabric/crawl/fetch_many",
+            http_tags=["fabric", "ingress"], memory="off", silent=True,
+            description="Fetch many web pages through the crawl worker class: the URLs are cut into small per-host "
+                        "batches, interleaved across hosts, and up to `parallel` batches run at once - each on an idle "
+                        "crawl node, or on the host when none is free. Every host keeps one shared rate however many "
+                        "fetchers run. A batch that fails or times out is retried once, so no URL is dropped. Receipts "
+                        "are written here, on the host. Input: urls (list of str!), parallel (int, default 4), "
+                        "per_batch (int, default 3), caller (str), purpose (str, default page), include_bodies (bool, "
+                        "default false). Output: {ok, results, ran_on, fetched, failed, retried, lost, ms}.")
+async def cap_crawl_fetch_many(urls: Any = None, parallel: int = 4, per_batch: int = cc.PER_BATCH,
+                               caller: str = "fabric.crawl", purpose: str = "page", include_bodies: bool = False,
+                               trace_id=None):
+    us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])]
+    batches = cc.plan_batches(us, per_batch)
+    if not batches:
+        return {"ok": False, "error": "no external http(s) URL given", "results": []}
+    sem = asyncio.Semaphore(max(1, min(int(parallel or 4), 16)))
+    t0 = time.monotonic()
+
+    async def _one(b: List[str]) -> Dict[str, Any]:
+        async with sem:
+            r: Dict[str, Any] = {}
+            attempts = 0
+            for attempts in (1, 2):
+                try:
+                    r = await _call("ingress.fetch.batch", urls=b, _timeout=30 + 25 * len(b))
+                except Exception as e:  # noqa: BLE001
+                    r = {"error": str(e)[:200]}
+                if isinstance(r.get("results"), list) and len(r["results"]) == len(b):
+                    break
+            rows = r.get("results") if isinstance(r.get("results"), list) and len(r["results"]) == len(b) \
+                else [cc.failed_row(u, str(r.get("error") or "batch failed twice")) for u in b]
+            for row in rows:
+                record_fetch_result(row, caller=caller, purpose=purpose)
+            return {"results": rows, "ran_on": r.get("ran_on") or "failed", "attempts": attempts}
+
+    done = await asyncio.gather(*(_one(b) for b in batches))
+    rows = [row for b in done for row in b["results"]]
+    if not include_bodies:
+        rows = [{k: v for k, v in row.items() if k not in ("html", "text")} for row in rows]
+    return dict(ok=True, results=rows, lost=cc.lost([u for b in batches for u in b], done),
+                ms=int((time.monotonic() - t0) * 1000), batches=len(batches), **cc.summary(done))
