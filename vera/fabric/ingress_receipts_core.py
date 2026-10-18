@@ -175,9 +175,12 @@ LOOKUP_RECORD = "SELECT content_hash, first_key, record_id, seen FROM web_conten
 LOOKUP_HASHES = "SELECT content_hash FROM web_content WHERE content_hash = ANY($1)"
 LOOKUP_BANDS = ("SELECT content_hash, simhash FROM web_content WHERE b0 = ANY($1) OR b1 = ANY($2) OR b2 = ANY($3) "
                 "OR b3 = ANY($4) LIMIT 4000")
-UPDATE_URL_NOVELTY = "UPDATE web_urls SET novelty = $2, novelty_kind = $3, canonical_hash = $4 WHERE url_key = $1"
-UPDATE_HOST_YIELD = ("UPDATE web_hosts SET novel_yield = CASE WHEN novel_yield IS NULL THEN $2 "
-                     "ELSE novel_yield * 0.9 + $2 * 0.1 END WHERE host = $1")
+# every parameter typed: an untyped $2 used in two places was deduced as numeric in one and double precision in
+# the other, the UPDATE failed, and (in one transaction with the receipts) took the whole batch with it (18 Oct)
+UPDATE_URL_NOVELTY = ("UPDATE web_urls SET novelty = $2::real, novelty_kind = $3::text, canonical_hash = $4::text "
+                      "WHERE url_key = $1::text")
+UPDATE_HOST_YIELD = ("UPDATE web_hosts SET novel_yield = CASE WHEN novel_yield IS NULL THEN $2::real "
+                     "ELSE novel_yield * 0.9 + $2::real * 0.1 END WHERE host = $1::text")
 
 MAX_LINKS_PER_PAGE = 500
 MAX_TITLE = 300

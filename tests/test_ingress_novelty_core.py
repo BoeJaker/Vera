@@ -149,3 +149,50 @@ def test_writer_skips_scoring_when_the_switch_is_off_or_the_lookup_fails():
     asyncio.new_event_loop().run_until_complete(go2())
     assert w2.stats["flushed"] == 1 and w2.stats["errors"] == 0           # the receipt still lands; novelty is skipped
     assert "novelty" in " ".join(rc.DDL) and "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty REAL" in rc.DDL
+
+
+def test_novelty_sql_types_every_parameter_and_runs_after_the_receipts():
+    """18 Oct on prod: `$2` in UPDATE_HOST_YIELD was deduced numeric vs double precision, the UPDATE failed, and in the
+    receipts' transaction it rolled back the whole batch. Every parameter is cast; novelty has its own transaction."""
+    import re
+    for sql in (rc.UPDATE_URL_NOVELTY, rc.UPDATE_HOST_YIELD):
+        assert all(p.endswith(("::real", "::text")) for p in re.findall(r"\$\d::\w+", sql))
+        bare = re.findall(r"\$\d(?!::)", sql)
+        assert bare == [], (sql, bare)
+    src = (ROOT / "vera" / "fabric" / "ingress_writer.py").read_text(encoding="utf-8")
+    i_receipts = src.index("await conn.executemany(rc.UPSERT_HOST, hosts)")
+    i_novelty = src.index("await conn.executemany(rc.UPDATE_URL_NOVELTY, novelty_rows)")
+    assert i_novelty > i_receipts and "a novelty failure must never cost a receipt" in src
+
+
+def test_a_failing_novelty_update_keeps_the_receipts():
+    class _NovConn(_Conn):
+        async def executemany(self, sql, rows):
+            if sql.startswith("UPDATE"):
+                raise RuntimeError("inconsistent types deduced for parameter $2")
+            return await super().executemany(sql, rows)
+
+    class _NovPool(_Pool):
+        def acquire(self):
+            pool = self
+
+            class _A:
+                async def __aenter__(self_):
+                    return _NovConn(pool.calls, pool.known, pool.cand)
+
+                async def __aexit__(self_, *a):
+                    return False
+            return _A()
+
+    pool = _NovPool()
+    w = iw.ReceiptWriter(lambda: pool, rows_in_thread=False, novelty_getter=lambda: True)
+
+    async def go():
+        w.enqueue(_item("/a"))
+        await w.drain()
+        w.stop()
+
+    asyncio.new_event_loop().run_until_complete(go())
+    manys = [c[1] for c in pool.calls if c[0] == "many"]
+    assert "web_hosts" in manys and "web_urls" in manys and "web_fetches" in manys
+    assert w.stats["flushed"] == 1 and w.stats["errors"] == 0 and w.stats["novelty_errors"] == 1
