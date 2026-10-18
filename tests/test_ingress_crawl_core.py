@@ -132,3 +132,17 @@ def test_the_writer_stores_bodies_after_the_receipts_and_the_host_answers_304s_f
     assert "headers=(validators or {}).get(u)" in fb and "OBJECT_STORE" not in fb               # the node stores nothing
     from vera.minds import switchboard_core as SB
     assert SB.REGISTRY["ingress.blobs"].default == "off"
+
+
+
+def test_the_crawl_can_fetch_through_the_crawl_class_and_falls_back_to_the_host():
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    ng = ast.get_source_segment(src, next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_node_get"))
+    assert '"ingress.fetch.batch", urls=[url]' in ng and "record_fetch_result" in ng
+    assert 'not (row.get("html") or row.get("text"))' in ng                  # a binary body: the host fetches it
+    i = src.index("resp = await _node_get(page_url) if _node_fetch else None")
+    assert "if resp is None:" in src[i:i + 200] and "client.get(page_url" in src[i:i + 400]
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["discovery.node_fetch"].default == "off"
