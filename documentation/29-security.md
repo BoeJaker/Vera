@@ -505,6 +505,27 @@ CORS answers only this machine's own origins (any port) and
   each needs a single-use ticket from a capability call and Vera's own Origin
   ([12](./12-execution.md), "Interactive terminals").
 
+### Caller tokens (non-browser callers)
+
+Programs that call the API (the MCP bridge, Codex, tools, sandboxes, nodes, n8n, OpenClaw) can identify
+themselves with a **caller token**: `Authorization: Bearer vat_<id>.<secret>` (or `X-Vera-Token`). The
+secret is 256 bits. Vera keeps only its SHA-256 in Redis `vera:auth:tokens`, with `kind`, `subject`,
+`scopes`, `created`, `expires` (90 days by default, at most 365), `last_used`, `last_peer` and `revoked`.
+
+| Capability | What it does |
+|---|---|
+| `auth.token.issue` (`POST /auth/token/issue`) | `kind`, `subject`, `scopes`, `ttl_days`, `deliver=keydrop\|file`. The token is **never returned**: it is sealed into keydrop for a person, or written `0600` under the state root (`auth/tokens/`) for a host-local service. Runs only from its own HTTP route (the `direct` tag: not from loops, agents, schedules, bridges or `/mcp/call`). |
+| `auth.token.list` (`GET /auth/token/list`) | Metadata only (never a secret or digest), plus the evidence below. |
+| `auth.token.revoke` (`POST /auth/token/revoke`) | Invalid at once (the 30 s cache is cleared). |
+
+The MCP bridge reads its token with `--token-file <path>` (or `VERA_TOKEN_FILE`), never on the command line.
+`--selftest` says whether one was loaded.
+
+**Rollout (B0.3b).** This is stage **R2: tokens are optional and nothing is refused.**
+- A valid token sets the call's caller (the usage actor becomes `token:<kind>`, doc 01) and updates `last_used` at most once a minute.
+- Every request is counted per (browser or program, peer class loopback/docker/lan/other, token valid/invalid/none) in `vera:auth:token_evidence:<day>` (91 days).
+- `auth.token.list` reports `offhost_program_without_valid_token`. Stage R3a (refuse an off-host program call without a valid token, 401) is switched on only after that number has been 0 for 3 days. Loopback stays allowed until R3b.
+
 What the framework does provide:
 
 - **Secret-free results by design.** Credential-handling capabilities return

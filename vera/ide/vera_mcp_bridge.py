@@ -43,8 +43,11 @@ SERVER_INFO = {"name": "vera", "version": "1.1.0"}
 # ─────────────────────────────────────────────────────────────────────────────
 class Vera:
     def __init__(self, base_url, allow_prefixes, timeout=120, insecure=False,
-                 caller_kind="mcp", session_id=""):
+                 caller_kind="mcp", session_id="", token=""):
         self.base = base_url.rstrip("/")
+        # A caller token (B0.3b), sent as a bearer on every request. Read from a file, never from the command
+        # line, so it does not land in process listings or recorded command arguments.
+        self.token = str(token or "").strip()
         self.allow = [p.strip() for p in (allow_prefixes or "").split(",") if p.strip()]
         self.timeout = timeout
         self.caller_kind = str(caller_kind or "mcp").strip()
@@ -63,8 +66,14 @@ class Vera:
         return urllib.request.urlopen(req, timeout=self.timeout,
                                       context=self._ssl_ctx)
 
+    def _headers(self, extra=None):
+        h = dict(extra or {})
+        if self.token:
+            h["Authorization"] = "Bearer " + self.token
+        return h
+
     def _get(self, path):
-        req = urllib.request.Request(self.base + path, method="GET")
+        req = urllib.request.Request(self.base + path, method="GET", headers=self._headers())
         with self._open(req) as r:
             return json.loads(r.read().decode("utf-8"))
 
@@ -72,7 +81,7 @@ class Vera:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
             self.base + path, data=data, method="POST",
-            headers={"Content-Type": "application/json"})
+            headers=self._headers({"Content-Type": "application/json"}))
         with self._open(req) as r:
             return json.loads(r.read().decode("utf-8"))
 
@@ -257,12 +266,22 @@ def main():
     ap.add_argument("--insecure", action="store_true",
                     help="Skip TLS certificate verification (Vera's self-signed "
                          "https). No effect on http:// URLs.")
+    ap.add_argument("--token-file", default=os.environ.get("VERA_TOKEN_FILE", ""),
+                    help="File holding a Vera caller token (vat_...), sent as a bearer. "
+                         "Default: $VERA_TOKEN_FILE. Get one with auth.token.issue (keydrop).")
     ap.add_argument("--selftest", action="store_true",
                     help="Fetch the tool list and print a summary, then exit.")
     args = ap.parse_args()
 
+    token = ""
+    if args.token_file:
+        try:
+            with open(os.path.expanduser(args.token_file), encoding="utf-8") as fh:
+                token = fh.read().strip()
+        except OSError as e:
+            print("vera bridge: cannot read --token-file (%s); continuing without a token" % e, file=sys.stderr)
     vera = Vera(args.url, args.allow, timeout=args.timeout, insecure=args.insecure,
-                caller_kind=args.caller_kind, session_id=args.session_id)
+                caller_kind=args.caller_kind, session_id=args.session_id, token=token)
 
     if args.selftest:
         try:
@@ -270,7 +289,8 @@ def main():
         except Exception as e:
             print("SELFTEST FAILED: %s: %s" % (type(e).__name__, e), file=sys.stderr)
             sys.exit(1)
-        print("OK — %d tools exposed from %s (allow=%r)" % (len(tools), args.url, args.allow))
+        print("OK — %d tools exposed from %s (allow=%r, token=%s)"
+              % (len(tools), args.url, args.allow, "yes" if token else "no"))
         for t in tools[:15]:
             print("  - %s  %s" % (t["name"], t["description"][:70]))
         if len(tools) > 15:

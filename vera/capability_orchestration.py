@@ -224,6 +224,9 @@ CALLER_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 # X-Vera-Surface header (vera/caller_context.py middleware). ("", "") when the caller did not say.
 CALLER_SURFACE: "contextvars.ContextVar[tuple]" = contextvars.ContextVar(
     "vera_caller_surface", default=("", ""))
+# The caller token this request carried and the server verified (B0.3b R2): {id, kind, subject, scopes}, or {}
+# when none. Set only by the caller-context middleware, never from request data.
+CALLER_TOKEN: "contextvars.ContextVar[dict]" = contextvars.ContextVar("vera_caller_token", default={})
 # Set only by the dedicated MCP envelope handler. Unlike caller_kind, this is a
 # server-owned transport fact and cannot be forged by request data.
 MCP_CALL_ACTIVE: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
@@ -7352,7 +7355,8 @@ def _note_usage(name: str) -> None:
         surface, trigger = CALLER_SURFACE.get()
         actor = _cc.actor_kind(name=name, running_caps=RUNNING_CAPS.get(), http_cap=CURRENT_HTTP_CAP.get(""),
                                mcp_call=MCP_CALL_ACTIVE.get(False), caller_kind=CALLER_KIND.get(""),
-                               background=BACKGROUND_LLM.get(""))
+                               background=BACKGROUND_LLM.get(""),
+                               token_kind=(CALLER_TOKEN.get() or {}).get("kind", ""))
         _USAGE.add(_cc.usage_field(name, actor, surface, trigger))
         if REDIS is not None and _USAGE.due(time.monotonic()):
             _USAGE.flushing = True
@@ -7471,7 +7475,7 @@ def capability(
                 if not _props[_k].get("description"):
                     _props[_k]["description"] = _frag["description"]
         group  = name.split(".")[0]
-        _is_money = _money_guard.TAG in (tags or ())
+        _guard_tag = next((t for t in (tags or ()) if t in _money_guard.TAGS), "")
         _redact_args = frozenset(str(key) for key in (redact_args or ()))
         _alias_for = str(compatibility_alias_for or "").strip()
         if _alias_for and (_alias_for == name or not re.fullmatch(
@@ -7501,16 +7505,17 @@ def capability(
             # the owner asks for it directly - its own route or the browser's /mcp/call, as
             # the outermost capability, outside any background driver. Loops, agents,
             # dreams, schedules, widgets and bridges are refused (money_guard_core).
-            if _is_money:
+            if _guard_tag:
                 _ok, _why = _money_guard.allowed(
                     name=name, running_caps=RUNNING_CAPS.get(), http_cap=CURRENT_HTTP_CAP.get(""),
                     mcp_call=MCP_CALL_ACTIVE.get(False), caller_kind=CALLER_KIND.get(""),
-                    background=BACKGROUND_LLM.get(""))
+                    background=BACKGROUND_LLM.get(""), what=_money_guard.TAGS[_guard_tag],
+                    where=("the Markets panel" if _guard_tag == "money" else "its own HTTP route"))
                 if not _ok:
-                    log.warning("money guard: refused %s (%s)", name, _why)
+                    log.warning("%s guard: refused %s (%s)", _guard_tag, name, _why)
                     await emit_event({"type": "cap.denied", "name": name, "group": group,
-                                      "rule": "money", "reason": _why})
-                    return {"ok": False, "error": f"refused: {_why}", "refused": "money",
+                                      "rule": _guard_tag, "reason": _why})
+                    return {"ok": False, "error": f"refused: {_why}", "refused": _guard_tag,
                             "capability": name}
             # READ-THROUGH: a dev sandbox has no estate of its own (its Redis and SQLite are its own, empty); a read-only
             # estate capability is answered by prod, one way — see sandbox_guard.read_through_allowed. Prod itself
@@ -13109,7 +13114,11 @@ APP.add_middleware(CORSMiddleware,
 # Caller surface: reads X-Vera-Surface into CALLER_SURFACE for the usage counter. Added before the edge
 # guard, so the guard stays outermost and refuses before this runs.
 from Vera.vera import caller_context as _caller_context
-APP.add_middleware(_caller_context.CallerSurface, var=CALLER_SURFACE)
+from Vera.vera import auth_tokens as _auth_tokens
+from Vera.vera import auth_tokens_core as _auth_tokens_core
+_TOKENS = _auth_tokens.service(lambda: REDIS)
+APP.add_middleware(_caller_context.CallerSurface, var=CALLER_SURFACE,
+                   token_var=CALLER_TOKEN, tokens=_TOKENS)
 
 APP.add_middleware(_edge_guard.EdgeGuard,
                    backend_host=cfg.BACKEND_HOST,
@@ -13142,6 +13151,94 @@ async def cap_caps_usage(days: int = 7, cap: str = "", surface: str = "", trigge
     out["days"] = len(keys)
     out["pending"] = sum(_USAGE.snapshot().values())
     return out
+
+
+# ── Caller tokens (B0.3b R2: issued, optional; nothing is refused for lacking one yet) ──────
+def _token_file_dir():
+    from Vera.vera import state_paths as _sp
+    return _sp.state_dir("auth", "tokens")
+
+
+def _keydrop_put(label: str, payload: dict) -> dict:
+    for _n, _m in list(sys.modules.items()):
+        if _m is not None and _n.endswith("secrets_capabilities") and hasattr(_m, "_keydrop_put_sync"):
+            return _m._keydrop_put_sync(label, payload)
+    return {"error": "the secrets service (keydrop) is not loaded"}
+
+
+def _write_token_file(path, token: str) -> None:
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(token + chr(10))
+    os.chmod(str(path), 0o600)
+
+
+@capability("auth.token.issue", memory="off", tags=["auth", "direct"], redact_result=True,
+            http_method="POST", http_path="/auth/token/issue", http_tags=["auth"],
+            description="Issue a caller token for a NON-BROWSER caller (the MCP bridge, Codex, a tool, a sandbox, "
+                        "a node, n8n, OpenClaw). The token (vat_<id>.<secret>) is NEVER returned: it is sealed into "
+                        "keydrop for a person (deliver=keydrop, default) or written 0600 under Vera's state root "
+                        "for a host-local service (deliver=file). The caller then sends `Authorization: Bearer "
+                        "<token>`. While B0.3b is in R2 a token is optional: valid ones are recorded (last_used), "
+                        "nothing is refused. Runs only from its own HTTP route. Inputs: kind (str! one of "
+                        "mcp_bridge, codex, tool, sandbox, node, n8n, openclaw), subject (str! e.g. claude@lenovo), "
+                        "scopes (str, CSV of capability prefixes, recorded for later), ttl_days (int=90, max 365), "
+                        "deliver (keydrop|file), note (str). Output: {ok, token: <record without secret or digest>, "
+                        "delivered_to}.")
+async def cap_auth_token_issue(kind: str = "", subject: str = "", scopes: str = "", ttl_days: int = 90,
+                               deliver: str = "keydrop", note: str = "", trace_id=None):
+    if deliver not in ("keydrop", "file"):
+        return {"ok": False, "error": "deliver must be keydrop or file"}
+    token, tid, secret = _auth_tokens_core.mint()
+    try:
+        rec = _auth_tokens_core.record(tid, secret, kind=kind, subject=subject,
+                                       scopes=[s for s in str(scopes or "").split(",")],
+                                       now=time.time(), ttl_days=ttl_days, note=note)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    if deliver == "keydrop":
+        res = await asyncio.to_thread(
+            _keydrop_put, f"vera-token:{rec['kind']}:{rec['subject']}",
+            {"token": token, "kind": rec["kind"], "subject": rec["subject"],
+             "how": "send it as 'Authorization: Bearer <token>'; the MCP bridge reads it with --token-file"})
+        if not res.get("ok"):
+            return {"ok": False, "error": f"keydrop did not take the token: {res.get('error')}"}
+        where = f"keydrop entry {res.get('entry')}"
+    else:
+        fname = rec["kind"] + "-" + rec["subject"].replace("@", "_").replace(":", "_") + ".token"
+        path = _token_file_dir() / fname
+        await asyncio.to_thread(_write_token_file, path, token)
+        where = f"file {path}"
+    await _TOKENS.put(rec)
+    await emit_event({"type": "auth.token.issued", "id": tid, "kind": rec["kind"], "subject": rec["subject"],
+                      "deliver": deliver})
+    return {"ok": True, "token": _auth_tokens_core.public(rec), "delivered_to": where}
+
+
+@capability("auth.token.list", memory="off", silent=True,
+            http_method="GET", http_path="/auth/token/list", http_tags=["auth"],
+            description="Caller tokens (metadata only: id, kind, subject, scopes, created, expires, last_used, "
+                        "last_peer, revoked; never a secret or digest) and the R2 evidence: requests per (browser "
+                        "or program, peer class loopback/docker/lan/other, token result valid/invalid/none) over "
+                        "the last `days` days, with the number of off-host program calls that came without a valid "
+                        "token (R3a refuses those, once this has been 0 for 3 days). Input: days (int=3). "
+                        "Output: {tokens[], evidence}.")
+async def cap_auth_token_list(days: int = 3, trace_id=None):
+    return {"tokens": [_auth_tokens_core.public(r) for r in await _TOKENS.all()],
+            "evidence": await _TOKENS.evidence_summary(days)}
+
+
+@capability("auth.token.revoke", memory="off", tags=["auth", "direct"],
+            http_method="POST", http_path="/auth/token/revoke", http_tags=["auth"],
+            description="Revoke a caller token by id (from auth.token.list); a revoked token is invalid at once. "
+                        "Runs only from its own HTTP route. Input: id (str!). Output: {ok, token}.")
+async def cap_auth_token_revoke(id: str = "", trace_id=None):
+    rec = await _TOKENS.revoke(str(id or "").strip())
+    if not rec:
+        return {"ok": False, "error": "no such token"}
+    await emit_event({"type": "auth.token.revoked", "id": rec["id"], "kind": rec["kind"],
+                      "subject": rec["subject"]})
+    return {"ok": True, "token": _auth_tokens_core.public(rec)}
 
 
 @capability("auth.edge.status", memory="off", silent=True,

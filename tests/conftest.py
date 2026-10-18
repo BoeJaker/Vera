@@ -21,6 +21,8 @@ _CRITICAL_MODULES = {
     "test_money_tag_dispatch",  # the dispatcher refuses money caps except from their own route (2026-10-17)
     "test_caller_context_core",  # "order by usage" counted screen refresh as interest; no actor or surface (2026-10-18)
     "test_caller_usage_dispatch",  # every call counted with its actor and surface; flush never loses a batch (2026-10-18)
+    "test_auth_tokens_core",  # API callers had no credential; B0.3b R2 tokens: digest-only, never returned (2026-10-18)
+    "test_auth_tokens_service",  # tokens optional in R2: checked, last_used, evidence; issue/revoke direct only (2026-10-18)
     "test_sandbox_idle_plan",  # sleep the container you judged, never an alias's target (2026-09-12)
     "test_operator_session_sweep",  # a cancelled run must not leak its browser context (2026-09-16)
     "test_gpu_residency",  # media models must not sit on the LLM's GPU while idle (2026-09-16)

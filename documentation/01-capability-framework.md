@@ -824,6 +824,7 @@ Each call's **actor kind** comes from the dispatcher's own context, never from t
 |---|---|
 | `ui:route` | the capability's own HTTP route (a panel button, a desk refresh) |
 | `ui:mcp` | the browser's `/mcp/call` (a person, or the chat's cap-in-chat and copilots acting for one) |
+| `token:<kind>` | a caller that sent a valid caller token ([29](./29-security.md), "Caller tokens"): checked by the server, so it beats `caller_kind` |
 | `bridge:claude` / `bridge:codex` / `bridge:mcp` | an MCP bridge (`caller_kind`) |
 | `nested` | inside another capability (a loop, an agent turn, a DAG step) |
 | `background:<driver>` | a background driver (`BACKGROUND_LLM`: dream, v8, fabric, idle …) |
