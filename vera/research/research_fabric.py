@@ -426,16 +426,23 @@ def _filter_rows(rows: List[Dict], filters: Dict[str, Any], limit: int) -> List[
 
 
 async def _query_by_id(dataset_id: str, record_id: str) -> Optional[Dict]:
-    """Fetch a single record by its id."""
+    """Fetch a single record by its id: the research LOGICAL id the caller saved it under (data.id: a cell id,
+    an iteration target, "singleton"), or the physical fabric row id. Rows come newest first, so the newest save
+    wins.
+
+    It compared only the physical row id, which is never the logical id, so every load returned None: notebook
+    saves answered 404, the iteration engine stopped at once ("gone"), and the web search config was lost on
+    restart (S8 / D18-1, backbone 18 Oct)."""
     fab = _fabric()
     if not fab or not hasattr(fab, "_sqlite_query"):
         return None
     try:
         rows = await fab._sqlite_query(dataset_id=dataset_id, limit=1000)
         for row in rows:
-            if row.get("id") == record_id:
-                data = _jload(row.get("data") or "{}")
-                return {**row, "_data": data, **data}
+            data = _jload(row.get("data") or "{}")
+            logical = str(data.get("id") or "") if isinstance(data, dict) else ""
+            if record_id and (logical == record_id or row.get("id") == record_id):
+                return {**row, "_data": data, **(data if isinstance(data, dict) else {})}
         return None
     except Exception:
         return None
