@@ -1165,6 +1165,47 @@ def _make_ohlcv_features(ohlcv: dict, window: int = 20, lookahead: int = 5) -> T
     return X[start:n-lookahead], fwd_ret[start:n-lookahead]
 
 
+_BAR_TIME_KEYS = ("date", "datetime", "timestamp", "ts", "time", "t", "open_time")
+
+
+def _bar_time(d: dict, row: dict):
+    """A bar's time as a sortable float (epoch seconds), from the bar itself, else its fabric row; None if neither.
+    Epoch numbers above 1e11 are milliseconds."""
+    for src in (d or {}, row or {}):
+        for k in _BAR_TIME_KEYS + (("created_at",) if src is row else ()):
+            v = src.get(k)
+            if v in (None, ""):
+                continue
+            if isinstance(v, (int, float)):
+                return float(v) / 1000.0 if v > 1e11 else float(v)
+            try:
+                return float(v) / 1000.0 if float(v) > 1e11 else float(v)
+            except (TypeError, ValueError):
+                pass
+            try:
+                from datetime import datetime, timezone
+                dt = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
+                return (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)).timestamp()
+            except Exception:
+                continue
+    return None
+
+
+def _chronological_split(X, y, val=0.15, test=0.15, gap=0):
+    """Train on the oldest bars, validate on the next, test on the newest, with `gap` bars dropped at each seam so a
+    label's look-ahead window never reaches into the next part (S18 / D11-2)."""
+    n = len(X)
+    n_test = max(1, int(n * test))
+    n_val = max(1, int(n * val))
+    n_train = n - n_val - n_test - 2 * gap
+    if n_train < 1:
+        gap = 0
+        n_train = n - n_val - n_test
+    a, b = n_train, n_train + gap
+    c, d = b + n_val, b + n_val + gap
+    return X[:a], y[:a], X[b:c], y[b:c], X[d:], y[d:]
+
+
 def _train_val_test_split(X, y, val=0.15, test=0.15, seed=42):
     n    = len(X)
     rng  = np.random.default_rng(seed)
@@ -2171,7 +2212,14 @@ if _CAP_AVAILABLE:
             # Parse feature and label columns
             try:
                 if task == "ohlcv_direction":
-                    ohlcv_data = [_parse_row(r) for r in rows]
+                    # Oldest first: the fabric returns rows newest first, so the series ran backwards and the label
+                    # ("up over the next 5 bars") was really "up over the previous 5" (S18 / D11-2).
+                    parsed = [(_parse_row(r), r) for r in rows]
+                    if all(_bar_time(d, r) is not None for d, r in parsed):
+                        parsed.sort(key=lambda dr: _bar_time(*dr))
+                    else:
+                        parsed.reverse()                       # storage order is newest first
+                    ohlcv_data = [d for d, _ in parsed]
                     ohlcv = {
                         "open":   [float(d.get("open",  0) or 0) for d in ohlcv_data],
                         "high":   [float(d.get("high",  0) or 0) for d in ohlcv_data],
@@ -2228,9 +2276,14 @@ if _CAP_AVAILABLE:
             if normalise:
                 X, xmu, xsig = _normalise(X)
 
-            X_tr, y_tr, X_va, y_va, X_te, y_te = _train_val_test_split(
-                X, y, val=val_frac, test=test_frac
-            )
+            if task == "ohlcv_direction":                  # time series: never test on the past
+                X_tr, y_tr, X_va, y_va, X_te, y_te = _chronological_split(
+                    X, y, val=val_frac, test=test_frac, gap=5   # = _make_ohlcv_features' lookahead
+                )
+            else:
+                X_tr, y_tr, X_va, y_va, X_te, y_te = _train_val_test_split(
+                    X, y, val=val_frac, test=test_frac
+                )
             return {"X_tr": X_tr, "y_tr": y_tr, "X_va": X_va, "y_va": y_va, "X_te": X_te, "y_te": y_te,
                     "feature_names": feature_names, "n_features": int(X.shape[1])}
 
