@@ -237,7 +237,8 @@ async def _do_release(p: Dict[str, Any]) -> Dict[str, Any]:
     p["restart_requested_at"] = _now().isoformat(timespec="seconds")
     await _save(p)
     await emit_event({"type": "evolve.release.restarting", "release_id": p["id"], "commit": p["merge"].get("commit")})
-    res = await _call("sys.dev.restart", confirm=True, resume_census=True,
+    # force: may_release already held for protected runs before the merge - a merged release must restart
+    res = await _call("sys.dev.restart", confirm=True, resume_census=True, force=True,
                       reason=f"release {p['id']}: main @ {str(p['merge'].get('commit') or '')[:10]} ({p.get('reason') or p.get('by')})")
     if not isinstance(res, dict) or not res.get("ok"):
         p["status"] = "failed"
