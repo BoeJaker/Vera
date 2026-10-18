@@ -9369,15 +9369,39 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     if(t==='done'||/\.done$/.test(t)||t==='run_done'||/\.(error|failed|cancelled)$/.test(t)) R.status=(ev.ok===false||/error|failed|cancelled/.test(t))?'fail':'ok';
     clearTimeout(_loopCanvasT[rid]); _loopCanvasT[rid]=setTimeout(()=>_loopCanvasFlush(rid), R.added?1500:50);
     if(/\.tool_done$/.test(t)&&ev.ok!==false&&ev.tool){ try{ _loopStepLand(R, ev); }catch(_){} }
+    /* the run's own answer lands beside it once, as a turn's answer does (D14: the live run ended with a summary that reached nothing) */
+    if((t==='done'||/\.done$/.test(t))&&ev.summary&&!R.answered){ R.answered=true; try{ _loopStepLand(R, {tool:'loop.answer', step_id:'answer', preview:String(ev.summary)}); }catch(_){} }
   }
   /* A LOOP DRIVES THE DESK AS A TURN DOES (DESK-ARRANGEMENT 8.4, LV-12; owner 2026-10-17: "you need to add integrating the agentic loop into the
      desk/canvas ... its a key part of the chat ui and needs to be able to drive it just the same"). A turn lands each tool's answer as an item
      (the adapters, _cvAdapt) and the desk's topic follows the turn; a loop only kept its one run item. Now each step's answer (a tool_done's
      preview, when it is the whole answer) is read by the same adapters and lands as its own item beside the run, and the desk's topic follows
      the step - the run and what its last steps made - as it follows a turn (when the desk follows the conversation at all). */
+  /* A REAL LOOP'S PREVIEWS ARE CUT OR ARE TEXT (D14, the first live loop on the design mirror 2026-10-18: web.research, prose.author and a
+     file read ran and NOTHING landed). The stream caps a preview at 12000 characters, so a search's JSON ends mid-value and does not parse;
+     a writer's preview is its text. A cut JSON is read up to its last whole value (the query and the sources that arrived whole); text is
+     read as text (a note, or prose when long), after the writer's own "wrote <file> ... act on it:" line. */
+  function _jsonPrefix(s){
+    s=String(s||''); if(s[0]!=='{'&&s[0]!=='[') return null; let inS=false, esc=false, st='', cut=-1, cutSt='';
+    for(let i=0;i<s.length;i++){ const ch=s[i];
+      if(inS){ if(esc) esc=false; else if(ch==='\\') esc=true; else if(ch==='"') inS=false; continue; }
+      if(ch==='"'){ inS=true; continue; }
+      if(ch==='{'||ch==='['){ st+=ch; continue; }
+      if(ch==='}'||ch===']'){ st=st.slice(0,-1); if(!st){ try{ return JSON.parse(s.slice(0,i+1)); }catch(_){ return null; } } cut=i+1; cutSt=st; continue; }
+      if(ch===','){ cut=i; cutSt=st; } }
+    if(cut<0) return null; const close=cutSt.split('').reverse().map(c=>c==='{'?'}':']').join('');
+    try{ return JSON.parse(s.slice(0,cut)+close); }catch(_){ return null; }
+  }
+  function _loopPreviewValue(p){
+    p=String(p||''); let v=null; try{ v=JSON.parse(p); }catch(_){ v=_jsonPrefix(p); }
+    if(v&&typeof v==='object') return v;
+    const t=p.replace(/^[^\n]*\bwrote\b[^\n]*(act on it:|IN FULL[^\n]*)\s*/i,'').trim();
+    return t.length>=20?t:null;
+  }
   async function _loopStepLand(R, ev){
-    let res=null; try{ res=JSON.parse(String(ev.preview||'')); }catch(_){ res=null; }
-    if(!res||typeof res!=='object') return;
+    const res=_loopPreviewValue(ev.preview);
+    if(res==null) return;
+    if(/(^|\.)(fs\.read|fs\.list|files\.read|read_file)$/.test(String(ev.tool))&&typeof res==='string') return;   /* a read of what a step already wrote is not a new answer */
     let made=null; try{ made=_cvAdapt(String(ev.tool), res, null); }catch(_){ made=null; } if(Array.isArray(made)) made=made[0]; if(!made||!made.kind) return;
     const key=R.key+':s'+String(ev.step_id||0)+':'+(R.stepN=(R.stepN||0)+1);
     R.stepKeys=(R.stepKeys||[]).concat([key]).slice(-12);
