@@ -2522,7 +2522,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                 if _fdoc:
                     _frid = "f_" + hashlib.sha256(f"{ds_id}:{page_url}".encode()).hexdigest()[:22]
                     _ftags = extra_tags + ["web", "discovery", "file", str(_fdoc.get("reader") or "")]
-                    _frec = _pc.crawl_record(
+                    _frec = _ipc.crawl_record(
                         _fdoc, _frid, page_url, _ftags, hostname=urlparse(page_url).netloc, depth=depth,
                         kind=_fdoc.get("kind") or "file", reader=_fdoc.get("reader") or "",
                         tables=(_fdoc.get("tables") or [])[:20], children=(_fdoc.get("children") or [])[:200],
@@ -3284,6 +3284,9 @@ try:
     from Vera.vera.fabric import ingress_parse_core as _pc
 except ImportError:                    # pragma: no cover
     from vera.fabric import ingress_parse_core as _pc
+#: the same module under a name no function shadows (_run_crawl_impl._process has a local dict called _pc, which
+#: made `_pc.crawl_record` an UnboundLocalError inside the crawl - WI-4b's file branch failed silently on prod)
+_ipc = _pc
 
 
 def _ingress_mod():
