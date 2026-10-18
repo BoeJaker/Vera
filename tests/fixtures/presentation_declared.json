@@ -2987,7 +2987,15 @@
   }
  },
  "intel.activity": {
+  "draw": {
+   "attrs": {
+    "auto": "30",
+    "scope": "intel"
+   },
+   "tag": "vera-activity-timeline"
+  },
   "empty": "No intel activity in the window",
+  "form": "element",
   "kind": "log",
   "map": {
    "events": "events",
@@ -2995,7 +3003,8 @@
    "level": "status",
    "t": "ts",
    "text": "title"
-  }
+  },
+  "title": "Intel activity"
  },
  "intel.brief": {
   "draw": {
@@ -3193,13 +3202,21 @@
   }
  },
  "intel.timeline.get": {
+  "draw": {
+   "attrs": {
+    "days": "{days}",
+    "topic": "{topic_id}"
+   },
+   "tag": "vera-intel-timeline"
+  },
+  "form": "element",
   "kind": "series",
   "map": {
    "points": "days",
    "t": "date",
    "v": "signals"
   },
-  "title": "Signals a day"
+  "title": "Intel timeline"
  },
  "intel.topic.list": {
   "draw": {

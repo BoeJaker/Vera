@@ -2755,8 +2755,13 @@
     const host = document.createElement('div'); host.setAttribute('slot', 'el'); host.style.cssText = 'width:100%;height:100%;overflow:auto;min-height:0';
     /* an element that can take the answer it was opened from (seed) starts with it - an event stream opened from obs.events shows
        those events at once instead of waiting for the next ones */
-    /* an attribute may name a field of the answer it was opened from: {scope} -> the answer's scope (activity.timeline) */
-    const fillAttr = (v) => { const m = /^\{([a-z_][a-z0-9_]*)\}$/i.exec(String(v)); if (!m) return String(v); const d = rec && rec.data; return d && typeof d === 'object' && !Array.isArray(d) && d[m[1]] != null ? String(d[m[1]]) : ''; };
+    /* an attribute may name a field of the answer it was opened from ({scope} -> the answer's scope, activity.timeline), else an
+       argument of the call that read it ({topic_id} -> intel.timeline.get's topic); neither: the attribute is left out. Only a plain
+       value is taken (intel.timeline.get answers `days` as its list of day buckets - the attribute is the argument's number) */
+    const plainVal = (x) => x != null && x !== '' && (typeof x === 'string' || typeof x === 'number' || typeof x === 'boolean');
+    const fillAttr = (v) => { const m = /^\{([a-z_][a-z0-9_]*)\}$/i.exec(String(v)); if (!m) return String(v); const d = rec && rec.data, a = rec && rec.read && rec.read.args;
+      if (d && typeof d === 'object' && !Array.isArray(d) && plainVal(d[m[1]])) return String(d[m[1]]);
+      return a && typeof a === 'object' && plainVal(a[m[1]]) ? String(a[m[1]]) : ''; };
     const go = () => { const x = document.createElement(e.tag); Object.keys(e.attrs || {}).forEach((k) => { const v = fillAttr(e.attrs[k]); if (v !== '') x.setAttribute(k, v); }); x.style.display = 'block'; host.appendChild(x);
       if (typeof x.seed === 'function' && rec && rec.data != null) { try { x.seed(rec.data); } catch (_) { /* the element runs as it would */ } } };
     const base = (el.base || '').replace(/\/$/, ''), src = EL_SRC[e.tag];

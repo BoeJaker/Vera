@@ -8,7 +8,10 @@ t('activity.timeline declares the element form with the Activity timeline, its s
 const WE = R('vera/widgets/widget_element.js');
 t('the element form knows where the timeline script is', WE.includes("'vera-activity-timeline': 'activity_timeline'"));
 // the attribute filling, run alone
-const i = WE.indexOf('    const fillAttr = '), j = WE.indexOf('\n', i); const src = WE.slice(i, j).trim();
-const mk = (data) => new Function('rec', src + '; return fillAttr;')({ data });
+const END = "String(a[m[1]]) : ''; };";
+const i = WE.indexOf('    const plainVal = '), j = WE.indexOf(END, i) + END.length; const src = WE.slice(i, j).trim();
+const mk = (data, args) => new Function('rec', src + '; return fillAttr;')({ data, read: { args: args || {} } });
 t('{field} is the answer field; a plain value stays; a missing field leaves the attribute out', mk({ scope: 'project:x' })('{scope}') === 'project:x' && mk({ scope: 'all' })('15') === '15' && mk({})('{scope}') === '' && mk([1])('{scope}') === '');
+t("...else the call's argument of that name (intel.timeline.get's topic_id); the answer's field wins", mk({ days: [] }, { topic_id: 't7' })('{topic_id}') === 't7' && mk({ scope: 'a' }, { scope: 'b' })('{scope}') === 'a' && mk({}, {})('{days}') === '');
+t('an answer field that is a list or a record is not an attribute: the argument is (intel.timeline.get days)', mk({ days: [{ date: 'x' }] }, { days: 30 })('{days}') === '30' && mk({ days: { a: 1 } }, {})('{days}') === '');
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);
