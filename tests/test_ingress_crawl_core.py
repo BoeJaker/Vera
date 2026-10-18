@@ -54,10 +54,27 @@ def test_the_caps_fetch_behind_the_shared_slot_and_record_on_the_host():
     import ast
     src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
     tree = ast.parse(src)
-    fb = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_ingress_fetch_batch")
+    fb = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_fetch_batch")
     seg = ast.get_source_segment(src, fb)
     assert "_host_slot(" in seg and "accept_encoding()" in seg and "is_internal(" in seg
     assert "record_fetch_result" not in seg and "WRITER" not in seg                 # nothing recorded on the node
     fm = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_crawl_fetch_many")
     seg = ast.get_source_segment(src, fm)
     assert '_call("ingress.fetch.batch"' in seg and "record_fetch_result" in seg and "for attempts in (1, 2)" in seg
+
+
+
+def test_a_crawl_worker_reserves_for_itself_while_a_batch_runs():
+    from vera.workers import node_compute_core as ncc
+    need = ncc.NEEDS["ingress.fetch.batch"]
+    r = cc.reservation(need, 1000.0, 3)
+    assert r == {"cpu": 0.25, "mem_gb": 0.25, "until": 1000.0 + 30 + 75, "cap": "ingress.fetch.batch"}
+    assert cc.EXTRA_RES_KEY.format(host_id="h1") == "vera:node_compute:extra_res:h1"
+    import ast
+    src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_ingress_fetch_batch")
+    seg = ast.get_source_segment(src, fn)
+    assert "_reserve_self(" in seg and "finally:" in seg and "_release_self(" in seg       # released on error too
+    rs = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reserve_self")
+    seg = ast.get_source_segment(src, rs)
+    assert "_IS_WORKER" in seg and "hset" in seg and "NEEDS" in seg and "expire" not in seg    # per-field until, no key TTL

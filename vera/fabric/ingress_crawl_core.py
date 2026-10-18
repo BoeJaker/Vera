@@ -97,3 +97,21 @@ def failed_row(url: str, error: str) -> Dict[str, Any]:
 def where(hostname: str, is_worker: bool) -> str:
     return ("node:" if is_worker else "host:") + (str(hostname or "") or "?")
 
+
+# ── a crawl worker's own reservation (contract with vera-44, 18 Oct) ─────────
+#: Redis HASH per node: field = one running batch, value = what it holds and until when (no key TTL: that would
+#: expire every batch on the node together). admit() (node_compute) adds the live fields on top of reserved_now()
+#: and drops expired ones, so a killed worker cannot hold capacity.
+EXTRA_RES_KEY = "vera:node_compute:extra_res:{host_id}"
+BATCH_FN = "ingress.fetch.batch"
+
+
+def batch_timeout_s(n_urls: int) -> int:
+    """How long a batch of n URLs may take - the host waits this long, and the reservation lasts as long."""
+    return 30 + 25 * max(1, int(n_urls or 1))
+
+
+def reservation(needs: Mapping[str, Any], now: float, n_urls: int) -> Dict[str, Any]:
+    need = dict(needs or {})
+    return {"cpu": float(need.get("cpu", 0.25)), "mem_gb": float(need.get("mem_gb", 0.25)),
+            "until": round(float(now) + batch_timeout_s(n_urls), 1), "cap": BATCH_FN}

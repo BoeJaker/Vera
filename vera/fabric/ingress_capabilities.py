@@ -890,9 +890,48 @@ async def _host_slot(host: str) -> None:
                         "{ok, results:[{url, final_url, status, content_type, html, text, elapsed_ms, error, etag, "
                         "last_modified, bytes}], ran_on}.")
 async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY_CHARS, trace_id=None):
+    us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])][:cc.MAX_BATCH]
+    res_key, res_field = await _reserve_self(len(us))
+    try:
+        return await _fetch_batch(us, max_chars)
+    finally:
+        await _release_self(res_key, res_field)
+
+
+async def _reserve_self(n_urls: int):
+    """On a crawl node: note this batch in the node's reservation hash so test-chunk admission counts it
+    (node_compute admit(), vera-44). Best effort; on the host, or without Redis, nothing."""
+    import json as _json
+    import uuid
+    hid = os.environ.get("VERA_WORKER_HOST_ID", "")
+    r = getattr(_orch, "REDIS", None)
+    if not getattr(_orch, "_IS_WORKER", False) or not hid or r is None:
+        return "", ""
+    try:
+        try:
+            from Vera.vera.workers import node_compute_core as _ncc
+        except ImportError:  # pragma: no cover
+            from vera.workers import node_compute_core as _ncc
+        key, field = cc.EXTRA_RES_KEY.format(host_id=hid), uuid.uuid4().hex
+        await r.hset(key, field, _json.dumps(cc.reservation(_ncc.NEEDS.get(cc.BATCH_FN) or {}, time.time(), n_urls)))
+        return key, field
+    except Exception as e:  # noqa: BLE001
+        log.debug("crawl reservation: %s", e)
+        return "", ""
+
+
+async def _release_self(key: str, field: str) -> None:
+    if not key or not field:
+        return
+    try:
+        await _orch.REDIS.hdel(key, field)
+    except Exception as e:  # noqa: BLE001
+        log.debug("crawl reservation release: %s", e)
+
+
+async def _fetch_batch(us: List[str], max_chars: int) -> Dict[str, Any]:
     import socket
     import httpx
-    us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])][:cc.MAX_BATCH]
     headers = dict(getattr(_wc, "BROWSER_HEADERS", {}) or {})
     headers["Accept-Encoding"] = ic.accept_encoding()
     out: List[Dict[str, Any]] = []
@@ -940,7 +979,7 @@ async def cap_crawl_fetch_many(urls: Any = None, parallel: int = 4, per_batch: i
             attempts = 0
             for attempts in (1, 2):
                 try:
-                    r = await _call("ingress.fetch.batch", urls=b, _timeout=30 + 25 * len(b))
+                    r = await _call("ingress.fetch.batch", urls=b, _timeout=cc.batch_timeout_s(len(b)))
                 except Exception as e:  # noqa: BLE001
                     r = {"error": str(e)[:200]}
                 if isinstance(r.get("results"), list) and len(r["results"]) == len(b):
