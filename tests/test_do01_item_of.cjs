@@ -4,7 +4,7 @@
 const fs = require('fs'); const path = require('path'); const R = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 let bad = 0; const t = (name, ok) => { if (!ok) bad++; console.log((ok ? 'ok   ' : 'FAIL ') + name); };
 const P = R('vera/widgets/present.js'), H = R('vera/chat/chat_panel.html');
-t('present.js makes the item and exports it', P.includes('  function itemOf(capName, result, args, opts){') && P.includes('Object.assign(W, { present, presentations, presentationOf, itemOf, jsonItem, calMonth,'));
+t('present.js makes the item and exports it', P.includes('  function itemOf(capName, result, args, opts){') && P.includes('Object.assign(W, { present, presentations, presentationOf, itemOf, jsonItem, rowRefOf, calMonth,'));
 t('the chat asks it - its own copy is gone', H.includes('return W.itemOf(capName, result, args, opts);') && !H.includes("case 'records': { const items=listOf(r0.data,") && !H.includes("const widget=(r)=>({ kind:'widget', n:String(r.title||title)"));
 t("the diary's month is shared too", P.includes('const calMonth=(evs)=>{') && H.includes('const _cvCalMonth=(evs)=>window.VeraWidget.calMonth(evs);'));
 t('the moved code needs nothing of the chat page', (() => { const i = P.indexOf('function itemOf('), j = P.indexOf('Object.assign(W, {', i); return !/\b_cv\w+|\bwindow\b|\bdocument\b/.test(P.slice(i, j)); })());

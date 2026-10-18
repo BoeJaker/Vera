@@ -2282,7 +2282,7 @@ async def cap_ssh_run(
 
 @capability(
     "exec.ssh.hosts.list",
-    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "hosts"}, "draw": {"columns": ["label", "host", "port", "user", "auth", "tags", "updated_at"]}, "empty": "No SSH hosts stored"}},
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "hosts"}, "draw": {"columns": ["label", "host", "port", "user", "auth", "tags", "updated_at"], "ref": "host:{id}"}, "empty": "No SSH hosts stored"}},
     http_method="GET", http_path="/exec/ssh/hosts", http_tags=["exec"],
     memory="off", silent=True,
     description="List all stored SSH host credentials (secrets redacted).",

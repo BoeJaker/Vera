@@ -1622,6 +1622,9 @@ async def _fabric_ingest(dataset_id: str, record_id: str, data: dict,
         item = dict(data)
         item["_record_id"] = record_id
         item["text"]       = text or record_id   # fabric uses 'text' for embedding
+        # Keyed upsert: the fabric replaces the row with this id. Without it every save appended a row with a random
+        # id, so an edit never replaced the old copy and ml.delete (by id) matched nothing (S18 / D11-1).
+        item["_id"]        = _fabric_row_id(dataset_id, record_id)
         await _ingest(
             dataset_id = dataset_id,
             data       = [item],
@@ -1634,26 +1637,60 @@ async def _fabric_ingest(dataset_id: str, record_id: str, data: dict,
         return False
 
 
-async def _fabric_delete(dataset_id: str, record_id: str):
-    """Remove a single record from the fabric by dataset+record id."""
+def _fabric_row_id(dataset_id: str, record_id: str) -> str:
+    return f"{dataset_id}:{record_id}"
+
+
+def _payload_of(row: dict):
+    """The module dict inside a fabric row (wrapped {data: payload} or flat), or None."""
+    raw = row.get("data")
     try:
-        from Vera.vera.fabric.data_fabric import _enqueue_write
-        await _enqueue_write({
-            "kind":   "raw",
-            "sql":    "DELETE FROM fabric_records WHERE dataset_id=? AND id=?",
-            "params": (dataset_id, record_id),
-        }, wait=True)
-        # Also decrement the record count
-        await _enqueue_write({
-            "kind":   "raw",
-            "sql":    (
-                "UPDATE fabric_datasets SET record_count=MAX(0,record_count-1),"
-                "updated_at=? WHERE dataset_id=?"
-            ),
-            "params": (now_iso(), dataset_id),
-        }, wait=False)
+        outer = json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return None
+    if not isinstance(outer, dict):
+        return None
+    payload = outer.get("data", outer)
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except Exception:
+            return None
+    return payload if isinstance(payload, dict) else None
+
+
+async def _fabric_delete(dataset_id: str, record_id: str) -> int:
+    """Remove every fabric row of one record: the keyed row and the copies older saves appended with random ids
+    (the old delete matched `id=record_id`, which no row had, so deleted modules came back). Returns rows removed."""
+    try:
+        from Vera.vera.fabric.data_fabric import _enqueue_write, _sqlite_query
+        rows = await _sqlite_query(dataset_id=dataset_id, limit=2000)
+        ids = {_fabric_row_id(dataset_id, record_id)}
+        for r in rows:
+            p = _payload_of(r) or {}
+            if record_id in (p.get("id"), p.get("_record_id"), p.get("module_id")) and r.get("id"):
+                ids.add(r["id"])
+        n = 0
+        for rid in ids:
+            await _enqueue_write({
+                "kind":   "raw",
+                "sql":    "DELETE FROM fabric_records WHERE dataset_id=? AND id=?",
+                "params": (dataset_id, rid),
+            }, wait=True)
+            n += any(r.get("id") == rid for r in rows)
+        if n:
+            await _enqueue_write({
+                "kind":   "raw",
+                "sql":    (
+                    "UPDATE fabric_datasets SET record_count=MAX(0,record_count-?),"
+                    "updated_at=? WHERE dataset_id=?"
+                ),
+                "params": (n, now_iso(), dataset_id),
+            }, wait=False)
+        return n
     except Exception as e:
         log.debug("_fabric_delete %s/%s: %s", dataset_id, record_id, e)
+        return 0
 
 
 async def _fabric_query_all(dataset_id: str) -> list:
@@ -1716,44 +1753,58 @@ async def _save_module(mid: str, module: dict):
     try:
         import Vera.vera.capability_orchestration as _orch
         if _orch.REDIS:
-            await _orch.REDIS.set(REDIS_PREFIX + mid, json.dumps(module), ex=86400)
+            await _orch.REDIS.set(REDIS_MODULE_PREFIX + mid, json.dumps(module), ex=86400)
     except Exception as e:
         log.debug("ml_workshop redis save: %s", e)
 
 
+# Module cache keys have their own prefix, read by SCAN: `KEYS vera:ml:*` blocked Redis on every ml.list and pulled
+# every weight, data and ONNX blob only to throw it away (D11-1). Old `vera:ml:<id>` copies expire within a day.
+REDIS_MODULE_PREFIX = REDIS_PREFIX + "module:"
+
+
+def _newer(a: dict, b: dict) -> bool:
+    """a is at least as new as b (by updated_at, then created_at)."""
+    def stamp(m):
+        return str(m.get("updated_at") or m.get("created_at") or "")
+    return stamp(a) >= stamp(b)
+
+
 async def _load_all_modules():
-    """Populate _MODULES from Data Fabric (authoritative) then Redis hot-cache."""
-    loaded = 0
+    """Populate _MODULES from Data Fabric (authoritative) then Redis hot-cache; the newest copy of each id wins
+    (the fabric rows came back in storage order, so an old copy could overwrite a newer one)."""
+    found: Dict[str, dict] = {}
 
     # 1. Load from Fabric (always available via SQLite)
     records = await _fabric_query_all(FABRIC_MODULES_DS)
     for data in records:
+        if not isinstance(data, dict):
+            continue
         mid = data.get("id") or data.get("_record_id") or data.get("module_id")
-        if mid and isinstance(data, dict) and "nodes" in data:
-            _MODULES[mid] = data
-            loaded += 1
+        if mid and "nodes" in data and (mid not in found or _newer(data, found[mid])):
+            found[mid] = data
 
     # 2. Supplement with Redis (may have more-recent in-flight saves)
     try:
         import Vera.vera.capability_orchestration as _orch
         if _orch.REDIS:
-            keys = await _orch.REDIS.keys(REDIS_PREFIX + "*")
-            for k in keys:
+            async for k in _orch.REDIS.scan_iter(match=REDIS_MODULE_PREFIX + "*", count=200):
                 raw = await _orch.REDIS.get(k)
-                if raw:
-                    try:
-                        m   = json.loads(raw)
-                        mid = k.decode().replace(REDIS_PREFIX, "") if isinstance(k, bytes) \
-                              else k.replace(REDIS_PREFIX, "")
-                        if mid and "nodes" in m:
-                            _MODULES[mid] = m      # Redis wins (more recent)
-                            loaded += 1
-                    except Exception:
-                        pass
+                if not raw:
+                    continue
+                try:
+                    m   = json.loads(raw)
+                    key = k.decode() if isinstance(k, bytes) else str(k)
+                    mid = key[len(REDIS_MODULE_PREFIX):]
+                    if mid and isinstance(m, dict) and "nodes" in m and (mid not in found or _newer(m, found[mid])):
+                        found[mid] = m
+                except Exception:
+                    pass
     except Exception as e:
         log.debug("ml_workshop redis load: %s", e)
 
-    log.info("ml_workshop: loaded %d modules (fabric+redis)", loaded)
+    _MODULES.update(found)
+    log.info("ml_workshop: loaded %d modules (fabric+redis)", len(found))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1944,16 +1995,16 @@ if _CAP_AVAILABLE:
         # Remove from in-process cache
         _MODULES.pop(id, None)
         # Remove from Data Fabric
-        await _fabric_delete(FABRIC_MODULES_DS, id)
-        # Remove from Redis
+        removed = await _fabric_delete(FABRIC_MODULES_DS, id)
+        # Remove from Redis (and the pre-D11-1 key, until it expires)
         try:
             import Vera.vera.capability_orchestration as _orch
             if _orch.REDIS:
-                await _orch.REDIS.delete(REDIS_PREFIX + id)
+                await _orch.REDIS.delete(REDIS_MODULE_PREFIX + id, REDIS_PREFIX + id)
         except Exception:
             pass
         await emit_event({"type": "ml.module_deleted", "id": id})
-        return {"ok": True, "id": id}
+        return {"ok": True, "id": id, "fabric_rows_removed": removed}
 
     # ── Run forward pass ──────────────────────────────────────────────────────
 

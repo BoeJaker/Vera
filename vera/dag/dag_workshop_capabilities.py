@@ -28726,6 +28726,7 @@ async def workshop_dag_run_stream(request: Request):
 
                 if out_key:
                     state[out_key] = result
+                _orch.apply_output_map(node, result, state)       # S12 / D13-1
 
                 preview = _result_preview(result, max_len=600)
                 ok = not (isinstance(result, dict)

@@ -7,7 +7,7 @@ const fs = require('fs'), path = require('path'), vm = require('vm');
 const H = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 const PRES = fs.readFileSync(path.join(__dirname, '..', 'vera', 'widgets', 'present.js'), 'utf8');   /* DO-0.1: the record -> item step is shared (VeraWidget.itemOf) */
-const a = PRES.indexOf('  function itemOf(capName, result, args, opts){'), b = PRES.indexOf('  Object.assign(W, {', a);
+const a = PRES.indexOf('  const rowRefOf=('), b = PRES.indexOf('  Object.assign(W, {', a);
 const decl = {}; const W = { presentationOf: (c) => decl[c] || null, present: (cap, res) => ({ element: decl[cap].element, title: cap, records: [{ form: decl[cap].form, data: res }] }),
   dataFor: (d) => d, mapped: (r, f, d) => d };
 const ctx = { W, calMonth: () => '2026-10', Object, String, Array, JSON }; vm.createContext(ctx);

@@ -391,6 +391,12 @@
     const n=new Date(); return n.getFullYear()+'-'+(n.getMonth()<9?'0':'')+(n.getMonth()+1); };
   /* the desk's json tree item: an answer you open, not braces in a fence (the chat's json rule, moved here once) */
   const jsonItem=(cap, c)=>({ kind:'json', n:cap||'result', k:'json', col:'#94a3b8', d:'data', content:{ title:String(cap||''), data:c } });
+  /* the estate thing a row is, when it says (the widget's rowRef rules - its own ref, a guest's vmid, a host's SSH login id, a mesh
+     node) or its declaration names one from its fields (draw.ref: 'host:{id}'); '' when it is not a thing the estate knows */
+  const rowRefOf=(r, tpl)=>{ if(!r||typeof r!=='object') return ''; const x=r.ref!=null?r.ref:(r.entity!=null?r.entity:r.entity_ref); if(x) return String(x);
+    if(r.vmid!=null&&r.vmid!=='') return 'guest:'+r.vmid; if(r.ssh_host_id) return 'host:'+r.ssh_host_id; if(r.host_id&&/mesh/i.test(String(r.kind==null?'':r.kind))) return 'mesh:'+r.host_id;
+    if(typeof tpl==='string'&&tpl){ let miss=false; const s=tpl.replace(/\{([a-z_][a-z0-9_]*)\}/gi,(m,k)=>{ const v=r[k]; if(v==null||v===''){ miss=true; return ''; } return String(v); }); return miss?'':s; }
+    return ''; };
   function itemOf(capName, result, args, opts){
     if(typeof W.present!=='function'||typeof W.presentationOf!=='function') return undefined;
     /* opts.fallback: an UNDECLARED answer read through present()'s own fallback (the shape rules) - the generic adapters'
@@ -427,7 +433,7 @@
         const columns=(Array.isArray(want)&&want.length?want.map(String).filter(k=>rows.some(x=>x[k]!=null)):keys.filter(k=>head.some(x=>x[k]!=null)&&head.every(x=>flat(x[k])))).slice(0,8);
         const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':Array.isArray(v)?v.join(', ').slice(0,120):typeof v==='object'?JSON.stringify(v).slice(0,120):String(v).slice(0,120); }));
         return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'var(--dv1, #38bdf8)', d:'table · '+body.length+' rows',
-                 content:{ columns, rows:body, caption:title } }; }
+                 content:Object.assign({ columns, rows:body, caption:title }, (()=>{ const tpl=((W.presentationOf(cap)||{}).draw||{}).ref; const refs=rows.slice(0,80).map(x=>rowRefOf(x, tpl)); return refs.some(Boolean)?{ refs }:{}; })()) }; }
       case 'records': { const items=listOf(r0.data, ['items','results','records','rows','pages','sources','data']).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',
           domain:x.domain||(String(x.url||'').match(/^https?:\/\/([^/]+)/)||[])[1]||'', title:String(x.title||x.url||''), snippet:String(x.snippet||'').slice(0,1200),
           text:typeof x.text==='string'&&x.text.length>=200?x.text.slice(0,20000):undefined, when:x.when||undefined, score:typeof x.score==='number'?x.score:undefined }));
@@ -456,5 +462,5 @@
       default: return widget(r0);   // widget-drawn kinds (status, metric, series, log, progress, graph)
     }
   }
-  Object.assign(W, { present, presentations, presentationOf, itemOf, jsonItem, calMonth, presentKinds: JSON.parse(JSON.stringify(KINDS)) });
+  Object.assign(W, { present, presentations, presentationOf, itemOf, jsonItem, rowRefOf, calMonth, presentKinds: JSON.parse(JSON.stringify(KINDS)) });
 })();

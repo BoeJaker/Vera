@@ -625,6 +625,55 @@ def node_train_model(inputs: dict, progress, should_stop) -> dict:
 TRAIN_ROW_FIELDS = ("features", "hyperparams", "task", "model_kind", "horizon")
 
 
+def bar_seconds(tt) -> int:
+    """A stored bar timestamp in unix seconds. Bars are stored in ms; the old `> 1e12` test kept every bar before
+    Sep 2001 (~1e12 ms) as "seconds", so long histories mixed units (S19 / D23-2 B2). Above 1e11 is ms: in seconds
+    that is the year 5138."""
+    return int(tt // 1000) if tt > 1e11 else int(tt)
+
+
+def portfolio_curve(txs: List[dict], closes: Dict[str, tuple], t_grid: List[int], iso_to_ms) -> tuple:
+    """Daily (value, cost) of a ledger: each symbol's FIFO lots from its OWN transactions, valued at its last close
+    on or before the day. Each asset used to be valued with the quantity of the whole ledger (S19 / D23-2 B1)."""
+    keys = sorted({tx["symbol_key"] for tx in txs})
+    out_v, out_c = [], []
+    for day in t_grid:
+        v_sum, c_sum = 0.0, 0.0
+        for k in keys:
+            lots = []
+            for tx in txs:
+                if tx.get("symbol_key") != k:
+                    continue
+                tms = iso_to_ms(tx.get("ts") or "")
+                if tms is None or tms / 1000 > day + 86399:
+                    continue
+                q, px = float(tx["qty"]), float(tx["price"])
+                if tx["side"] == "buy":
+                    lots.append([q, px])
+                else:
+                    rem = q
+                    while rem > 1e-12 and lots:
+                        take = min(rem, lots[0][0])
+                        lots[0][0] -= take; rem -= take
+                        if lots[0][0] <= 1e-12:
+                            lots.pop(0)
+            qty = sum(l[0] for l in lots)
+            cost = sum(l[0] * l[1] for l in lots)
+            if qty <= 1e-12:
+                continue
+            ts, cs = closes.get(k, ([], []))
+            px = None
+            for i in range(len(ts) - 1, -1, -1):
+                if ts[i] <= day + 86399:
+                    px = cs[i]
+                    break
+            if px:
+                v_sum += qty * px
+            c_sum += cost
+        out_v.append(round(v_sum, 2)); out_c.append(round(c_sum, 2))
+    return out_v, out_c
+
+
 if _CAP_AVAILABLE and HAS_NUMPY:
 
     def _md():
@@ -3071,47 +3120,13 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 tt = b.get("timestamp")
                 if tt is None:
                     continue
-                ts.append(int(tt // 1000) if tt > 1e12 else int(tt))
+                ts.append(bar_seconds(tt))
                 cs.append(float(b.get("close") or 0))
             closes[k] = (ts, cs)
 
-        # daily grid
+        # daily grid; position qty over time per key
         t_grid = list(range(start_s - (start_s % 86400), now_s + 1, 86400))
-        # position qty over time per key
-        out_v, out_c = [], []
-        for day in t_grid:
-            v_sum, c_sum = 0.0, 0.0
-            for k in keys:
-                qty, cost = 0.0, 0.0
-                lots = []
-                for tx in txs:
-                    tms = md._iso_to_ms(tx.get("ts") or "")
-                    if tms is None or tms / 1000 > day + 86399:
-                        continue
-                    q, px = float(tx["qty"]), float(tx["price"])
-                    if tx["side"] == "buy":
-                        lots.append([q, px])
-                    else:
-                        rem = q
-                        while rem > 1e-12 and lots:
-                            take = min(rem, lots[0][0])
-                            lots[0][0] -= take; rem -= take
-                            if lots[0][0] <= 1e-12:
-                                lots.pop(0)
-                qty = sum(l[0] for l in lots)
-                cost = sum(l[0] * l[1] for l in lots)
-                if qty <= 1e-12:
-                    continue
-                ts, cs = closes.get(k, ([], []))
-                px = None
-                for i in range(len(ts) - 1, -1, -1):
-                    if ts[i] <= day + 86399:
-                        px = cs[i]
-                        break
-                if px:
-                    v_sum += qty * px
-                c_sum += cost
-            out_v.append(round(v_sum, 2)); out_c.append(round(c_sum, 2))
+        out_v, out_c = portfolio_curve(txs, closes, t_grid, md._iso_to_ms)
         # trim leading empty days
         first = 0
         for i, v in enumerate(out_v):
