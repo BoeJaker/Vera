@@ -192,6 +192,12 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "(simhash within 3 bits via the LSH bands) against web_content, written to web_urls.novelty and the host's "
        "novel-yield EWMA - two indexed reads per batch, off the request path. The embedding step stays in shadow "
        "(four-minds §12.5).", owner="web-ingress"),
+    _f("discovery.read_files", ("off", "on"), "web", "WI-4b",
+       "What a crawl does with a file it fetched (PDF, Office, EPUB, archives, catalogues): 'off' (default) = drops it "
+       "and queues the parent directory, as before; 'on' = reads it with the ingress readers, ingests it as a 'file' "
+       "record (text, tables, archive members, catalogue datasets), indexes it in fabric_pages, and follows the URLs "
+       "it points at (catalogue distributions, sitemap and feed entries). Files over the reader's byte cap are "
+       "recorded by metadata only.", owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),

@@ -106,3 +106,34 @@ def test_media_binary_and_bad_inputs_never_raise():
         d = rd.read(reader, b"\x00\x01garbage", BASE + "/x")
         assert d["reader"] in (reader, "xml", "html") and isinstance(d.get("text"), str), reader
     assert rd.read("csv", b"", BASE + "/e.csv")["tables"][0]["rows"] == 0
+
+
+def test_child_urls_follow_catalogues_sitemaps_feeds_and_api_pages():
+    c = _read("/api/3/action/package_search")
+    urls = rd.child_urls(c, BASE + "/api/3/action/package_search")
+    assert BASE + "/files/data.csv.gz" in urls and BASE + "/files/handbook.epub" in urls and len(urls) == 5
+    s = _read("/sitemap.xml")
+    assert rd.child_urls(s, BASE + "/sitemap.xml") == [BASE + "/sitemap-1.xml.gz", BASE + "/sitemap-2.xml.gz"]
+    f = _read("/feed.rss")
+    assert rd.child_urls(f, BASE + "/feed.rss") == [BASE + "/a", BASE + "/c"]
+    a = _read("/api/items")
+    assert rd.child_urls(a, BASE + "/api/items") == [BASE + "/api/items?cursor=p2"]
+    z = _read("/files/bundle.zip")
+    assert rd.child_urls(z, BASE + "/files/bundle.zip") == []          # archive members are read, not fetched
+
+
+def test_the_crawl_reads_files_only_behind_its_switch_and_before_the_old_fallback():
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    new = src.index('if "text/html" not in ct and "text/plain" not in ct and _ingress_read_files_on():')
+    old = src.index('            if "text/html" not in ct and "text/plain" not in ct:\n                # Non-HTML, non-data file')
+    assert new < old
+    block = src[new:old]
+    for name in ("_read_file_doc", "_file_child_urls", "crawl_record", "_write_fabric_page", "file_read", "_qn"):
+        assert name in block, name
+    assert "queued_norm" not in block
+    tree = ast.parse(src)
+    fns = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    assert {"_read_file_doc", "_file_child_urls", "_ingress_read_files_on"} <= fns
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["discovery.read_files"].default == "off"
