@@ -676,9 +676,9 @@ async def _autoconnect() -> None:
         log.debug("n8n autoconnect skipped", exc_info=True)
 
 
-@APP.on_event("startup")
-async def _n8n_startup() -> None:
-    asyncio.create_task(_autoconnect())
+# @APP.on_event("startup") never fires under the app's lifespan (S28 / D28-5, backbone 18 Oct): this module loads
+# inside the lifespan with the loop running, so start_at_import starts the hook now, once.
+_orch.start_at_import(_autoconnect, "n8n_autoconnect")
 
 
 @capability(
