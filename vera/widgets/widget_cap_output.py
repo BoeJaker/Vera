@@ -16,6 +16,7 @@ The result forms it picks from (CAP_FORMS) are all in widget_record.FORMS.
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Dict, List, Optional
 
@@ -428,6 +429,51 @@ def _as_rows(v: Any) -> list:
     return []
 
 
+def _keyed_num(x: Any) -> Any:
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return x if math.isfinite(x) else None
+    if isinstance(x, str) and x.strip():
+        try:
+            f = float(x)
+        except ValueError:
+            return None
+        return (int(f) if f.is_integer() else f) if math.isfinite(f) else None
+    return None
+
+
+def _keyed_point(p: Any, i: int, tk: Any, vk: Any) -> dict:
+    if not _is_obj(p):
+        return {"t": i, "v": _keyed_num(p)}
+    if tk:
+        t = pick(p, tk)
+    else:
+        t = next((p[k] for k in ("t", "ts", "time") if p.get(k) is not None), None)
+    v = pick(p, vk) if vk else next((p[k] for k in ("v", "value") if p.get(k) is not None), None)
+    return {"t": i if t is None or t is _MISSING else t, "v": _keyed_num(None if v is _MISSING else v)}
+
+
+def keyed_series(v: Any, tk: Any = None, vk: Any = None) -> Dict[str, list]:
+    """Series keyed by name (DA-01e, map.keyed) - present.js keyedSeries: {name: [{t, v}, ...]} or {name: {t: [...],
+    v: [...]}} as {name: [{t, v}]}, one line per key; v a number or None."""
+    out: Dict[str, list] = {}
+    if not _is_obj(v):
+        return out
+    for k, s in v.items():
+        pts = None
+        if isinstance(s, list):
+            pts = [_keyed_point(p, i, tk, vk) for i, p in enumerate(s)]
+        elif _is_obj(s):
+            ts, vs = pick(s, tk or "t"), pick(s, vk or "v")
+            if isinstance(vs, list):
+                pts = [{"t": ts[i] if isinstance(ts, list) and i < len(ts) and ts[i] is not None else i, "v": _keyed_num(x)}
+                       for i, x in enumerate(vs)]
+        if pts:
+            out[str(k)] = pts
+    return out
+
+
 def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size: str, max_records: int) -> Dict[str, Any]:
     K = PRESENT_KINDS[P["kind"]]
     m = P.get("map") if _is_obj(P.get("map")) else {}
@@ -495,7 +541,12 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
         rec("ring" if m.get("max") else "hero", c,
             {"value": m.get("value"), "max": m.get("max"), "unit": m.get("unit"), "trend": m.get("trend")})
     elif kind == "series":
-        if isinstance(m.get("split"), list) and m["split"]:
+        if m.get("keyed") is True:
+            ks = keyed_series(val("points"), m.get("t"), m.get("v"))
+            if not ks:
+                return {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+            rec("trace", ks)
+        elif isinstance(m.get("split"), list) and m["split"]:
             rec("area", c, {"series": m.get("points"), "t": m.get("t"), "split": m["split"]})
         else:
             rec("trace", c, {"series": m.get("points"), "t": m.get("t"), "v": m.get("v")})

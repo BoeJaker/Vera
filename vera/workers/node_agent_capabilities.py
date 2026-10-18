@@ -153,6 +153,7 @@ async def _collect_runners(node_filter: str = "") -> Dict[str, Any]:
 
 @capability(
     "nodes.agent.status", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["node", "node_id", "cores", "load", "mem_available_mb", "mem_total_mb", "runners", "can_control"]}, "empty": "No node runs the Vera node agent"}},
     http_method="GET", http_path="/nodes/agent/status", http_tags=["nodes", "obs"],
     description="Host facts from every compute node running the Vera node agent "
                 "— cores, load, memory, runner count, and every GPU under `gpus` "
@@ -188,6 +189,7 @@ async def cap_nodes_agent_status(trace_id=None) -> Dict[str, Any]:
 
 @capability(
     "nodes.runner.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "runners"}, "draw": {"columns": ["node", "model", "state", "stuck", "rss_mb", "cpu_seconds", "age_s", "reason"]}, "empty": "No compute-worker processes running"}},
     http_method="GET", http_path="/nodes/runner/list", http_tags=["nodes", "obs"],
     description="Every compute-worker process across the estate (ollama's "
                 "llama-server today), with pid, model blob, state, CPU seconds, "

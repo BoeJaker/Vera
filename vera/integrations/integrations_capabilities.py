@@ -198,6 +198,7 @@ async def _audit(event: str, rec: Dict, **extra) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "integration.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "integrations"}, "draw": {"columns": ["label", "kind", "host", "port", "scheme", "source", "sensitive", "identity_verified"]}}},
     http_method="GET", http_path="/integrations/list", http_tags=["integration"],
     memory="off", silent=True,
     description="List all integrations (API secrets redacted). Output: "
@@ -588,6 +589,7 @@ async def cap_identity_register(id: str = "", fqdn: str = "", trace_id=None) -> 
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "integration.connections",
+    contract={"presentation": {"kind": "graph", "map": {"nodes": "graph.nodes", "edges": "graph.edges", "node_id": "id", "label": "label", "type": "type", "edge_from": "from", "edge_to": "to"}}},
     http_method="POST", http_path="/integrations/connections", http_tags=["integration"],
     memory="off",
     description="Summarise every connection to/from an integration: reverse-proxy "
@@ -1151,6 +1153,7 @@ async def integration_effect_shadow_evidence(
 
 @capability(
     "integration.effect.inventory", http_method="GET",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "domains"}, "draw": {"columns": ["label", "id", "boundary", "authority", "external_mutation", "source_modules"]}}},
     http_path="/integrations/effect/inventory",
     http_tags=["integration", "policy"], memory="off", silent=True,
     description="Inspect the deterministic boundary inventory for business, commerce, "

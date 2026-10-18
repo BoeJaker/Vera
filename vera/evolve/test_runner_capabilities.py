@@ -176,6 +176,7 @@ async def cap_nodes_testenv_sync(host_id: str = "", dry_run: bool = False, trace
 
 @capability(
     "nodes.testenv.status",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["host", "state", "current", "sha", "python", "failed", "error"]}}},
     http_method="GET", http_path="/nodes/testenv/status", http_tags=["nodes", "evolve"],
     memory="off", silent=True,
     description="Each node's pinned pytest venv against the one the gate image needs: "

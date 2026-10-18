@@ -65,6 +65,9 @@ def test_fixture(path):
         d0 = d[0] if isinstance(d, list) else d
         for k, v in e["first"].items():
             assert d0.get(k) == v, k
+    if "data" in e:
+        # the first record's data exactly - the browser reads the same fixture to the same data (DA-01e keyed series)
+        assert got["records"][0]["data"] == e["data"]
     if fx.get("presentation") and fx["presentation"].get("status") != "invalid":
         assert got["declared"] is True
         # each record carries the declaration it was read by (a composite's parts: their own)

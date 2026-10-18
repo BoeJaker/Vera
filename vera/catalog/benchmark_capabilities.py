@@ -1275,6 +1275,7 @@ async def cap_bench_node_perf(fresh: bool = False, trace_id=None):
 
 
 @capability("bench.node_perf.history", memory="off", silent=True,
+            contract={"presentation": {"kind": "series", "map": {"points": "series", "keyed": True, "t": "t", "v": "ping_ms"}, "title": "Node ping · ms", "empty": "No node samples yet"}},
             http_method="GET", http_path="/bench/node_perf/history", http_tags=["bench"],
             description="Per-node time-series ring behind the monitor sparklines: samples "
                         "of {t, tps, calls, loaded_vram_gb, ping_ms, reachable, loaded}. "

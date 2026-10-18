@@ -272,6 +272,7 @@ def _seal(v: str) -> str:
 
 @capability(
     "identity.openbao.seal.status",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/identity/openbao/seal/status", http_tags=["identity"],
     memory="off", silent=True,
     description="OpenBao seal/initialisation state and whether Vera KMS auto-unseal "

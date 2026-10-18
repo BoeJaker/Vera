@@ -9675,6 +9675,7 @@ async def obs_neo4j_diag(trace_id=None):
     return out
 
 @capability("ollama.gate.status", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["node", "has_gpu", "gated", "capacity", "held", "free", "owners"]}}},
             http_method="GET", http_path="/ollama/gate", http_tags=["ollama", "obs"],
             description="Cross-process Ollama GPU gate ('one big queue') status: "
                         "whether it is enabled, the coordination Redis DB, and per-node "

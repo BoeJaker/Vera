@@ -73,6 +73,20 @@
   /* a template over the call's arguments: "Quotes · {symbols}" */
   const fill = (t, args) => String(t).replace(/\{([a-zA-Z0-9_.]+)\}/g, (m, k) => { const v = pick(args || {}, k); return v == null ? '' : Array.isArray(v) ? v.join(', ') : String(v); }).replace(/\s*·\s*$/, '').trim();
   /* rows from a container that is a dict of things (workers keyed by id) - the key as the name */
+  /* series keyed by name (DA-01e, map.keyed): {name: [{t, v}, ...]} or {name: {t: [...], v: [...]}} as one line per key,
+     {name: [{t, v}]} - the shape split makes, which trace (as lines), area and column draw. t: map.t, else t / ts / time,
+     else the place; v: map.v, else v / value - a number, else null (a point the chart leaves out) */
+  const keyedNum = (x) => (typeof x === 'number' && isFinite(x)) ? x : (typeof x === 'string' && x.trim() !== '' && isFinite(+x)) ? +x : null;
+  const keyedPoint = (p, i, tk, vk) => { if (!isObj(p)) return { t: i, v: keyedNum(p) };
+    const t = tk ? pick(p, tk) : (p.t != null ? p.t : p.ts != null ? p.ts : p.time);
+    return { t: t == null ? i : t, v: keyedNum(vk ? pick(p, vk) : (p.v != null ? p.v : p.value)) }; };
+  function keyedSeries(v, tk, vk) {
+    const out = {}; if (!isObj(v)) return out;
+    Object.keys(v).forEach((k) => { const s = v[k]; let pts = null;
+      if (Array.isArray(s)) pts = s.map((p, i) => keyedPoint(p, i, tk, vk));
+      else if (isObj(s)) { const ts = pick(s, tk || 't'), vs = pick(s, vk || 'v'); if (Array.isArray(vs)) pts = vs.map((x, i) => ({ t: Array.isArray(ts) && ts[i] != null ? ts[i] : i, v: keyedNum(x) })); }
+      if (pts && pts.length) out[k] = pts; });
+    return out; }
   const asRows = (v) => Array.isArray(v) ? v : isObj(v) ? Object.keys(v).map((k) => isObj(v[k]) ? Object.assign({ name: k }, v[k]) : { name: k, value: v[k] }) : [];
 
   let REG = {};
@@ -118,7 +132,10 @@
       case 'status': rec('status', Object.assign({ status: at('verdict') }, m.checks ? { checks: asRows(at('checks')) } : {})); break;
       case 'metric': rec(m.max ? 'ring' : 'hero', c, { map: { value: m.value, max: m.max, unit: m.unit, trend: m.trend } }); break;
       case 'series':
-        if (Array.isArray(m.split) && m.split.length) rec('area', c, { map: { series: m.points, t: m.t, split: m.split } });
+        if (m.keyed === true) { const ks = keyedSeries(at('points'), m.t, m.v);
+          if (!Object.keys(ks).length) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' };
+          rec('trace', ks); }
+        else if (Array.isArray(m.split) && m.split.length) rec('area', c, { map: { series: m.points, t: m.t, split: m.split } });
         else rec('trace', c, { map: { series: m.points, t: m.t, v: m.v } });
         break;
       case 'log': rec('log', c, { map: { events: m.events, t: m.t, text: m.text, kind: m.kind || m.level } }); break;

@@ -35,6 +35,8 @@ for (const f of files.sort()) {
   if (JSON.stringify(forms) !== JSON.stringify(e.forms)) bad.push('forms ' + JSON.stringify(forms) + ' != ' + JSON.stringify(e.forms));
   if (e.empty != null && got.empty !== e.empty) bad.push('empty "' + got.empty + '" != "' + e.empty + '"');
   if (e.first) { const d = got.records[0] && got.records[0].data; const d0 = Array.isArray(d) ? d[0] : d; Object.keys(e.first).forEach((k) => { if (!d0 || d0[k] !== e.first[k]) bad.push('first.' + k + ' ' + JSON.stringify(d0 && d0[k]) + ' != ' + JSON.stringify(e.first[k])); }); }
+  // the first record's data exactly - the server mirror reads the same fixture to the same data (DA-01e keyed series)
+  if (e.data !== undefined) { const got0 = JSON.stringify(got.records[0] && got.records[0].data), want = JSON.stringify(e.data); if (got0 !== want) bad.push('data ' + String(got0).slice(0, 160) + ' != ' + want.slice(0, 160)); }
   // every record it gives draws its answer, not its empty face
   got.records.forEach((r) => { const h = String(W.draw(r.form, r.data, 'm', { record: r, title: r.title, sample: false }) || ''); if (/class="wempty"/.test(h)) bad.push(r.form + ' draws empty: ' + h.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 80)); });
   t('fixture ' + f, !bad.length, bad.join('; '));

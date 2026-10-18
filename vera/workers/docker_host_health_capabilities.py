@@ -180,6 +180,7 @@ async def _fix(apply: bool, min_age_s: int) -> Dict[str, Any]:
 
 @capability(
     "docker.host.health", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/docker/host/health", http_tags=["docker"],
     description="The Docker daemon on the Vera host: its state (and how long it has been in it), resident memory and "
                 "growth per day, `docker exec` helpers deadlocked in runc, whether live-restore is on and dockerd is "
