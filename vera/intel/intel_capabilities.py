@@ -711,7 +711,9 @@ async def cap_signal_add(topic_id: str = "", url: str = "", title: str = "", not
 
 
 @capability("intel.timeline.get", http_method="GET", http_path="/intel/timeline/get", http_tags=["intel"],
-            contract={"presentation": {"kind": "series", "map": {"points": "days", "t": "date", "v": "signals"}, "title": "Signals a day"}},
+            # the Intelligence panel's own timeline on the desk (Wave 1: panel-derived) - stand in a day, see the topic as of then
+            contract={"presentation": {"kind": "series", "form": "element", "map": {"points": "days", "t": "date", "v": "signals"},
+                                       "draw": {"tag": "vera-intel-timeline", "attrs": {"topic": "{topic_id}", "days": "{days}"}}, "title": "Intel timeline"}},
             memory="off", silent=True,
             description="A topic's timeline (or every topic's): day buckets over the window plus the signals, "
                         "assessments and reports as point events, newest first. Input: topic_id, days "
@@ -731,7 +733,9 @@ async def cap_timeline_get(topic_id: str = "", days: int = 90, trace_id=None):
 
 
 @capability("intel.activity", http_method="GET", http_path="/intel/activity", http_tags=["intel"],
-            contract={"presentation": {"kind": "log", "map": {"events": "events", "t": "ts", "text": "title", "kind": "kind", "level": "status"}, "empty": "No intel activity in the window"}},
+            # intel's events ARE the Activity timeline's intel scope: the panel's own timeline on the desk (Wave 1: panel-derived)
+            contract={"presentation": {"kind": "log", "form": "element", "map": {"events": "events", "t": "ts", "text": "title", "kind": "kind", "level": "status"},
+                                       "draw": {"tag": "vera-activity-timeline", "attrs": {"scope": "intel", "auto": "30"}}, "title": "Intel activity", "empty": "No intel activity in the window"}},
             memory="off", silent=True,
             description="Intel's own events for Vera's activity timeline: assessments, alerts, briefs built and where "
                         "they went, actions people ran, the last night batch. Input: topic_id (blank = all topics), "
