@@ -66,7 +66,8 @@ for (const [name, file, attr, ids] of BY_ID) {
   t('Business: its menu buttons carry them', /const d=\(STORE_OPEN\?STORE_DESC:NAV_DESC\)\[id\]; b\.dataset\.label=label; if\(d\)\{ b\.dataset\.desc=d\[0\]; b\.dataset\.descLong=d\[1\]; \}/.test(B));
   const E = fs.readFileSync(path.join(__dirname, '..', 'vera', 'evolve', 'evolve_panel.html'), 'utf8');
   const items = (E.slice(E.indexOf('VeraPanelBridge.registerNav(['), E.indexOf(']);', E.indexOf('VeraPanelBridge.registerNav(['))).match(/\{id:'[^']+'[^}]*\}/g) || []);
-  t('Loop Lab: all ' + items.length + ' items carry an icon, a short and a long description', items.length === 6 && items.every((x) => /icon:'[^']+'/.test(x) && /desc:'[^']{8,}'/.test(x) && /desc_long:'[^']{8,}'/.test(x)));
+  const railCount = (E.match(/<button class="btn[^"]*" data-sec="[a-z]+"/g) || []).length;
+  t('Loop Lab: all ' + items.length + ' items carry an icon, a short and a long description', items.length === railCount && items.every((x) => /icon:'[^']+'/.test(x) && /desc:'[^']{8,}'/.test(x) && /desc_long:'[^']{8,}'/.test(x)));
   const M = fs.readFileSync(path.join(__dirname, '..', 'vera', 'markets', 'markets_studio_panel.html'), 'utf8');
   t('Markets: its late buttons (News, Flow, Dash) are described too', ['news', 'flow', 'dash'].every((v) => new RegExp("b\\.dataset\\.view='" + v + "';[^\\n]*b\\.dataset\\.desc='[^']{8,}'; b\\.dataset\\.descLong='[^']{20,}';").test(M)));
 }

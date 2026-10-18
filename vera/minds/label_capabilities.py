@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import Vera.vera.capability_orchestration as _orch
-from Vera.vera.capability_orchestration import APP, capability
+from Vera.vera.capability_orchestration import APP, capability, register_ui
 
 try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import label_core as LB
@@ -68,12 +68,17 @@ async def cap_decide_label_queue(question_id: str = "", limit: int = 20, trace_i
                 ORDER BY s.ts DESC LIMIT $2""", q, limit * 4)
         ids = [r["decision_id"] for r in rows]
         runs = sorted({r["run_id"] for r in rows if r["run_id"]})
-        shadows: Dict[tuple, List[Dict[str, Any]]] = {}
-        if runs:
+        srows: List[Dict[str, Any]] = []
+        if ids:
+            # each shadow by the decision it answered (detail.for); rows without it by their run (older rows)
             for s in await conn.fetch(
                     """SELECT run_id, question_id, row FROM decision_ledger
-                       WHERE run_id = ANY($1::text[]) AND mode = 'shadow'""", runs):
-                shadows.setdefault((s["run_id"], s["question_id"]), []).append(_json(s["row"]))
+                       WHERE mode = 'shadow' AND (row->'detail'->>'for' = ANY($1::text[])
+                             OR (run_id = ANY($2::text[]) AND COALESCE(row->'detail'->>'for', '') = ''))""",
+                    ids, runs):
+                srows.append({"run_id": s["run_id"], "question_id": s["question_id"], "row": _json(s["row"])})
+        shadows = LB.shadows_for([{"decision_id": r["decision_id"], "run_id": r["run_id"],
+                                   "question_id": r["question_id"]} for r in rows], srows)
         outs: Dict[str, List[Dict[str, Any]]] = {}
         if ids:
             for o in await conn.fetch(
@@ -82,7 +87,7 @@ async def cap_decide_label_queue(question_id: str = "", limit: int = 20, trace_i
                 outs.setdefault(o["decision_id"], []).append(
                     {"source": o["source"], "strength": o["strength"], "label": _json(o["label"])})
     items = [{"row": _json(r["row"]), "state": _json(r["state"]), "ts": r["ts"].isoformat() if r["ts"] else "",
-              "shadows": shadows.get((r["run_id"], r["question_id"]), []),
+              "shadows": shadows.get(r["decision_id"], []),
               "outcomes": outs.get(r["decision_id"], [])} for r in rows]
     return {"items": [LB.view(it) for it in LB.order(items, limit)],
             "questions": [dict(c) for c in counts]}
@@ -128,3 +133,18 @@ async def _labels_page():
     if p.exists():
         return HTMLResponse(p.read_text(encoding="utf-8"))
     return HTMLResponse("<pre>labels_panel.html not found</pre>", status_code=404)
+
+
+# D10-4: the labelling page from the panels menu (an inject, not a top-level tab), in its own frame
+register_ui(
+    "decision-labels",
+    "Decision labels",
+    "\u2713",
+    """<div id="decision-labels-mount" style="height:100%;display:flex;flex-direction:column;">
+  <iframe src="/decide/labels" style="flex:1;border:none;width:100%;height:100%;background:var(--bg0,#0d0f12)"></iframe>
+</div>""",
+    "",
+    ui_caps=["decide.label.queue", "decide.label"],
+    mode="inject",
+    tab_order=88,
+)

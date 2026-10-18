@@ -58,6 +58,7 @@ async def _config() -> Dict[str, Any]:
 _WORKER_FIELDS = ("id", "role", "status", "classes", "libs", "host", "host_id",
                   "current_task", "task_started", "cpu_pct", "ncpu", "mem_avail_gb",
                   "ram_total_gb", "ram_used_gb", "load1", "metrics_at",
+                  "cpu_pct_avg", "cpu_scope",   # P0-1/P0-2: the node's own cores, averaged (18 Oct 2026)
                   # several jobs per worker (MW-7): admission reads these - left
                   # out, every worker fell back to one job at a time (2026-10-11)
                   "compute_slots", "compute_running")

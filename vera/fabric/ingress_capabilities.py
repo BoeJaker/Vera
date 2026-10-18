@@ -585,21 +585,42 @@ def record_gap(question: str, *, caller: str = "info.seek") -> bool:
 
 @capability("fabric.map.search", http_method="POST", http_path="/fabric/map/search", http_tags=["fabric", "ingress"],
             memory="off", silent=True,
-            description="What Vera has already read on something: the page index's full-text hits ranked with the web "
+            description="What Vera has already read on something: the page index's full-text hits and the fabric's "
+                        "vector hits fused (reciprocal rank fusion), reranked on an NLP node, then ranked with the web "
                         "map - members of a named topic first, recently checked pages and pages that were new when "
                         "found a little higher - each with since when Vera has known it, when it was last checked, "
                         "how often it was fetched and changed. Input: query (str!), topic_id (str: an intel topic id), "
-                        "limit (int, default 10). Output: {ok, results:[{url, title, excerpt, score, known_since, "
+                        "limit (int, default 10), vector (bool, default true), rerank (bool, default true). Output: {ok, results:[{url, title, excerpt, score, known_since, "
                         "last_checked, fetches, changes, novelty, kind, topic_member}], index_ms}.")
-async def cap_map_search(query: str = "", topic_id: str = "", limit: int = 10, trace_id=None):
+async def cap_map_search(query: str = "", topic_id: str = "", limit: int = 10, vector: bool = True,
+                         rerank: bool = True, trace_id=None):
     q = " ".join(str(query or "").split())
     if not q:
         return {"error": "query required"}
     lim = max(1, min(int(limit or 10), 50))
     t0 = time.monotonic()
-    idx = await _call("discovery.recall_index.search", query=q, limit=lim * 3) if _has("discovery.recall_index.search") else {}
+
+    async def _text():
+        return await _call("discovery.recall_index.search", query=q, limit=lim * 3) \
+            if _has("discovery.recall_index.search") else {}
+    text_task = asyncio.ensure_future(_text())
+    vdiag: Dict[str, Any] = {}
+    vec_pages = await _vector_pages(q, lim * 3, vdiag) if vector else []
+    idx = await text_task
     index_ms = int((time.monotonic() - t0) * 1000)
-    pages = list((idx or {}).get("pages") or [])
+    text_pages = list((idx or {}).get("pages") or [])
+    pages = sc.fuse({"text": text_pages, "vector": vec_pages}, ic.url_key)
+    reranked = False
+    if rerank and len(pages) > 1 and _has("nlp.rerank"):
+        head = pages[:20]
+        docs = [(str(p.get("title") or "") + ". " + " ".join(str(p.get("full_text") or "").split())[:900]) for p in head]
+        try:
+            rr = await asyncio.wait_for(_call("nlp.rerank", query=q, documents=docs, top_k=len(docs)), RERANK_TIMEOUT_S)
+            if rr.get("ranked"):
+                pages = sc.apply_rerank(head, rr["ranked"]) + pages[20:]
+                reranked = True
+        except Exception as e:  # noqa: BLE001
+            log.debug("map search rerank: %s", e)
     keys = {str(p.get("url") or ""): ic.url_key(str(p.get("url") or "")) for p in pages}
     rows: Dict[str, Dict[str, Any]] = {}
     members: List[str] = []
@@ -616,8 +637,60 @@ async def cap_map_search(query: str = "", topic_id: str = "", limit: int = 10, t
                         tc.topic_key(topic_id), list(set(keys.values())))]
         except Exception as e:  # noqa: BLE001
             log.debug("map search join: %s", e)
-    return {"ok": bool((idx or {}).get("ok", bool(pages))), "query": q,
-            "results": sc.rank(pages, rows, members, keys=keys, limit=lim), "index_ms": index_ms}
+    results = sc.rank(pages, rows, members, keys=keys, limit=lim)
+    legs = {p.get("url"): p.get("legs") for p in pages}
+    for r in results:
+        r["legs"] = legs.get(r["url"]) or []
+    return {"ok": bool((idx or {}).get("ok", bool(pages))), "query": q, "results": results, "index_ms": index_ms,
+            "legs": {"text": len(text_pages), "vector": len(vec_pages), "reranked": reranked, "vector_diag": vdiag},
+            "ms": int((time.monotonic() - t0) * 1000)}
+
+
+RERANK_TIMEOUT_S = 6.0
+VECTOR_TIMEOUT_S = 8.0
+
+
+def _records_by_id(ids: List[str]) -> List[Any]:
+    df = _data_fabric()
+    if df is None or not ids:
+        return []
+    conn = df._sqlite_conn()
+    marks = ",".join("?" * len(ids))
+    return conn.execute(f"SELECT id, dataset_id, text, data FROM fabric_records WHERE id IN ({marks})", ids).fetchall()
+
+
+async def _vector_pages(q: str, n: int, diag: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """The vector leg: the query embedded the way records are, the fabric's Chroma collection searched with NO where
+    filter (a filter scans the whole collection), the hits that are web pages, in similarity order. [] on any
+    failure or after VECTOR_TIMEOUT_S - the text leg still answers."""
+    d = diag if diag is not None else {}
+    df = _data_fabric()
+    store = getattr(df, "FABRIC_CHROMA", None) if df else None
+    if store is None or not hasattr(df, "_embed"):
+        d["error"] = "no fabric vector store in this process"
+        return []
+    t0 = time.monotonic()
+    try:
+        async def _go():
+            emb = await df._embed(q)
+            d["embed_ms"] = int((time.monotonic() - t0) * 1000)
+            if not emb:
+                d["error"] = "no embedding"
+                return []
+            d["dim"] = len(emb)
+            hits = await asyncio.get_running_loop().run_in_executor(None, lambda: store.search(emb, top_k=n))
+            d["hits"] = len(hits or [])
+            d["search_ms"] = int((time.monotonic() - t0) * 1000) - d["embed_ms"]
+            score = {rid: s for rid, s in hits or []}
+            rows = await asyncio.to_thread(_records_by_id, list(score))
+            d["records"] = len(rows)
+            pages = [sc.record_page(r[0], r[1], r[2], r[3], score.get(r[0], 0.0)) for r in rows]
+            return sorted([p for p in pages if p], key=lambda p: p["rank"], reverse=True)
+        return await asyncio.wait_for(_go(), VECTOR_TIMEOUT_S)
+    except Exception as e:  # noqa: BLE001
+        d["error"] = (type(e).__name__ + ": " + str(e))[:160]
+        log.debug("map search vector leg: %s", e)
+        return []
 
 
 @capability("fabric.map.gaps", http_method="GET", http_path="/fabric/map/gaps", http_tags=["fabric", "ingress"],

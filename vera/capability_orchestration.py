@@ -2217,7 +2217,10 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
                             COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gw,
                             required=True)
                     except _gate.GateAcquisitionError as _ge:
-                        if str(_ge) == "queue_timeout":
+                        # Compare the REASON, not the message: str() of the error is "required inference lease
+                        # unavailable: queue_timeout", so the old `str(_ge) == "queue_timeout"` never matched and
+                        # every gate timeout generated ungated (S1 / D03-1, backbone 18 Oct).
+                        if getattr(_ge, "reason", "") == "queue_timeout":
                             raise Exception(
                                 f"gpu gate timeout on {iid}: no free slot after "
                                 f"{int(_gw)}s (node busy with earlier requests)")
@@ -12660,6 +12663,9 @@ async def lifespan(app: FastAPI):
         # The prod release, gated on the census (merge + restart only when no
         # census goal is in flight, or forced).
         os.path.join(_here, "evolve/release_capabilities.py"),
+        # Models and Performance in Loop Lab (owner, 18 Oct 2026): reads bench/, ollama, minds/, census/ and the
+        # releases view above, so it comes after all of them.
+        os.path.join(_here, "evolve/models_perf_capabilities.py"),
         # One task through time: reads the census archive AND the suite's run
         # records, so it must come after both census/ and evolve/ above.
         os.path.join(_here, "evolve/task_history_capabilities.py"),

@@ -204,6 +204,8 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="releases" onclick="nav('releases')" title="What is being gated, promoted to bleeding-edge and released to prod - each pipeline's stages and tests, the release in flight, and what every release carried"><span class="ic">&#9650;</span>Releases</button>
   <button class="btn" data-sec="schedule" onclick="nav('schedule')" title="A calendar of Loop Lab work &mdash; censuses, suites, tasks, pipeline steps, board items &mdash; started by the scheduler only when the box is free"><span class="ic">🗓</span>Schedule</button>
   <button class="btn" data-sec="tests" onclick="nav('tests')" title="Four-minds' tests on the schedule &mdash; each one's health (failed, interrupted, missed, recovering, running), its last runs and what it found"><span class="ic">&#10003;</span>Tests</button>
+  <button class="btn" data-sec="models" onclick="nav('models')" title="Every model Vera uses - which jobs it serves, how fast it runs on real traffic, its benchmarks, and the students scored in shadow"><span class="ic">&#9672;</span>Models</button>
+  <button class="btn" data-sec="performance" onclick="nav('performance')" title="How well things run - Loop Lab (censuses, gates, releases, the background queue) beside Vera's normal use (chat reply time, the chat corpus, services), each number with its source"><span class="ic">&#9889;</span>Performance</button>
   <button class="btn" data-sec="settings" data-vera-settings="#sec-settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
 
@@ -733,6 +735,52 @@ html.vpb-nav-hosted body{padding-left:0}
   </div>
 </div>
 
+<!-- == MODELS (owner 18 Oct 2026: "see the benchmarks and kpis of models somewhere in the loop lab"). Read:
+     evolve.models.view. A benchmark that passed nothing is shown as broken, never as 0%. == -->
+<div class="sec" id="sec-models" style="display:none">
+  <div class="card">
+    <div class="card-h">
+      <span class="card-t">MODELS</span>
+      <span class="hint">which model does which job, how fast, how well - live numbers from real traffic beside the benchmarks</span>
+      <span style="flex:1"></span>
+      <button class="btn sm" onclick="loadModels()">↻</button>
+      <button class="btn sm ok-btn" onclick="mdlBench()" title="add a one-off benchmark to the Schedule (it loads models, so it runs in a booked slot, not now)">Schedule a benchmark…</button>
+    </div>
+    <div id="mdl-issues"></div>
+    <div id="mdl-tiles" class="kp-tiles"><span class="hint">loading…</span></div>
+    <div id="mdl-table" class="hint">loading…</div>
+    <div id="mdl-detail"></div>
+  </div>
+  <div class="kp-two">
+    <div class="card"><div class="card-h"><span class="card-t">Which model serves which job</span><span class="hint">seconds a call · tokens a second · ollama.route_stats</span></div><div id="mdl-matrix" class="hint">loading…</div></div>
+    <div class="card"><div class="card-h"><span class="card-t">Students</span><span class="hint">small models learning Vera's yes/no decisions, scored in shadow · decide.shadow.report</span></div><div id="mdl-students" class="hint">loading…</div></div>
+  </div>
+  <div class="kp-two">
+    <div class="card"><div class="card-h"><span class="card-t">Benchmarks</span><span class="hint">every run · bench.results</span></div><div id="mdl-bench" class="hint">loading…</div></div>
+    <div class="card"><div class="card-h"><span class="card-t">Nodes</span><span class="hint">what each is warm with now · bench.node_perf</span></div><div id="mdl-nodes" class="hint">loading…</div></div>
+  </div>
+</div>
+
+<!-- == PERFORMANCE (owner 18 Oct 2026: "a holistic view of performance across the loop lab and veras normal use").
+     Read: evolve.performance.view. Every number names its source; a broken measure is listed, never scored. == -->
+<div class="sec" id="sec-performance" style="display:none">
+  <div class="card">
+    <div class="card-h">
+      <span class="card-t">PERFORMANCE</span>
+      <span class="hint">Loop Lab and Vera's normal use side by side - each number says where it comes from</span>
+      <span style="flex:1"></span>
+      <select id="pf-days" onchange="loadPerformance()" title="the window, compared with the same length before it"><option value="1">24 h</option><option value="7" selected>7 days</option><option value="30">30 days</option></select>
+      <button class="btn sm" onclick="loadPerformance()">↻</button>
+    </div>
+    <div id="pf-broken"></div>
+  </div>
+  <div class="kp-two">
+    <div class="card"><div class="card-h"><span class="card-t">Loop Lab</span><span class="hint">is the improvement machine getting better?</span><span style="flex:1"></span><a class="hint" style="cursor:pointer" onclick="nav('work')">runs ›</a></div><div id="pf-loop" class="kp-grid"><span class="hint">loading…</span></div></div>
+    <div class="card"><div class="card-h"><span class="card-t">Vera's everyday use</span><span class="hint">is it quick and right for the owner?</span><span style="flex:1"></span><a class="hint" style="cursor:pointer" onclick="nav('models')">models ›</a></div><div id="pf-vera" class="kp-grid"><span class="hint">loading…</span></div></div>
+  </div>
+  <div class="card"><div class="card-h"><span class="card-t">Who uses the models</span><span class="hint">share of every model call · ollama.route_stats</span></div><div id="pf-share" class="hint">loading…</div></div>
+</div>
+
 <div class="sec" id="sec-schedule" style="display:none">
   <div class="card sch-card">
     <div class="card-h">
@@ -1093,7 +1141,7 @@ function nav(sec){
     // absorbed before it: an old deep-link or injected nav item still lands
     // on the table that holds their data.
     pipelines:()=>nav('ship'),review:()=>nav('ship'),sources:()=>nav('ship'),sandbox:()=>nav('ship'),unittests:()=>nav('ship'),logs:()=>nav('ship'),
-    schedule:loadSchedule,releases:loadReleases,
+    schedule:loadSchedule,releases:loadReleases,models:loadModels,performance:loadPerformance,
     settings:fillSettings}[sec];
   if(f)f();
   // The address bar says which page is open (a deep link says more).
@@ -1120,8 +1168,11 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'ship', label:'Ship', icon:'\u2197', desc:'Every branch and its pipeline', desc_long:'Every branch - its pipeline, review, sandbox and tests - in one table, with the commit graph, race lanes, authorship and gate strip below it.'},
   {id:'agents', label:'Agents', icon:'\u2609', desc:'Every agent session', desc_long:'Every agent session - Claude Code, Codex, a Vera loop, an edit-queue agent - with its board items, pipelines and sandboxes, and the board by lane.'},
   {id:'mission', label:'Mission control', icon:'\u25c9', desc:'Every event; what needs a person', desc_long:'Every event - actions, errors, gates - in one table, with what is live and what needs a person above it.'},
+  {id:'releases', label:'Releases', icon:'\u25b2', desc:'Gating, promotions and releases', desc_long:'What is being gated, promoted to bleeding-edge and released to prod - each pipeline\'s stages and tests, the release in flight, and what every release carried.'},
   {id:'schedule', label:'Schedule', icon:'\u25a6', desc:'A calendar of Loop Lab work', desc_long:'A calendar of Loop Lab work - censuses, suites, tasks, pipeline steps, board items - started by the scheduler only when the box is free.'},
   {id:'tests', label:'Tests', icon:'\u2713', desc:'Scheduled tests and their health', desc_long:'Every scheduled test (four-minds matrix, claims, tool shortlist, memory census, chat corpus, census arms) - its schedule entries, next fire, health (failed / interrupted / missed / recovering / running / ok), last runs and report headline.'},
+  {id:'models', label:'Models', icon:'\u25c8', desc:'Every model: speed, jobs, benchmarks', desc_long:'Every model Vera uses - which jobs it serves, how fast it runs on real traffic, its benchmarks, and the students scored in shadow.'},
+  {id:'performance', label:'Performance', icon:'\u26a1', desc:'Loop Lab and Vera use, side by side', desc_long:'How well things run - Loop Lab (censuses, gates, releases, the background queue) beside Vera\'s normal use (chat reply time, the chat corpus, services), each number with its source.'},
   {id:'settings', label:'Settings', icon:'\u2699', desc:'Loop Lab settings', desc_long:'Loop Lab settings.'},
 ]);
 
@@ -1243,6 +1294,120 @@ async function relReleaseNow(){
   if(!f)return;
   const r=await post('/evolve/release/prod',{confirm:true,census:f.mode,force:f.mode==='force',reason:'Loop Lab Releases section'});
   toast(r&&r.held?('release waiting ('+f.mode+'): '+(r.why||'')):r&&r.ok?'releasing':(r&&(r.error||r.refused))||'refused');loadReleases();
+}
+/* ═══ MODELS + PERFORMANCE (owner 18 Oct 2026) ═══ */
+let _mdl=null, _mdlSel=null, _mdlAll=false, _mdlStAll=false;
+const MDL_MIN_CALLS=50;
+function kpN(v,d){return v==null?'-':(typeof v==='number'?(Math.abs(v)>=1000?v.toLocaleString():String(Math.round(v*Math.pow(10,d||0))/Math.pow(10,d||0))):String(v))}
+function kpS(sec){if(sec==null)return '-';return sec>=90?Math.round(sec/6)/10+' min':Math.round(sec*10)/10+' s'}
+function kpBar(pct,col){return '<span class="kp-bar"><i style="width:'+Math.max(0,Math.min(100,pct||0))+'%;background:'+(col||'#7aa2f7')+'"></i></span>'}
+function kpTile(label,big,sub,bad,onclick){return '<button class="kp-tile'+(bad?' bad':'')+'"'+(onclick?' onclick="'+onclick+'"':'')+'><span class="l">'+esc(label)+'</span><span class="b">'+esc(big)+'</span><span class="s">'+esc(sub||'')+'</span></button>'}
+function kpNote(t,tone){return '<div class="kp-note '+(tone||'warn')+'">'+t+'</div>'}
+function kpShort(m){return String(m||'').replace(/^jaahas\//,'').replace(/^hf\.co\/[^/]+\//,'')}
+async function loadModels(){
+  const d=await api('/evolve/models/view');
+  if(!d||d.error){$('mdl-table').innerHTML='<div class="empty">'+esc((d&&d.error)||'models unavailable')+'</div>';return}
+  _mdl=d; const s=d.summary||{}, lb=s.last_bench, bs=s.best_student;
+  $('mdl-issues').innerHTML=(d.issues||[]).map(i=>kpNote('<b>'+esc(i.what)+'</b> - '+esc(i.why),i.tone)).join('')+((d.errors||[]).length?kpNote('some sources did not answer: '+esc(d.errors.join(' · ')),'bad'):'');
+  $('mdl-tiles').innerHTML=kpTile('Model calls on record',kpN(s.calls),(s.models||0)+' models on '+(s.nodes||0)+' nodes')
+    +kpTile('Fastest live path',s.fastest?kpN(s.fastest.tps,1)+' tok/s':'-',s.fastest?kpShort(s.fastest.model)+' @ '+s.fastest.node:'')
+    +kpTile('Slowest live path',s.slowest?kpS(s.slowest.wall_s)+' a call':'-',s.slowest?kpShort(s.slowest.model)+' @ '+s.slowest.node:'',s.slowest&&s.slowest.wall_s>120)
+    +kpTile('Best student',bs?kpN(bs.accuracy,3):'-',bs?kpShort(bs.impl.replace(/^llm:/,''))+' · '+bs.question+' vs real outcomes':'none scored on enough outcomes')
+    +kpTile('Last benchmark',lb?String(lb.at).slice(0,10):'never',lb?(lb.broken?'broken: nothing passed':(lb.accuracy!=null?Math.round(lb.accuracy*100)+'% · ':'')+kpShort(lb.model)):'',!lb||lb.broken||(lb.age_days||0)>14);
+  const allRows=d.models||[], rows=_mdlAll?allRows:allRows.filter(r=>r.calls>=MDL_MIN_CALLS||r.key===_mdlSel), maxT=Math.max(1,...rows.map(r=>r.tps||0));
+  $('mdl-table').innerHTML=rows.length?'<table class="kp-tbl"><thead><tr><th>model</th><th>node</th><th>jobs it serves</th><th style="text-align:right">calls</th><th>live tok/s</th><th style="text-align:right">avg wall</th><th>benchmark</th><th>now</th></tr></thead><tbody>'
+    +rows.map((r,i)=>{const b=r.bench;return '<tr class="'+(_mdlSel===r.key?'sel':'')+(r.stale?' stale':'')+'" style="cursor:pointer" onclick="mdlOpen('+i+')"'+(r.stale?' title="not called since '+esc(String(r.last).slice(0,10))+' - history, not a live path"':'')+'><td><b>'+esc(kpShort(r.model))+'</b></td><td class="mono">'+esc(r.node)+'</td><td>'+esc((r.jobs||[]).slice(0,3).map(j=>j.job.replace(/_/g,' ')).join(' · ')||(r.job_types||[]).slice(0,3).join(' · '))+'</td>'
+      +'<td class="mono" style="text-align:right">'+kpN(r.calls)+'</td><td class="mono">'+kpN(r.tps,1)+' '+kpBar(100*(r.tps||0)/maxT,(r.tps||0)<2?'#f87171':'#7aa2f7')+'</td><td class="mono" style="text-align:right'+((r.wall_s||0)>120?';color:#f87171':'')+'">'+kpS(r.wall_s)+'</td>'
+      +'<td>'+(b?(b.broken?'<span style="color:#f87171" title="'+esc(b.broken)+'">broken · '+esc(String(b.at).slice(5,10))+'</span>':(b.accuracy!=null?Math.round(b.accuracy*100)+'%':'-')+' · '+esc(String(b.at).slice(5,10))):'<span class="hint">never</span>')+'</td>'
+      +'<td>'+(r.stale?'<span class="hint">unused since '+esc(String(r.last).slice(5,10))+'</span>':r.warm?'<span style="color:#4ade80">warm</span>':'<span class="hint">cold</span>')+'</td></tr>'}).join('')+'</tbody></table>'
+    +(allRows.length>rows.length||_mdlAll?'<a class="hint" style="cursor:pointer" onclick="_mdlAll=!_mdlAll;loadModels()">'+(_mdlAll?'show only models with '+MDL_MIN_CALLS+'+ calls':'show all '+allRows.length+' (another '+(allRows.length-rows.length)+' with under '+MDL_MIN_CALLS+' calls)')+'</a>':''):'<div class="empty">no model calls on record</div>';
+  const mx=d.matrix||{}, ms=(mx.models||[]).slice(0,4);
+  $('mdl-matrix').innerHTML=ms.length?'<div style="overflow-x:auto"><table class="kp-mx"><thead><tr><th>job type</th>'+ms.map(k=>'<th title="'+esc(k)+'">'+esc(kpShort(k).replace('@',' @ '))+'</th>').join('')+'</tr></thead><tbody>'
+    +(mx.jobs||[]).map(j=>'<tr><td>'+esc(j.replace(/_/g,' '))+'</td>'+ms.map(k=>{const c=((mx.cells||{})[j]||{})[k];if(!c)return '<td class="none">·</td>';const w=c.wall_s||0;
+      return '<td class="'+(w<30?'g':w<70?'a':'r')+'" title="'+c.n+' calls">'+kpS(c.wall_s)+'<br><span>'+kpN(c.tps,1)+' tok/s · '+kpN(c.n)+'</span></td>'}).join('')+'</tr>').join('')
+    +'</tbody></table></div><div class="hint" style="margin-top:6px">green under 30 s a call · amber 30-70 s · red over 70 s · a dot: that model never serves that job</div>':'<span class="hint">no routing data</span>';
+  const sw=d.student_switch||{}, _seen={}, st=(d.students||[]).filter(r=>r.n>0&&(_mdlStAll||r.leader||((_seen[r.question]=(_seen[r.question]||0)+1)<=2)));
+  $('mdl-students').innerHTML=(sw.guard&&sw.guard.why?'<div class="hint" style="margin-bottom:6px">training: '+(sw.enabled?'on':'off')+' · '+esc(sw.guard.why)+'</div>':'')
+    +(st.length?'<table class="kp-tbl"><thead><tr><th>question</th><th>implementation</th><th style="text-align:right">seen</th><th>agrees with live</th><th>right vs real outcome</th><th style="text-align:right">p50</th></tr></thead><tbody>'
+    +st.map(r=>'<tr'+(r.leader?' class="lead"':'')+'><td class="mono">'+esc(r.question)+'</td><td class="mono">'+esc(r.impl)+(r.leader?' <b style="color:#4ade80">leads</b>':'')+'</td><td class="mono" style="text-align:right">'+kpN(r.n)+'</td>'
+      +'<td>'+(r.agreement!=null?kpBar(100*r.agreement,'#7aa2f7')+' '+kpN(r.agreement,2):'-')+'</td>'
+      +'<td>'+(r.accuracy!=null&&r.outcomes>=20?kpBar(100*r.accuracy,r.accuracy>=.8?'#4ade80':r.accuracy>=.5?'#e0a458':'#f87171')+' '+kpN(r.accuracy,3):'<span class="hint">'+(r.outcomes||0)+' outcomes - too few</span>')
+      +(r.agrees_not_right?' <span style="color:#f87171" title="agrees with the live answer but is wrong against what happened - it copies the live path">copies live</span>':'')+'</td>'
+      +'<td class="mono" style="text-align:right">'+(r.ms_p50!=null?kpS(r.ms_p50/1000):'-')+'</td></tr>').join('')+'</tbody></table>'
+      +'<a class="hint" style="cursor:pointer" onclick="_mdlStAll=!_mdlStAll;loadModels()">'+(_mdlStAll?'show the leader and top two per question':'show all '+(d.students||[]).filter(r=>r.n>0).length+' implementations')+'</a>':'<span class="hint">no shadow scores yet</span>');
+  const bn=d.benchmarks||[];
+  $('mdl-bench').innerHTML=bn.length?'<table class="kp-tbl"><thead><tr><th>when</th><th>model @ node</th><th>score</th><th style="text-align:right">gen tok/s</th><th style="text-align:right">first token</th></tr></thead><tbody>'
+    +bn.slice(0,30).map(b=>'<tr><td class="mono">'+esc(String(b.at).slice(0,10))+(b.age_days!=null?' <span class="hint">'+Math.round(b.age_days)+' d ago</span>':'')+'</td><td>'+esc(kpShort(b.model))+' <span class="hint">@ '+esc(b.node)+'</span></td>'
+      +'<td>'+(b.broken?'<span style="color:#f87171" title="'+esc(b.broken)+'">broken - 0 of '+b.total+' passed</span>':(b.accuracy!=null?Math.round(b.accuracy*100)+'% ('+b.passed+'/'+b.total+')':'-'))+'</td>'
+      +'<td class="mono" style="text-align:right">'+kpN(b.gen_tps,1)+'</td><td class="mono" style="text-align:right">'+(b.ttft_ms!=null?kpS(b.ttft_ms/1000):'-')+'</td></tr>').join('')+'</tbody></table>':'<div class="empty">no benchmark has ever been run - Schedule a benchmark… above</div>';
+  $('mdl-nodes').innerHTML=(d.nodes||[]).length?'<table class="kp-tbl"><thead><tr><th>node</th><th>hardware</th><th>warm now</th><th style="text-align:right">ping</th></tr></thead><tbody>'
+    +(d.nodes||[]).map(n=>{const hw=n.hw||{};return '<tr><td class="mono">'+esc(n.id)+' <span style="color:'+(n.status==='online'?'#4ade80':'#f87171')+'">'+esc(n.status||'')+'</span></td><td>'+esc(hw.gpu_name||((hw.cpu_cores?hw.cpu_cores+' cores':'')+(hw.ram_gb?' · '+hw.ram_gb+' GB':'')))+'</td><td>'+esc((n.loaded||[]).map(kpShort).join(' · ')||'-')+'</td><td class="mono" style="text-align:right">'+(n.ping_ms!=null?Math.round(n.ping_ms)+' ms':'-')+'</td></tr>'}).join('')+'</tbody></table>':'<span class="hint">no nodes</span>';
+  if(_mdlSel){const i=rows.findIndex(r=>r.key===_mdlSel);if(i>=0)mdlOpen(i,true)}
+  // the table's rows are the filtered list: mdlOpen(i) indexes the same list
+}
+function mdlOpen(i,keep){
+  const all=((_mdl||{}).models||[]), shown=_mdlAll?all:all.filter(x=>x.calls>=MDL_MIN_CALLS||x.key===_mdlSel), r=shown[i]; if(!r)return;
+  if(!keep&&_mdlSel===r.key){_mdlSel=null;$('mdl-detail').innerHTML='';loadModels();return}
+  _mdlSel=r.key; const b=r.bench, maxN=Math.max(1,...(r.jobs||[]).map(j=>j.n));
+  document.querySelectorAll('#mdl-table tr.sel').forEach(t=>t.classList.remove('sel'));
+  const tr=document.querySelectorAll('#mdl-table tbody tr')[i]; if(tr)tr.classList.add('sel');
+  $('mdl-detail').innerHTML='<div class="kp-drill"><div class="kp-crumb"><a onclick="mdlOpen('+i+')">Models</a> › <b>'+esc(kpShort(r.model))+'</b> › '+esc(r.node)+'<span style="flex:1"></span><button class="btn sm" onclick="mdlOpen('+i+')">‹ back</button></div>'
+    +'<div class="hint">'+esc(r.node_label||r.node)+(r.gpu?' · GPU':' · CPU')+' · '+(r.warm?'warm now':'not loaded now')+' · '+kpN(r.calls)+' calls · last '+esc(String(r.last||'').replace('T',' ').slice(0,16))+(r.prompt_chars?' · prompts average '+kpN(r.prompt_chars)+' chars':'')+'</div>'
+    +'<table class="kp-tbl" style="margin-top:6px"><thead><tr><th>job type</th><th>who for</th><th style="text-align:right">calls</th><th></th><th style="text-align:right">wall a call</th><th style="text-align:right">tok/s</th><th style="text-align:right">tokens</th></tr></thead><tbody>'
+    +(r.jobs||[]).map(j=>'<tr><td>'+esc(j.job.replace(/_/g,' '))+'</td><td class="hint">'+esc({loop:'Loop Lab',chat:'owner (chat)',background:'background',other:'other'}[j.group]||j.group)+'</td><td class="mono" style="text-align:right">'+kpN(j.n)+'</td><td>'+kpBar(100*j.n/maxN)+'</td><td class="mono" style="text-align:right">'+kpS(j.wall_s)+'</td><td class="mono" style="text-align:right">'+kpN(j.tps,1)+'</td><td class="mono" style="text-align:right">'+kpN(j.tokens)+'</td></tr>').join('')+'</tbody></table>'
+    +(b?(b.broken?kpNote('<b>Benchmark '+esc(b.id)+' ('+esc(String(b.at).slice(0,10))+')</b> - '+esc(b.broken)+'. Fix the grader, then benchmark again.','bad')
+        :'<div class="hint" style="margin-top:6px">benchmark '+esc(b.id)+' · '+esc(String(b.at).slice(0,10))+' · '+(b.accuracy!=null?Math.round(b.accuracy*100)+'%':'-')+' · '+kpN(b.gen_tps,1)+' tok/s generating · first token '+(b.ttft_ms!=null?kpS(b.ttft_ms/1000):'-')+'</div>')
+      :'<div class="hint" style="margin-top:6px">never benchmarked on this node</div>')
+    +'<div class="row" style="margin-top:8px;gap:6px"><button class="btn sm ok-btn" onclick="mdlBench(\''+esc(r.model)+'\',\''+esc(r.node)+'\')">Schedule a benchmark of this model…</button></div></div>';
+}
+async function mdlBench(model,node){
+  const ms=((_mdl||{}).models||[]);
+  const opts=ms.map(r=>[r.key,kpShort(r.model)+' @ '+r.node]); if(!opts.length){toast('no models known yet');return}
+  const t=new Date(); t.setDate(t.getDate()+(t.getHours()>=4?1:0)); t.setHours(3,35,0,0);
+  const pad=n=>String(n).padStart(2,'0'), local=t.getFullYear()+'-'+pad(t.getMonth()+1)+'-'+pad(t.getDate())+'T03:35';
+  const f=await askForm('Schedule a benchmark',[
+      {id:'key',label:'Model and node',type:'select',value:(model&&node)?model+'@'+node:opts[0][0],options:opts},
+      {id:'at',label:'When (one-off; defaults to the nightly background window)',value:local},
+      {id:'cold',type:'check',label:'Cold start (unload first, measures the load time too)'}],{ok:'Add to the Schedule'});
+  if(!f)return;
+  const k=String(f.key), at=k.lastIndexOf('@'), mdl=k.slice(0,at), nd=k.slice(at+1);
+  const d=await post('/evolve/schedule/upsert',{schedule:{title:'Benchmark · '+kpShort(mdl)+' @ '+nd,kind:'cap',
+    target:{name:'bench.run.start',arguments:{instance_id:nd,model:mdl,role:'all',cold:!!f.cold}},once_at:f.at,exclusive:true,enabled:true}});
+  toast(d&&d.ok?('benchmark booked · '+(d.next?String(d.next.start).replace('T',' ').slice(0,16):f.at.replace('T',' '))):'not booked: '+((d&&d.error)||'?'));
+}
+function pfKpi(name,val,sub,src,bad,series,col){
+  const mx=Math.max(1e-9,...(series||[]).map(x=>x||0));
+  return '<div class="kp-kpi'+(bad?' bad':'')+'"><div class="h"><span>'+esc(name)+'</span><b>'+esc(val)+'</b></div>'
+    +(series&&series.length?'<div class="kp-spark">'+series.map(x=>'<i style="height:'+(x==null?0:Math.max(6,100*x/mx))+'%;background:'+(col||'#7aa2f7')+(x==null?';opacity:.15;height:100%':'')+'"></i>').join('')+'</div>':'')
+    +'<div class="s">'+esc(sub||'')+'</div><div class="src">'+esc(src||'')+'</div></div>'}
+function pfArrow(a,b){if(a==null||b==null)return '';return Math.abs(a-b)<0.005?' · same as before':a>b?' ↑ from '+kpN(b,2):' ↓ from '+kpN(b,2)}
+async function loadPerformance(){
+  const days=(($('pf-days')||{}).value||'7');
+  const d=await api('/evolve/performance/view?days='+encodeURIComponent(days));
+  if(!d||d.error){$('pf-loop').innerHTML='<div class="empty">'+esc((d&&d.error)||'performance unavailable')+'</div>';return}
+  const L=d.loop_lab||{}, c=L.census||{}, g=L.gates||{}, q=L.queue||{}, V=d.vera_use||{}, ch=V.chat||{}, co=V.corpus||{}, sv=V.services||{}, ser=c.series||[];
+  $('pf-broken').innerHTML=(d.broken||[]).map(b=>kpNote('<b>Broken measure: '+esc(b.what)+'</b> - '+esc(b.why)+' <span class="hint">('+esc(b.source)+')</span>','bad')).join('')
+    +((d.errors||[]).length?kpNote('some sources did not answer: '+esc(d.errors.join(' · ')),'bad'):'')
+    +(!(d.broken||[]).length&&!(d.errors||[]).length?'<div class="hint">every measure answered</div>':'');
+  const win=days==='1'?'24 h':days+' days';
+  $('pf-loop').innerHTML=[
+    pfKpi('Census goals done',c.done_rate!=null?Math.round(c.done_rate*100)+'%':'-',(c.done||0)+' of '+(c.goals||0)+' goals in '+(c.runs||0)+' full run(s), '+win+(c.prev&&c.prev.done_rate!=null?' · before: '+Math.round(c.prev.done_rate*100)+'%':''),c.source,false,ser.map(x=>x.done_rate),'#4ade80'),
+    pfKpi('Census quality',c.quality!=null?kpN(c.quality,2):'-','mean quality score'+pfArrow(c.quality,(c.prev||{}).quality),'census.runs · quality_mean',false,ser.map(x=>x.quality),'#4ade80'),
+    pfKpi('Wall per goal',c.wall_per_goal_min!=null?c.wall_per_goal_min+' min':'-','median per run · '+(c.wall_capped||0)+' goal(s) hit the wall cap','census.runs · wall_total_s',false,ser.map(x=>x.wall_per_goal_min),'#7aa2f7'),
+    pfKpi('Gates passed',g.gates?g.passed+' / '+g.gates:'-',(g.failed||0)+' failed · '+win,g.source,(g.failed||0)>0),
+    pfKpi('Pipeline time',g.gate_min!=null?kpN(g.gate_min,1)+' min':'-','median adopt → last stage, gated pipelines','evolve.releases.view · stages'),
+    pfKpi('Adopt → prod',g.lead_h!=null?kpN(g.lead_h,1)+' h':'-',g.lead_n?'median of '+g.lead_n+' released change(s) · most of it waits for census goals':'no released change in the window','evolve.releases.view · releases carried'),
+    pfKpi('Waiting to release',String((g.on_edge||0)+(g.ready||0)),(g.on_edge||0)+' on an edge, '+(g.ready||0)+' passed, not promoted'+(g.edge_ahead!=null?' · bleeding-edge '+g.edge_ahead+' commit(s) ahead of main':''),'evolve.releases.view'),
+    pfKpi('Background queue',q.depth!=null?q.depth+' job(s)':'-',(q.oldest_h!=null?'oldest waiting '+q.oldest_h+' h':'')+(q.running?' · running: '+q.running.title:'')+(q.stranded?' · '+q.stranded+' stranded':'')+(q.min_quiet_s?' · runs in the booked Background-work windows (outside them it waits for '+Math.round(q.min_quiet_s/60)+' min of quiet)':''),q.source,(q.oldest_h||0)>12)].join('');
+  $('pf-vera').innerHTML=[
+    pfKpi('Chat reply time',kpS(ch.wall_s),'average of the recent replies'+(ch.tokens?' · '+kpN(ch.tokens)+' tokens at '+kpN(ch.tps,1)+' tok/s':''),ch.source,(ch.wall_s||0)>30),
+    pfKpi('Chat replies',kpN(ch.replies),(ch.by_model||[]).slice(0,2).map(m=>kpShort(m.model)+' @ '+m.node+' '+kpN(m.n)).join(' · '),'ollama.route_stats · n'),
+    pfKpi('Prompt size',ch.prompt_chars!=null?kpN(Math.round(ch.prompt_chars))+' chars':'-','what each chat turn sends the model','ollama.route_stats · ema_prompt_chars'),
+    pfKpi('Chat test corpus',co.broken?'broken':co.pass_rate!=null?Math.round(co.pass_rate*100)+'%':'-',(co.finished?'last run '+String(co.finished).slice(0,10)+(co.age_days!=null?' ('+Math.round(co.age_days)+' d ago)':''):'never run')+(co.cases?' · '+co.cases+' cases':''),co.source,!!co.broken||co.stale),
+    pfKpi('Services up',sv.of?sv.ok+' / '+sv.of:'-',Object.entries(sv.up||{}).filter(([k,v])=>!v).map(([k])=>k+' down').concat(Object.entries(sv.ollama||{}).filter(([k,v])=>v!=='online').map(([k,v])=>k+' '+v)).join(' · ')||'redis, postgres, chroma, neo4j and every Ollama node',sv.source,sv.of&&sv.ok<sv.of)].join('');
+  const sh=d.share||{}, gc={loop:'#a07a30',chat:'#2a6aa0',background:'#2a8a7a',other:'#4a505a'}, gn={loop:'Loop Lab',chat:'chat (owner)',background:'background',other:'other'};
+  $('pf-share').innerHTML=sh.total?'<div class="kp-share">'+(sh.groups||[]).filter(x=>x.pct>0).map(x=>'<i style="width:'+x.pct+'%;background:'+gc[x.group]+'" title="'+esc(gn[x.group]+' '+x.pct+'%')+'">'+(x.pct>=6?esc(gn[x.group]+' '+Math.round(x.pct)+'%'):'')+'</i>').join('')+'</div>'
+    +'<div class="kp-share-k">'+(sh.groups||[]).map(x=>'<div><b style="color:'+gc[x.group]+'">'+esc(gn[x.group])+'</b> '+kpN(x.n)+' calls - '+esc((x.jobs||[]).map(j=>j.job.replace(/_/g,' ')+' '+kpN(j.n)).join(', ')||'none')+'</div>').join('')+'</div>':'<span class="hint">no model calls on record</span>';
 }
 async function schStopRun(id){const d=await api('/evolve/schedule/stop_run',{method:'POST',body:JSON.stringify({run_id:id})});toast(d&&d.ok?'stopped':'not stopped: '+((d&&d.error)||'?'));closeModal();loadSchedule()}
 async function schRuns(){
@@ -6493,6 +6658,26 @@ vera-agent-loop-output.alo-fill{display:block;height:max(360px,calc(100vh - 230p
 #sec-releases .rel-card:hover{border-color:var(--acc,#7aa2f7)}#sec-releases .rel-card .t{font-weight:600;font-size:12.5px;word-break:break-all}#sec-releases .rel-card .m{font-size:11.5px;opacity:.75}
 #sec-releases .rel-chips{display:flex;flex-wrap:wrap;gap:3px}#sec-releases .rel-chip{font-size:10.5px;padding:1px 5px;border-radius:4px;border:1px solid var(--c);color:var(--c)}
 #sec-releases .rel-live{padding:8px 10px;border:1px solid #2c4a3a;border-radius:8px;margin:6px 0;font-size:12.5px}
+#sec-models .kp-tiles,#sec-performance .kp-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:8px 0}
+.kp-tile{text-align:left;display:flex;flex-direction:column;gap:2px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg1,transparent);color:inherit;cursor:default}
+.kp-tile.bad{border-color:#7a3a3a}.kp-tile .l{font-size:11.5px;opacity:.7}.kp-tile .b{font-size:20px;font-weight:600}.kp-tile .s{font-size:11.5px;opacity:.7}.kp-tile.bad .s{color:#f0a0a0;opacity:1}
+.kp-two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+@media (max-width:900px){.kp-two{grid-template-columns:1fr}#sec-models .kp-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.kp-note{padding:8px 10px;border-radius:8px;margin:6px 0;font-size:12.5px;border:1px solid}
+.kp-note.warn{background:rgba(224,164,88,.08);border-color:rgba(224,164,88,.35)}.kp-note.bad{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.4)}.kp-note.info{background:rgba(122,162,247,.08);border-color:rgba(122,162,247,.35)}
+.kp-tbl{width:100%;border-collapse:collapse;font-size:12.5px}.kp-tbl th{text-align:left;font-weight:500;opacity:.7;padding:6px 8px}.kp-tbl td{padding:6px 8px;border-top:1px solid var(--border)}
+.kp-tbl tr.sel td{background:rgba(122,162,247,.10)}.kp-tbl tr.stale td{opacity:.5}.kp-tbl tr.lead td{background:rgba(74,222,128,.06)}
+.kp-bar{display:inline-block;width:70px;height:6px;border-radius:3px;background:rgba(127,127,127,.2);vertical-align:middle}.kp-bar i{display:block;height:100%;border-radius:3px}
+.kp-mx{border-collapse:separate;border-spacing:3px;font-size:12px}.kp-mx th{font-weight:500;opacity:.7;text-align:left;padding:4px 8px}.kp-mx td{padding:6px 8px;border-radius:4px;font-family:var(--mono,monospace)}
+.kp-mx td span{opacity:.7;font-size:11px}.kp-mx td.g{background:rgba(74,222,128,.12)}.kp-mx td.a{background:rgba(224,164,88,.14)}.kp-mx td.r{background:rgba(248,113,113,.14)}.kp-mx td.none{opacity:.3;text-align:center}
+.kp-drill{border:1px solid rgba(122,162,247,.4);border-radius:8px;padding:10px 12px;margin-top:8px}.kp-crumb{display:flex;align-items:center;gap:6px;font-size:12.5px;margin-bottom:4px}.kp-crumb a{cursor:pointer}
+.kp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.kp-kpi{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}.kp-kpi.bad{border-color:#7a3a3a}
+.kp-kpi .h{display:flex;align-items:baseline;gap:8px}.kp-kpi .h span{flex:1;font-size:11.5px;opacity:.7}.kp-kpi .h b{font-size:17px}
+.kp-kpi .s{font-size:11.5px;opacity:.75}.kp-kpi.bad .s{color:#f0a0a0;opacity:1}.kp-kpi .src{font-size:10.5px;opacity:.45;font-family:var(--mono,monospace)}
+.kp-spark{display:flex;align-items:flex-end;gap:2px;height:24px}.kp-spark i{flex:1;border-radius:2px 2px 0 0}
+.kp-share{display:flex;height:24px;border-radius:6px;overflow:hidden;font-size:11.5px}.kp-share i{font-style:normal;padding:4px 6px;white-space:nowrap;overflow:hidden;color:#fff}
+.kp-share-k{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 14px;font-size:12px;margin-top:8px;opacity:.85}
 .ask-ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:10050}
 .ask-ov.on{display:flex}
 .ask-ov .ask-box{background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;padding:12px;width:min(520px,92vw);max-height:90%;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.4)}

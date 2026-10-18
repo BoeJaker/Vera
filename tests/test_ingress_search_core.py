@@ -95,3 +95,31 @@ def test_info_seek_counts_index_hits_and_the_metrics_cap_is_schedulable():
     from vera.evolve import schedule_core as SC
     assert SC.cap_allowed("fabric.map.metrics") and SC.cap_allowed("fabric.map.gaps.fill")
     assert not SC.cap_allowed("fabric.map.search")
+
+
+def test_rrf_fuses_the_legs_by_page_and_the_reranker_blends_in():
+    key = lambda u: u.split("#")[0]
+    text = [{"url": "https://a/1", "full_text": "short"}, {"url": "https://b/2", "full_text": "b"}]
+    vec = [{"url": "https://b/2", "full_text": "b text that is longer"}, {"url": "https://c/3", "full_text": "c"},
+           {"url": "https://a/1#x", "full_text": "a much longer text"}]
+    f = sc.fuse({"text": text, "vector": vec}, key)
+    assert [r["url"].split("#")[0] for r in f] == ["https://b/2", "https://a/1", "https://c/3"]
+    assert f[0]["legs"] == ["text", "vector"] and f[0]["full_text"] == "b text that is longer"
+    assert f[1]["full_text"] == "a much longer text" and f[2]["legs"] == ["vector"]
+    assert abs(f[0]["rank"] - (1 / 62 + 1 / 61)) < 1e-9
+    r = sc.apply_rerank(f, [{"index": 2, "score": 6.0}, {"index": 0, "score": -6.0}])
+    assert r[0]["url"] == "https://c/3" and r[0]["rerank"] > 0.99 and r[-1]["rerank"] is None
+    assert sc.apply_rerank(f, []) == f and sc.squash(0.4) == 0.4 and sc.squash("x") == 0.0
+    assert sc.record_page("p1", "web.search", "body", '{"url": "https://x/y", "title": "T"}', 0.8)["rank"] == 0.8
+    assert sc.record_page("r1", "memory.chat", "hi", '{"text": "no url"}', 0.9) is None
+
+
+def test_map_search_runs_the_legs_concurrently_and_never_filters_chroma():
+    import ast
+    src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_vector_pages")
+    seg = ast.get_source_segment(src, fn)
+    assert "store.search(emb, top_k=n)" in seg and "dataset_id" not in seg and "VECTOR_TIMEOUT_S" in seg
+    ms = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_map_search")
+    seg = ast.get_source_segment(src, ms)
+    assert "ensure_future(_text())" in seg and "sc.fuse(" in seg and '"nlp.rerank"' in seg and "RERANK_TIMEOUT_S" in seg

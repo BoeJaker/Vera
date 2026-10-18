@@ -38,12 +38,12 @@ def _section(src, sec):
 # -- eight pages (Schedule joined the five on 2026-09-21; Releases + Tests on 2026-10-18)
 def test_loop_lab_is_eight_pages(src):
     secs = re.findall(r'<div class="sec" id="sec-([a-z]+)"', src)
-    assert sorted(secs) == ["agents", "mission", "releases", "schedule", "settings", "ship", "tests", "work"], secs   # + Releases, + Tests (owner, 18 Oct 2026)
+    assert sorted(secs) == ["agents", "mission", "models", "performance", "releases", "schedule", "settings", "ship", "tests", "work"], secs   # + Releases, + Tests, + Models, + Performance (owner, 18 Oct 2026)
     rail = re.findall(r'data-sec="([a-z]+)"', src)
-    assert rail == ["work", "ship", "agents", "mission", "releases", "schedule", "tests", "settings"], rail
+    assert rail == ["work", "ship", "agents", "mission", "releases", "schedule", "tests", "models", "performance", "settings"], rail
     for sec in ("master", "test", "watch", "errors", "activity"):
         assert 'id="sec-%s"' % sec not in src, "section %s still in the DOM" % sec
-    assert 'class="rail-grp"' not in src[src.index('id="nav"'):src.index("</div>", src.index('id="nav"'))], "eight pages need no groups"
+    assert 'class="rail-grp"' not in src[src.index('id="nav"'):src.index("</div>", src.index('id="nav"'))], "ten pages need no groups"
     nav = src[src.index("VeraPanelBridge.registerNav(["):]
     nav = nav[:nav.index("]);")]
     assert "{id:'mission', label:'Mission control'," in nav
@@ -224,3 +224,13 @@ def test_the_panel_script_parses(src):
     bodies = re.findall(r"<script[^>]*>(.*?)</script>", src, re.S)
     p = subprocess.run([node, "--check", "-"], input="\n;\n".join(bodies), text=True, capture_output=True)
     assert p.returncode == 0, "panel JS does not parse:\n" + (p.stderr or "")[-2000:]
+
+
+def test_the_host_menu_lists_every_rail_section_in_order(src):
+    """18 Oct 2026, the owner: "the releases page isnt displayed on the harness absorbed menu". The docked menu reads
+    registerNav, not the rail - a section added to the rail alone is missing there. They must match, in order."""
+    rail = re.findall(r'<button class="btn[^"]*" data-sec="([a-z]+)"', src)
+    assert len(rail) >= 10, rail
+    nav = src[src.index("VeraPanelBridge.registerNav(["):]
+    nav = nav[:nav.index("]);")]
+    assert re.findall(r"\{id:'([a-z]+)'", nav) == rail

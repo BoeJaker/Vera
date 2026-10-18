@@ -38,7 +38,10 @@ def interrupted(rec: Dict[str, Any], now: datetime, max_age_h: float = MAX_AGE_H
     cur = str(rec.get("current") or "")
     steps = rec.get("steps") or []
     last = str((steps[-1] or {}).get("stage") or "") if steps else ""
-    if not (cur.startswith(IN_FLIGHT_PREFIXES) or last in ("critical-queue", "gate-resume")):
+    # "test-pool": a POOLED gate's notes ("N test files in 12 chunks ...", "test runners all busy ...") are its last
+    # step while its chunks wait or run - before 18 Oct 2026 a restart then left the pipeline adopted with no gate,
+    # forever (feat/models-performance-view sat 9 h; the "stranded pipelines" vera-d0 reported)
+    if not (cur.startswith(IN_FLIGHT_PREFIXES) or last in ("critical-queue", "gate-resume", "test-pool")):
         return False
     made = _parse(rec.get("created_at") or "")
     return made is not None and now - made <= timedelta(hours=max_age_h)
