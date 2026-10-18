@@ -1127,6 +1127,73 @@ async def cap_ui_panels_open(session_id: str = "", trace_id=None):
     return {"ok": True, "session_id": sid, "panels": panels, "count": len(panels), "hosts": hosts}
 
 
+# ── the desk's pointer monitor (a chat setting, off by default): what was topmost where the pointer went and clicked,
+# so a part of the desk that never takes the pointer can be found from the person's own browser. A rolling list.
+_DESK_TRACE_KEY = "vera:ui:desk:trace"
+_DESK_TRACE_KEEP = 500
+_DESK_TRACE_TTL = 7 * 86400
+
+
+@APP.post("/ui/desk/trace", include_in_schema=False)
+async def _desk_trace_post(request: _BridgeRequest):
+    """Body: {session_id, ua, records:[{t, kind, x, y, top, cursor, live, verdict, page}]} - at most 40 a post."""
+    from fastapi.responses import JSONResponse
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid json"}, status_code=400)
+    recs = (body or {}).get("records")
+    if not isinstance(recs, list):
+        return JSONResponse({"ok": False, "error": "records must be a list"}, status_code=400)
+    r = _redis()
+    if not r:
+        return JSONResponse({"ok": False, "error": "redis unavailable"}, status_code=503)
+    sid = str((body or {}).get("session_id", ""))[:80]
+    ua = str((body or {}).get("ua", ""))[:160]
+    rows = [json.dumps({"sid": sid, "ua": ua, "at": now_iso(),
+                        **{k: (str(v)[:300] if not isinstance(v, (int, float)) else v) for k, v in x.items()}})
+            for x in recs[:40] if isinstance(x, dict)]
+    try:
+        if rows:
+            await r.lpush(_DESK_TRACE_KEY, *rows)
+            await r.ltrim(_DESK_TRACE_KEY, 0, _DESK_TRACE_KEEP - 1)
+            await r.expire(_DESK_TRACE_KEY, _DESK_TRACE_TTL)
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": f"store failed: {e}"}, status_code=500)
+    return JSONResponse({"ok": True, "count": len(rows)})
+
+
+@capability(
+    "ui.desk.trace",
+    http_method="GET", http_path="/ui/desk/trace", http_tags=["ui", "canvas"],
+    memory="off", silent=True,
+    description=(
+        "What the desk's pointer monitor recorded (the chat setting 'Pointer monitor'): newest first, for each pointer "
+        "move that changed what was under it and each press - the topmost element, its cursor, the live element (panel "
+        "page, chart, graph) drawn there if any, and whether the pointer reached it or what covered it. Inputs: limit "
+        "(int, default 100), session_id (str, optional filter). Output: {ok, records:[...], count}."
+    ),
+)
+async def cap_ui_desk_trace(limit: int = 100, session_id: str = ""):
+    r = _redis()
+    if not r:
+        return {"ok": False, "error": "redis unavailable"}
+    try:
+        raw = await r.lrange(_DESK_TRACE_KEY, 0, max(1, min(int(limit or 100), _DESK_TRACE_KEEP)) - 1)
+    except Exception as e:
+        return {"ok": False, "error": f"read failed: {e}"}
+    out = []
+    for x in raw or []:
+        try:
+            rec = json.loads(x.decode("utf-8", "replace") if isinstance(x, (bytes, bytearray)) else x)
+        except Exception:
+            continue
+        if session_id and rec.get("sid") != session_id:
+            continue
+        out.append(rec)
+    return {"ok": True, "records": out, "count": len(out)}
+
+
 # ── saved menus (the ChatMenu board's "Save as menu…"): a menu record of the user's own, shown in the rail beneath
 # the built-ins - {id, name, icon, items:[{id, label, tpl}], from}. Keyed per owner (a session id, or 'me').
 _LHM_MENU_KEY = "vera:ui:lhm:menu:{owner}:{id}"
