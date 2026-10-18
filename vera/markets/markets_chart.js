@@ -57,14 +57,50 @@
       finally { busy = false; } if (after) after(); };
     return (chart) => chart.timeScale().subscribeVisibleLogicalRangeChange(() => from(chart.timeScale())); };
   /* the signal markers on the price series (library v4 and v5) */
-  M.setMarkers = function (series, entries, exits, holder) {
+  M.setMarkers = function (series, entries, exits, holder, extra) {
     if (!series) return holder || null;
     const mk = [...(entries || []).map((t) => ({ time: t, position: 'belowBar', color: '#3fd0a4', shape: 'arrowUp' })),
-                ...(exits || []).map((t) => ({ time: t, position: 'aboveBar', color: '#e0705a', shape: 'arrowDown' }))].sort((a, b) => a.time - b.time);
+                ...(exits || []).map((t) => ({ time: t, position: 'aboveBar', color: '#e0705a', shape: 'arrowDown' })),
+                ...(extra || [])].sort((a, b) => a.time - b.time);
     try { if (typeof series.setMarkers === 'function') { series.setMarkers(mk); return holder || null; }
       if (root.LightweightCharts && root.LightweightCharts.createSeriesMarkers) { if (holder && holder.setMarkers) { holder.setMarkers(mk); return holder; } return root.LightweightCharts.createSeriesMarkers(series, mk); } }
     catch (e) { /* markers are optional */ }
     return holder || null;
+  };
+  /* EVERY MARKER THE MARKETS SIDE HAS FOR AN ASSET (owner 2026-10-18: "markets chart should be able to get all the markers from
+     market"): dated flags (annotations - events, halvings, pinned news), the person's trades, the strategies' alerts and the live
+     monitors' last entries and exits, each on the bar it falls in; price levels (hline annotations) as price lines. Read-only
+     capabilities, through the same /mcp/call the desk uses. call(name, args) -> the answer's content. */
+  M.pyList = (v) => { if (Array.isArray(v)) return v; if (v == null || v === '') return [];
+    try { return JSON.parse(String(v).replace(/'/g, '"').replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false').replace(/\bNone\b/g, 'null')); } catch (e) { return []; } };
+  M.pyObj = (v) => { if (v && typeof v === 'object') return v; const l = M.pyList(v); return l && !Array.isArray(l) && typeof l === 'object' ? l : {}; };
+  M.toUnix = (v) => { if (v == null || v === '') return null; const n = Number(v); if (isFinite(n) && n > 0) return n > 1e12 ? Math.floor(n / 1000) : Math.floor(n);
+    const d = Date.parse(String(v)); return isFinite(d) ? Math.floor(d / 1000) : null; };
+  /* the bar a moment falls in: the last bar at or before it (a moment past the last bar but within one bar of it goes on the last) */
+  M.snap = (times, t) => { if (!times || !times.length || t == null) return null; const n = times.length;
+    if (t < times[0]) return null; const step = n > 1 ? times[n - 1] - times[n - 2] : 86400; if (t > times[n - 1] + step) return null;
+    let lo = 0, hi = n - 1; while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (times[mid] <= t) lo = mid; else hi = mid - 1; } return times[lo]; };
+  M.shortText = (t, n) => { t = String(t || '').replace(/\s+/g, ' ').trim(); n = n || 22; return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+  M.marketMarkers = async function (call, prov, sym, times) {
+    const key = prov + ':' + sym, dsp = 'mkt.' + prov + '.' + M.slug(sym) + '.';
+    const [ann, tx, al, mon] = await Promise.all([
+      call('markets.annotate.list', { symbol_key: key }), call('markets.portfolio.tx_list', { symbol_key: key, limit: 500 }),
+      call('markets.alerts.list', { limit: 500 }), call('markets.monitor.status', {})]);
+    const markers = [], lines = []; const at = (t) => M.snap(times, M.toUnix(t));
+    const put = (t, m) => { const time = at(t); if (time != null) markers.push(Object.assign({ time }, m)); };
+    ((ann && ann.annotations) || []).forEach((a) => { const pts = M.pyList(a.points); const c = a.color || '#8a93a6';
+      if (a.kind === 'hline') { const p = pts[0] && Number(pts[0].p); if (isFinite(p)) lines.push({ price: p, color: c, title: M.shortText(a.text, 18) }); return; }
+      if (a.kind === 'vline' || pts.length === 1) { const t = pts[0] && (pts[0].t != null ? pts[0].t : pts[0].time);
+        put(t, { position: 'aboveBar', color: c, shape: 'circle', text: M.shortText(a.text) }); } });
+    ((tx && tx.transactions) || []).forEach((x) => { if (x.symbol_key && x.symbol_key !== key) return; const buy = String(x.side || '').toLowerCase() !== 'sell';
+      put(x.ts || x.created_at, { position: buy ? 'belowBar' : 'aboveBar', color: buy ? '#3fd0a4' : '#e0705a', shape: buy ? 'arrowUp' : 'arrowDown',
+        text: (buy ? 'Buy ' : 'Sell ') + (x.qty || '') + (x.price ? ' @ ' + Number(x.price).toLocaleString() : '') }); });
+    ((al && al.alerts) || []).forEach((x) => { if (!String(x.dataset_id || '').startsWith(dsp)) return; const ent = String(x.direction || '') === 'entry';
+      put(x.created_at, { position: ent ? 'belowBar' : 'aboveBar', color: ent ? '#7aa2f7' : '#c58af9', shape: ent ? 'arrowUp' : 'arrowDown', text: M.shortText(x.name, 16) }); });
+    ((mon && mon.monitors) || []).forEach((m) => { if (!String(m.dataset_id || '').startsWith(dsp)) return; const st = M.pyObj(m.state);
+      [['last_entry_ts', true], ['last_exit_ts', false], ['last_short_ts', false], ['last_short_exit_ts', true]].forEach(([k, up]) => {
+        if (st[k] != null && st[k] !== '') put(st[k], { position: up ? 'belowBar' : 'aboveBar', color: '#e8b34d', shape: up ? 'arrowUp' : 'arrowDown', text: M.shortText(m.name, 16) }); }); });
+    return { markers, lines };
   };
   /* /markets/indicators' answer drawn: overlays on the price chart, the rest in panes made by addSub(id, labelHtml).
      ctx = { main, bars (columnar), result, addSub, overlays (array the overlay series go in), esc }. */
@@ -258,7 +294,8 @@
       const addSub = (id, labelHtml) => { const el = document.createElement('div'); el.className = 'pane sub'; el.innerHTML = '<div class="pl">' + labelHtml + '</div>'; st.appendChild(el);
         const chart = L.createChart(el, opts()); sync(chart); const s = { el, chart, id }; this._subs.push(s); return s; };
       if (r && !r.error) M.drawIndicators({ main: this._main, bars: B, result: r, addSub, overlays: this._overlays, esc });
-      this._markers = M.setMarkers(this._candle, this._entries, this._exits, null);
+      this._markers = M.setMarkers(this._candle, this._entries, this._exits, null, this._mkt && this._mkt.markers);
+      this._mktLoad(seq);
       /* the bar under the pointer, in words */
       this._main.subscribeCrosshairMove((p) => { const i = p && p.time != null ? B.t.indexOf(p.time) : -1; this._readout(i >= 0 ? i : B.t.length - 1); });
       this._readout(B.t.length - 1); this._head();
@@ -282,7 +319,20 @@
       this._head(); this._livePlan();
     }
     /* signals from a backtest or a strategy: entries and exits as unix times */
-    setSignals(entries, exits) { this._entries = entries || []; this._exits = exits || []; if (this._candle) this._markers = M.setMarkers(this._candle, this._entries, this._exits, this._markers); }
+    setSignals(entries, exits) { this._entries = entries || []; this._exits = exits || []; if (this._candle) this._markers = M.setMarkers(this._candle, this._entries, this._exits, this._markers, this._mkt && this._mkt.markers); }
+    /* the market's own markers (M.marketMarkers): read once a minute per asset and timeframe, then drawn with the signals */
+    async _mktLoad(seq) {
+      const B = this._B; if (!B || !this._candle) return; const id = this._prov + ':' + this._sym + ':' + this._tf;
+      if (!this._mkt || this._mkt.id !== id || Date.now() - this._mkt.at > 60000) {
+        const call = async (name, args) => { try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
+          const j = await r.json(); return j && j.type === 'tool_result' ? j.content : j; } catch (e) { return null; } };
+        let got = null; try { got = await M.marketMarkers(call, this._prov, this._sym, B.t.slice()); } catch (e) { got = null; }
+        if (seq !== this._seq || !got) return; this._mkt = Object.assign({ id, at: Date.now() }, got); }
+      if (!this._candle) return;
+      this._markers = M.setMarkers(this._candle, this._entries, this._exits, this._markers, this._mkt.markers);
+      (this._plines || []).forEach((l) => { try { this._candle.removePriceLine(l); } catch (e) { /* gone with the chart */ } });
+      this._plines = (this._mkt.lines || []).map((l) => { try { return this._candle.createPriceLine({ price: l.price, color: l.color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: l.title }); } catch (e) { return null; } }).filter(Boolean);
+    }
   }
   if (root.customElements && !root.customElements.get('vera-mkt-chart')) root.customElements.define('vera-mkt-chart', VeraMktChart);
 })(window);
