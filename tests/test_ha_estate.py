@@ -213,3 +213,23 @@ class TestSummarise:
     def test_reads_as_a_sentence(self):
         s = estate.summarise_plan(estate.plan_sync(REGISTRY, []))
         assert "5 to add" in s and "1 skipped" in s
+
+
+
+def test_health_registry_checks_that_a_service_answers_not_that_its_port_is_open():
+    """web-ingress WI-16b: SearXNG and cadvisor kept their ports open while answering nothing (18 Oct)."""
+    from vera.homeassistant import ha_estate as E
+    assert E.health_probe_for({"label": "SearXNG"})["cap"] == "web.searxng.heal.status"
+    assert E.health_probe_for({"label": "cadvisor"})["path"] == "/healthz" and E.health_probe_for({"label": "redis"}) is None
+    rule = E.HEALTH_PROBES["searxng"]["rule"]
+    assert E.healthy_from({"status": {"reachable": True, "last_count": 10}}, rule) is True
+    assert E.healthy_from({"status": {"reachable": True, "last_count": 0}}, rule) is False
+    assert E.healthy_from({"status": {"reachable": False, "last_count": 5}}, rule) is False
+    assert E.healthy_from({"status": {}}, rule) is False
+    assert E.healthy_from({"error": "boom"}, rule) is None and E.healthy_from("x", rule) is None
+    assert E.healthy_body(200, "ok", "ok") and not E.healthy_body(200, "", "ok") and not E.healthy_body(502, "ok", "ok")
+    import ast, pathlib
+    src = (pathlib.Path(__file__).resolve().parents[1] / "vera" / "homeassistant" / "ha_capabilities.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_estate_sync")
+    seg = ast.get_source_segment(src, fn)
+    assert "health_probe_for" in seg and '"health_check"' in seg and "_probe(url)" in seg      # port check as fallback

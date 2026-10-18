@@ -40,6 +40,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import asyncio
 import httpx
 from fastapi.responses import HTMLResponse
 
@@ -565,6 +566,25 @@ async def _registry() -> List[Dict[str, Any]]:
     return out if isinstance(out, list) else []
 
 
+async def _health(hp: Dict[str, Any], url: str, timeout: float = 6.0) -> Optional[bool]:
+    """A registry probe (ha_estate.HEALTH_PROBES): a capability's answer checked with its rule, or an HTTP path whose
+    body must contain the expected text. None when it could not be asked (the port check decides then)."""
+    try:
+        if hp.get("cap"):
+            fn = (_orch.CAPABILITY_REGISTRY.get(hp["cap"]) or {}).get("func")
+            if not fn:
+                return None
+            res = await asyncio.wait_for(fn(**dict(hp.get("args") or {})), timeout)
+            return estate.healthy_from(res, hp.get("rule") or [])
+        if hp.get("path"):
+            async with httpx.AsyncClient(verify=False, timeout=timeout, follow_redirects=True) as c:
+                r = await c.get(url.rstrip("/") + hp["path"])
+            return estate.healthy_body(r.status_code, r.text[:2000], hp.get("expect") or "")
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 async def _probe(url: str, timeout: float = 4.0) -> bool:
     """Is the service answering? Any HTTP response counts as alive.
 
@@ -646,10 +666,18 @@ async def cap_estate_sync(dry_run: bool = True, include_ephemeral: bool = False,
          or not estate.is_ephemeral(str(i.get("label") or i.get("id") or ""))])
 
     reachable: Dict[str, bool] = {}
+    health_by: Dict[str, str] = {}
     if probe:
         for key, url in estate.probe_targets(
                 [by_id[k] for k in ids if k in by_id]):
-            reachable[key] = await _probe(url)
+            hp = estate.health_probe_for(by_id[key])
+            ok = await _health(hp, url) if hp else None
+            if ok is None:
+                reachable[key] = await _probe(url)
+                health_by[key] = "port"
+            else:
+                reachable[key] = ok
+                health_by[key] = "answers"
 
     checked = now_iso()
     created, updated, failed = [], [], []
@@ -663,6 +691,8 @@ async def cap_estate_sync(dry_run: bool = True, include_ephemeral: bool = False,
         body = estate.build_entity(by_id[key], eid,
                                    reachable.get(key) if probe else None,
                                    checked)
+        if health_by.get(key):
+            body["attributes"]["health_check"] = health_by[key]
         try:
             await _request("POST", f"/api/states/{eid}",
                            {"state": body["state"],
