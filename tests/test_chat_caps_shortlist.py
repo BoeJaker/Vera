@@ -85,3 +85,17 @@ def test_the_page_asks_before_the_turn_and_keeps_its_own_list_on_failure():
     assert "if(!allowedCaps.length && !serverSafe.length) return '';" in body
     assert "[...new Set([...serverSafe,...relevantNames.slice(0,10)])].slice(0,34)" in body
     assert re.search(r"c\.mode==='on'", src)
+
+
+@pytest.mark.parametrize("name", [
+    "memory.graph_normalize", "fabric.entity_graph.link_memory",     # the first live sample let these through
+    "secstore.kv.get", "jobs.recover_now", "fs.read", "redis.get", "print.news", "acct.get",
+    "memory.auto_summarise", "netscan.dork.search", "intel.api_key.status"])
+def test_the_18_oct_review_keeps_writes_and_secrets_out(name):
+    assert CC.safe(name, _e())[0] is False
+
+
+def test_a_read_only_contract_cannot_carry_a_secret_or_a_system_family_through():
+    assert CC.safe("vault.token.get", _e(["read"]))[0] is False
+    assert CC.safe("mail.password.get", _e(["read"]))[0] is False
+    assert CC.safe("memory.get", _e())[0] is True and CC.safe("markets.alerts.list", _e())[0] is True
