@@ -590,6 +590,31 @@ must not be reopened, and which runs are comparable at all.
 
 ---
 
+## 10a. Background work is SCHEDULED - there is no quiet time
+
+There is NO quiet time on this box (owner, 18 Oct 2026: "you must not rely on quiet time - there is no such
+thing, quiet time must be scheduled"). Censuses, probes, gates and loops run day and night, so anything that
+waits for an idle box waits forever: on 17-18 Oct, 51 background jobs sat unstarted for 8+ hours, and intel's
+batch once waited six days.
+
+- **Anything you queue or leave to run later gets a scheduled slot.** That covers background.enqueue jobs,
+  shadow judges, backfills, evals and measurements. Never write code or a plan that waits for "the box to go
+  quiet", "an idle gap" or "a quiet hour".
+- **The box's standing windows** are Loop Lab schedule entries "Background work · nightly 03:30-05:00" and
+  "· weekdays 17:00-18:00", running `evolve.background.window`. That capability reserves the idle queue for every
+  job kind with work waiting and drains them one after another; it is exclusive, so no census starts meanwhile,
+  and it yields at its window end. A job you `background.enqueue` is picked up by the next standing window.
+- **Your own work needs more, or sooner?** Book a window for it, on your unit's night or a free gap:
+  `evolve.schedule.upsert {schedule: {kind: "cap", title: "<what> · <unit>", target: {name:
+  "evolve.background.window", arguments: {kinds: "<your job kind>", minutes: N}}, days: [...], start, end,
+  exclusive: true, at_window_end: "yield", notes: "<why, who>"}}`. For work that is its own capability, schedule
+  that capability as the cap instead (allow-listed families: `schedule_core.CAP_ALLOW_PREFIXES`).
+- **Check it ran.** `evolve.schedule.all` and the Loop Lab Schedule tab show every slot and what it is for;
+  `background.status` shows the queue's depth and how long its oldest job has waited. A job waiting longer than
+  a day means a missing window: book one, do not wait.
+- **A slot can be stopped:** census with `census.control.set action=yield`; any other run with
+  `evolve.schedule.stop_run {run_id}` (the ■ on the run).
+
 ## 11. OPTIONAL MODE — the census-driven improvement loop
 
 For a change whose effect is **behavioural rather than unit-testable**: the

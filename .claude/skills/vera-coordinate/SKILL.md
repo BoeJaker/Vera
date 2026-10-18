@@ -132,8 +132,8 @@ Schedule calendar. A session's own timers are invisible to it unless the session
   `agents.work.pending {session: <your name>}` at every wake-up and at least every 30 minutes while it runs
   (a `/loop` or a cron of its own), then `agents.work.ack {id, status: claimed}` -> does it -> `ack done`
   (or `declined` with the reason). A request for `any` goes to whichever session claims it first.
-- **Obey the night rules** in `shared-planning/NIGHT-BOOKINGS.md` for anything a timer starts: nothing new
-  03:30-05:00, nothing of yours in the owner's evening, and only on your unit's booked nights.
+- **Obey the night rules** in `shared-planning/NIGHT-BOOKINGS.md` for anything a timer starts: nothing of yours in the owner's evening (18:00-01:00), night starts only on your unit's booked nights.
+- **There is no quiet time - it must be scheduled** (owner, 18 Oct 2026). Never leave work waiting for an idle box: queue it for the standing "Background work" windows or book a window of your own (improve-vera §5a, improve-vera-sandboxed §10a).
 
 ## 5. When Vera is unreachable (degraded mode)
 
