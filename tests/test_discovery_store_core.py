@@ -194,3 +194,30 @@ def test_acquisition_registers_through_the_capability_and_resumes():
     assert "resume_visited" in [a.arg for a in acquire.args.args + acquire.args.kwonlyargs]   # B11
     cont = ast.dump(_func(tree, "cap_web_continue"))
     assert "continue_kwargs" in cont
+
+
+
+def test_deferred_passes_find_crawl_records_by_the_crawls_own_id():
+    # 18 Oct: fabric_records.id is a uuid, the crawl's p_/f_ id is in data.id - the T3 and media handlers
+    # looked up the wrong one and found no text
+    import ast
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_record_row")
+    seg = ast.get_source_segment(src, fn)
+    assert "json_extract(data, '$.id')" in seg and "dataset_id=?" in seg
+    for name in ("_t3_handler", "_t3_media_handler"):
+        h = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == name)
+        hs = ast.get_source_segment(src, h)
+        assert "_record_row(ds_id, rid)" in hs and "WHERE id=?" not in hs, name
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("SELECT json_extract('{}', '$.a')")
+    except sqlite3.OperationalError:
+        return                                        # an sqlite without JSON1 (old Windows Pythons); the host has it
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE fabric_records (id TEXT, dataset_id TEXT, text TEXT, data TEXT)")
+    conn.execute("INSERT INTO fabric_records VALUES ('uuid-1', 'web.gaps', 'body', '{\"id\": \"p_abc\"}')")
+    row = conn.execute("SELECT id, text FROM fabric_records WHERE dataset_id=? AND json_extract(data, '$.id')=?",
+                       ("web.gaps", "p_abc")).fetchone()
+    assert row["id"] == "uuid-1" and row["text"] == "body"
