@@ -9360,11 +9360,13 @@ async def cap_sys_debug_tasks(match: str = "", limit: int = 40, trace_id=None):
                         "on the way back up (it re-runs the goal it was on); pass "
                         "resume_census=false to drop it instead. Inputs: confirm (bool!), "
                         "delay_s (float, default 1.5 — time to return this response before "
-                        "the swap), reason (str), resume_census (bool=true). "
-                        "Output: {ok, restarting, pid, argv, census}.")
+                        "the swap), reason (str), resume_census (bool=true), force (bool=false - restart "
+                        "even while a PROTECTED scheduled run is open; without it the restart is "
+                        "refused and names those runs). "
+                        "Output: {ok, restarting, pid, argv, census} or {ok:false, held, protected}.")
 async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
                               reason: str = "", resume_census: bool = True,
-                              trace_id=None):
+                              force: bool = False, trace_id=None):
     if not dev_mode_on():
         return {"ok": False, "error": "dev mode is off — set VERA_DEV_MODE=1 to enable "
                                       "sys.dev.restart", "dev_mode": False}
@@ -9372,6 +9374,23 @@ async def cap_sys_dev_restart(confirm: bool = False, delay_s: float = 1.5,
         return {"ok": False, "error": "confirm=True is required — this kills all in-flight "
                                       "work (agentic loops, chat streams, queued jobs)",
                 "dev_mode": True}
+    # B1.0 (backbone, 18 Oct 2026): protect held releases only - a direct sys.dev.restart at 14:12 BST closed a
+    # protected scheduled run (vera-62). Every restart path now honours the schedule's protected_running(); the
+    # release path checks it before merging and passes force so a merged release always restarts.
+    if not (force is True or str(force).strip().lower() in ("1", "true", "yes")):
+        try:
+            _sc = sys.modules.get("schedule_capabilities") or sys.modules.get("Vera.vera.evolve.schedule_capabilities")
+            _prot = await _sc.protected_running() if (_sc is not None and hasattr(_sc, "protected_running")) else []
+        except Exception as _pe:
+            _prot, _pe_s = [], str(_pe)
+            log.debug("sys.dev.restart: protected runs unreadable: %s", _pe_s)
+        if _prot:
+            names = ", ".join(str(p.get("title") or p.get("schedule_id") or "?") for p in _prot[:4])
+            log.warning("sys.dev.restart refused: protected run(s) open: %s", names)
+            return {"ok": False, "held": True, "restarting": False,
+                    "error": f"a protected scheduled run is open ({names}) - wait for it, stop it from the "
+                             "Schedule, or pass force=true",
+                    "protected": _prot[:8]}
     log.warning("sys.dev.restart requested%s", f" — {reason}" if reason else "")
     # A census in flight would otherwise record the restart as its goal's result
     # and move on — which is why prod could not be restarted for the hours a set
