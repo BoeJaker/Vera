@@ -4219,6 +4219,11 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         "escalated": escalated, "prompt_chars": prompt_chars,
         "route_reason": "; ".join(routing_info.get("reason") or [])[:400],
         "est_seconds": routing_info.get("est_seconds"),
+        # B1+ (looplab-control): every parameter the call ran with - the owner's "logging every parameter set for a
+        # model - temperature, ... is thought enabled and so on" - so the durable record can say what shaped it
+        "options": dict(routing_info.get("options") or {}), "think": think, "json_mode": bool(json_mode),
+        "keep_alive": str(keep_alive or "")[:16], "prefer_gpu": bool(prefer_gpu),
+        "background": routing_info.get("background") or "", "interactive_backoff": bool(routing_info.get("interactive_backoff")),
     }
 
     # NOTE: in_use is already reserved above (right after pick_instance) to close
@@ -4680,6 +4685,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     finally:
         inst["in_use"]=max(0,inst["in_use"]-1)
         _inflight_release(inst, _req_slot_id)
+        _ollama_call_record(req_entry)       # B1+: the durable record, whatever way the call ended
 
 
 # Every short answer to the call-site matrix (four-minds FM-2 / FM-12, switch decide.site_capture, off by default): a
@@ -4703,6 +4709,40 @@ async def ollama_generate(*args, **kwargs) -> str:
     except Exception:                    # the tap must never touch the answer
         pass
     return out
+
+
+#: B1+ (looplab-control, 19 Oct 2026): the DURABLE per-call record. The ring above lives in one process and empties on
+#: a restart; most calls are made in node workers. Every finished generate call - in whichever process made it - is
+#: added to this capped Redis stream (read back by ollama.calls / ollama.calls.rollup, vera/workers/ollama_calls_*).
+OLLAMA_CALLS_KEY = "vera:ollama:calls"
+OLLAMA_CALLS_MAXLEN = 200000
+_OLLAMA_CALL_WRITER = os.environ.get("VERA_WORKER_HOST_ID") or __import__("platform").node()
+
+
+def _ollama_call_record(entry: dict) -> None:
+    """Add one finished call to the durable record. Never raises and never waits: the call's answer is not held up."""
+    try:
+        if REDIS is None or not entry:
+            return
+        rec = _sanitize_ollama_log_entry(entry)
+        if rec.get("status") == "running":
+            rec["status"] = "unfinished"
+        rec["writer"] = _OLLAMA_CALL_WRITER
+        try:
+            rec["writer_load1"] = round(os.getloadavg()[0], 2)
+        except (OSError, AttributeError):
+            pass
+        data = json.dumps(rec, default=str)[:8000]
+        asyncio.get_running_loop().create_task(_ollama_call_xadd(data))
+    except Exception:                       # the record must never touch the call
+        pass
+
+
+async def _ollama_call_xadd(data: str) -> None:
+    try:
+        await REDIS.xadd(OLLAMA_CALLS_KEY, {"data": data}, maxlen=OLLAMA_CALLS_MAXLEN, approximate=True)
+    except Exception:
+        pass
 
 
 def _ollama_log_append(entry: dict):
@@ -12685,6 +12725,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "workers/warm_models_capabilities.py"),
         # compute.* - model training on the node workers (node_compute_core)
         os.path.join(_here, "workers/node_compute_capabilities.py"),
+        # B1+: reads of the durable per-call record (ollama.calls, ollama.calls.rollup)
+        os.path.join(_here, "workers/ollama_calls_capabilities.py"),
         # nodes.testenv.* + evolve.test_pool.* - gate pytest sharded over the nodes
         os.path.join(_here, "evolve/test_runner_capabilities.py"),
         # nodes.parity.* + caps.footprint - node parity by evidence (footprint tracer)
