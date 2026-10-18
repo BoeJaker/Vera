@@ -545,7 +545,17 @@ _SERVES_NLP = [
         ("rerank", "Xenova/ms-marco-MiniLM-L-6-v2",
          "Answer a stored decision by the cross-encoder's score of each label card against its text (ms-marco "
          "MiniLM on an NLP node) - no training, no LLM, a shadow judge in the candidate matrix."))]
-NLP_IMPL = {"zeroshot": "zeroshot:deberta-base", "nli": "nli:deberta-large", "rerank": "rerank:msmarco-minilm"}
+NLP_IMPL = {"zeroshot": "zeroshot:deberta-base", "nli": "nli:deberta-large", "rerank": "rerank:msmarco-minilm",
+            "nli_direct": "nli-direct:deberta-large"}
+# the direct-entailment judge (18 Oct): for a question NLI can ask directly (applications_core.DIRECT - a claim
+# against its evidence), premise = the evidence, hypothesis = the claim; p(yes) = entailment
+_SERVES_NLP.append(_bind(
+    "decide", "nlp", io_in="state", io_out="label", tier=3, placement="nlp", questions=list(APPS.DIRECT),
+    selector={"family": "nli_direct"}, model="MoritzLaurer/DeBERTa-v3-large-mnli-fever-anli-ling-wanli",  # pragma: allowlist secret (a model id)
+    uses="Answer a stored decision NLI can ask directly - does the evidence entail the claim - with DeBERTa-large "
+         "on an NLP node (premise = evidence, hypothesis = claim): no cards, no training, no LLM; a shadow judge "
+         "in the candidate matrix.",
+    limits="only questions with a premise and a hypothesis (applications_core.DIRECT)."))
 
 
 async def _nlp_probs(family: str, text: str, cards: Dict[str, str]) -> Dict[str, float]:
@@ -566,6 +576,15 @@ async def _nlp_probs(family: str, text: str, cards: Dict[str, str]) -> Dict[str,
     return {}
 
 
+async def _direct_probs(question_id: str, pair: Dict[str, str]) -> Dict[str, float]:
+    """{yes label: entailment, no label: 1 - entailment} for a DIRECT question."""
+    d = APPS.DIRECT[question_id]
+    out = await _raw("nlp.nli", pairs=[{"premise": pair["premise"], "hypothesis": pair["hypothesis"]}])
+    res = (out.get("results") or [{}])[0] or {}
+    e = float(res.get("entailment") or 0)
+    return {d["yes"]: e, d["no"]: 1.0 - e}
+
+
 @capability(
     "decide.shadow.nlp", serves=_SERVES_NLP, http_method="POST", http_path="/decide/shadow/nlp", http_tags=["minds"],
     memory="off",
@@ -580,12 +599,16 @@ async def cap_decide_shadow_nlp(family: str = "zeroshot", question_id: str = "al
                                 since_hours: int = 72, trace_id=None) -> Dict[str, Any]:
     if family not in NLP_IMPL:
         return {"ok": False, "error": f"family must be one of {sorted(NLP_IMPL)}"}
+    direct = family == "nli_direct"
     if question_id == "all":
         return {"ok": True, "family": family,
                 "questions": {q: await cap_decide_shadow_nlp(family=family, question_id=q, limit=limit,
-                                                             since_hours=since_hours) for q in JC.CARDS}}
+                                                             since_hours=since_hours)
+                              for q in (APPS.DIRECT if direct else JC.CARDS)}}
     q = JC.QUESTIONS.get(question_id)
     cards = JC.CARDS.get(question_id)
+    if direct and question_id not in APPS.DIRECT:
+        return {"ok": False, "error": f"{question_id!r} has no direct premise/hypothesis"}
     if not q or not cards:
         return {"ok": False, "error": f"no cards for {question_id!r}"}
     pool_db = getattr(_orch, "PG_POOL", None)
@@ -609,13 +632,15 @@ async def cap_decide_shadow_nlp(family: str = "zeroshot", question_id: str = "al
     for r in rows:
         state = json.loads(r["state"]) if isinstance(r["state"], str) else (r["state"] or {})
         live = json.loads(r["row"]) if isinstance(r["row"], str) else (r["row"] or {})
-        text = JC.user_message(question_id, state)
+        pair = APPS.direct_pair(question_id, state) if direct else None
+        text = JC.user_message(question_id, state) if not direct else (pair and pair["premise"])
         if not text:
             skipped += 1
             continue
         t0 = time.monotonic()
         try:
-            probs = await _nlp_probs(family, text[:2000], cards)
+            probs = (await _direct_probs(question_id, pair) if direct
+                     else await _nlp_probs(family, text[:2000], cards))
         except Exception as e:
             log.debug("nlp judge %s: %s", family, e)
             probs = {}

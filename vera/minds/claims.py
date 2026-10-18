@@ -30,7 +30,7 @@ except Exception:                        # worktree / app-free import
     from vera.minds import contract_core as _MC                                     # type: ignore
 
 log = logging.getLogger("vera.minds.claims")
-DONE_KEY = "vera:claims:harvested"        # set of session ids already read
+DONE_KEY = "vera:claims:harvested:" + CL.EVIDENCE_VERSION   # session ids read with this evidence version
 NIGHT_KEY = "vera:claims:night:"
 _STATS: Dict[str, int] = {"runs": 0, "claims": 0, "errors": 0}
 
@@ -92,7 +92,7 @@ async def harvest(hours: int = 48, max_runs: int = 40) -> Dict[str, Any]:
                     labels=list(CL.LABELS), state={"claim": p["claim"], "url": p["url"]},
                     state_ref={"kind": "claim", "id": CL.claim_ref(sid, p["claim"])}, decider="rule",
                     implementation=CL.RULE, mode="rule", run_id=sid[:80], session_id=sid[:80],
-                    detail={"overlap": p["overlap"]})
+                    detail={"overlap": p["overlap"], "evidence": p.get("version"), "sources": p.get("sources")})
                 res = await L.append(row)
                 if res.get("ok"):
                     recorded += 1

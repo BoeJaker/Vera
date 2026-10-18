@@ -90,12 +90,31 @@ def _s(v: Any, n: int = MAX_FIELD) -> str:
     return " ".join(str(v or "").split())[:n]
 
 
+#: the claim's evidence as the judges see it (claims_core.EVIDENCE_CHARS)
+EVIDENCE_CHARS = 2000
+#: questions an NLI model can answer directly - premise entails hypothesis - with the label that entailment means
+#: (the nli_direct judge; the card judges ask it indirectly, through a card about the whole prompt)
+DIRECT: Dict[str, Dict[str, str]] = {
+    "output.claim_supported": {"premise": "evidence", "hypothesis": "claim", "yes": "supported",
+                               "no": "unsupported"},
+}
+
+
+def direct_pair(question_id: str, state: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """{premise, hypothesis} for a DIRECT question when the state has both, else None."""
+    d = DIRECT.get(question_id)
+    if not d or not isinstance(state, dict):
+        return None
+    prem, hyp = _s(state.get(d["premise"]), EVIDENCE_CHARS), _s(state.get(d["hypothesis"]), 400)
+    return {"premise": prem, "hypothesis": hyp} if prem and hyp else None
+
+
 def user_message(question_id: str, state: Dict[str, Any]) -> Optional[str]:
     """The text put to a model for one stored decision, or None when the inputs lack what it needs."""
     if question_id not in QUESTIONS or not isinstance(state, dict):
         return None
     if question_id == "output.claim_supported":
-        claim, ev = _s(state.get("claim"), 400), _s(state.get("evidence"), 1200)
+        claim, ev = _s(state.get("claim"), 400), _s(state.get("evidence"), EVIDENCE_CHARS)
         if not claim or not ev:
             return None
         src = " | ".join(x for x in (_s(state.get("title"), 200), _s(state.get("url"), 300)) if x)
