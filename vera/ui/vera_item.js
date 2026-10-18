@@ -389,6 +389,14 @@
     live: { route: '/markets/bars', every_s: 15, how: 'the newest bars while it is seen (IntersectionObserver, page visible); the markers read once a minute per asset and timeframe' },
     surfaces: ['desk', 'panel:markets'],
     note: 'panel:markets uses its shared pieces (VeraMktChart.*: the loader, chart options, series adapters, panes, indicators, markers), not the tag. Not a dashboard tile yet (plan §1.5).' });
+  registerBody('vera-mkt-map', { role: 'element', element: 'vera-mkt-map', src: 'vera/markets/markets_chart.js', label: 'Market map',
+    contract: [{ kind: 'table', by: 'api', reads: ['window'], how: "/markets/overview's groups (markets.overview): the Quant Studio's Pulse map - each asset a box sized and coloured by its move over the window (VeraMktChart.drawMarketMap, the Studio draws with it)" }],
+    faces: VIEWED, sizes: ['m', 'l', 'xl'],
+    controls: [{ id: 'win', label: 'Window', title: "1D, 1W, 1M, 3M, YTD, 1Y - the Studio's Pulse windows" }],
+    navigation: [{ to: 'element', args: { element: 'vera-mkt-chart', symbol: '<symbol>', provider: '<provider>', tf: '1d' }, how: "an asset's box opens its chart in place; ← Map returns; the host hears mkt-symbol" }],
+    live: { route: '/markets/overview', every_s: 60, how: 'read again every minute while it is seen and the page visible (the server caches it 60 s)' },
+    surfaces: ['desk', 'panel:markets-studio'],
+    note: 'panel:markets-studio draws its Pulse map with the shared drawMarketMap, not the tag. Not on the desk from an answer yet: markets.overview still declares a table (the route waits for DO-0.3).' });
   registerBody('vera-graph', { role: 'element', element: 'veraUI.Graph', src: 'vera/vera_graph.js', label: 'Graph',
     contract: [{ kind: 'graph', by: 'api', reads: ['layer', 'layerOpts', 'nodes', 'edges'], how: 'veraUI.Graph: a snapshot by layer (memory, entity, a fabric.graphs graph) through fetchSnapshot, or the nodes and edges a host loads' }],
     faces: [], sizes: [],
