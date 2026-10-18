@@ -14857,8 +14857,10 @@ except Exception:                                     # pragma: no cover
 # When a final-gate follow-up is redundant (census 2026-09-30: edits were skipped).
 try:
     from Vera.vera.dag import follow_up_core as _follow_up_core
+    from Vera.vera.dag import gate_actions_core as _gate_actions
 except Exception:                                     # pragma: no cover
     from vera.dag import follow_up_core as _follow_up_core
+    from vera.dag import gate_actions_core as _gate_actions
 
 
 async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float]]:
@@ -21724,10 +21726,15 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         "Judge the artifact that WAS produced, not an idealised one.\n"
         "A FILE DELIVERABLE IS SETTLED BY THE FILE REGISTER. Read the FILE REGISTER below: if "
         "the file is listed it EXISTS, and if it is marked VERIFIED a real parser passed it. "
-        "That settles created / valid / complete — so when DONE WHEN asks for a created, valid "
+        "That settles created / valid — so when DONE WHEN asks only for a created, valid "
         "or working file and the register shows it, the goal is MET: complete it, and do NOT "
         "add a follow-up step to re-read, re-parse or re-run the file to prove what the "
         "register already states.\n"
+        "The register does NOT settle what the goal asks the file to CONTAIN or what it asks to be "
+        "DONE with it: named functions or sections, citations / sources, 'then run the tests', "
+        "'open it in a browser and report'. Each of those needs evidence in the ledger (the content "
+        "shown in an output, or a step that did it); without that evidence the goal is NOT complete - "
+        "name what is missing.\n"
         "The ONE thing the register cannot show is a page's live BEHAVIOUR. If the goal "
         "explicitly asked for that and it was never checked, the only follow-up worth adding "
         "is an `operator.run` step (a real headless browser against the sandbox-served file). "
@@ -21947,6 +21954,16 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                                 "directory containing the report described by the goal."),
                 })
 
+    # ── Override 4: an ACTION the goal asks for that no step performed ──────
+    # "then run the tests", "open it in a browser" - checked against the calls the run made
+    # (gate_actions_core), not the judge's opinion. 16-18 Oct census: both were waved through
+    # because the file register showed the file.
+    try:
+        for _m in _gate_actions.missing(_grounding_goal, results):
+            _fire_override(_m["reason"], _m["step"])
+    except Exception as _ge:                                        # pragma: no cover
+        log.debug("gate actions check skipped: %s", _ge)
+
     # ── Give the forced verdict teeth. The overrides above can flip
     # `complete` to False, but `obj["follow_up"]` was built by the judge back
     # when IT still believed complete=True — so it's empty, and a forced-False
@@ -21972,7 +21989,8 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
             _fu_text = f"{(_fu or {}).get('title', '')} {(_fu or {}).get('goal', '')}" \
                 if isinstance(_fu, dict) else str(_fu or "")
             _fu_files = _v6_extract_paths(_fu_text)
-            if _fu_files and not _v6_claim_grounded(_fu_files, _goal_files_fu):
+            if (_fu_files and not _v6_claim_grounded(_fu_files, _goal_files_fu)
+                    and not _v6_test_claim(_fu_files, _grounding_goal)):
                 log.info("v6 gate: dropped a hallucinated follow-up step not grounded "
                          "in the goal: %r", _fu_text[:200])
                 continue
@@ -22101,6 +22119,17 @@ def _v6_path_norm(p: str) -> str:
     return p.strip("/")
 
 
+_V6_TEST_FILE_RE = re.compile(r"(^|/)(test_[\w.-]+\.py|[\w.-]+_test\.py|[\w.-]+\.(test|spec)\.[jt]sx?)$")
+
+
+def _v6_test_claim(claimed: List[str], goal_text: str) -> bool:
+    """A claim naming a TEST file is grounded when the goal asks for tests at all - "plus a test file" names
+    no file, so `test_stats.py` was dropped as invented while the gap was real (mirror A/B, 17 Oct 2026)."""
+    if not re.search(r"\btests?\b|\btest file|\bunit tests?\b", str(goal_text or ""), re.I):
+        return False
+    return any(_V6_TEST_FILE_RE.search(_v6_path_norm(c)) for c in (claimed or ()))
+
+
 def _v6_claim_grounded(claimed: List[str], goal_files: Any) -> bool:
     """Does any claimed path name a file or folder the GOAL names? Compared as the same file,
     not the same string (16 Oct 2026, census: the goal's `/workspace/statkit` with `stats.py`
@@ -22146,7 +22175,7 @@ def _v6_ground_missing_claims(items: List[str], goal_text: str) -> Tuple[List[st
     dropped: List[str] = []
     for item in items:
         claimed = _v6_extract_paths(str(item or ""))
-        if claimed and not _v6_claim_grounded(claimed, goal_files):
+        if claimed and not _v6_claim_grounded(claimed, goal_files) and not _v6_test_claim(claimed, goal_text):
             dropped.append(item)
         else:
             kept.append(item)
