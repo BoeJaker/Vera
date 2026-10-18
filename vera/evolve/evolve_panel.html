@@ -1387,8 +1387,10 @@ function _olvKit(){
   VeraDrill.registerKind('test-run',{label:'Test run',
     load:(id,ctx)=>ctx.call('evolve.unittest.history',{limit:200}).then(a=>{const r=((a&&a.runs)||[]).find(x=>x.ts===id);if(!r)throw new Error('no longer in the history');return r}),
     title:(r,id)=>r?(r.branch||'')+' · '+(r.ok?'green':'red'):id,
-    tabs:[{id:'detail',label:'Detail'},{id:'failures',label:'Failures'}],
+    tabs:(r)=>[{id:'detail',label:'Detail'},{id:'failures',label:'Failures'}].concat(r&&r.pipeline_id?[{id:'change',label:'Change'}]:[]),
     render:(r,tab)=>{
+      if(tab==='change')return _olvLib('vera-diff.js',()=>window.VeraDiff&&customElements.get('vera-diff'))
+        .then(()=>'<vera-diff pipeline="'+esc(r.pipeline_id)+'"></vera-diff>');
       if(tab==='failures')return (r.failures||[]).length?(r.failures||[]).map(f=>typeof f==='string'?'<pre>'+esc(f)+'</pre>':
         '<div style="border-bottom:1px solid var(--border);padding:4px 0"><b style="color:var(--err)">'+esc(f.kind||'failure')+'</b> <code>'+esc(f.node_id||'')+'</code>'+
         (f.description?'<pre>'+esc(String(f.description).slice(0,1500))+'</pre>':'')+'</div>').join('')+(r.failures_truncated?'<div class="hint">more failures than shown (truncated)</div>':''):'';

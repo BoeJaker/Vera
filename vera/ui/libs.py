@@ -10,6 +10,8 @@ from the same copy.
   /ui/iso-lattice.js -> vera/ui/iso_lattice.js  window.VeraLattice  the iso lattice: planes x areas,
                                                        pipes, widgets, the view (Live ops, graph modes)
   /ui/menus.js  -> vera/ui/menus.js  window.MENUS     every context menu
+  /ui/vera-diff.js -> vera/ui/vera_diff.js  window.VeraDiff + <vera-diff>: THE diff viewer (word-level, folds, file
+                                             tree, hunk keys, lint on changed lines; K6)
   /ui/vera-compare.js -> vera/ui/vera_compare.js  window.VeraCompare + <vera-compare>: THE compare workspace
                                                      (pins, stacked / layered / side by side, aligned; K4)
   /ui/vera-kit.js -> vera/ui/vera_kit.js  window.VeraDrill / VeraLive / VeraStates + <vera-drill>, <vera-live-strip>:
@@ -61,6 +63,11 @@ async def _serve_iso_js():
 @APP.get("/ui/iso-lattice.js", include_in_schema=False)
 async def _serve_iso_lattice_js():
     return _script("iso_lattice.js")
+
+
+@APP.get("/ui/vera-diff.js", include_in_schema=False)
+async def _serve_vera_diff_js():
+    return _script("vera_diff.js")
 
 
 @APP.get("/ui/vera-compare.js", include_in_schema=False)
