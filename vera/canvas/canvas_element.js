@@ -8707,7 +8707,7 @@
         return e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (c ? '.' + c.trim().split(/\s+/).slice(0, 2).join('.') : '') + (e.dataset && (e.dataset.key || e.dataset.kind) ? '[' + (e.dataset.kind || '') + (e.dataset.key ? ' ' + String(e.dataset.key).slice(0, 40) : '') + ']' : ''); };
       const show = (line) => { const sr = this.shadowRoot; if (!sr) return; let el = sr.querySelector('.vc-trace');
         if (!el) { el = document.createElement('div'); el.className = 'vc-trace'; el.setAttribute('aria-hidden', 'true');
-          el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;pointer-events:none;max-width:70vw;padding:4px 8px;border-radius:6px;font:10px/1.35 var(--mono,ui-monospace,monospace);white-space:pre-wrap;color:var(--fg,#e8e6e3);background:color-mix(in srgb,var(--bg2,#1d2128) 92%,transparent);border:1px solid var(--acc,#5a9e8f)';
+          el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;pointer-events:none;max-width:70vw;padding:4px 8px;border-radius:6px;font:10px/1.35 var(--mono,ui-monospace,monospace);white-space:pre-wrap;color:var(--fg,#e8e6e3);background:color-mix(in srgb,var(--bg2,#1d2128) 92%,transparent);border:1px solid var(--acc,#5a9e8f)';   /* z-local: the pointer monitor (WSU-100 debugging, off by default) is a page overlay outside the item bands, over everything incl. toasts */
           sr.appendChild(el); }
         el.textContent = 'pointer monitor: ' + line; };
       const rec = (r) => { r.t = Math.round(performance.now()); T.log.push(r); if (T.log.length > 80) T.log.shift(); T.out.push(r); if (T.out.length > 40) T.out.shift();
