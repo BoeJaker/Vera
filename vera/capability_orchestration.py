@@ -9445,6 +9445,15 @@ async def cap_sys_activity_clear(id: str = "", trace_id=None):
     return {"ok": True, "cleared": bool(n)}
 
 
+@capability("sys.activity.status", memory="off", silent=True,
+            http_method="GET", http_path="/sys/activity/status", http_tags=["sys"],
+            description="READ-ONLY. What /health's `activity` shows: agent loops, gates and declared "
+                        "tests / probes / benchmarks in flight (sys.activity.declare). Output: {busy, "
+                        "summary, loops[], gates[], declared[{id, kind, label, by, since, updated}]}.")
+async def cap_sys_activity_status(trace_id=None):
+    return await _health_activity()
+
+
 @capability("sys.debug.tasks", memory="off", silent=True,
             http_method="GET", http_path="/sys/debug/tasks", http_tags=["sys"],
             description="READ-ONLY. Where every asyncio task in this process is waiting: each "

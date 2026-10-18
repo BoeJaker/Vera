@@ -79,3 +79,24 @@ def test_controls_live_in_the_drill_only(src):
     kit = js[js.index("function _tstKit("):]
     assert "tstRunNow(" in kit and "tstEnable(" in kit
     assert "confirm('Start this scheduled test now?')" in js
+
+
+def test_live_strip_protected_and_declared_lanes(src):
+    sec = _section(src, "tests")
+    assert '<vera-live-strip id="tst-live"' in sec
+    js = _block(src)
+    assert "items:'census.gates',where:{state:'running'}" in js and "items:'census.protected'" in js
+    assert "cap:'sys.activity.status'" in js and "where:{kind:'test'}" in js
+
+
+def test_race_to_green_is_a_matrix_of_gate_attempts_that_drills_into_failures(src):
+    js = _block(src)
+    body = js[js.index("async function _tstRace("):]
+    assert "r.pipeline_id&&r.branch" in body and "cols_order:'n'" in body and "ok:['green']" in body
+    assert "open('test-run',c.ts,{root:true,tab:c.v==='red'?'failures':''})" in body
+
+
+def test_activity_has_a_reader_in_the_sys_family():
+    o = open(os.path.join(ROOT, "vera", "capability_orchestration.py"), encoding="utf-8").read()
+    i = o.index('@capability("sys.activity.status"')
+    assert "return await _health_activity()" in o[i:i + 900]
