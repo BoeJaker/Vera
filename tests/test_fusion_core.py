@@ -52,7 +52,7 @@ def test_seek_uses_the_core_for_memory_hits():
     funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)}
     mem = ast.dump(funcs["_memory_candidates"])
     assert "lexical_pass" in mem and "weight" in mem
-    seek = ast.get_source_segment(src, funcs["cap_memory_seek"])
+    seek = ast.get_source_segment(src, funcs["_memory_seek_body"])    # memory.seek's body since D10-1
     assert "_fc.rrf(" in seek and "list_weight(len(ranked))" in seek
 
 
