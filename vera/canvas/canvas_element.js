@@ -1423,6 +1423,11 @@
         const md = rec.data && typeof rec.data === 'object' && !Array.isArray(rec.data) ? rec.data : null;
         if (form === 'candles' && md && md.symbol) { const prov = md.provider || String(md.key || '').split(':')[0] || 'yahoo';
           return `<div class="vc-wid vc-mchart-w" data-w="canvas.chart"><div class="vc-live" data-live="mchart" data-key="${esc(key)}" data-symbol="${esc(md.symbol)}" data-provider="${esc(prov)}" data-tf="${esc(md.timeframe || '1d')}"><span class="vc-dim">opening the ${esc(md.symbol)} chart…</span></div></div>`; }
+        /* THE MARKET OVERVIEW IS THE MARKET MAP (the redesign plan section 4, the Quant Studio's views as elements): a treemap
+           record holding the overview's groups of assets (a markets.overview answer) is drawn by <vera-mkt-map> - the Studio's
+           Pulse map, its windows, an asset opening its chart in place - not a treemap of group sizes */
+        if (form === 'treemap' && md && Array.isArray(md.groups) && md.groups.some((g) => g && Array.isArray(g.assets))) {
+          return `<div class="vc-wid vc-mchart-w" data-w="canvas.chart"><div class="vc-live" data-live="mmap" data-key="${esc(key)}"><span class="vc-dim">opening the market map…</span></div></div>`; }
         return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || (rec.draw && rec.draw.size) || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ''}${rcap ? `<button class="vc-wid-b" data-wid-act="refresh" data-wid-key="${esc(key)}" title="Read ${esc(rcap)} again and redraw">refresh</button>` : ''}</div></div>`;
       }
       /* `root` rather than a bare `window`: the module is loaded as a script in the page AND required directly by
@@ -7101,7 +7106,7 @@
     _kindOf(c, key) {
       if (!c) return ''; const t = c.dataset.type || ''; const cc = this._contentOf(key) || {}; const rec = cc.record && typeof cc.record === 'object' ? cc.record : cc;
       const f = String(rec.form || cc.form || cc.widget || (rec.draw && rec.draw.form) || '').replace(/@iso$/, '');
-      if (c.querySelector('.vc-mchart-w, vera-mkt-chart') || /^(candles|ohlcv|trace|area|column|line|series|scatter|bands|heat|matrix)$/.test(f) || c.querySelector('.vc-app[data-as="widget"]')) return 'chart';
+      if (c.querySelector('.vc-mchart-w, vera-mkt-chart, vera-mkt-map') || /^(candles|ohlcv|trace|area|column|line|series|scatter|bands|heat|matrix)$/.test(f) || c.querySelector('.vc-app[data-as="widget"]')) return 'chart';
       if (t === 'table' || f === 'table' || c.querySelector('.it-bd .vc-app-t, .it-bd > .vc-res[data-as="table"], .it-bd > table.vc-table, .it-bd .vc-tbl')) return 'table';
       if (/^(records|entities|research|source)$/.test(t) || /^(list|cards|news|feed|links|notices|checklist|people|ranked|reading|headlines|articles|sources)$/.test(f) || c.querySelector('.it-bd .vc-rbx, .it-bd .vc-app-cards')) return 'list';
       return '';
@@ -7749,6 +7754,8 @@
           else if (kind === 'mchart') { inner = document.createElement('vera-mkt-chart'); h.textContent = '';   /* the Markets chart (WSU-75) */
             inner.setAttribute('symbol', h.dataset.symbol || ''); inner.setAttribute('provider', h.dataset.provider || 'yahoo'); inner.setAttribute('tf', h.dataset.tf || '1d');
             ensureLib('/markets/chart.js', 'vera-mkt-chart'); }
+          else if (kind === 'mmap') { inner = document.createElement('vera-mkt-map'); h.textContent = '';   /* the Quant Studio's market map */
+            ensureLib('/markets/chart.js', 'vera-mkt-map'); }
           else if (kind === 'preview') { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key);
           inner.setAttribute('sandbox', 'allow-scripts');   // no network, no cookies, no same-origin: it only draws
           // a code item previews its code; an html item previews the page it IS (its content field is `html`)
@@ -7779,7 +7786,7 @@
           else { inner = document.createElement('iframe'); inner.className = 'vc-pframe'; inner.setAttribute('title', key); inner.src = h.dataset.src || 'about:blank'; }
           el = document.createElement('div'); el.className = 'lv'; el.dataset.kind = kind; el.dataset.key = key; el.appendChild(inner); L[key] = el; live.appendChild(el);
           try { this.dispatchEvent(new CustomEvent('vera:canvas:live', { bubbles: true, detail: { key, kind, ws: h.dataset.ws || '', src: h.dataset.src || '' } })); } catch (e) {}
-        } else if (kind === 'mchart') { if (h.textContent) h.textContent = '';   /* a redrawn slot under a chart already drawn: no placeholder over it */
+        } else if (kind === 'mchart' || kind === 'mmap') { if (h.textContent) h.textContent = '';   /* a redrawn slot under a chart already drawn: no placeholder over it */
         } else if (kind === 'widget') { const inner = el.firstChild, rc = this._contentOf(key); const sz = h.dataset.size || 'm'; if (h.textContent) h.textContent = ''; if (inner && inner.getAttribute('size') !== sz) inner.setAttribute('size', sz); try { const j = JSON.stringify((rc && (rc.record || rc)) || null); if (inner && j && inner._recJson !== j) { inner._recJson = j; inner.record = rc.record || rc; } } catch (e) {}
           this._widgetFit(key, inner);   // a re-rendered slot is a fresh face: its own width again
         } else if (kind === 'mermaid') { if (h.textContent) h.textContent = ''; try { if (this.deskAlign()) el.firstChild.setAttribute('max-scale', '2'); else el.firstChild.removeAttribute('max-scale'); } catch (e) {}   /* on the desk a diagram grows with its card (WSU-44) */

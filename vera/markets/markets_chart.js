@@ -225,6 +225,81 @@
       else sc.innerHTML='<span class="muted">—</span>'; }
   });
   };
+  /* THE MARKET MAP (the Quant Studio's Pulse treemap, moved once): /markets/overview's groups as columns, each asset a box sized
+     by its move over the window and coloured by it, animated from where the boxes were. cv / box = the canvas and the box that
+     sizes it; pulse = the overview answer; Wk = the window (chg_1d, chg_1w, ...); st = the page's state {rects, anim};
+     o = {col: {up, dn, ink, muted}, hexA, fmtPct, anim (bool), onPick(key)}. */
+  M.drawMarketMap = function(cv, box, pulse, Wk, st, o){
+  if(!cv||!pulse) return;
+  const allAssets=()=>pulse.groups.flatMap(g=>g.assets.filter(a=>!a.sparse));
+  const COL=o.col, hexA=o.hexA, fmtPct=o.fmtPct;
+  const dpr=root.devicePixelRatio||1;
+  const W=box.clientWidth,H=box.clientHeight;
+  cv.width=W*dpr;cv.height=H*dpr;
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
+  const groups=pulse.groups.map(g=>({name:g.name,
+    assets:g.assets.filter(a=>!a.sparse).map(a=>({...a,
+      w:Math.max(0.35,Math.min(12,Math.abs(a[Wk]??0)+0.35))}))}))
+    .filter(g=>g.assets.length);
+  const totalW=groups.reduce((s,g)=>s+g.assets.reduce((x,a)=>x+a.w,0),0)||1;
+  /* columns per group, rows per asset */
+  const targets=new Map();
+  let x=2;
+  groups.forEach(g=>{
+    const gw=g.assets.reduce((s,a)=>s+a.w,0)/totalW*(W-4-groups.length*2);
+    let y=18;
+    const gsum=g.assets.reduce((s,a)=>s+a.w,0)||1;
+    g.assets.sort((a,b)=>(b.w)-(a.w)).forEach(a=>{
+      const ah=a.w/gsum*(H-20-g.assets.length);
+      targets.set(a.key,{x,y,w:gw,h:ah,a,gname:g.name});
+      y+=ah+1;
+    });
+    x+=gw+2;
+  });
+  /* animate from previous rects */
+  const t0=performance.now(),dur=o.anim?520:1;
+  if(st.anim) cancelAnimationFrame(st.anim);
+  const maxAbs=Math.max(2,...allAssets().map(a=>Math.abs(a[Wk]||0)));
+  const frame=now=>{
+    const p=Math.min(1,(now-t0)/dur), e=1-Math.pow(1-p,3);
+    ctx.clearRect(0,0,W,H);
+    ctx.font='10px ui-monospace,Consolas,monospace';
+    targets.forEach((tgt,key)=>{
+      const prev=st.rects.get(key)||{...tgt,w:0,h:0};
+      const r={x:prev.x+(tgt.x-prev.x)*e, y:prev.y+(tgt.y-prev.y)*e,
+        w:prev.w+(tgt.w-prev.w)*e, h:prev.h+(tgt.h-prev.h)*e};
+      const v=tgt.a[Wk]??0;
+      const al=0.18+Math.min(1,Math.abs(v)/maxAbs)*0.72;
+      ctx.fillStyle=hexA(v>=0?COL.up:COL.dn,al);
+      ctx.beginPath(); ctx.roundRect(r.x,r.y,Math.max(1,r.w),Math.max(1,r.h),3); ctx.fill();
+      if(r.w>44&&r.h>15){
+        ctx.fillStyle=COL.ink; ctx.textAlign='left';
+        ctx.fillText(tgt.a.symbol,r.x+5,r.y+12);
+        if(r.h>27){ ctx.fillStyle=hexA(COL.ink,.75);
+          ctx.fillText(fmtPct(v),r.x+5,r.y+24); }
+      }
+    });
+    /* group captions */
+    ctx.fillStyle=COL.muted; ctx.textAlign='left';
+    let gx=2;
+    groups.forEach(g=>{
+      const gw=g.assets.reduce((s,a)=>s+a.w,0)/totalW*(W-4-groups.length*2);
+      ctx.fillText(g.name.toUpperCase(),gx+2,12);
+      gx+=gw+2;
+    });
+    if(p<1) st.anim=requestAnimationFrame(frame);
+    else { st.rects=targets; st.anim=null; }
+  };
+  st.anim=requestAnimationFrame(frame);
+  cv.onclick=e=>{
+    const r=cv.getBoundingClientRect();
+    const mx=e.clientX-r.left,my=e.clientY-r.top;
+    for(const [key,tgt] of st.rects){
+      if(mx>=tgt.x&&mx<=tgt.x+tgt.w&&my>=tgt.y&&my<=tgt.y+tgt.h){ o.onPick(key); break; }
+    }
+  };
+  };
+  M.MAP_WINDOWS = [['chg_1d', '1D'], ['chg_1w', '1W'], ['chg_1m', '1M'], ['chg_3m', '3M'], ['chg_ytd', 'YTD'], ['chg_1y', '1Y']];   /* the Studio's Pulse windows */
   /* /markets/indicators' answer drawn: overlays on the price chart, the rest in panes made by addSub(id, labelHtml).
      ctx = { main, bars (columnar), result, addSub, overlays (array the overlay series go in), esc }. */
   M.drawIndicators = function (ctx) {
@@ -304,6 +379,10 @@
      parse - one pixel painted with it says what it is */
   const plainColor = (css, fallback) => { try { const cv = document.createElement('canvas'); cv.width = cv.height = 1; const x = cv.getContext('2d'); x.fillStyle = fallback; x.fillStyle = css; x.fillRect(0, 0, 1, 1);
       const p = x.getImageData(0, 0, 1, 1).data; return 'rgba(' + p[0] + ',' + p[1] + ',' + p[2] + ',' + (p[3] / 255).toFixed(2) + ')'; } catch (e) { return fallback; } };
+  /* the theme's colours as a canvas paints them (the sparkline, the market map): up, down, ink, muted - and hexA for either form */
+  const themeCol = (el) => { const cs = getComputedStyle(el); const g = (n, fb) => plainColor(cs.getPropertyValue(n).trim() || fb, fb);
+    return { up: g('--ok', '#3fd0a4'), dn: g('--err', '#e0705a'), ink: g('--t1', '#e8e0d4'), muted: g('--dim2', '#8a7e70'),
+      hexA: (c, a) => (/^rgba?\(/.test(c) ? c.replace(/^rgba?\(([^,]+),([^,]+),([^,)]+)(,[^)]*)?\)$/, 'rgba($1,$2,$3,' + a + ')') : M.hexA(c, a)) }; };
   /* a read that did not reach the server (or the server failing: 5xx) is `failed` - tried again; an answer that says why is not */
   const api = async (path, body) => { try { const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}); if (r.status >= 500) return { error: 'HTTP ' + r.status, failed: true }; return await r.json(); } catch (e) { return { error: String(e), failed: true }; } };
 
@@ -601,8 +680,7 @@
       }
       if (this._sideId !== want) return; side.innerHTML = html; if (after) after(side); }
     /* the sparkline in the desk's theme colours */
-    _sparkCol() { const cs = getComputedStyle(this); const g = (n, fb) => plainColor(cs.getPropertyValue(n).trim() || fb, fb);
-      return { up: g('--ok', '#3fd0a4'), dn: g('--err', '#e0705a'), hexA: (c, a) => (/^rgba\(/.test(c) ? c.replace(/,[^,]*\)$/, ',' + a + ')') : M.hexA(c, a)) }; }
+    _sparkCol() { return themeCol(this); }
     /* a backtest's trades on the candles, on the timeframe it ran on */
     async _openBt(id) {
       const r = await this._call('markets.backtest.get', { id }); if (!r || r.error) return;
@@ -625,4 +703,66 @@
     }
   }
   if (root.customElements && !root.customElements.get('vera-mkt-chart')) root.customElements.define('vera-mkt-chart', VeraMktChart);
+
+  /* ── <vera-mkt-map window> - the Quant Studio's market map on the desk (the redesign plan section 4: the Studio's views as
+     elements, one implementation). /markets/overview (cached 60 s on the server) drawn by M.drawMarketMap with the Studio's windows;
+     read again every 60 s while it is seen. An asset picked opens its <vera-mkt-chart> in place - "← Map" returns. ── */
+  class VeraMktMap extends HTMLElement {
+    static get observedAttributes() { return ['window']; }
+    constructor() { super(); this.attachShadow({ mode: 'open' }); this._st = { rects: new Map(), anim: null }; }
+    get _win() { const w = this.getAttribute('window') || 'chg_1d'; return M.MAP_WINDOWS.some((x) => x[0] === w) ? w : 'chg_1d'; }
+    connectedCallback() {
+      if (this._built) return; this._built = true;
+      this.shadowRoot.innerHTML = `<style>
+        :host{display:block;width:100%;height:100%;min-height:160px}
+        [hidden]{display:none!important}
+        .wrap{display:flex;flex-direction:column;width:100%;height:100%;font:11px/1.3 var(--mono,ui-monospace,monospace);color:var(--t2,#b9aea0);background:var(--bg1,#15181d)}
+        .hd{display:flex;align-items:center;gap:4px 8px;flex-wrap:wrap;padding:2px 2px 4px}
+        .hd b{color:var(--t1,#e8e0d4);font-size:12px} .info{color:var(--dim2,#8a7e70);font-size:10px;margin-left:auto}
+        .hd button{font:inherit;font-size:9.5px;padding:0 5px;border-radius:5px;border:1px solid var(--bd,rgba(127,127,127,.25));background:transparent;color:var(--dim2,#8a7e70);cursor:pointer}
+        .hd button.on{color:var(--acc,#5a9e8f);border-color:color-mix(in srgb,var(--acc,#5a9e8f) 55%,transparent);background:color-mix(in srgb,var(--acc,#5a9e8f) 12%,transparent)}
+        .box{position:relative;flex:1 1 auto;min-height:120px} .box canvas{position:absolute;inset:0;width:100%;height:100%;cursor:pointer}
+        .deep{flex:1 1 auto;min-height:0;display:flex} .deep vera-mkt-chart{flex:1 1 auto}
+        .msg{padding:12px;color:var(--dim2,#8a7e70)} .box .msg{position:absolute;inset:0;pointer-events:none}
+      </style>
+      <div class="wrap"><div class="hd"><button class="bk" data-a="map" title="Back to the market map" hidden>← Map</button><b class="ttl">Market map</b>
+        <span class="wins">${M.MAP_WINDOWS.map(([w, l]) => `<button data-a="win" data-v="${w}">${l}</button>`).join('')}</span><span class="info"></span></div>
+        <div class="box"><canvas></canvas></div><div class="deep" hidden></div></div>`;
+      this.shadowRoot.addEventListener('click', (ev) => { const b = ev.target.closest && ev.target.closest('button[data-a]'); if (!b) return; ev.stopPropagation();
+        if (b.dataset.a === 'win') this.setAttribute('window', b.dataset.v); else if (b.dataset.a === 'map') this._map(); });
+      this._io = new IntersectionObserver((es) => { this._seen = es.some((e) => e.isIntersecting); this._livePlan(); }); this._io.observe(this);
+      this._ro = new ResizeObserver(() => { clearTimeout(this._rsT); this._rsT = setTimeout(() => this._draw(false), 150); }); this._ro.observe(this);
+      document.addEventListener('visibilitychange', this._vis = () => this._livePlan());
+      this._load();
+    }
+    disconnectedCallback() { clearTimeout(this._liveT); clearTimeout(this._rsT); try { this._io.disconnect(); this._ro.disconnect(); } catch (e) { /* gone */ }
+      document.removeEventListener('visibilitychange', this._vis); if (this._st.anim) cancelAnimationFrame(this._st.anim); this._built = false; }
+    attributeChangedCallback() { if (this._built) this._draw(true); }
+    async _load() {
+      const info = this.shadowRoot.querySelector('.info'); if (!this._pulse) info.textContent = 'reading…';
+      const r = await api('/markets/overview');
+      if (r && r.groups) { this._pulse = r; this._draw(true); }
+      else if (!this._pulse) { info.textContent = (r && r.error) || 'overview failed'; }
+      this._livePlan(); }
+    _livePlan() { clearTimeout(this._liveT); if (!this._seen || document.visibilityState === 'hidden') return; this._liveT = setTimeout(() => this._load(), 60000); }
+    _draw(anim) { const sr = this.shadowRoot, P = this._pulse, w = this._win;
+      sr.querySelectorAll('.wins button').forEach((b) => b.classList.toggle('on', b.dataset.v === w));
+      if (!P) return; sr.querySelector('.info').textContent = P.count + ' assets · ' + String(P.asof || '').slice(11, 16) + 'Z';
+      const box = sr.querySelector('.box'); if (box.hidden || !box.clientWidth) return;
+      /* nothing with bars yet (an empty overview, or every asset still backfilling): said, not an empty box */
+      const none = !(P.groups || []).some((g) => (g.assets || []).some((a) => !a.sparse)); const em = box.querySelector('.msg');
+      if (none) { if (!em) box.insertAdjacentHTML('beforeend', '<div class="msg">No assets with bars in the overview yet</div>'); } else if (em) em.remove();
+      const col = themeCol(this);
+      M.drawMarketMap(box.querySelector('canvas'), box, P, w, this._st, { col, hexA: col.hexA, fmtPct: F.fmtPct, anim: !!anim, onPick: (key) => this._open(key) }); }
+    /* an asset picked: its chart, here */
+    _open(key) { const sr = this.shadowRoot, i = String(key).indexOf(':'); const prov = i > 0 ? key.slice(0, i) : 'yahoo', sym = i > 0 ? key.slice(i + 1) : key;
+      const deep = sr.querySelector('.deep'); deep.innerHTML = ''; const c = document.createElement('vera-mkt-chart');
+      c.setAttribute('provider', prov); c.setAttribute('symbol', sym); c.setAttribute('tf', '1d'); deep.appendChild(c);
+      sr.querySelector('.box').hidden = true; sr.querySelector('.wins').hidden = true; deep.hidden = false; sr.querySelector('.bk').hidden = false; sr.querySelector('.ttl').textContent = sym;
+      this.dispatchEvent(new CustomEvent('mkt-symbol', { bubbles: true, composed: true, detail: { provider: prov, symbol: sym } })); }
+    _map() { const sr = this.shadowRoot; sr.querySelector('.deep').hidden = true; sr.querySelector('.deep').innerHTML = ''; sr.querySelector('.box').hidden = false;
+      sr.querySelector('.wins').hidden = false; sr.querySelector('.bk').hidden = true; sr.querySelector('.ttl').textContent = 'Market map'; this._st.rects = new Map(); this._draw(true); }
+  }
+  M.Map = VeraMktMap;
+  if (root.customElements && !root.customElements.get('vera-mkt-map')) root.customElements.define('vera-mkt-map', VeraMktMap);
 })(window);

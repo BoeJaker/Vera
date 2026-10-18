@@ -3273,76 +3273,10 @@ function gaugeHtml(label,val,pct,color,sub){
 }
 /* shared (markets/chart.js), drawn in this page's theme colours */
 function drawSpark(cv,vals,up){ return VeraMktChart.drawSpark(cv,vals,up,{up:COL.up,dn:COL.dn,hexA}); }
-/* animated slice-and-dice treemap grouped by sector */
+/* animated slice-and-dice treemap grouped by sector - the shared market map (markets/chart.js VeraMktChart.drawMarketMap; the desk's
+   <vera-mkt-map> draws the same), in this page's theme colours */
 function drawTreemap(){
-  const cv=$('treemapCv'); if(!cv||!S.pulse) return;
-  const box=$('treemapBox');
-  const dpr=devicePixelRatio||1;
-  const W=box.clientWidth,H=box.clientHeight;
-  cv.width=W*dpr;cv.height=H*dpr;
-  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0);
-  const Wk=S.pulseWin;
-  const groups=S.pulse.groups.map(g=>({name:g.name,
-    assets:g.assets.filter(a=>!a.sparse).map(a=>({...a,
-      w:Math.max(0.35,Math.min(12,Math.abs(a[Wk]??0)+0.35))}))}))
-    .filter(g=>g.assets.length);
-  const totalW=groups.reduce((s,g)=>s+g.assets.reduce((x,a)=>x+a.w,0),0)||1;
-  /* columns per group, rows per asset */
-  const targets=new Map();
-  let x=2;
-  groups.forEach(g=>{
-    const gw=g.assets.reduce((s,a)=>s+a.w,0)/totalW*(W-4-groups.length*2);
-    let y=18;
-    const gsum=g.assets.reduce((s,a)=>s+a.w,0)||1;
-    g.assets.sort((a,b)=>(b.w)-(a.w)).forEach(a=>{
-      const ah=a.w/gsum*(H-20-g.assets.length);
-      targets.set(a.key,{x,y,w:gw,h:ah,a,gname:g.name});
-      y+=ah+1;
-    });
-    x+=gw+2;
-  });
-  /* animate from previous rects */
-  const t0=performance.now(),dur=ANIM_ON?520:1;
-  if(TM.anim) cancelAnimationFrame(TM.anim);
-  const maxAbs=Math.max(2,...allAssets().map(a=>Math.abs(a[Wk]||0)));
-  const frame=now=>{
-    const p=Math.min(1,(now-t0)/dur), e=1-Math.pow(1-p,3);
-    ctx.clearRect(0,0,W,H);
-    ctx.font='10px ui-monospace,Consolas,monospace';
-    targets.forEach((tgt,key)=>{
-      const prev=TM.rects.get(key)||{...tgt,w:0,h:0};
-      const r={x:prev.x+(tgt.x-prev.x)*e, y:prev.y+(tgt.y-prev.y)*e,
-        w:prev.w+(tgt.w-prev.w)*e, h:prev.h+(tgt.h-prev.h)*e};
-      const v=tgt.a[Wk]??0;
-      const al=0.18+Math.min(1,Math.abs(v)/maxAbs)*0.72;
-      ctx.fillStyle=hexA(v>=0?COL.up:COL.dn,al);
-      ctx.beginPath(); ctx.roundRect(r.x,r.y,Math.max(1,r.w),Math.max(1,r.h),3); ctx.fill();
-      if(r.w>44&&r.h>15){
-        ctx.fillStyle=COL.ink; ctx.textAlign='left';
-        ctx.fillText(tgt.a.symbol,r.x+5,r.y+12);
-        if(r.h>27){ ctx.fillStyle=hexA(COL.ink,.75);
-          ctx.fillText(fmtPct(v),r.x+5,r.y+24); }
-      }
-    });
-    /* group captions */
-    ctx.fillStyle=COL.muted; ctx.textAlign='left';
-    let gx=2;
-    groups.forEach(g=>{
-      const gw=g.assets.reduce((s,a)=>s+a.w,0)/totalW*(W-4-groups.length*2);
-      ctx.fillText(g.name.toUpperCase(),gx+2,12);
-      gx+=gw+2;
-    });
-    if(p<1) TM.anim=requestAnimationFrame(frame);
-    else { TM.rects=targets; TM.anim=null; }
-  };
-  TM.anim=requestAnimationFrame(frame);
-  cv.onclick=e=>{
-    const r=cv.getBoundingClientRect();
-    const mx=e.clientX-r.left,my=e.clientY-r.top;
-    for(const [key,tgt] of TM.rects){
-      if(mx>=tgt.x&&mx<=tgt.x+tgt.w&&my>=tgt.y&&my<=tgt.y+tgt.h){ assetDrill(key); break; }
-    }
-  };
+  VeraMktChart.drawMarketMap($('treemapCv'),$('treemapBox'),S.pulse,S.pulseWin,TM,{col:COL,hexA,fmtPct,anim:ANIM_ON,onPick:assetDrill});
 }
 async function assetDrill(key){
   const a=allAssets().find(x=>x.key===key);

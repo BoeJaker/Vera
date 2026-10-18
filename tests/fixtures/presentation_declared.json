@@ -3420,12 +3420,15 @@
   }
  },
  "markets.overview": {
-  "kind": "table",
+  "empty": "no tracked assets in the overview yet",
+  "form": "treemap",
+  "kind": "parts",
   "map": {
    "name": "name",
-   "rows": "groups",
-   "value": "median_1d"
-  }
+   "parts": "groups",
+   "value": "count"
+  },
+  "title": "Market map"
  },
  "markets.portfolio.history": {
   "empty": "No portfolio history",
