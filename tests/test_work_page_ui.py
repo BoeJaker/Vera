@@ -41,26 +41,28 @@ def _section(src, sec):
 
 # ── the rail shrank: 22 → 17, Work first ─────────────────────────────────────
 def test_the_absorbed_pages_are_gone_from_rail_and_dom(src):
-    for sec in ("tasks", "runs", "census", "overview", "variants", "improve"):
+    for sec in ("tasks", "runs", "census", "variants", "improve"):     # overview is a page again (S1, 18 Oct 2026)
         assert 'data-sec="%s"' % sec not in src, "rail still has %s" % sec
         assert 'id="sec-%s"' % sec not in src, "section %s still in the DOM" % sec
     secs = re.findall(r'<div class="sec" id="sec-([a-z]+)"', src)
-    assert "work" in secs and len(secs) == 10, secs   # 17 after slice 3; 13 after Ship (5); 9 after Agents (6); 5 after Mission control (7); 6 with Schedule (2026-09-21); 8 with Releases + Tests; 10 with Models + Performance (owner, 18 Oct 2026)
+    assert "work" in secs and len(secs) == 11, secs   # 17 after slice 3; 13 after Ship (5); 9 after Agents (6); 5 after Mission control (7); 6 with Schedule (2026-09-21); 8 with Releases + Tests; 10 with Models + Performance (owner, 18 Oct 2026)
 
 
-def test_work_is_first_and_the_home(src):
+def test_overview_is_first_and_the_home_work_second(src):
+    # looplab-control §9 S1 (owner O1): the Overview - one timeline of every Loop Lab operation - is the home
     rail = re.findall(r'data-sec="([a-z]+)"', src)
-    assert rail[0] == "work"
-    assert re.search(r'<button class="btn on" data-sec="work"', src)
-    assert '<div class="sec" id="sec-work">' in src, "shown at load"
+    assert rail[:2] == ["overview", "work"]
+    assert re.search(r'<button class="btn on" data-sec="overview"', src)
+    assert '<div class="sec" id="sec-overview">' in src, "shown at load"
+    assert '<div class="sec" id="sec-work" style="display:none">' in src
     assert '<div class="sec" id="sec-ship" style="display:none">' in src
-    assert "return b?b.dataset.sec:'work'" in _fn(src, "_curSec")
-    assert "if(!routeHash()&&_curSec()==='work')nav('work')" in src, "a deep link lands on its page; otherwise Work"
+    assert "return b?b.dataset.sec:'overview'" in _fn(src, "_curSec")
+    assert "if(!routeHash()&&_curSec()==='overview')nav('overview')" in src, "a deep link lands on its page; otherwise the Overview"
 
 
 def test_old_deep_links_still_land_on_the_table(src):
     nav = _fn(src, "nav")
-    for sec in ("tasks", "runs", "census", "overview", "variants", "improve"):
+    for sec in ("tasks", "runs", "census", "variants", "improve"):     # overview is a page again (S1, 18 Oct 2026)
         assert "%s:()=>nav('work')" % sec in nav, sec
     assert "work:loadWork" in nav
 
