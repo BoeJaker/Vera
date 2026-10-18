@@ -144,6 +144,12 @@ html.vpb-nav-hosted body{padding-left:0}
 .olv-lanes button.on{color:inherit;border-color:currentColor}
 .olv-lanes button i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
 .olv-drill{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px}
+.tst-t{width:100%;border-collapse:collapse;font-size:12px}.tst-t th{text-align:left;color:var(--muted);font-weight:500;padding:4px 6px;border-bottom:1px solid var(--border)}
+.tst-t td{padding:5px 6px;border-bottom:1px solid var(--border);vertical-align:top}.tst-t tr.tst-r{cursor:pointer}.tst-t tr.tst-r:hover td{background:var(--bg2,var(--bg1))}
+.tst-h{display:inline-block;font-size:10.5px;padding:1px 7px;border-radius:9px;border:1px solid currentColor;white-space:nowrap}
+.tst-h.running::before{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:4px;animation:olvPulse 1.6s infinite}
+.tst-f{display:inline-block;font-size:10px;color:var(--muted);border:1px solid var(--border);border-radius:8px;padding:0 5px;margin-right:3px}
+.tst-broken{color:var(--err);font-weight:600}.tst-src{color:var(--muted);font-size:10.5px}
 .olv-drill .dk{color:var(--muted);display:inline-block;min-width:80px}
 .olv-drill pre{white-space:pre-wrap;max-height:320px;overflow:auto;font-size:11px;background:var(--bg2,var(--bg1));padding:6px 8px;border-radius:6px}
 .olv-drill table{border-collapse:collapse;width:100%}.olv-drill td{padding:2px 6px;border-bottom:1px solid var(--border);vertical-align:top}
@@ -855,8 +861,26 @@ html.vpb-nav-hosted body{padding-left:0}
 
 <!-- == TESTS: four-minds' scheduled tests on their own page (owner, 18 Oct 2026) - /decide/tests in a frame,
      loaded the first time the section opens (a full page is a frame, never inline) == -->
-<div class="sec" id="sec-tests" style="display:none;height:calc(100vh - 60px)">
-  <iframe id="tests-frame" title="Tests" data-src="/decide/tests" style="width:100%;height:100%;border:0;background:transparent"></iframe>
+<div class="sec" id="sec-tests" style="display:none">
+  <!-- Tests (looplab-control §9.4 S2, handed over by four-minds 18 Oct - four-minds/LOOPLAB-TESTS-HANDOVER.md): the
+       scheduled tests on the kit - rows from decide.tests.status, THE timeline (runs, windows, measures), THE matrix
+       (candidates), THE drill (test > entries / runs / record; a matrix cell). Four-minds owns the data; this draws it.
+       A broken measure reads BROKEN, never 0%; every number names its source; controls only in the drill. -->
+  <div class="card" id="tst-card">
+    <div class="card-h"><span class="card-t">Tests</span><span class="hint">every scheduled test &middot; from <code>decide.tests.status</code></span><span class="hint" id="tst-at" style="margin-left:auto"></span></div>
+    <div class="olv-tiles" id="tst-tiles"></div>
+    <div id="tst-rows"><div class="hint">loading the tests&hellip;</div></div>
+    <vera-drill class="olv-drill" id="tst-drill" url></vera-drill>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Over time</span><span class="hint">runs and windows of every test &middot; the measures they report</span></div>
+    <div class="olv-lanes" id="tst-lanes"></div>
+    <div id="tst-tl-host"></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Candidate matrix</span><span class="hint" id="tst-mx-hint">applications &times; candidates &middot; accuracy &middot; grey under 30 outcomes &middot; <code>decide.matrix.report</code></span></div>
+    <div id="tst-mx"></div>
+  </div>
 </div>
 
 <div class="sec" id="sec-settings" style="display:none">
@@ -1168,7 +1192,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={overview:loadOverviewPage,compare:loadComparePage,work:loadWork,ship:loadShip,agents:agentsPoll,mission:missionPoll,
-    tests:()=>{const fr=document.getElementById('tests-frame');if(fr&&!fr.getAttribute('src'))fr.setAttribute('src',(window._veraBase||'')+fr.dataset.src);},
+    tests:loadTestsPage,
     // Pages Mission control absorbed (slice 7): the compose form is a modal,
     // the theatres the live panel, the rest its table.
     test:()=>mcOpen('test'),watch:()=>mcOpen('watch'),errors:()=>mcOpen('errors'),master:()=>nav('mission'),activity:()=>nav('mission'),
@@ -1372,6 +1396,155 @@ function olvDrill(d){
   if(d.lane==='ll.tests')$('olv-drill').open('test-run',it.ts,{rec:it,root:true});
   else if(it.id)$('olv-drill').open('event',it.id,{rec:it,root:true});
 }
+
+/* ═══ TESTS — every scheduled test on the kit (looplab-control §9.4 S2; four-minds handover 18 Oct) ═══ */
+// Four-minds owns the data (decide.tests.status + each test's report caps); this draws it with THE timeline, THE matrix
+// and THE drill. Rules from the handover: a broken measure is never a score (the chat corpus of 11 Oct, 30/30 error, is
+// BROKEN, not 0%); every number names its source; controls (run now, enable) live only in the drill.
+const TST_HEALTH={failed:'#c96b6b',interrupted:'#e0a458',missed:'#e0a458',recovering:'#a78bfa',running:'#6db87a',never:'#8b93a1',ok:'#6db87a',disabled:'#5a6270',scheduled:'#7aa2f7'};
+const TST_ORDER=['failed','interrupted','missed','recovering','running','never','ok','scheduled','disabled'];
+const TST_RESULT={done:'#6db87a',green:'#6db87a',ok:'#6db87a',ended:'#7aa2f7',error:'#c96b6b',failed:'#c96b6b',red:'#c96b6b',interrupted:'#e0a458',stopped:'#e0a458'};
+let _tstData=null,_tstCorpus=null,_tstTimer=null,_tstKitDone=false,_tstOn=null,_tstCells={};
+const TST_SERIES=[   // measures over time: each a lane on THE timeline from the cap that serves it (handover §5)
+  {lane:'tst.shortlist',label:'Shortlist hit@5',cap:'caps.shortlist.replay',args:{history:60},items:'history',t:'ts',value:'loop.hit@5',tip:'{night} · hit@5 {loop.hit@5} · MRR {loop.mrr}',c:'#7aa2f7',on:1},
+  {lane:'tst.memory',label:'Memory seek p50 (ms)',cap:'memory.perf.rows',args:{kind:'probe',days:60,limit:200},items:'rows',t:'ts',value:'extra.latency.ms_p50',tip:'{sha_short} · p50 {extra.latency.ms_p50} ms · p95 {extra.latency.ms_p95} · MRR {extra.quality.mrr}',c:'#e0a458',on:1},
+  {lane:'tst.memq',label:'Memory quality (MRR)',cap:'memory.perf.rows',args:{kind:'probe',days:60,limit:200},items:'rows',t:'ts',value:'extra.quality.mrr',tip:'{sha_short} · MRR {extra.quality.mrr} · hit@10 {extra.quality.hit@10}',c:'#6db87a',on:1},
+  {lane:'tst.matrix',label:'Matrix pairs scored',cap:'decide.matrix.history',args:{days:60},items:'rows',t:'ts',value:'pairs_scored',tip:'{ts} · {pairs_scored} scored · {pairs_untested} untested · {pairs_beating_live} beat live',c:'#a78bfa',on:1},
+  {lane:'tst.claims',label:'Claims: live accuracy',cap:'decide.claims.history',args:{days:60},items:'rows',t:'ts',value:'live_accuracy',tip:'{ts} · live {live_accuracy} on {live_n} · best {best_judge} {best_accuracy}',c:'#4ade80',on:1},
+  {lane:'tst.worldview',label:'Worldview median population',cap:'worldview.spread.history',args:{days:60},items:'rows',t:'ts',value:'median_population',tip:'{ts} · median {median_population} · {concepts_below_min} below min · {status}',c:'#c9a35a',on:0},
+];
+function _tstAgo(v){if(!v)return '';const s=(Date.now()-Date.parse(v))/1000;return s<0?'in '+VeraLive.ago(-s):VeraLive.ago(s)+' ago'}
+function _tstFmt(x,d){return x==null||x===''||isNaN(+x)?'–':(+x).toFixed(d==null?2:d)}
+/* the headline per test, naming its source; null = this test reports no number */
+function _tstHeadline(t){
+  const h=t.headline||{},src=s=>' <span class="tst-src">'+esc(s)+'</span>';
+  if(h.error)return '<span class="tst-broken">BROKEN</span> '+esc(String(h.error).slice(0,80))+src(t.report||'');
+  switch(t.id){
+    case 'matrix':return h.pairs_scored==null?null:esc(h.pairs_scored+' pairs scored · '+h.pairs_untested+' untested · '+h.applications+' applications')+src('decide.matrix.report');
+    case 'claims':return h.decisions==null?null:esc(h.with_outcome+' of '+h.decisions+' decisions have an outcome')+src('decide.ledger.stats');
+    case 'shortlist':return h['loop_hit@5']==null?null:esc('hit@5 '+_tstFmt(h['loop_hit@5'],3)+' · recall@10 '+_tstFmt(h['loop_recall@10'],3)+' · MRR '+_tstFmt(h.loop_mrr,3)+' · '+(h.night||''))+src('caps.shortlist.replay');
+    case 'cascade':return h.eligible?esc(Object.keys(h.eligible).length+' of '+h.questions+' questions eligible: '+Object.keys(h.eligible).join(', '))+src('decide.cascade.plan'):null;
+    case 'calibration':return h.week?esc(h.week+': '+h.alerts+' alert(s)')+src('decide.calibration.history'):null;
+    case 'memory':return h.seek_p50_ms==null?null:esc('seek p50 '+Math.round(h.seek_p50_ms)+' ms · p95 '+Math.round(h.seek_p95_ms)+' ms · MRR '+_tstFmt((h.quality||{}).mrr,3)+' · '+(h.sha||''))+src('memory.perf.rows');
+    case 'chat_corpus':{   // the headline's own fields (four-minds 488afd41: objects + `broken`), else chat.corpus.last itself
+      const own=h.cases!=null&&h.status&&typeof h.status==='object';
+      const c=own?h:(_tstCorpus&&_tstCorpus.summary);if(!c)return null;const st=c.status||{};
+      if(c.broken===true||(c.cases&&(st.error||0)>=c.cases))return '<span class="tst-broken">BROKEN</span> every case errored ('+st.error+'/'+c.cases+') - no score'+src('chat.corpus.last');
+      const tt=(c.ttft_ms||{}).plain||{};
+      return esc(Math.round(100*(c.pass_rate||0))+'% pass ('+(st.pass||0)+'/'+c.cases+', '+(st.fail||0)+' fail, '+(st.error||0)+' error) · TTFT p50 '+(tt.p50||'–')+' ms')+src('chat.corpus.last');
+    }
+  }
+  return null;
+}
+function _tstHealthChip(h){return '<span class="tst-h '+esc(h)+'" style="color:'+(TST_HEALTH[h]||'#8b93a1')+'">'+esc(h)+'</span>'}
+function _tstEntryIds(){return ((_tstData&&_tstData.tests)||[]).flatMap(t=>(t.entries||[]).map(e=>e.id))}
+function _tstLanes(){
+  const ids=_tstEntryIds(),now=Date.now(),start=new Date(now-8*864e5).toISOString(),end=new Date(now+3*864e5).toISOString();
+  const base=[
+    {lane:'tst.windows',label:'Test windows',group:'Tests',type:'band',color:'#7aa2f7',live:120,source:{cap:'evolve.schedule.events',args:{mode:'windows',include_agents:false,include_releases:false,start,end}},
+     map:{items:'events',t:'start',end:'end',id:'id',where:{source:'loop-lab',schedule_id:ids},tip:'{title}',color:'#7aa2f7'}},
+    {lane:'tst.runs',label:'Test runs',group:'Tests',type:'bar',color:'#6db87a',live:60,source:{cap:'evolve.schedule.history',args:{limit:200}},
+     map:{items:'runs',t:'started_at',end:'finished_at',id:'id',where:{schedule_id:ids},tip:'{title} · {result} · {reason} · {detail}',color:{field:'result',map:TST_RESULT,else:'#8b93a1'}}},
+  ];
+  const series=TST_SERIES.map(S=>({lane:S.lane,label:S.label,group:'Measures',type:'strip',color:S.c,live:300,source:{cap:S.cap,args:S.args},map:{items:S.items,t:S.t,value:S.value,tip:S.tip,color:S.c}}));
+  return base.concat(series);
+}
+async function loadTestsPage(){
+  try{await Promise.all([_olvScript(),_olvLib('vera-matrix.js',()=>window.VeraMatrix&&customElements.get('vera-matrix'))])}
+  catch(e){$('tst-rows').innerHTML='<div class="hint">the kit did not load: '+esc(e.message)+'</div>';return}
+  _tstKit();
+  await tstRefresh();
+  clearInterval(_tstTimer);_tstTimer=setInterval(()=>{if(_curSec()==='tests')tstRefresh();else{clearInterval(_tstTimer);_tstTimer=null}},60000);
+}
+async function tstRefresh(){
+  const [d,cc]=await Promise.all([VeraDrill.call('decide.tests.status',{}).catch(e=>({error:e.message})),VeraDrill.call('chat.corpus.last',{}).catch(()=>null)]);
+  if(!d||d.error||!Array.isArray(d.tests)){$('tst-rows').innerHTML=VeraStates.html('error','could not read decide.tests.status'+(d&&d.error?': '+d.error:''));return}
+  _tstData=d;_tstCorpus=cc;
+  $('tst-at').textContent='read '+_tstAgo(d.at)+(d.headlines_at?' · headlines '+_tstAgo(d.headlines_at):'');
+  const counts=d.counts||{};
+  $('tst-tiles').innerHTML=TST_ORDER.filter(h=>counts[h]).map(h=>'<div class="olv-tile'+(h==='running'?' live':'')+'" title="tests whose worst entry is '+h+'"><div class="k">'+esc(h)+'</div><div class="v" style="color:'+TST_HEALTH[h]+'">'+counts[h]+'</div><div class="s">'+esc(d.tests.filter(t=>t.health===h).map(t=>t.name).join(' · '))+'</div></div>').join('');
+  const tests=d.tests.slice().sort((a,b)=>TST_ORDER.indexOf(a.health)-TST_ORDER.indexOf(b.health));
+  $('tst-rows').innerHTML='<table class="tst-t"><tr><th>health</th><th>test</th><th>next</th><th>last run</th><th>headline</th></tr>'+tests.map(t=>{
+    const nx=(t.entries||[]).map(e=>e.next).filter(Boolean).sort()[0],r=(t.runs||[])[0];
+    const flags=(t.entries||[]).some(e=>e.recover)?'<span class="tst-f" title="a restart-killed run restarts at the next tick">recover</span>':'';
+    const prot=(t.entries||[]).some(e=>e.protect)?'<span class="tst-f" title="a release waits for this test while it runs">protect</span>':'';
+    const due=(t.entries||[]).some(e=>e.recover_due)?'<span class="tst-f" style="color:#a78bfa">recovering</span>':'';
+    const hl=_tstHeadline(t);
+    return '<tr class="tst-r" data-test="'+esc(t.id)+'"><td>'+_tstHealthChip(t.health)+'</td><td><b>'+esc(t.name)+'</b><div class="tst-src">'+esc(t.package||'')+' · '+(t.entries||[]).length+' entr'+((t.entries||[]).length===1?'y':'ies')+'</div>'+flags+prot+due+'</td>'+
+      '<td>'+esc(nx?new Date(nx).toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'}):'–')+'</td>'+
+      '<td>'+(r?'<span style="color:'+(TST_RESULT[r.result]||'#8b93a1')+'">'+esc(r.result||'')+'</span> <span class="tst-src">'+esc(_tstAgo(r.started_at))+'</span>':'<span class="tst-src">no run yet</span>')+'</td>'+
+      '<td>'+(hl==null?'<span class="tst-src">no number reported</span>':hl)+'</td></tr>'}).join('')+'</table>';
+  document.querySelectorAll('#tst-rows tr.tst-r').forEach(tr=>tr.addEventListener('click',()=>$('tst-drill').open('test',tr.dataset.test,{root:true})));
+  _tstTimeline();
+  _tstMatrix();
+}
+function _tstTimeline(){
+  const lanes=_tstLanes();lanes.forEach(s=>VeraTimeline.registerLane(s));
+  if(_tstOn==null){try{const s=JSON.parse(localStorage.getItem('looplab-tests-lanes')||'null');if(Array.isArray(s))_tstOn=new Set(s)}catch(_){}
+    if(!_tstOn)_tstOn=new Set(['tst.windows','tst.runs'].concat(TST_SERIES.filter(S=>S.on).map(S=>S.lane)))}
+  $('tst-lanes').innerHTML=lanes.map(L=>'<button class="'+(_tstOn.has(L.lane)?'on':'')+'" onclick="tstLane(\''+L.lane+'\')" title="'+esc((L.source||{}).cap||'')+'"><i style="background:'+L.color+'"></i>'+esc(L.label)+'</button>').join('');
+  let tl=$('tst-tl');
+  if(!tl){$('tst-tl-host').innerHTML='<vera-timeline id="tst-tl" from="-7d" to="+2d"></vera-timeline>';tl=$('tst-tl');
+    tl.addEventListener('timeline:select',e=>{const it=e.detail.item||{};if(e.detail.lane==='tst.runs'&&it.schedule_id){const t=_tstData.tests.find(x=>(x.entries||[]).some(en=>en.id===it.schedule_id));if(t)$('tst-drill').open('test',t.id,{root:true,tab:'runs'})}})}
+  tl.setAttribute('lanes',lanes.filter(L=>_tstOn.has(L.lane)).map(L=>L.lane).join(','));
+}
+function tstLane(id){_tstOn.has(id)?_tstOn.delete(id):_tstOn.add(id);try{localStorage.setItem('looplab-tests-lanes',JSON.stringify([..._tstOn]))}catch(_){}_tstTimeline()}
+/* THE matrix: decide.matrix.report flattened to cells (until four-minds adds a flat `cells` field - asked 18 Oct) */
+async function _tstMatrix(){
+  const r=await VeraDrill.call('decide.matrix.report',{days:7}).catch(e=>({error:e.message}));
+  if(!r||r.error||!r.applications){$('tst-mx').innerHTML=VeraStates.html('error','could not read decide.matrix.report'+(r&&r.error?': '+r.error:''));return}
+  const cells=[];_tstCells={};
+  const liveAcc={};(r.cells||[]).forEach(x=>{if(x.live)liveAcc[x.application]=x.accuracy});
+  if(Array.isArray(r.cells))r.cells.forEach(x=>{   // the flat cells (four-minds 488afd41); live is one cell per application
+    const thin=!(+x.outcomes_n>=30),la=liveAcc[x.application];
+    const c={app:x.application,cand:x.candidate,acc:x.accuracy,outcomes_n:x.outcomes_n,n:x.n,agreement:x.agreement,ms_p50:x.ms_p50,live:!!x.live,
+      v:x.accuracy==null||thin?'thin':+x.accuracy,beats:!x.live&&!thin&&la!=null&&+x.accuracy>+la};
+    cells.push(c);_tstCells[c.app+'\u0000'+c.cand]=c});
+  else Object.keys(r.applications).forEach(app=>{const a=r.applications[app]||{},live=a.live||{};
+    const put=(cand,x,isLive)=>{const thin=!(+x.outcomes_n>=30);const c={app,cand,acc:x.accuracy,outcomes_n:x.outcomes_n,n:x.n,agreement:x.agreement,ms_p50:x.ms_p50,live:isLive,
+      v:x.accuracy==null||thin?'thin':+x.accuracy,beats:!isLive&&!thin&&live.accuracy!=null&&+x.accuracy>+live.accuracy};cells.push(c);_tstCells[app+'\u0000'+cand]=c};
+    put('live',{accuracy:live.accuracy,outcomes_n:live.n,n:live.n},true);
+    (a.candidates||[]).forEach(x=>put(x.candidate,x,false));});
+  cells.sort((a,b)=>(b.live?1:0)-(a.live?1:0));   // the live column first (columns keep first-seen order)
+  const beats=cells.filter(c=>c.beats).length;
+  $('tst-mx-hint').innerHTML=esc(Object.keys(r.applications).length+' applications × '+((r.candidates||[]).length+1)+' columns (live first) · '+r.pairs_scored+' pairs scored, '+r.pairs_untested+' untested · '+beats+' beat live on 30+ outcomes · grey = under 30 outcomes')+' · <code>decide.matrix.report</code>';
+  let el=$('tst-mx').querySelector('vera-matrix');
+  if(!el){$('tst-mx').innerHTML='<vera-matrix id="tst-mxel"></vera-matrix>';el=$('tst-mxel');
+    el.addEventListener('matrix:select',e=>{const c=_tstCells[e.detail.row+'\u0000'+e.detail.col];if(c)$('tst-drill').open('mx-cell',e.detail.row+'|'+e.detail.col,{rec:c,root:true})})}
+  el.record={map:{cells:'cells',row:'app',col:'cand',value:'v',tip:'{app} · {cand} · accuracy {acc} on {outcomes_n} outcomes · agreement {agreement} · p50 {ms_p50} ms'},
+    colour:{scale:[0,1],good:'high',thin:'#2b313b','*':'#2b313b'},data:{cells}};
+}
+function _tstKit(){
+  if(_tstKitDone)return;_tstKitDone=true;
+  const row=_olvRow,when=_olvWhen;
+  VeraDrill.registerKind('test',{label:'Test',
+    load:(id)=>Promise.resolve((_tstData&&_tstData.tests||[]).find(t=>t.id===id)||VeraDrill.call('decide.tests.status',{}).then(d=>{_tstData=d;const t=(d.tests||[]).find(x=>x.id===id);if(!t)throw new Error('no test '+id);return t})),
+    title:(t,id)=>(t&&t.name)||id,
+    tabs:[{id:'summary',label:'Summary'},{id:'entries',label:'Entries'},{id:'runs',label:'Runs'},{id:'record',label:'Record'}],
+    render:(t,tab)=>{
+      if(tab==='record')return '<pre>'+esc(JSON.stringify(t,null,2))+'</pre>';
+      if(tab==='runs')return (t.runs||[]).length?'<table>'+t.runs.map(r=>'<tr><td>'+esc(when(r.started_at))+'</td><td style="color:'+(TST_RESULT[r.result]||'#8b93a1')+'">'+esc(r.result||'')+'</td><td>'+esc(r.title||'')+(r.detail?'<div class="tst-src">'+esc(r.detail)+'</div>':'')+'</td></tr>').join('')+'</table>':'';
+      if(tab==='entries')return (t.entries||[]).map(e=>'<div style="border-bottom:1px solid var(--border);padding:5px 0">'+_tstHealthChip(e.health)+' <b>'+esc(e.title)+'</b>'+
+        row('when',e.when)+row('next',when(e.next))+row('last',e.last_started_at?when(e.last_started_at)+' · '+(e.last_result||''):'')+row('recover',e.recover?'yes'+(e.recover_due?' - due at the next tick':''):'no')+row('protect',e.protect?'yes - a release waits while it runs':'no')+
+        '<div style="display:flex;gap:6px;margin-top:4px"><button class="btn" onclick="tstRunNow(\''+esc(e.id)+'\')" title="start this entry now">&#9654; run now</button>'+
+        '<button class="btn" onclick="tstEnable(\''+esc(e.id)+'\','+(!e.enabled)+')">'+(e.enabled?'disable':'enable')+'</button>'+
+        '<a href="#" data-drill="schedule:'+esc(e.id)+'" style="align-self:center">schedule ›</a></div></div>').join('');
+      const hl=_tstHeadline(t);
+      return row('test',t.name)+row('package',t.package)+'<div><span class="dk">health</span>'+_tstHealthChip(t.health)+'</div>'+row('report',t.report)+
+        '<div><span class="dk">headline</span>'+(hl==null?'<span class="tst-src">no number reported</span>':hl)+'</div>'+
+        (t.headline?'<pre>'+esc(JSON.stringify(t.headline,null,2))+'</pre>':'');
+    }});
+  VeraDrill.registerKind('mx-cell',{label:'Matrix cell',
+    load:(id)=>{const c=_tstCells[id.replace('|','\u0000')];if(!c)throw new Error('open the matrix first');return c},
+    title:(c,id)=>c?c.app+' · '+c.cand:id,
+    render:(c)=>row('application',c.app)+row('candidate',c.cand+(c.live?' (the live rule)':''))+
+      row('accuracy',c.acc==null?'–':_tstFmt(c.acc,3)+' on '+(c.outcomes_n||0)+' outcomes'+(+c.outcomes_n<30?' - under 30: shown, not ranked':''))+
+      row('agreement',c.agreement==null?'':_tstFmt(c.agreement,3)+' with live, over '+c.n+' decisions')+row('speed',c.ms_p50==null?'':'p50 '+c.ms_p50+' ms')+
+      (c.beats?'<div style="color:var(--ok)">beats live on 30+ outcomes</div>':'')+
+      '<div style="margin-top:6px"><a href="'+(window._veraBase||'')+'/decide/labels" target="_blank" rel="noopener">labelled examples › Decision labels</a> <span class="tst-src">decide.ledger / decide.label.queue</span></div>'});
+}
+async function tstRunNow(id){if(!confirm('Start this scheduled test now?'))return;const r=await VeraDrill.call('evolve.schedule.run_now',{id}).catch(e=>({error:e.message}));toast(r&&!r.error?'started':'could not start: '+((r&&r.error)||''));tstRefresh()}
+async function tstEnable(id,on){const r=await VeraDrill.call('evolve.schedule.enable',{id,enabled:on}).catch(e=>({error:e.message}));toast(r&&!r.error?(on?'enabled':'disabled'):'could not change: '+((r&&r.error)||''));tstRefresh()}
 
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
 // Any Loop Lab work on a weekly window or once: a census, a suite, a task, a pipeline step, a board item's dispatch, an
