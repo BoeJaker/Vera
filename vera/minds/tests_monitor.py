@@ -80,8 +80,16 @@ async def _h_memory() -> Dict[str, Any]:
 
 async def _h_chat_corpus() -> Dict[str, Any]:
     d = await _call("chat.corpus.last")
-    keep = ("at", "run", "note", "cases", "passed", "failed", "summary", "error")
-    return {k: (d.get(k) if not isinstance(d.get(k), (dict, list)) else str(d.get(k))[:200]) for k in keep if k in d}         or {"value": str(d)[:200]}
+    # objects, not repr strings (vera-44, 18 Oct); broken = every case errored - a broken measure, never a 0% score
+    if not isinstance(d, dict) or d.get("error") and not d.get("summary"):
+        return {"error": (d or {}).get("error") if isinstance(d, dict) else "no answer"}
+    summ = d.get("summary") or {}
+    status = summ.get("status") or {}
+    cases = summ.get("cases") or 0
+    return {"run": d.get("run") or {}, "running": d.get("running"),
+            "cases": cases, "status": status, "pass_rate": summ.get("pass_rate"), "ttft_ms": summ.get("ttft_ms"),
+            "failed_n": len(summ.get("failed") or []), "errors_n": len(summ.get("errors") or []),
+            "broken": bool(cases) and status.get("error", 0) == cases}
 
 
 async def _h_claims() -> Dict[str, Any]:
