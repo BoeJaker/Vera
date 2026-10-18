@@ -928,6 +928,10 @@ async def cap_map_metrics(days: int = 1, sample: int = 20, store: bool = False, 
         overlaps.append(sc.overlap_at([x.get("key") for x in r.get("results") or []], list(srow["result_keys"] or [])))
     m = sc.daily_metrics(purposes, overlaps, fresh, crawl, fetches)
     m["days"] = d
+    try:
+        m["retention"] = (await cap_map_retention(days=90)).get("retention")
+    except Exception as e:  # noqa: BLE001
+        m["retention"] = {"error": str(e)[:120]}
     m["semantic_shadow"] = {"pages": int(sem.get("n") or 0), "known": int(sem.get("known") or 0),
                             "mean_novelty": round(float(sem["mean"]), 3) if sem.get("mean") is not None else None}
     out: Dict[str, Any] = {"metrics": m}
@@ -996,3 +1000,45 @@ async def semantic_note(url: str, ds_id: str, rid: str) -> Optional[float]:
     except Exception as e:  # noqa: BLE001
         log.debug("semantic novelty %s: %s", url, e)
         return None
+
+
+# ── the retention experiment (PLAN §14.2) ────────────────────────────────────
+
+RETENTION_SQL = {
+    "revisits": ("WITH f AS (SELECT ts, status, content_hash, lag(ts) OVER w AS pts, lag(content_hash) OVER w AS phash "
+                 "FROM web_fetches WHERE ts > NOW() - make_interval(days => $1) WINDOW w AS (PARTITION BY url_key ORDER BY ts)) "
+                 "SELECT CASE WHEN pts IS NULL THEN 'first' ELSE " + sc.AGE_SQL.format(d="ts - pts") + " END AS bucket, "
+                 "count(*) AS n, count(*) FILTER (WHERE pts IS NOT NULL AND (status = 304 OR (content_hash IS NOT NULL "
+                 "AND content_hash = phash))) AS unchanged, count(*) FILTER (WHERE pts IS NOT NULL AND (status = 304 OR "
+                 "(content_hash IS NOT NULL AND phash IS NOT NULL))) AS comparable FROM f GROUP BY 1"),
+    "recall": ("SELECT " + sc.AGE_SQL.format(d="q.ts - u.first_seen") + " AS bucket, count(*) AS n FROM web_queries q "
+               "CROSS JOIN LATERAL unnest(q.result_keys) AS k(url_key) JOIN web_urls u ON u.url_key = k.url_key "
+               "WHERE q.purpose = 'index_hit' AND q.ts > NOW() - make_interval(days => $1) GROUP BY 1"),
+    "span": "SELECT EXTRACT(EPOCH FROM (NOW() - min(ts))) / 86400 FROM web_fetches",
+    "counts": "SELECT (SELECT count(*) FROM web_fetches) AS f, (SELECT count(*) FROM web_links) AS l",
+}
+
+
+@capability("fabric.map.retention", http_method="POST", http_path="/fabric/map/retention", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="Is keeping a longer web history worth it (the retention experiment): over the last `days` of "
+                        "receipts, by the age of the previous fetch of the same URL (<1d, 1-7d, 7-30d, 30-60d, 60-90d, "
+                        ">90d) - how many fetches were revisits and how many of those came back unchanged; by the age "
+                        "of the pages index answers cited - how much recall comes from old pages; and what a day of "
+                        "history costs in bytes. Input: days (int, default 90). Output: {retention}.")
+async def cap_map_retention(days: int = 90, trace_id=None):
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected"}
+    d = max(1, min(int(days or 90), 365))
+    try:
+        async with pool.acquire() as conn:
+            rev = [dict(r) for r in await conn.fetch(RETENTION_SQL["revisits"], d)]
+            rec = [dict(r) for r in await conn.fetch(RETENTION_SQL["recall"], d)]
+            span = float(await conn.fetchval(RETENTION_SQL["span"]) or 0.0)
+            cnt = await conn.fetchrow(RETENTION_SQL["counts"])
+            sizes = {r[0]: int(r[1]) for r in await conn.fetch(rc.SIZE_SQL, list(rc.MAP_TABLES))}
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+    return {"retention": sc.retention_curves(rev, rec, sizes, {"web_fetches": int(cnt[0] or 0),
+                                                                 "web_links": int(cnt[1] or 0)}, span)}

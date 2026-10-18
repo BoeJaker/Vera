@@ -107,6 +107,7 @@ DDL: Tuple[str, ...] = (
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty_kind TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS canonical_hash TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_novelty REAL",
+    "ALTER TABLE web_fetches ADD COLUMN IF NOT EXISTS content_hash TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_twin TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_at TIMESTAMPTZ",
     # WI-8: topic maps, keyed on the intel topic id
@@ -165,8 +166,8 @@ UPSERT_URL = """INSERT INTO web_urls (url_key, host, last_status, content_type, 
     simhash = COALESCE(EXCLUDED.simhash, web_urls.simhash), fetches = web_urls.fetches + 1,
     last_caller = EXCLUDED.last_caller, last_purpose = EXCLUDED.last_purpose, policy = EXCLUDED.policy,
     final_key = COALESCE(EXCLUDED.final_key, web_urls.final_key), title = COALESCE(EXCLUDED.title, web_urls.title)"""
-INSERT_FETCH = """INSERT INTO web_fetches (url_key, host, status, ms, bytes, from_cache, caller, purpose, policy, error)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"""
+INSERT_FETCH = """INSERT INTO web_fetches (url_key, host, status, ms, bytes, from_cache, caller, purpose, policy, error,
+    content_hash) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"""
 UPSERT_LINK = """INSERT INTO web_links (src_key, dst_key, text, rel) VALUES ($1, $2, $3, $4)
     ON CONFLICT (src_key, dst_key) DO UPDATE SET last_seen = NOW(), text = COALESCE(EXCLUDED.text, web_links.text)"""
 UPSERT_CONTENT = """INSERT INTO web_content (content_hash, first_key, size, reader, simhash, b0, b1, b2, b3)
@@ -264,7 +265,7 @@ def rows_for(item: Dict[str, Any]) -> Dict[str, Any]:
                 item.get("title") or None),
         "fetch": (key, host, status or None, int(item.get("elapsed_ms") or 0), int(item.get("bytes") or 0),
                   bool(item.get("from_cache")), item.get("caller") or None, item.get("purpose") or None,
-                  item.get("policy"), item.get("error") or None),
+                  item.get("policy"), item.get("error") or None, content_hash),
         "content": content_row,
         "links": links,
         "key": key, "content_hash": content_hash,
