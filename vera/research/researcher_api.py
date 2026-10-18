@@ -167,6 +167,21 @@ if _VERA_MODE:
             "research routing profile registration failed: %s", _rp_err)
 
 log = logging.getLogger("vera.researcher")
+
+def _ingress_client(timeout: float = 30, headers=None, *, purpose: str = "api", caller: str = "research",
+                    follow_redirects: bool = True, **kw):
+    """This module's HTTP client (web-ingress WI-9): through the ingress gateway when it is loaded - every response
+    a receipt in the web map, every request on the host's shared slot - else a plain client, as before."""
+    import sys as _sys
+    ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+    if ing is not None and hasattr(ing, "hooked_client"):
+        try:
+            return ing.hooked_client(caller=caller, purpose=purpose, timeout=timeout, headers=headers,
+                                     follow_redirects=follow_redirects, **kw)
+        except Exception as e:  # noqa: BLE001
+            log.debug("ingress client: %s", e)
+    return httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=follow_redirects, **kw)
+
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 SCREENSHOT_DIR = Path("screenshots")
@@ -1032,7 +1047,7 @@ async def _searxng_once(host: str, query: str, limit: int) -> list[dict]:
     definition of when to stop.
     """
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with _ingress_client(timeout=10.0, purpose="search") as c:
 
             async def _fetch(pageno: int):
                 try:
@@ -1090,7 +1105,7 @@ async def search_brave(query: str, limit: int) -> list[dict]:
         log.debug("search_brave: no api_key configured")
         return []
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with _ingress_client(timeout=10.0, purpose="search") as c:
             r = await _request_with_web_policy(
                 lambda: c.get("https://api.search.brave.com/res/v1/web/search",
                               params={"q":query,"count":limit},
@@ -1115,7 +1130,7 @@ def _clean_search_url(url: str) -> str:
 async def search_ddg(query: str, limit: int) -> list[dict]:
     try:
         _hdrs = _webclient.BROWSER_HEADERS if _webclient else {"User-Agent": "Mozilla/5.0"}
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+        async with _ingress_client(timeout=10.0, follow_redirects=True, purpose="search") as c:
             r = await _request_with_web_policy(
                 lambda: c.get("https://html.duckduckgo.com/html/",
                               params={"q":query}, headers=_hdrs),
@@ -1520,7 +1535,7 @@ async def gather_arxiv(
         return []
     log.debug("gather_arxiv: querying for %r", query[:60])
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with _ingress_client(timeout=10.0, purpose="api") as c:
             r = await c.get("https://export.arxiv.org/api/query",
                 params={"search_query":f"all:{query}","max_results":limit,"sortBy":"relevance"})
         cits = []
@@ -1546,7 +1561,7 @@ async def gather_hackernews(query: str, limit: int = 8) -> list[Citation]:
         return []
     log.debug("gather_hackernews: querying for %r", query[:60])
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        async with _ingress_client(timeout=8.0, purpose="api") as c:
             r = await c.get("https://hn.algolia.com/api/v1/search",
                 params={"query":query,"hitsPerPage":limit,"tags":"story"})
         return [Citation(id=str(uuid.uuid4())[:8],
@@ -1916,7 +1931,7 @@ async def _github_crawl_readme(repo_url: str, token: str = "") -> str:
         headers = {"Accept": "application/vnd.github.raw+json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with _ingress_client(timeout=10.0, purpose="page") as c:
             r = await c.get(api_url, headers=headers)
             if r.status_code == 200:
                 return r.text[:4000]
@@ -1960,7 +1975,7 @@ async def gather_github(query: str, limit: int = 8) -> list[Citation]:
             "X-GitHub-Api-Version": "2022-11-28",
         }
         try:
-            async with httpx.AsyncClient(timeout=12.0, headers=api_headers) as c:
+            async with _ingress_client(timeout=12.0, headers=api_headers, purpose="api") as c:
                 scope = ""
                 if repos:
                     scope = " ".join(f"repo:{r.strip()}" for r in repos.split(",") if r.strip())
@@ -2073,7 +2088,7 @@ async def gather_archive(query: str, active: set) -> list[Citation]:
 
     if "wayback" in active and any(s.id == "wayback" and s.enabled for s in sources):
         try:
-            async with httpx.AsyncClient(timeout=10.0) as c:
+            async with _ingress_client(timeout=10.0, purpose="api") as c:
                 # CDX API: find recent snapshots containing the query terms
                 r = await c.get("http://web.archive.org/cdx/search/cdx",
                     params={
@@ -2099,7 +2114,7 @@ async def gather_archive(query: str, active: set) -> list[Citation]:
     if "commoncrawl" in active and any(s.id == "commoncrawl" and s.enabled for s in sources):
         try:
             # Common Crawl Index API
-            async with httpx.AsyncClient(timeout=12.0) as c:
+            async with _ingress_client(timeout=12.0, purpose="api") as c:
                 r = await c.get("https://index.commoncrawl.org/CC-MAIN-2024-10-index",
                     params={"url": f"*{query.replace(' ','*')}*", "output": "json", "limit": 4})
                 for line in r.text.strip().splitlines()[:4]:
@@ -2195,7 +2210,7 @@ async def _fetch_structured_url(url: str, job_id: str, timeout: float = 15.0) ->
             html, text = fp.get("html", ""), fp.get("text", "")
             title = fp.get("title", "") or url
         else:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
+            async with _ingress_client(timeout=timeout, follow_redirects=True, purpose="page") as c:
                 r = await c.get(url, headers={"Accept": "text/html,application/xhtml+xml"})
                 if r.status_code >= 400:
                     return None
@@ -3322,7 +3337,7 @@ async def _gather_nvd(keyword: str, job_id: str, limit: int = 12) -> list[Citati
     try:
         await broadcast(job_id, {"type":"step","t":time.time(),
             "label":"NVD/CVE","detail":f"Querying NVD: {keyword[:50]}"})
-        async with httpx.AsyncClient(timeout=15.0) as c:
+        async with _ingress_client(timeout=15.0, purpose="api") as c:
             r = await c.get("https://services.nvd.nist.gov/rest/json/cves/2.0",
                 params={"keywordSearch": keyword, "resultsPerPage": limit},
                 headers={"User-Agent":"Vera-Research/2.0"})
