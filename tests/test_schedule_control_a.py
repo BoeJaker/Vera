@@ -47,10 +47,18 @@ def test_follow_state_reads_each_status_shape():
 
 
 # ── A2 ────────────────────────────────────────────────────────────────────────
-def test_quiet_hour_holds_starts_unless_quiet_ok():
+def test_no_quiet_window_by_default():
+    """Owner 18 Oct 2026: there is no quiet hour - background work is scheduled instead."""
+    assert core.DEFAULT_QUIET == []
+    assert core.in_quiet(datetime(2026, 10, 18, 4, 20, tzinfo=UTC), core.DEFAULT_QUIET, "UTC") == ""
+    assert core.cap_allowed("evolve.background.window")
+
+
+def test_a_configured_quiet_window_still_holds_starts_unless_quiet_ok():
     now = datetime(2026, 10, 18, 4, 20, tzinfo=UTC)
-    assert core.in_quiet(now, core.DEFAULT_QUIET, "UTC") == "04:00-05:00"
-    assert core.in_quiet(datetime(2026, 10, 18, 5, 0, tzinfo=UTC), core.DEFAULT_QUIET, "UTC") == ""
+    q = [{"start": "04:00", "end": "05:00"}]
+    assert core.in_quiet(now, q, "UTC") == "04:00-05:00"
+    assert core.in_quiet(datetime(2026, 10, 18, 5, 0, tzinfo=UTC), q, "UTC") == ""
     assert core.in_quiet(now, [{"start": "23:00", "end": "01:00"}], "UTC") == ""
     assert core.in_quiet(datetime(2026, 10, 18, 0, 30, tzinfo=UTC), [{"start": "23:00", "end": "01:00"}], "UTC")
     st = {"quiet": "04:00-05:00"}

@@ -1206,3 +1206,71 @@ async def _agent_events(s: datetime, e: datetime) -> List[Dict[str, Any]]:
                     "start": core.iso(st), "end": core.iso(en), "source": "agents-work", "read_only": True,
                     "kind": x.get("kind"), "status": x.get("view_status"), "color": "#e0a458"})
     return out
+
+
+
+# ── scheduled background work (owner, 18 Oct 2026) ──────────────────────────
+# The idle queue starts a job only after 600 s with nothing running - on a box that runs censuses, probes,
+# gates and loops all day and night that quiet never comes (intel's batch waited six days, 12-17 Oct). The
+# owner: "this stuff should just be scheduled instead of waiting for a quiet period that never comes". A
+# window here RESERVES the queue for every kind that has work waiting (the reservation sets the quiet gate
+# aside for those kinds, as intel.night.run does for intel alone) and drains them one after another until the
+# time is up. As the target of an exclusive Loop Lab schedule it keeps censuses off meanwhile.
+_BG_WINDOW_POLL_S = 15
+
+
+def _idle_svc():
+    for name in ("Vera.vera.idle_queue_service", "vera.idle_queue_service"):
+        mod = sys.modules.get(name)
+        if mod is not None:
+            return mod
+    try:
+        import importlib
+        return importlib.import_module("Vera.vera.idle_queue_service")
+    except Exception:
+        return None
+
+
+@capability("evolve.background.window", memory="off",
+            http_method="POST", http_path="/evolve/background/window", http_tags=["evolve", "schedule", "background"],
+            description="Run the background queue NOW for up to `minutes` (default 90, max 600): reserve it for every "
+                        "kind with work waiting (or only `kinds`, comma list) and drain those jobs one after another, "
+                        "without waiting for the box to go quiet. Meant as the target of an exclusive Loop Lab schedule "
+                        "entry - a scheduled window for background work. Output: {ok, ran, remaining, kinds, minutes, reason}.")
+async def cap_background_window(minutes: int = 90, kinds: str = "", trace_id=None) -> Dict[str, Any]:
+    svc = _idle_svc()
+    if svc is None or not hasattr(svc, "reserve"):
+        return {"ok": False, "error": "the idle queue service is not loaded"}
+    only = {k.strip() for k in (kinds or "").split(",") if k.strip()}
+    budget = max(5, min(int(minutes or 90), 600)) * 60
+    t0 = time.time()
+    ran, reason, seen = 0, "queue empty", set()
+
+    async def _waiting():
+        return [j for j in await svc.load_jobs()
+                if j.get("state") in ("waiting", "running") and (not only or j.get("kind") in only)]
+
+    try:
+        while True:
+            jobs = await _waiting()
+            if not jobs:
+                break
+            if time.time() - t0 >= budget:
+                reason = "time is up"
+                break
+            ks = sorted({str(j.get("kind")) for j in jobs})
+            seen.update(ks)
+            svc.reserve(ks, t0 + budget, by="evolve.background.window")     # refreshed: new kinds join
+            async def _never_busy():
+                return ""
+            r = await svc.drain_once("", _never_busy, time.time())
+            if r.get("action") == "started":
+                ran += 1
+            await asyncio.sleep(_BG_WINDOW_POLL_S)
+    finally:
+        svc.release_reservation("evolve.background.window")
+    left = len([j for j in await _waiting() if j.get("state") == "waiting"])
+    await emit_event({"type": "evolve.background.window", "ran": ran, "remaining": left, "reason": reason})
+    return {"ok": True, "ran": ran, "remaining": left, "kinds": sorted(seen),
+            "minutes": round((time.time() - t0) / 60, 1), "reason": reason,
+            "summary": "ran %d background job(s), %d left (%s)" % (ran, left, reason)}
