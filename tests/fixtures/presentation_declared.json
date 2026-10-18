@@ -3775,6 +3775,25 @@
   },
   "title": "Metrics stack"
  },
+ "minds.switch.list": {
+  "draw": {
+   "columns": [
+    "id",
+    "default",
+    "modes",
+    "surface",
+    "package",
+    "owner",
+    "census"
+   ]
+  },
+  "empty": "No switches",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "switches"
+  }
+ },
  "ml.catalogue": {
   "draw": {
    "columns": [

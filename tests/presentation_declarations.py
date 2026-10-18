@@ -24,7 +24,7 @@ def declared_in_source(root: str = ROOT) -> dict:
                 src = open(p, encoding="utf-8").read()
             except (OSError, UnicodeDecodeError):
                 continue
-            if '"presentation"' not in src:
+            if '"presentation"' not in src and "presentation=" not in src:
                 continue
             try:
                 tree = ast.parse(src)
@@ -45,6 +45,11 @@ def declared_in_source(root: str = ROOT) -> dict:
                         for k, v in zip(kw.value.keys, kw.value.values):
                             if isinstance(k, ast.Constant) and k.value == "presentation":
                                 out[first.value] = ast.literal_eval(v)
+                    # a contract built by a helper (four-minds' _MC.contract(..., presentation={...})) declares too
+                    elif kw.arg == "contract" and isinstance(kw.value, ast.Call):
+                        for hk in kw.value.keywords:
+                            if hk.arg == "presentation" and isinstance(hk.value, ast.Dict):
+                                out[first.value] = ast.literal_eval(hk.value)
     return dict(sorted(out.items()))
 
 
