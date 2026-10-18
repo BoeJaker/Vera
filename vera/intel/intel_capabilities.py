@@ -1836,12 +1836,24 @@ async def cap_indicator_add(topic_id: str = "", kind: str = "price", query: str 
 
 # ── prediction markets: an open question with a price on it ──────────────────
 
+def _ingress_client(timeout: float, headers: Dict[str, str], purpose: str = "api"):
+    """intel's HTTP client (web-ingress WI-9c): through the ingress gateway when it is loaded - every response a
+    receipt in the web map, every request on the host's shared slot - else a plain client."""
+    import httpx
+    ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+    if ing is not None and hasattr(ing, "hooked_client"):
+        try:
+            return ing.hooked_client(caller="intel", purpose=purpose, timeout=timeout, headers=headers,
+                                     follow_redirects=True)
+        except Exception as ex:  # noqa: BLE001
+            log.debug("intel: ingress client: %s", ex)
+    return httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=True)
+
+
 async def _http_json(url: str, params: Optional[Dict[str, Any]] = None, timeout: float = 20.0,
                      headers: Optional[Dict[str, str]] = None) -> Any:
     """A public, keyless JSON read (prediction markets, the geocoder)."""
-    import httpx
-    async with httpx.AsyncClient(timeout=timeout, headers=headers or {"User-Agent": "vera-intel/1"},
-                                 follow_redirects=True) as c:
+    async with _ingress_client(timeout, headers or {"User-Agent": "vera-intel/1"}) as c:
         r = await c.get(url, params=params)
         r.raise_for_status()
         return r.json()

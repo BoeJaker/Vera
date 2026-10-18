@@ -3651,6 +3651,21 @@ def _parse_feed_items(raw: str, max_items: int = 60) -> List[Dict[str, Any]]:
     return out
 
 
+
+def _dream_ingress_client(timeout: float = 12.0, **kw):
+    """The dream sensors' HTTP client (web-ingress WI-9c): through the ingress gateway when it is loaded (a receipt
+    per response, the host's shared slot per request), else a plain client."""
+    import sys as _sys
+    import httpx
+    ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+    kw.setdefault("follow_redirects", True)
+    if ing is not None and hasattr(ing, "hooked_client"):
+        try:
+            return ing.hooked_client(caller="dream.sensor", purpose="feed", timeout=timeout, **kw)
+        except Exception:  # noqa: BLE001
+            pass
+    return httpx.AsyncClient(timeout=timeout, **kw)
+
 @capability(
     "dream.sensor.web_feed", memory="off", silent=True,
     http_method="GET", http_path="/dream/sensor/web_feed",
@@ -3675,7 +3690,7 @@ async def dream_sensor_web_feed(url: str = "", feed_id: str = "",
     raw = ""
     try:
         import httpx
-        async with httpx.AsyncClient(timeout=12.0, follow_redirects=True,
+        async with _dream_ingress_client(timeout=12.0,
                                      headers={"User-Agent": "Vera-Dream/1.0"}) as c:
             resp = await c.get(url)
             if resp.status_code == 200:
