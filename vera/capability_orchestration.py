@@ -35,6 +35,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .capability_enforcement import PolicyEnforcementDenied, enforcement_projection
 from . import money_guard_core as _money_guard
+from . import caller_context_core as _cc
 # Pure context-budget decisions — window vs prompt vs output vs retained prefix.
 # Imports nothing from Vera, so it is safe this early and cannot cycle. Pinned by
 # tests/test_ctx_policy.py, which is the point: these were inline and untestable.
@@ -219,6 +220,10 @@ BACKGROUND_LLM: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 # triggered_by field (codex / claude_code / autonomous via BACKGROUND_LLM / user).
 CALLER_KIND: "contextvars.ContextVar[str]" = contextvars.ContextVar(
     "vera_caller_kind", default="")
+# Which UI surface asked, and whether a person or an auto-refresh did: (surface, trigger), from the
+# X-Vera-Surface header (vera/caller_context.py middleware). ("", "") when the caller did not say.
+CALLER_SURFACE: "contextvars.ContextVar[tuple]" = contextvars.ContextVar(
+    "vera_caller_surface", default=("", ""))
 # Set only by the dedicated MCP envelope handler. Unlike caller_kind, this is a
 # server-owned transport fact and cannot be forged by request data.
 MCP_CALL_ACTIVE: "contextvars.ContextVar[bool]" = contextvars.ContextVar(
@@ -7335,6 +7340,44 @@ async def _activity_worker():
             log.debug("activity_worker loop: %s", e)
 
 
+# ── Usage counter (B0.11 R0 slice 1; desk DO-0.4) ─────────────────────────────
+# Every call through wrap() is counted per UTC day x capability x actor kind x surface x trigger
+# (caller_context_core). Counts are held in process and written to Redis in one pipeline at most every
+# FLUSH_INTERVAL_S, so the hot path costs a dict increment. Read with caps.usage. Observation only.
+_USAGE = _cc.UsageBuffer()
+
+
+def _note_usage(name: str) -> None:
+    try:
+        surface, trigger = CALLER_SURFACE.get()
+        actor = _cc.actor_kind(name=name, running_caps=RUNNING_CAPS.get(), http_cap=CURRENT_HTTP_CAP.get(""),
+                               mcp_call=MCP_CALL_ACTIVE.get(False), caller_kind=CALLER_KIND.get(""),
+                               background=BACKGROUND_LLM.get(""))
+        _USAGE.add(_cc.usage_field(name, actor, surface, trigger))
+        if REDIS is not None and _USAGE.due(time.monotonic()):
+            _USAGE.flushing = True
+            asyncio.get_running_loop().create_task(_flush_usage())
+    except Exception as _ue:                  # counting must never break a call
+        log.debug("usage count %s: %s", name, _ue)
+
+
+async def _flush_usage() -> None:
+    batch = _USAGE.drain()
+    try:
+        if batch and REDIS is not None:
+            key = _cc.day_key()
+            pipe = REDIS.pipeline()
+            for field, n in batch.items():
+                pipe.hincrby(key, field, n)
+            pipe.expire(key, _cc.RETENTION_S)
+            await pipe.execute()
+    except Exception as e:
+        _USAGE.restore(batch)
+        log.debug("usage flush: %s", e)
+    finally:
+        _USAGE.flushing = False
+
+
 def capability(
     name:        str,
     *,
@@ -7438,6 +7481,7 @@ def capability(
 
         @functools.wraps(func)
         async def wrap(**kw):
+            _note_usage(name)
             # A dev sandbox is a FULL Vera process and registers every
             # capability prod does - including promote_to_main, branch.delete
             # and sandbox.prune - while sharing prod's coordinator Redis. The
@@ -13062,11 +13106,42 @@ APP.add_middleware(CORSMiddleware,
 # vera/edge_guard_core.py). Added after CORS, so it is the outermost middleware
 # and runs before CORS and routing. Default mode is enforce (VERA_EDGE_GUARD;
 # break-glass: SET vera:auth:mode observe EX 3600 on the host's Redis).
+# Caller surface: reads X-Vera-Surface into CALLER_SURFACE for the usage counter. Added before the edge
+# guard, so the guard stays outermost and refuses before this runs.
+from Vera.vera import caller_context as _caller_context
+APP.add_middleware(_caller_context.CallerSurface, var=CALLER_SURFACE)
+
 APP.add_middleware(_edge_guard.EdgeGuard,
                    backend_host=cfg.BACKEND_HOST,
                    listen_port=cfg.ORCHESTRATOR_PORT,
                    on_event=lambda evt: emit_event(evt),
                    redis_getter=lambda: REDIS)
+
+
+@capability("caps.usage", memory="off", silent=True,
+            http_method="GET", http_path="/caps/usage", http_tags=["caps"],
+            description="Who calls which capability, from where: counts per capability x actor kind (ui:route, "
+                        "ui:mcp, nested, background:<x>, bridge:<kind>, internal) x surface (desk, dashboard, "
+                        "panel:<id>, chat, lhm, from the X-Vera-Surface header) x trigger (person | auto), summed "
+                        "over the last `days` UTC days (1-91). by_cap ranks by person-triggered calls first, so "
+                        "screen auto-refresh does not read as interest. Filters match a prefix. Read-only. "
+                        "Inputs: days (int=7), cap, surface, trigger, actor (str), limit (int=100). "
+                        "Output: {days, calls, distinct, rows[], by_cap[], pending}.")
+async def cap_caps_usage(days: int = 7, cap: str = "", surface: str = "", trigger: str = "",
+                         actor: str = "", limit: int = 100, trace_id=None):
+    keys = _cc.day_keys(days)
+    hashes = []
+    if REDIS is not None:
+        for k in keys:
+            try:
+                hashes.append(await REDIS.hgetall(k) or {})
+            except Exception as e:
+                log.debug("caps.usage %s: %s", k, e)
+    hashes.append(_USAGE.snapshot())        # not yet flushed
+    out = _cc.aggregate(hashes, cap=cap, surface=surface, trigger=trigger, actor=actor, limit=limit)
+    out["days"] = len(keys)
+    out["pending"] = sum(_USAGE.snapshot().values())
+    return out
 
 
 @capability("auth.edge.status", memory="off", silent=True,
