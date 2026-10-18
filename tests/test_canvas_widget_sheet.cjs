@@ -19,7 +19,7 @@ global.customElements = { get: (n) => n === 'vera-widget' ? function () {} : und
 const live = B.widget(rec, 'l', 'widget:gauge-1');
 t('with <vera-widget> on the page a record is a live slot keyed by the item, at its size', /class="vc-live" data-live="widget" data-key="widget:gauge-1" data-size="l"/.test(live), live);
 t('the caption says form · source', /vc-cap mono">gauge · obs\.health</.test(live), live);
-t('no source → the caption says sample', /gauge · sample</.test(B.widget({ form: 'gauge', draw: {} }, 'm', 'k')));
+t('no source → the caption is the form alone, never "sample" (a desk item shows no sample data - DO-0.3)', /class="vc-cap mono">gauge</.test(B.widget({ form: 'gauge', draw: {} }, 'm', 'k')) && !/sample/.test(B.widget({ form: 'gauge', draw: {} }, 'm', 'k')));
 t('a form-only record is a live slot too', /vc-live" data-live="widget" data-key="k2" data-size="m"/.test(B.widget({ form: 'gauge', title: 'Disk', data: { value: 41 } }, '', 'k2')));
 t('no key (a preview) → the static path, not a live slot', !/vc-live/.test(B.widget(rec, 'm', '')));
 // the harvest's shape (a reply's widget lifted onto the canvas): the record inside the content is the widget

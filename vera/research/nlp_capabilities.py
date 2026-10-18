@@ -300,6 +300,8 @@ if _CAP_AVAILABLE:
                      "task, labels (list — gliner), threshold (float=0.4 — gliner). Output: "
                      "{entities:[{entity, word, score, start, end}], model, node}. gliner and "
                      "spacy have no in-process path: they run only on a node."),
+        contract={"presentation": {"kind": "entities", "map": {"entities": "entities"}, "title": "Names · {task}",
+                                   "empty": "no names found"}},
     )
     async def cap_nlp_ner(text: str = "", task: str = "ner", labels: Optional[List[str]] = None,
                           threshold: float = 0.4, trace_id=None):

@@ -1,0 +1,31 @@
+{
+ "cap": "markets.chart",
+ "args": {
+  "symbol": "ETH"
+ },
+ "presentation": {
+  "kind": "series",
+  "form": "candles",
+  "map": {
+   "bars": "bars"
+  },
+  "views": [
+   "table"
+  ],
+  "title": "{symbol} · {timeframe}",
+  "empty": "no stored bars for {symbol}",
+  "status": "declared"
+ },
+ "result": {
+  "symbol": "ETH-USD",
+  "count": 0,
+  "bars": []
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "series",
+  "title": "ETH",
+  "forms": [],
+  "empty": "no stored bars for ETH"
+ }
+}

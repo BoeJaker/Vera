@@ -8138,8 +8138,13 @@ IMPORTANT:
       case 'calendar': { const evs=listOf(r0.data, ['events','items','data']).filter(x=>x&&x.start).map(x=>Object.assign({}, x, { title:String(x.title||'') })); if(!evs.length) return null;
         return { kind:'calendar', n:'Calendar', k:'calendar', col:'var(--dv7, #9fe1e7)', d:'calendar · '+evs.length+' event'+(evs.length===1?'':'s'), key:'calendar:month',
                  content:{ title:title||'Calendar', month:_cvCalMonth(evs), selected:'', events:evs } }; }
+      /* the names an answer holds, as the desk's entities element - chips, a list, a graph (DO-0.3; present() reads them
+         to one row each {name, type, count, group}, which a widget draws as pills) */
+      case 'entities': { const es=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&x.name); if(!es.length) return null; const groups=[], by={};
+        es.forEach(x=>{ const g=String(x.group||x.type||'other'); if(!by[g]){ by[g]={ group:g, entities:[] }; groups.push(by[g]); } by[g].entities.push({ text:String(x.name), type:String(x.type||''), count:+x.count||1 }); });
+        return { kind:'entities', n:title+' · '+es.length+' name'+(es.length===1?'':'s'), k:'entities', col:'var(--dv2, #7aa2d6)', d:'entities · '+es.length, content:{ groups } }; }
       case 'composite': return pr.records.map(widget);
-      default: return widget(r0);   // widget-drawn kinds (status, metric, series, log, progress, graph) and entities (json for now)
+      default: return widget(r0);   // widget-drawn kinds (status, metric, series, log, progress, graph)
     }
   }
   // the one entry point: a result in, a canvas item (or several, or nothing) out

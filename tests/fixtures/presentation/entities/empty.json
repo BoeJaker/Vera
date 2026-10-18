@@ -1,0 +1,23 @@
+{
+ "cap": "nlp.ner",
+ "args": {},
+ "presentation": {
+  "kind": "entities",
+  "map": {
+   "entities": "entities"
+  },
+  "empty": "no names found",
+  "status": "declared"
+ },
+ "result": {
+  "ok": true,
+  "entities": []
+ },
+ "expect": {
+  "element": "entities",
+  "kind": "entities",
+  "title": "nlp.ner",
+  "forms": [],
+  "empty": "no names found"
+ }
+}

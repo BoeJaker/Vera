@@ -82,6 +82,11 @@
      empty lines - "a counter needs a value", "no numbers to draw" - explain a record the form cannot draw, which is a
      different thing; used for an empty read they made the tile look as though its values had been cleared. A real
      zero never comes here: zero is a reading. */
+  // nothing read to draw, on a host that never shows the sample (DO-0.3): reading · read failed · nothing to show
+  const unreadFace = (state, src, size, err) => state === 'reading' || state === 'failed'
+    ? ((size === 'xs' || size === 's') ? '<span class="vw-xs vw-nodata">' + (state === 'reading' ? 'reading…' : 'read failed') + '</span>'
+      : '<div class="vw-nodata"><b>' + (state === 'reading' ? 'reading…' : 'read failed') + '</b><i>' + esc(state === 'reading' ? (src || '') : String(err || src || '').slice(0, 160)) + '</i></div>')
+    : NODATA(src, size);
   const NODATA = (src, size) => (size === 'xs' || size === 's')
     ? '<span class="vw-xs vw-nodata">no data</span>'
     : '<div class="vw-nodata"><b>no data</b><i>' + esc(src ? src + ' read \u00b7 nothing to show' : 'nothing read') + '</i></div>';
@@ -92,7 +97,8 @@
   // (form is drawn by R.form now - it falls back to the kv face when it has no draw.fields, so it is no longer an alias)
   const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', rate: 'counter',
                   iso: 'table', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', checks: 'checklist',
-                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines', cores: 'cellmap', 'core-matrix': 'cellmap', 'status-matrix': 'cellmap', cpumap: 'cellmap' };
+                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines', cores: 'cellmap', 'core-matrix': 'cellmap', cpumap: 'cellmap' };
+  // (status-matrix is the Loop Lab's picture - DRAWN below - not the cell map: its alias here was dead, DRAWN won, DO-0.3)
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
@@ -116,7 +122,16 @@
                   /* the multi-line chart (2026-09-28) */
                   lines: 'series',
                   /* the status matrix: a square per core, thread or cpu, lenses to colour it by (2026-09-28) */
-                  cellmap: 'items' };
+                  cellmap: 'items',
+                  /* ONE FORMS LIST (DO-0.3): every form this file draws is named here - forms() returns all of them, and
+                     widget_record.FORMS (the python catalogue) is held to this table by tests/test_forms_contract.py.
+                     the reading list (web.research's sources and the links it found) */
+                  reading: 'items',
+                  /* the Loop Lab's pictures (the CI section draws them; each reads its ci payload whole) */
+                  'status-matrix': 'matrix', 'race-green': 'matrix', 'test-grid': 'matrix', 'ci-board': 'items', 'run-track': 'stages', 'run-compare': 'values', 'ci-pulse': 'values', 'ci-fleet': 'items', 'ci-run': 'values',
+                  'census-commits': 'matrix', element: 'panel', 'loop-perf': 'items', 'census-live': 'stages', 'census-timeline': 'events', 'trend-layers': 'series',
+                  /* the image studio's forms */
+                  images: 'items', sprites: 'items', sprite: 'string', character: 'string' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
   // the Loop Lab's pictures (see the CI section): each draws the ci payload whole, at every size
   const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run|census-commits|element|loop-perf|census-live|census-timeline|trend-layers)$/;
@@ -782,7 +797,7 @@
       const slotStyle = (slotH || sp > 1) ? ' style="' + (slotH ? 'height:' + slotH + 'px;' : '') + (sp > 1 ? 'grid-column:span ' + sp + ';' : '') + '"' : '';
       const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
       if (!r0) return '<div class="vw-slot" data-slot="' + esc(slot) + '"><small class="wempty">' + esc(String(c && c.record || '')) + '</small></div>';
-      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined, textK: o && o.textK, width: (o && o.width && !chip) ? Math.max(120, Math.floor((o.width - (ncol - 1) * 8) * sp / ncol) - 16) : undefined };
+      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: (wasRead || (o && o.sample === false)) ? false : undefined, textK: o && o.textK, width: (o && o.width && !chip) ? Math.max(120, Math.floor((o.width - (ncol - 1) * 8) * sp / ncol) - 16) : undefined };
       // a child whose reading is still on its way says so - its slot never shows the form's sample values as though they
       // were the estate's (the review found "serving · ct126 · qwen3:30b" standing in for the narrator, the identity
       // server, OpenClaw and telegram while their reads were queued)
@@ -800,12 +815,12 @@
         const bh = Math.max(40, Math.round((canon(n.form) === 'kv' ? keysN * 19 : canon(n.form) === 'pills' ? 52 : lim * 31 + 56) * tk * bhScale));   /* its share of the body */
         return '<div class="vw-slot vw-slot-block' + stale + '" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: bh, title: n.title }, kopts, { width: (o && o.width) ? Math.max(160, o.width - 20) : undefined })) + '</div></div>'; }
       if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k" title="' + esc(n.title || n.form) + '">' + esc(n.title || n.form) + '</span><span class="vw-slot-c">' + draw(n.form, data, 's', Object.assign({}, kopts, { title: '' })) + kerr + '</span></div>';
-      const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
+      const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead && !(o && o.sample === false) ? sample(n.form) : data));
       /* an XL composite's list draws at the height its items need (every row, up to 200) and its slot scrolls - the
          forms size their row count to the height they are given, so this is the one place the whole list is asked for */
       let drawH = kidH, scroll = '';
       if (xl && LISTY.test(canon(n.form))) {
-        let cnt = 0; try { cnt = itemCount(dataFor(mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data), canon(n.form))); } catch (e) { cnt = 0; }
+        let cnt = 0; try { cnt = itemCount(dataFor(mapped(n, n.form, data === undefined && !wasRead && !(o && o.sample === false) ? sample(n.form) : data), canon(n.form))); } catch (e) { cnt = 0; }
         const need = Math.min(200, cnt) * Math.round(34 * ((o && o.textK) || 1)) + 60;
         if (need > kidH) { drawH = need; scroll = ' data-scroll="1"'; }
       }
@@ -2015,7 +2030,7 @@
        error     a failed answer: what failed, said once, the detail folded (new)
        markdown  prose a cap wrote: headings, lists, code, emphasis        (new)
      Each is drawn by VeraWidget.draw like every other form, and has a sample face. */
-  const CAP_FORMS = ['kv', 'table', 'list', 'json', 'log', 'terminal', 'diff', 'code', 'progress', 'hero', 'trace', 'area', 'column', 'status', 'files', 'media', 'error', 'markdown'];
+  const CAP_FORMS = ['kv', 'table', 'list', 'json', 'log', 'terminal', 'diff', 'code', 'progress', 'hero', 'trace', 'area', 'column', 'status', 'files', 'media', 'error', 'markdown', 'reading'];
   const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
   const isScalar = (v) => v == null || typeof v !== 'object';
   // json: a tree you open - objects and arrays fold (the first level open), scalars coloured by kind, big ones capped
@@ -2497,7 +2512,6 @@
     const add = (b, who, pat, h0) => pat.split('').forEach((ch, i) => R0.push({ ts: T(h0 + (i >> 1), (i % 2) * 30), branch: b, controller: who, ok: ch === 'p' ? true : ch === 'f' ? false : null, status: ch === 'r' ? 'running' : '', passed: 5190 + i, failed: ch === 'f' ? 2 : 0, total: 5192 + i, failures: ch === 'f' ? [{ node_id: 'tests/test_ship.py::test_' + b.slice(-4) }] : [] }));
     add('feat/loop-lab-widgets', 'claude', 'ffpppffp', 8); add('fix/gate-budget', 'codex', 'fffp', 9); add('feat/census-yield', 'vera', 'ppfr', 10); add('feat/ops-live-view', 'claude', 'pppp', 7); add('fix/sandbox-menu', 'user', 'ff', 12);
     const lanes = ciLanes(R0); return { kind: 'ci', view: 'matrix', title: 'Gate runs', lanes, summary: ciSummary(lanes) }; };
-  Object.assign(DRAWN, { 'status-matrix': 'matrix', 'race-green': 'matrix', 'test-grid': 'matrix', 'ci-board': 'items', 'run-track': 'stages', 'run-compare': 'values', 'ci-pulse': 'values', 'ci-fleet': 'items', 'ci-run': 'values' });
   const CI_GLYPH = { 'status-matrix': '▦', 'race-green': '⚑', 'test-grid': '▤', 'ci-board': '▥', 'run-track': '⋯', 'run-compare': '⇄', 'ci-pulse': '∿', 'ci-fleet': '⊞', 'ci-run': '◉' };
   Object.assign(FORM_SAMPLE, {
     'status-matrix': CI_SAMPLE, 'race-green': () => Object.assign(CI_SAMPLE(), { view: 'race', title: 'Race to green' }),
@@ -2722,7 +2736,6 @@
       if (window.customElements && customElements.whenDefined) customElements.whenDefined(e.tag).then(go); else sc.addEventListener('load', go, { once: true }); }
     el.appendChild(host); el._elHost = host; el._elSig = sig;
   }
-  Object.assign(DRAWN, { 'census-commits': 'matrix', element: 'panel' });
   Object.assign(CI_GLYPH, { 'census-commits': '⨯' });
   Object.assign(FORM_SAMPLE, {
     'census-commits': () => { const runs = Array.from({ length: 14 }, (_, i) => { const done = [9, 10, 9, 11, 10, 12, 11, 10, 12, 12, 11, 10, 12, 11][i]; return { id: 'run' + (64 + i), goals: 12, done, capped: 12 - done, wall_s: 8000 + (i % 4) * 700, commit_count: [2, 0, 5, 3, 0, 9, 1, 0, 6, 2, 0, 4, 11, 1][i], merges: i % 3, commits: Array.from({ length: [2, 0, 5, 3, 0, 9, 1, 0, 6, 2, 0, 4, 11, 1][i] }, (_, k) => ({ sha: 'c' + i + k, subject: k % 2 ? 'Loop Lab: merge feat/x' + k : 'loop: a fix ' + k, merge: k % 2 === 1 })) }; });
@@ -2826,7 +2839,6 @@
     }).join('');
     return wrap('census-timeline', '<div class="ci-hd"><span class="ci-hdt"><b>' + esc(p.title || 'Census') + ' timeline · ' + esc(p.template || '') + '</b><small>newest first · a band is a census run, where it ended · the commits under it landed before it · ' + ev.length + ' rows' + (ev.length > shown.length ? ', newest ' + shown.length + ' drawn' : '') + '</small></span></div><div class="ct-rows' + (sz === 'xl' ? ' scroll' : '') + '">' + rowsH + '</div>', 'ci');
   };
-  Object.assign(DRAWN, { 'loop-perf': 'items', 'census-live': 'stages', 'census-timeline': 'events' });
   Object.assign(CI_GLYPH, { 'loop-perf': '⏱', 'census-live': '◔', 'census-timeline': '⎇' });
   Object.assign(FORM_SAMPLE, {
     'loop-perf': () => ({ kind: 'ci', view: 'loop-perf', rows: [['Make the timer better.', 'cancelled', 1805, 45, 69, [['exec.bash.run', 608647], ['memory.seek', 28866]]], ['Write a 200-word explainer', 'done', 1009, 13, 24, [['prose.author', 128061], ['code.edit', 53987]]], ['Generate 200 random integers', 'done', 471, 7, 10, [['code.author', 40029], ['exec.python.run', 10860]]], ['What is 17 multiplied by 23?', 'done', 128, 2, 8, [['memory.seek', 12956]]]].map((x, i) => ({ id: 's' + i, goal: x[0], status: x[1], o: x[1] === 'done' ? 'pass' : 'fail', started_at: '2026-09-27T2' + i + ':00:00Z', wall_s: x[2], steps: 2, planned: 2, calls: x[3], fails: i === 0 ? 3 : 0, repeats: i === 0 ? 5 : 0, llm_calls: x[4], tool_ms: x[5].reduce((a, t) => a + t[1], 0), by_tool: x[5].map((t) => ({ tool: t[0], ms: t[1] })), stages: [{ stage: 'planner', calls: 2 }, { stage: 'controller', calls: 4 }] })),
@@ -2907,7 +2919,6 @@
     const ax = '<div class="tl-ax"><span>' + esc(new Date(t0).toLocaleDateString()) + '</span><span>' + rows.length + ' points · newest on the right</span><span>' + esc(new Date(t1).toLocaleDateString()) + '</span></div>';
     return wrap('trend-layers', controls + legend + '<div class="tl-wrap" style="min-height:' + (sz === 'm' ? 80 : sz === 'l' ? 170 : 260) + 'px"><svg class="tl-plot" viewBox="0 0 ' + W + ' 100" preserveAspectRatio="none">' + (mode === 'lanes' ? on.slice(1).map((_, i) => '<line x1="0" x2="' + W + '" y1="' + ((i + 1) * LH).toFixed(2) + '" y2="' + ((i + 1) * LH).toFixed(2) + '" stroke="var(--b-bd)" stroke-width="1" vector-effect="non-scaling-stroke"/>').join('') : '') + paths + '</svg>' + pts.join('') + '</div>' + ax, 'ci');
   };
-  Object.assign(DRAWN, { 'trend-layers': 'series' });
   Object.assign(CI_GLYPH, { 'trend-layers': '≈' });
   Object.assign(FORM_SAMPLE, { 'trend-layers': () => ({ runs: Array.from({ length: 24 }, (_, i) => ({ run_id: 'run' + (54 + i), ended_at: Date.UTC(2026, 8, 3 + i) / 1000, template: i % 5 ? 'default' : 'exec-family', done: [9, 10, 9, 11, 10, 12, 11, 10, 12, 12, 11, 10][i % 12], quality_mean: 0.8 + (i % 7) / 50, wall_total_s: 8200 + ((i * 37) % 13) * 140 })) }) });
   const TL_CSS = '.vb-trend-layers{display:flex;flex-direction:column;gap:6px;height:100%;min-height:0}'
@@ -2967,7 +2978,7 @@
       return sampleFace(draw(f0, data, size, Object.assign({}, opts, { sample: false, record: Object.assign({}, opts.record || {}, sample('composite')) })), size, opts.sampleTag);
     }
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i>' + (figure(f, data) || '—') + '</span>';
-    if (size === 's' && !CI_FORMS.test(f) && (DRAWN[f] === 'items' || f === 'kv' || f === 'form' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f === 'form' ? 'kv' : f, d, opts); if (cs) return cs; }
+    if (size === 's' && !CI_FORMS.test(f) && f !== 'reading' && (DRAWN[f] === 'items' || f === 'kv' || f === 'form' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f === 'form' ? 'kv' : f, d, opts); if (cs) return cs; }
     if (size === 's' && f !== 'calnav') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
     if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|form|numbers|month|schedule|calnav|vgraph|cellmap)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
@@ -3216,7 +3227,6 @@
     + 'html[data-blocks="off"] .vw-sprc,html[data-blocks="off"] .vw-chrm,html[data-blocks="off"] .vw-sprt{background:transparent!important}'
     + ':host-context(html[data-blocks="off"]) .vw-sprc,:host-context(html[data-blocks="off"]) .vw-chrm,:host-context(html[data-blocks="off"]) .vw-sprt{background:transparent!important}';
   // the registrations: the forms drawn, their shapes, their sample faces, their glyphs; each takes its body whole at L and XL
-  Object.assign(DRAWN, { images: 'items', sprites: 'items', sprite: 'string', character: 'string' });
   ['images', 'sprites', 'sprite', 'character'].forEach((f) => TABLE_FORMS.add(f));
   Object.assign(GLYPH, { images: '▣', sprites: '◳', sprite: '◳', character: '☺' });
   /* the sample faces: drawn here, so the gallery and the pickers show the forms with nothing read - a pixel figure's
@@ -3770,15 +3780,18 @@ span.vw-sampled{opacity:.85}
   /* VIEW AS (owner, 2026-09-27: "some widgets could transform to others to give a different view instead of haveing tonnes of
      realted spread out widgets"). A widget offers the forms of its data's family - only those that would draw this answer -
      and turns into the one chosen, in place; the choice is kept per widget, "as made" goes back. */
-  const NO_VIEW = /^(panel|composite|calnav|month|schedule|calendar|agenda|vgraph|terminal|media|diff|code|markdown|error|string|split-flap|frame|announcement|globe|candles|context_graph|structgraph)$/;
+  const NO_VIEW = /^(reading|panel|composite|calnav|month|schedule|calendar|agenda|vgraph|terminal|media|diff|code|markdown|error|string|split-flap|frame|announcement|globe|candles|context_graph|structgraph)$/;
   const VIEW_FAMILY = { series: ['trace', 'lines', 'area', 'step', 'scope', 'bars', 'table', 'json'], values: ['bars', 'column', 'ranked', 'lollipop', 'donut', 'treemap', 'pills', 'kv', 'table', 'json'],
     parts: ['donut', 'treemap', 'stacked-bar', 'waffle', 'bars', 'table', 'json'], items: ['table', 'rows', 'cards', 'list', 'stack', 'json'], events: ['log', 'lane', 'timeline', 'feed', 'table', 'json'],
-    level: ['radial', 'gauge', 'meter', 'dial', 'counter', 'hero', 'json'], stages: ['stepper', 'pipeline', 'progress', 'funnel', 'gantt', 'table', 'json'], points: ['scatter', 'table', 'json'],
+    level: ['radial', 'ring', 'gauge', 'meter', 'dial', 'counter', 'hero', 'trace', 'json'], stages: ['stepper', 'pipeline', 'progress', 'funnel', 'gantt', 'table', 'json'], points: ['scatter', 'table', 'json'],
     matrix: ['heat', 'matrix', 'dots', 'table', 'json'], graph: ['graph', 'minigraph', 'pipes', 'json'], rate: ['turbine', 'ticker', 'json'] };
+  // a figure's series views (trace) only when it has a trend to draw - two numbers or more (DO-0.3: the metric's trace)
+  const trendView = (rec, f, shape, data) => { if (shape !== 'level' || DRAWN[f] !== 'series') return true;
+    try { const dd = dataFor(mapped(rec, f, data), f); return Array.isArray(dd) && series(dd).filter((v) => isFinite(v)).length >= 2; } catch (_) { return false; } };
   function viewsFor(rec, form0, data) {
     const f0 = canon(form0), shape = DRAWN[f0]; if (!shape || NO_VIEW.test(f0) || data === undefined) return [];
     const out = [f0];
-    (VIEW_FAMILY[shape] || ['table', 'json']).forEach((f) => { if (out.includes(f) || typeof R[f] !== 'function') return; try { if (!isEmpty(dataFor(mapped(rec, f, data), f))) out.push(f); } catch (_) {} });
+    (VIEW_FAMILY[shape] || ['table', 'json']).forEach((f) => { if (out.includes(f) || typeof R[f] !== 'function' || !trendView(rec, f, shape, data)) return; try { if (!isEmpty(dataFor(mapped(rec, f, data), f))) out.push(f); } catch (_) {} });
     return out.slice(0, 9);
   }
   function partAt(root, target) {
@@ -4098,7 +4111,7 @@ span.vw-sampled{opacity:.85}
 
   class VeraWidgetEl extends HTMLElement {
     constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._empty = false; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; wireParts(this); }
-    static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare']; }
+    static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare', 'no-sample']; }
     get record() { return this._rec; }
     set record(v) {
       let j = ''; try { j = JSON.stringify(v); } catch (_) { j = ''; }
@@ -4271,25 +4284,30 @@ span.vw-sampled{opacity:.85}
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
       const wasRead = !!this._read, dataM = mapped(rec, form, this._data), have = this._data !== undefined && !isEmpty(dataFor(dataM, form));   // what the form would draw of the answer
       const fillIn = canon(form) === 'form' && rec.draw && Array.isArray(rec.draw.fields) && rec.draw.fields.length > 0;   // a form to fill in is never a sample
-      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element' && !fillIn;   // an element draws itself: it is never a sample      // the sample face: no source, or never read
+      const blank = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element' && !fillIn;   // an element draws itself: it is never a sample      // nothing read to draw: no source, or never read
+      /* NO SAMPLE (DO-0.3, owner: one rule everywhere): a host that sets no-sample - every desk item, a dashboard tile
+         except while it is being configured - never draws the form's SAMPLE values: it says it is reading, that the read
+         failed, or that there is nothing to show. The pickers, the galleries and the configure sheet keep the sample face. */
+      const noSample = this.hasAttribute('no-sample');
+      const sampled = blank && !noSample;
       const readEmpty = wasRead && !have && !this._err, stale = wasRead && !!this._err && have;
       // the face's STATE, on the host (data-state) and in widget:rendered: reading (a read is on its way - the sample face
       // is drawn faint, never as though it were the reading) · failed (a read that never answered) · sample (nothing to
       // read) · empty · stale · live. A bare host (a dashboard tile) says it in its own head, so its body carries no tag.
-      const reading = sampled && !this._err && !this._empty && !!rec.source && readable(rec.source) && this._data === undefined;
-      const state = reading ? 'reading' : (this._err && !have ? 'failed' : (sampled ? 'sample' : (readEmpty ? 'empty' : (stale ? 'stale' : 'live'))));
+      const reading = blank && !this._err && !this._empty && !!rec.source && readable(rec.source) && this._data === undefined;
+      const state = reading ? 'reading' : (this._err && !have ? 'failed' : (sampled ? 'sample' : ((readEmpty || blank) ? 'empty' : (stale ? 'stale' : 'live'))));
       if (this.getAttribute('data-state') !== state) this.setAttribute('data-state', state);
       opts.sampleTag = this.hasAttribute('bare') ? false : (reading ? 'reading…' : (state === 'failed' ? 'read failed' : undefined));
       let why = '';
-      if (this._err) why = esc(rec.source + ': ' + this._err) + (have ? ' · last reading' : ' · sample');
-      else if (this._empty && !have) why = esc(rec.source) + ' · read empty · sample';
+      if (this._err) why = esc(rec.source + ': ' + this._err) + (have ? ' · last reading' : (noSample ? '' : ' · sample'));
+      else if (this._empty && !have) why = esc(rec.source) + ' · read empty' + (noSample ? '' : ' · sample');
       else if (readEmpty) why = 'read · empty';
       else if (this._data === undefined && rec.source && !readable(rec.source)) why = '<button class="vw-read" data-read>Read ' + esc(rec.source) + '</button>';
       else if (this._data === undefined && rec.source) why = 'reading ' + esc(rec.source) + '…';
       // a read that answered with nothing says so in one voice; everything else draws as it did
-      const body = readEmpty && form !== 'panel' && form !== 'composite'
-        ? NODATA(rec.source, size)
-        : draw(form, have ? this._data : undefined, size, Object.assign({}, opts, wasRead ? { sample: false } : {}));
+      const body = (readEmpty || (blank && noSample)) && form !== 'panel' && form !== 'composite'
+        ? (blank && noSample ? unreadFace(state, rec.source, size, this._err) : NODATA(rec.source, size))
+        : draw(form, have ? this._data : undefined, size, Object.assign({}, opts, (wasRead || noSample) ? { sample: false } : {}));
       // bare: the HOST draws the head (a dashboard tile's own head carries the title and the record chip — the board's
       // tile is one head over the body), so the element draws its body and caption alone, as xs and s already do
       const small = size === 'xs' || size === 's' || this.hasAttribute('bare');
