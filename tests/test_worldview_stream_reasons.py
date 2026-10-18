@@ -45,3 +45,20 @@ def test_the_worker_counts_and_retries():
     worker = src[src.index("async def _wv_stream_worker("):src.index('"worldview.stream.start"')]
     assert worker.index("if _STREAM_RETRY:") < worker.index("# Check if dynamics update is due")
     assert 'fe[etype] = fe.get(etype, 0) + 1' in worker
+
+
+
+# -- FM-W.3 (18 Oct): the scheduled catch-up for allow-listed datasets ------------------------------------------
+def test_catchup_takes_only_new_ids_once_in_order():
+    assert SC.unindexed(["a", "b", "a", "", "c", "d"], {"b", "d"}) == ["a", "c"]
+    assert SC.chunks(["1", "2", "3"], 2) == [["1", "2"], ["3"]]
+
+
+def test_the_catchup_capability():
+    src = open(os.path.join(ROOT, "vera", "worldview", "worldview_jepa.py"), encoding="utf-8").read()
+    body = src[src.index('"worldview.catchup",'):src.index('"worldview.stream.status",')]
+    assert 'CATCHUP_DATASETS_DEFAULT = ["web.worldview_seeds"]' in src
+    assert "_SC.unindexed(listed, MODEL.record_concepts.keys())" in body
+    assert "_stream_encode_new_records(ds, limit=len(chunk), record_ids=chunk)" in body
+    assert "range(CATCHUP_MAX_PAGES)" in body and "run_in_executor(None, _list, ds)" in body
+    assert "asyncio.to_thread(MODEL.save)" in body
