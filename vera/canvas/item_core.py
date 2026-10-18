@@ -33,8 +33,13 @@ PLACED_BY = ("auto", "person")
 # so canvas.item.set refused them and the choice never reached the record)
 VIEWS = ("list", "cards", "table", "graph", "chart", "chips", "fields", "code", "structure", "both", "tree", "flat", "validate", "drawn")
 
-# the fields canvas.item.set may change, one call, one event (Decision 2)
-SETTABLE = ("face", "place", "view", "size", "locked", "folded", "group", "state")
+# what a full item returns to, and what a window gives when it is sent back (WSU-58 S7: kept on the record, so a second
+# browser restores a maximised item and a kept window as the first one had them; see face_state below)
+BACKS = ("pill", "tile", "window")
+DOCKS = ("tile", "pill")
+
+# the fields canvas.item.set may change, one call, one event (Decision 2; back and dock: WSU-58 S7)
+SETTABLE = ("face", "place", "view", "size", "locked", "folded", "group", "state", "back", "dock")
 
 # the place rect's numeric bounds: fractions of the surface for fx/fy, pixels for w/h
 _PLACE_NUM = {"fx": (0.0, 1.0), "fy": (0.0, 1.0), "w": (34.0, 8000.0), "h": (24.0, 8000.0), "z": (0.0, 999.0)}
@@ -104,12 +109,35 @@ def norm_place(p: Any, prev: Optional[Dict[str, Any]] = None) -> Tuple[Optional[
     return (out if out else None), bad
 
 
+_GROUP_BAD = "group must be {id?, front?, at?, sep?} naming an id, sep or at - or {} for the surface's own grouping"
+
+
 def norm_group(g: Any) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    """The item's composite (WSU-58 S7): {} = the surface groups it as it does (no choice of the person's);
+    id = the item the person joined it to (a card dropped on another, LV-11); sep = the person took it out of its group;
+    at = when its tab was last brought to the front (ms; the latest in a group is in front); front = it was, as written."""
     if g is None or g == {} or g == "":
         return {}, []
-    if not isinstance(g, dict) or not str(g.get("id") or "").strip():
-        return None, ["group must be {id, front?} or {} to separate"]
-    return {"id": str(g["id"]).strip()[:80], "front": bool(g.get("front"))}, []
+    if not isinstance(g, dict):
+        return None, [_GROUP_BAD]
+    gid = str(g.get("id") or "").strip()[:80]
+    sep = bool(g.get("sep"))
+    at = None
+    if g.get("at") not in (None, ""):
+        at = _num(g.get("at"))
+        if at is None:
+            return None, ["group.at must be a number (ms)"]
+    if not gid and not sep and at is None:
+        return None, [_GROUP_BAD]
+    out: Dict[str, Any] = {}
+    if gid and not sep:
+        out["id"] = gid
+    out["front"] = bool(g.get("front"))
+    if at is not None:
+        out["at"] = int(round(max(0.0, at)))
+    if sep:
+        out["sep"] = True
+    return out, []
 
 
 def normalise(block: Dict[str, Any]) -> Dict[str, Any]:
@@ -126,6 +154,10 @@ def normalise(block: Dict[str, Any]) -> Dict[str, Any]:
         src = {"cap": c.get("cap"), "args": c.get("args") or {}, "ts": c.get("ts") or "", "ms": c.get("ms") or 0}
     anchors = b.get("anchors") if isinstance(b.get("anchors"), list) else ([b["anchor"]] if isinstance(b.get("anchor"), dict) else [])
     state = b.get("state") if b.get("state") in STATES else "now"
+    face = face_of({"face": b.get("face"), "state": state})
+    # back only on a full item; dock only on a window (or a full item that came from one) - as face_state reads them
+    back = b.get("back") if face == "full" and b.get("back") in BACKS else ""
+    dock = b.get("dock") if (face == "window" or (face == "full" and back == "window")) and b.get("dock") in DOCKS else ""
     return {
         "key": str(b.get("key") or b.get("id") or ""),
         "id": b.get("id"),
@@ -134,7 +166,9 @@ def normalise(block: Dict[str, Any]) -> Dict[str, Any]:
         "source": src or {},
         "anchors": anchors,
         "state": state,
-        "face": face_of({"face": b.get("face"), "state": state}),
+        "face": face,
+        "back": back,
+        "dock": dock,
         "size": size if size in SIZES else "m",
         "place": place or {},
         "locked": bool((place or {}).get("locked")),
@@ -193,6 +227,12 @@ def apply_set(block: Dict[str, Any], fields: Dict[str, Any]) -> Tuple[Dict[str, 
             probs += bad
             if g is not None:
                 want["group"] = g
+        elif k in ("back", "dock"):
+            ok = BACKS if k == "back" else DOCKS
+            if v != "" and v not in ok:                  # "" clears it (a full item restored, a window sent back)
+                probs.append(f"{k} must be one of {'|'.join(ok)} or ''")
+            else:
+                want[k] = v
     if probs:
         return {}, {}, probs
     # a tile or window asked of a parked item brings it back into the now band: the shelf only holds pills
@@ -239,8 +279,8 @@ FACE_EVENTS = ("pill", "unpill", "open", "max", "restore", "send_back", "drag", 
                "lock", "unlock", "park", "unpark", "pin", "unpin", "focus", "blur")
 LAYOUT_EVENTS = ("no_room", "to_border", "from_border")
 EVENTS = FACE_EVENTS + LAYOUT_EVENTS
-_BACK = ("pill", "tile", "window")
-_DOCK = ("tile", "pill")
+_BACK = BACKS
+_DOCK = DOCKS
 
 
 def face_state(item: Dict[str, Any]) -> Dict[str, Any]:

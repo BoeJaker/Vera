@@ -1957,6 +1957,12 @@
   .vc-note{border-left:2px solid var(--acc,#5a9e8f);padding:3px 0 3px 8px;
     color:var(--fg2,#c3cad4);white-space:pre-wrap}
   .vc-by{color:var(--dim,#6b7480);font-size:11px;margin-left:5px}
+  /* a model dive's line (DA-09): what ran on what; running, failed, cut */
+  .vc-dive{font-size:11px;color:var(--dim,#6b7480);padding:2px 0 5px}
+  .vc-dive.run{color:var(--fg2,#c3cad4)}.vc-dive.bad{color:var(--err,#f7768e)}
+  .vc-dive-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;background:var(--acc,#5a9e8f);animation:vcDivePulse 1.2s ease-in-out infinite}
+  @keyframes vcDivePulse{50%{opacity:.25}}
+  .vc-dive-cut{font-size:11px;color:var(--warn,#d6b25e);padding:0 0 5px}
   .vc-fig{margin:.3em 0}.vc-fig img{max-width:100%;border-radius:6px;display:block}
   .vc-fig figcaption,.vc-cap{font-size:10.5px;color:var(--dim,#6b7480);margin-top:3px}
   .vc-tablewrap{overflow-x:auto}
@@ -3893,6 +3899,60 @@
       if (n(hosts) >= 2) dive('links', 'Links', 'ranked', top(hosts, 12), 'links per site');
     }
     return out; };
+  /* DEEP DIVES BY A MODEL (DA-09): beside the ones read off the item, two that a model works out from the item's TEXT -
+     a summary (llm.summarize, the local LLM) and the names in it (fabric.entity_graph.extract_text, the CPU NER). ONLY ON
+     DEMAND: one runs when the person picks it from the menu - never on load, on hover or in the background (owner: background
+     inference only at night). Each opens as an item of its own beside its source (dive:<id>:<source key>), a markdown or an
+     entities item, that says while it runs that it is running, shows a failure in itself, and says when the text was cut to
+     what the dive sends (max). A dive card is not offered dives of its own. */
+  const MODEL_DIVES = [
+    { id: 'summary', label: 'Summarise', cap: 'llm.summarize', kind: 'markdown', max: 6000, note: 'a short summary by the local model',
+      args: (text) => ({ text, max_words: 150, style: 'concise' }),
+      read: (r) => { const s = String((r && r.summary) || '').trim(); return s ? { md: s } : null; } },
+    { id: 'nlp-ents', label: 'Entities', cap: 'fabric.entity_graph.extract_text', kind: 'entities', max: 20000, note: 'the names in it, by the NER model (CPU)',
+      args: (text, key) => ({ items: [{ id: String(key || 'text'), text }], content_type: 'text' }),
+      read: (r) => { if (!r || !Array.isArray(r.nodes)) return null;
+        const ents = r.nodes.filter((x) => x && x.name).map((x) => ({ text: String(x.name), type: String(x.type || 'other'), count: +((x.props && x.props.mention_count) || 1) }))
+          .sort((a, b2) => b2.count - a.count).slice(0, 60);
+        return { groups: ents.length ? [{ group: 'named in it', entities: ents }] : [] }; } },
+  ];
+  /* the text a model dive reads: a document's, a note's, a page's, a research report's; a records item's open record (its
+     text as read) or, none open, the list's titles and snippets. { text, of } - of says which part it was. */
+  const diveText = (b, el) => {
+    const c = (b && b.content) || {}, ty = String((b && b.type) || ''), key = String((b && b.key) || '');
+    const s = (v) => (typeof v === 'string' ? v : '');
+    if (ty === 'markdown' || ty === 'note') return { text: s(c.md) || s(c.text) || s(c.markdown), of: ty === 'note' ? 'the note' : 'the document' };
+    if (ty === 'source') return { text: s(c.reader && c.reader.markdown) || s(c.text) || s(c.snippet), of: 'the page' };
+    if (ty === 'research') return { text: s(c.report), of: 'the report' };
+    if (ty === 'records') {
+      const items = (Array.isArray(c.items) ? c.items : []).filter((r) => r && typeof r === 'object');
+      const st = el && el._recUi && el._recUi[key]; const open = st && st.open ? items.filter((r) => st.open[r.id]) : [];
+      const opened = open.map((r) => { const cur = (st.body && st.body[r.id]) || {};
+        return s(cur.reader && cur.reader.markdown) || s(cur.text) || s(r.text) || s(r.snippet); }).filter((t) => t.trim());
+      if (opened.length) return { text: opened.join('\n\n'), of: opened.length > 1 ? 'the open records' : 'the open record' };
+      return { text: items.map((r) => [s(r.title), s(r.snippet)].filter(Boolean).join(' - ')).filter((t) => t.trim()).join('\n'), of: 'the list' };
+    }
+    return { text: '', of: '' };
+  };
+  const modelDivesOf = (b, el) => {
+    const c = (b && b.content) || {}; if (!b || (c.dive && typeof c.dive === 'object')) return [];
+    if (!/^(markdown|note|source|research|records)$/.test(String(b.type || ''))) return [];
+    const src = diveText(b, el); if (String(src.text || '').trim().length < 80) return [];
+    return MODEL_DIVES.map((d) => Object.assign({}, d, { model: true, of: src.of, title: d.label + ' · ' + String(blockTitle(b) || b.type || '').slice(0, 60) }));
+  };
+  /* what a model dive card says above its body: running (and since when), failed (and why), the text cut, what ran */
+  const diveStrip = (d) => {
+    if (!d || typeof d !== 'object') return '';
+    const n = (x) => Number(x || 0).toLocaleString('en-GB');
+    const cut = d.cut ? `<div class="vc-dive-cut" data-dive-cut="1">The text was cut: the first ${n(d.chars)} of ${n(d.total)} characters of ${esc(d.of || 'it')} were sent.</div>` : '';
+    const what = `<span class="mono">${esc(d.cap || '')}</span>`;
+    if (d.state === 'running') {
+      const stale = d.started && Date.now() - +d.started > 10 * 60 * 1000;
+      return `<div class="vc-dive run" data-dive-state="${stale ? 'stale' : 'running'}">${stale ? 'This dive did not finish - pick it again from the menu.' : '<i class="vc-dive-dot"></i>Running'} ${what} on ${n(d.chars)} characters of ${esc(d.of || 'it')}…</div>${cut}`;
+    }
+    if (d.state === 'error') return `<div class="vc-dive bad" data-dive-state="error">Failed: ${esc(String(d.error || 'no answer'))} <span class="vc-dim">(${what})</span></div>${cut}`;
+    return `<div class="vc-dive" data-dive-state="done">${what} · ${esc(d.of || '')} · ${d.ms != null ? (d.ms < 1000 ? d.ms + ' ms' : (d.ms / 1000).toFixed(1) + ' s') : ''}</div>${cut}`;
+  };
   /* the kinds whose drawer already draws a head — name, state and the controls that belong to that kind. The card
      does not draw a second one over them; see "ONE HEADER PER ITEM" where the card is built. */
   /* the person's behind / front / among pick per panel item, kept in this browser for every canvas and frame */
@@ -4309,6 +4369,7 @@
        its fields merged); the page has already drawn it, so nothing waits on the answer. Keyless blocks keep theirs here. */
     _itemSet(key, f) {
       key = String(key || ''); if (!key || !this.canvasId || this._bidOf(key)) return;
+      f = this._itemRec(key, f);
       const q = this._itemQ || (this._itemQ = {}); const was = q[key] || {};
       if (f.place && was.place) f = Object.assign({}, f, { place: Object.assign({}, was.place, f.place) });
       q[key] = Object.assign(was, f); (this._itemPend || (this._itemPend = new Set())).add(key);
@@ -4336,11 +4397,31 @@
        of ours to that item is still on its way. A record that says nothing leaves the copy as it is (so what was kept here
        before the record carried it is not lost; it goes up with the next change). */
     _itemHydrate(doc) {
-      const pend = this._itemPend || new Set(); let lk = 0, ps = 0, pl = 0, vw = 0, fd = 0;
+      const pend = this._itemPend || new Set(); let lk = 0, ps = 0, pl = 0, vw = 0, fd = 0, wn = 0, ly = 0, gs = 0, gj = 0, gf = 0;
       const locks = this._lockGet(), pos = this._deskPosGet(), pills = this._pillReal(), views = viewStore(this), folds = this._folds();
+      /* WSU-58 S7: the rest of the item's state - maximised (face 'full' + back), its layer (place.layer), its group (taken out,
+         joined, when its tab was in front) and a kept window (face 'window' + its place) - comes back from the record the same way */
+      const cid = this.canvasId, maxK = 'vera:canvas:max:' + cid, wins = this._winKeepGet(), seps = this._sepGet(), joins = this._joinGet(), fronts = this._cmpGet();
+      let picks = null, maxWas = ''; try { maxWas = this._maxFor === cid ? (this._max || '') : (localStorage.getItem(maxK) || ''); } catch (e) { maxWas = this._max || ''; }
+      let maxNow = maxWas, maxRec = '';
       ((doc && doc.blocks) || []).forEach((b) => { const key = b && b.key ? String(b.key) : ''; if (!key || pend.has(key)) return;
-        if (b.face === 'pill' || b.face === 'tile') { const on = b.face === 'pill' && b.state !== 'parked'; if (!!pills[key] !== on) { if (on) pills[key] = 1; else delete pills[key]; pl++; } }
+        /* under a full item, the face it returns to is what the pill and window caches hold */
+        const full = b.face === 'full', under = full ? (['pill', 'tile', 'window'].indexOf(b.back) >= 0 ? b.back : 'tile') : b.face;
+        if (under === 'pill' || under === 'tile') { const on = under === 'pill' && b.state !== 'parked'; if (!!pills[key] !== on) { if (on) pills[key] = 1; else delete pills[key]; pl++; } }
         const P = b.place && typeof b.place === 'object' ? b.place : null;
+        if (full && ['now', 'pinned'].indexOf(b.state || 'now') >= 0) { if (!maxRec || key === maxWas) maxRec = key; }
+        else if (key === maxWas && b.face && 'back' in b) maxNow = '';   /* the record says it was restored */
+        /* a record from before S7 carries no back: this browser's maximise stands, and goes up */
+        else if (key === maxWas && b.face && !full && !(this._maxUp || (this._maxUp = new Set())).has(key)) { this._maxUp.add(key); this._maxWrite('', key, true); }
+        if (under === 'window' && P && P.fx != null && P.w > 0 && P.h > 0) { const v = { w: P.w, h: P.h, fx: P.fx, fy: P.fy }; if (JSON.stringify(wins[key]) !== JSON.stringify(v)) { wins[key] = v; wn++; } }
+        else if (b.face && under !== 'window' && wins[key]) { delete wins[key]; wn++; }
+        if (P && ['among', 'behind', 'front'].indexOf(P.layer) >= 0) { picks = picks || layersLoad(); if (picks[key] !== P.layer) { picks[key] = P.layer; ly++; }
+          if (P.layer === 'among') { if (this._layer[key]) { delete this._layer[key]; ly++; } } else if (this._layer[key] !== P.layer) { this._layer[key] = P.layer; ly++; } }
+        const G = b.group && typeof b.group === 'object' ? b.group : null;
+        if (G) { if (!!seps[key] !== !!G.sep) { if (G.sep) seps[key] = 1; else delete seps[key]; gs++; }
+          const jid = G.sep ? '' : String(G.id || ''); if ((joins[key] || '') !== jid) { if (jid) joins[key] = jid; else delete joins[key]; gj++; }
+          /* the front tab: the latest time any browser brought a tab to the front wins (a time is never taken back) */
+          if (typeof G.at === 'number' && G.at > (fronts[key] || 0)) { fronts[key] = G.at; gf++; } }
         if (P && 'locked' in P) { if (P.locked && P.fx != null) { const v = { fx: P.fx, fy: P.fy, w: P.w, h: P.h, face: b.face === 'pill' ? 'chip' : 'card' }; if (JSON.stringify(locks[key]) !== JSON.stringify(v)) { locks[key] = v; lk++; } } else if (!P.locked && locks[key]) { delete locks[key]; lk++; } }
         if (P && P.by === 'person' && !P.locked && P.fx != null) { const v = { fx: P.fx, fy: P.fy }; if (P.w) v.w = P.w; if (P.h) v.h = P.h; if (JSON.stringify(pos[key]) !== JSON.stringify(v)) { pos[key] = v; ps++; } }
         else if (P && P.by === 'auto' && pos[key]) { delete pos[key]; ps++; }
@@ -4349,7 +4430,37 @@
       const save = (n, k, v) => { if (n) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* this page only */ } } };
       save(lk, 'vera:canvas:desklock:' + this.canvasId, locks); save(ps, 'vera:canvas:deskpos:' + this.canvasId, pos); save(pl, 'vera:canvas:deskpill:' + this.canvasId, pills);
       save(vw, 'vera:canvas:views:' + this.canvasId, views); save(fd, 'vera:canvas:fold:' + this._foldsFor, folds);
-      if (lk || ps || pl) this._html = null;
+      save(wn, 'vera:canvas:deskwin:' + cid, wins); save(gs, 'vera:canvas:desksep:' + cid, seps); save(gj, 'vera:canvas:deskjoin:' + cid, joins);
+      if (gf) this._cmpSet(fronts); if (ly && picks) layersSave(picks);
+      if (maxRec) maxNow = maxRec;
+      if (maxNow !== maxWas) { try { if (maxNow) localStorage.setItem(maxK, maxNow); else localStorage.removeItem(maxK); } catch (e) { /* this page only */ }
+        if (this._maxFor === cid) this._max = maxNow; }
+      if (lk || ps || pl || wn || ly || gs || gj || gf || maxNow !== maxWas) this._html = null;
+    }
+    /* WHAT GOES UP FOR A FULL ITEM (WSU-58 S7): the record holds face 'full' and the face it returns to (back); a face written for an
+       item while it fills the desk (its pill control, a window sent back) is the face it will return to, so it goes up as back */
+    _itemRec(key, f) {
+      if (!f || !f.face || f.face === 'full' || !this._max || this._max !== String(key)) return f;
+      return Object.assign({}, f, { face: 'full', back: f.face });
+    }
+    /* the face an item has under the desk's own caches, as the record holds it: a kept window, the person's pill, else a tile */
+    _recFace(key) { return this._winKeepGet()[key] ? 'window' : this._pillReal()[key] ? 'pill' : 'tile'; }
+    /* maximise / restore on the record, by the face rule (VeraItem.transition 'max'): `was` the item that filled the desk before
+       (restored), `key` the item toggled - full when it is this._max (or `on`), else back to the face it came from */
+    _maxWrite(was, key, on) {
+      const rec = (k, full) => { const under = this._recFace(k), dock = under === 'window' ? 'tile' : '';
+        const s = full ? { face: under, dock } : { face: 'full', back: under, dock };
+        const t = VI && VI.transition ? VI.transition(s, 'max') : (full ? { face: 'full', back: under, dock } : { face: under, back: '', dock });
+        return { face: t.face, back: t.back || '', dock: t.dock || '' }; };
+      if (was && was !== key) this._itemSet(was, rec(was, false));
+      if (key) this._itemSet(key, rec(key, !!on || this._max === key));
+    }
+    /* the item's group as the record holds it (WSU-58 S7): taken out (sep), joined to a card (id, LV-11), when its tab was last in front (at) */
+    _groupRec(key) {
+      const sep = this._sepGet()[key], jn = this._joinGet()[key], at = this._cmpGet()[key], g = {};
+      if (!sep && !jn && !at) return {};
+      if (jn && !sep) g.id = String(jn);
+      g.front = !!(this._grpFront || {})[key]; if (at) g.at = Math.round(at); if (sep) g.sep = true; return g;
     }
     /* the ⋯ menu of a desk card: what is not worth a place in its one row of controls. On the stage (a card clips what is
        inside it), under the button, closed by its own use, a second ⋯ or a press anywhere else. */
@@ -4418,8 +4529,12 @@
         layer: () => '<hr>' + row('layer-behind', 'Full size, behind', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'Full size, in front', 'Fill the free desk, over the other items', L === 'front' || this._max === key),
         /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
         dive: () => { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
-          return dv.length ? '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
-            return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-layer-key="${k}" title="${esc((on ? 'Close ' : 'Open ') + d.label.toLowerCase() + (d.note ? ' - ' + d.note : '') + ' (a widget beside it)')}">${esc(d.label)}</button>`; }).join('') : ''; },
+          /* ...and the model's (DA-09): run only when picked here */
+          const mv = modelDivesOf(b, this);
+          return dv.length || mv.length ? '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
+            return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-layer-key="${k}" title="${esc((on ? 'Close ' : 'Open ') + d.label.toLowerCase() + (d.note ? ' - ' + d.note : '') + ' (a widget beside it)')}">${esc(d.label)}</button>`; }).join('')
+            + mv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
+              return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-dive-model="1" data-layer-key="${k}" title="${esc(on ? 'Close ' + d.label.toLowerCase() : d.label + ' ' + d.of + ' - ' + d.note + ', run now (' + d.cap + '), beside it')}">${esc(d.label)} <span class="vc-dim">· model</span></button>`; }).join('') : ''; },
       };
       let h = VI.menu(b.type, { source: src }, o).map((id) => (R[id] ? R[id]() : '')).join('');
       /* the body's own: what it declared as it was drawn, or the kit's actions for its card - never one the menu has above */
@@ -4469,8 +4584,9 @@
       key = String(key || ''); if (!key) return;
       if (mode === 'behind' || mode === 'front') this._layer[key] = mode; else delete this._layer[key];
       /* a card made to fill the desk (its maximise) sent behind or in front: that layer is its place now, not the maximise */
-      if (this._max === key) { this._max = ''; try { localStorage.removeItem('vera:canvas:max:' + this.canvasId); } catch (e) { /* this page only */ } delete this.dataset.maxed; this._html = null; if (this._doc) { this.render(this._doc); } }
+      if (this._max === key) { this._max = ''; try { localStorage.removeItem('vera:canvas:max:' + this.canvasId); } catch (e) { /* this page only */ } this._maxWrite('', key); delete this.dataset.maxed; this._html = null; if (this._doc) { this.render(this._doc); } }
       const picks = layersLoad(); picks[key] = (mode === 'behind' || mode === 'front') ? mode : 'among'; layersSave(picks);
+      this._itemSet(key, { place: { layer: picks[key] } });   /* WSU-58 S7: the layer is on the item record (place.layer); this browser's pick is its cache */
       const card = this.shadowRoot && [...this.shadowRoot.querySelectorAll('.stage .it')].find((c) => c.dataset.key === key);
       if (card) card.querySelectorAll('[data-act^="layer-"]').forEach((bt) => bt.classList.toggle('on', bt.dataset.act === 'layer-' + this._layer[key]));
       /* any other item's head gains (or loses) its Behind / Front with the layer: drawn again (a panel's are always there) */
@@ -4690,9 +4806,11 @@
       try { localStorage.setItem('vera:canvas:deskfront:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
     /* JOINED BY THE PERSON (LV-11, WSU-97): a card dropped on another - {member key: the card it was dropped on}, per canvas, in this browser */
     _joinGet() { if (this._joinA) return this._joinA; try { this._joinA = JSON.parse(localStorage.getItem('vera:canvas:deskjoin:' + this.canvasId) || '{}') || {}; } catch (e) { this._joinA = {}; } return this._joinA; }
-    _joinSet(key, to) { const m = this._joinGet(); if (to) m[key] = to; else delete m[key]; try { localStorage.setItem('vera:canvas:deskjoin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ } }
+    _joinSet(key, to) { const m = this._joinGet(); const was = m[key] || ''; if (to) m[key] = to; else delete m[key]; try { localStorage.setItem('vera:canvas:deskjoin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ }
+      if (was !== (m[key] || '')) this._itemSet(key, { group: this._groupRec(key) }); }   /* WSU-58 S7: on the item record too */
     _sepGet() { if (this._sepA) return this._sepA; try { this._sepA = JSON.parse(localStorage.getItem('vera:canvas:desksep:' + this.canvasId) || '{}') || {}; } catch (e) { this._sepA = {}; } return this._sepA; }
-    _sepSet(key, on) { const m = this._sepGet(); if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:desksep:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ } }
+    _sepSet(key, on) { const m = this._sepGet(); const was = !!m[key]; if (on) m[key] = 1; else delete m[key]; try { localStorage.setItem('vera:canvas:desksep:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* kept for this page only */ }
+      if (was !== !!on) this._itemSet(key, { group: this._groupRec(key) }); }   /* WSU-58 S7: on the item record too */
     _placeDesk(st, cards) {
       const D = root.VeraDesk, body = this.shadowRoot.getElementById('body');
       this._liveFollow(650);   /* every card it places may glide (.45 s): what is drawn over them follows each frame */
@@ -5263,7 +5381,7 @@
       const out = [];
       plan.forEach((it) => {
         /* a card in the pill strip IS a pill, whatever size it was given (a resized card sent there was drawn as a card 150 x 34) */
-        const c = it.c, key = it.id, s = it.strip && it.h <= 40 ? { w: it.w, h: it.h, face: it.face0 === 'icon' ? 'icon' : 'chip', nd: 0 } : it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 } : it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
+        let c = it.c, key = it.id, s = it.strip && it.h <= 40 ? { w: it.w, h: it.h, face: it.face0 === 'icon' ? 'icon' : 'chip', nd: 0 } : it.replay ? { w: it.w, h: it.h, face: it.face0 || D.faceOf(it.w, it.h), nd: it.nd0 != null ? it.nd0 : 0.5 } : it.win ? { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) === 'chip' ? 'card' : D.faceOf(it.w, it.h), nd: 0 }
           : it.lock ? { w: it.w, h: it.h, face: it.lock.face || 'card', nd: 0.5 }
           /* grown into the free desk: that size, its face from it (a card grown past a full card's size is a full card) */
           : it.grown ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: it.h, face: D.faceOf(it.w, it.h) })
@@ -5274,6 +5392,10 @@
           : it.keepSize ? Object.assign({}, D.sizeAt(R, it.x, it.y, it.so, desk), { w: it.w, h: Math.min(it.h, it.h > 40 && it.maxH ? it.maxH : Infinity), face: it.h <= 40 ? 'chip' : (it.face0 || 'chip') })   /* at a pill's height it IS a pill: a held card kept a pill's size with a card's face - a sliver with only its icons */
           : it.maxH ? (() => { const s0 = D.sizeAt(R, it.x, it.y, it.so, desk); if (s0.face === 'chip' || s0.face === 'icon') return s0; const hh = Math.min(s0.h, it.maxH); return Object.assign({}, s0, { h: hh, face: D.faceOf(s0.w, hh) === 'chip' ? 'card' : D.faceOf(s0.w, hh) }); })()
           : D.sizeAt(R, it.x, it.y, it.so, desk);
+        /* A CARD DRAWN AS A PILL IS DRAWN IN THE STRIP (WSU-95: the pills moved once, x 1061 -> 1081, at the first touch after a load): a card that
+           turns out a pill only here - pushed towards the border by the separation, a pill there by its distance - was drawn where it ended,
+           beside the strip, and the next pass slotted it. It goes to its slot in this pass. */
+        if ((s.face === 'chip' || s.face === 'icon') && !it.strip && !it.win && !it.board && !it.fixed && !it.stay && stripFn) { stripFn(it); s = { w: it.w, h: it.h, face: it.face0 === 'icon' ? 'icon' : 'chip', nd: 0 }; }
         const isChip = s.face === 'chip' || s.face === 'icon';
         const w = Math.min(W - 16, s.w, isChip ? Infinity : (it.maxW || Infinity)), h = Math.max(isChip ? 0 : Math.min(H - 8, it.minH || 0), Math.min(H - 8, s.h));
         const left = Math.max(0, Math.min(W - w, Math.round(it.x - w / 2))), top = Math.max(0, Math.min(H - h, Math.round(it.y - h / 2)));
@@ -5284,7 +5406,7 @@
         { const was = c.dataset.deskFace || '', pill = (x) => x === 'chip' || x === 'icon';
           /* ...and a card that comes into view where another was (a combined card's new front tab, a card back from behind its tabs) fades in */
           const cameIn = this._shownLast && !this._shownLast.has(key) && !!was;
-          if ((cameIn || (was && was !== s.face && pill(was) !== pill(s.face))) && !c.classList.contains('desk-new')) { c.classList.add('face-swap'); clearTimeout(c._fsT); c._fsT = setTimeout(() => c.classList.remove('face-swap'), 170); } }
+          if ((cameIn || (was && was !== s.face && pill(was) !== pill(s.face))) && !c.classList.contains('desk-new')) { c.classList.add('face-swap'); clearTimeout(c._fsT); c._fsT = setTimeout(() => { c.classList.remove('face-swap'); try { this._liveLayout(); } catch (e) { /* later */ } }, 170); } }
         c.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon');
         c.classList.toggle('desk-icon', s.face === 'icon');
         c.dataset.deskFace = s.face;
@@ -5371,10 +5493,11 @@
         st.querySelectorAll('.it.desk-new[data-key]').forEach((c) => { const k = c.dataset.key; if (!NS[k]) NS[k] = { first: nowT, at: nowT, r: '' }; });
         out.forEach((o) => { const e = NS[o.key]; if (!e) return; const rr = [o.x, o.y, o.w, o.h, o.face].join(','); if (e.r !== rr) { e.r = rr; e.at = nowT; } });
         const reveal = () => { const t = Date.now(); let left = 0;
-          st.querySelectorAll('.it.desk-new[data-key]').forEach((c) => { const e = NS[c.dataset.key];
+          let shown = 0; st.querySelectorAll('.it.desk-new[data-key]').forEach((c) => { const e = NS[c.dataset.key];
             /* still for 340 ms AND measured: the content fit has run since it came (it re-placed the desk a second later); at most 2 s */
             const fitDone = this.getAttribute('desk-fit') === 'off' || (this._fitRanAt || 0) > (e ? e.first : 0);
-            if (!e || (t - e.at >= 340 && fitDone) || t - e.first >= 2000) { c.classList.remove('desk-new'); delete NS[c.dataset.key]; } else left++; });
+            if (!e || (t - e.at >= 340 && fitDone) || t - e.first >= 2000) { c.classList.remove('desk-new'); delete NS[c.dataset.key]; shown++; } else left++; });
+          if (shown) { try { this._liveLayout(); } catch (e) { /* the live layer follows on its next layout */ } }
           Object.keys(NS).forEach((k) => { if (t - NS[k].first > 4000) delete NS[k]; });
           if (left) this._revealT = setTimeout(reveal, 120); };
         clearTimeout(this._revealT); this._revealT = setTimeout(reveal, 120); }
@@ -5777,6 +5900,8 @@
         else {
           try { inner = fn(c, b.size, key, this); }
           catch (e) { inner = `<div class="err">Could not render a ${esc(b.type)} block.</div>`; }
+          /* a model dive's card (DA-09): what ran, running / failed, the text cut - its body only once it is done */
+          if (c.dive && typeof c.dive === 'object') inner = diveStrip(c.dive) + (c.dive.state === 'done' ? inner : '');
           // a decision draws its ask above its own body; a bare question (a note that is only its question) is the ask alone
           if (dec) { const keep = b.type === 'loop' || c[textFieldOf(b.type)]; if (!keep) this._kitNow = null; inner = askHtml(dec) + (keep ? inner : ''); }
         }
@@ -6806,7 +6931,8 @@
       try { localStorage.setItem('vera:canvas:deskwin:' + this.canvasId, JSON.stringify(m)); } catch (e) { /* this page only */ }
       /* a window made by this pass gets its head's dock control: drawn again once the pass is done */
       if (at && !this._winRedrawT) this._winRedrawT = setTimeout(() => { this._winRedrawT = 0; this._html = null; if (this._doc) this.render(this._doc); }, 0);
-      this._itemSet(key, at ? { face: 'window', place: { fx: at.fx, fy: at.fy, w: at.w, h: at.h, by: 'person' } } : { face: 'tile' }); }
+      /* dock: a window the desk kept goes back to a tile when it is sent back (WSU-58 S7) */
+      this._itemSet(key, at ? { face: 'window', dock: 'tile', place: { fx: at.fx, fy: at.fy, w: at.w, h: at.h, by: 'person' } } : { face: 'tile', dock: '' }); }
     /* BACK TO THE DESK: the window goes, and so does the size that made it one - the card is placed again like any other */
     _winDock(key) {
       key = String(key || ''); if (!this._winKeepGet()[key]) return false;
@@ -7019,8 +7145,9 @@
       if (this._max !== key) { const b0 = this._blockOf(key); if (b0 && ['now', 'pinned'].indexOf(b0.state || 'now') < 0) return; }
       const body = this.shadowRoot.getElementById('body');
       if (this._max !== key && body) this._maxTop = body.scrollTop;   // where the reader was, for when it is restored
-      const back = this._max === key; this._max = back ? '' : key;
+      const back = this._max === key, was = this._max; this._max = back ? '' : key;
       try { const k = 'vera:canvas:max:' + this.canvasId; if (this._max) localStorage.setItem(k, this._max); else localStorage.removeItem(k); } catch (e) {}
+      if (typeof this._maxWrite === 'function') this._maxWrite(was, key);   /* WSU-58 S7: face 'full' (and what it returns to) on the item record */
       if (this._max) this.dataset.maxed = '1'; else delete this.dataset.maxed;
       try { this.dispatchEvent(new CustomEvent('vera:canvas:max', { bubbles: true, detail: { key, max: this._max === key } })); } catch (e) {}
       if (this._doc) this.render(this._doc);
@@ -7172,7 +7299,11 @@
           if (opened) { const wasWin = this._wins && this._wins.has(fr.dataset.key); if (wasWin) this._wins.delete(fr.dataset.key);
             requestAnimationFrame(() => requestAnimationFrame(() => { const stg = this.shadowRoot.getElementById('stage'); const n = stg && [...stg.querySelectorAll('.it[data-key]')].find((x) => x.dataset.key === key);
               if (n && n.classList.contains('desk-chip')) { if (wasWin) this._winOpen(n); else this._pillCard(n); } })); } }
-        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now(); }
+        if (act === 'cmptab') { const m = this._cmpGet(); m[key] = Date.now(); this._cmpSet(m); (this._cmpPick = this._cmpPick || {})[key] = Date.now();
+          /* WSU-58 S7: the front tab on the item record - the picked one, and the times of the other tabs of its card, so another
+             browser puts the same tab in front */
+          const bar = btn && btn.closest ? btn.closest('.cmp-tabs') : null; const mem = bar ? [...bar.querySelectorAll('[data-act="cmptab"][data-layer-key]')].map((x) => x.dataset.layerKey) : [];
+          const fr = this._grpFront = this._grpFront || {}; [...new Set(mem.concat([key]))].forEach((k) => { fr[k] = k === key; this._itemSet(k, { group: this._groupRec(k) }); }); }
         else { if (act === 'cmpsep') { this._histPush('cmpsep', key); this._joinSet(key, null); } else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
@@ -7318,6 +7449,8 @@
       }
       if (act === 'pin' || act === 'ctx') return this.call(it && it.classList.contains('pinned') ? 'canvas.add' : 'canvas.pin', { key });
       if (act === 'park') return this.call('canvas.park', { key });
+      if (act === 'dive' && btn.dataset.diveModel) { try { const pop = btn.closest('.hd-pop'); if (pop) pop.remove(); } catch (e) { /* closed anyway */ }
+        return this._modelDive(key, btn.dataset.dive); }
       if (act === 'dive') { const b = this._blockOf(key); const d = b && divesOf(b, this).find((x) => x.id === btn.dataset.dive); if (!d) return;
         const dk = 'dive:' + d.id + ':' + key; try { const pop = btn.closest('.hd-pop'); if (pop) pop.remove(); } catch (e) { /* closed anyway */ }
         if (((this._doc && this._doc.blocks) || []).some((x) => String(x.key || '') === dk)) return this.call('canvas.remove', { key: dk });
@@ -7824,6 +7957,10 @@
              going dark when they fill the desk ... if i press the expand button ... until then the element is blank") */
           const z = m.z != null ? m.z : (card.style.zIndex || '');
           if (el.style.zIndex !== z) el.style.zIndex = z;
+          /* ...and fades with it (WSU-96: a card fading in, or dimmed for a pill <-> card change, left its chart or graph drawn at full
+             strength over it): unseen while its card is still settling, dimmed while it changes face */
+          const fade = card.classList.contains('desk-new') ? '0' : card.classList.contains('face-swap') ? '0.08' : '';
+          if (el.style.opacity !== fade) { el.style.transition = (el.style.transition && el.style.transition !== 'none' ? el.style.transition + ', ' : '') + 'opacity .3s'; el.style.opacity = fade; }
         }
         if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} }
           /* a records item's graph takes its slot's height (owner, 2026-10-04: "elements on the canvas still dont resize on
@@ -7905,6 +8042,30 @@
       const base = (window._veraBase || '').replace(/\/$/, '');
       try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name, arguments: args || {} }, opts && opts.trace ? { trace_id: opts.trace } : {})) }); const j = await r.json(); return unwrap(j); }
       catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+    }
+    /* A MODEL DIVE, PICKED (DA-09; MODEL_DIVES): its card goes up at once saying it is running, the cap is called once with
+       the item's text (cut to the dive's max) on a desk trace, and the card is written again with the answer or the error.
+       Picked again it closes - a run still going is let go (its answer is not written). Nothing here runs unless picked. */
+    async _modelDive(key, id) {
+      const b = this._blockOf(key); const d = b && modelDivesOf(b, this).find((x) => x.id === id); if (!d) return;
+      const dk = 'dive:' + d.id + ':' + key; const runs = this._diveRuns || (this._diveRuns = {});
+      if (((this._doc && this._doc.blocks) || []).some((x) => String(x.key || '') === dk) || runs[dk]) { delete runs[dk]; return this.call('canvas.remove', { key: dk }); }
+      const src = diveText(b, this); const all = String(src.text || ''); const cut = all.length > d.max; const text = cut ? all.slice(0, d.max) : all;
+      const dive = { cap: d.cap, of: src.of, state: 'running', started: Date.now(), chars: text.length, total: all.length, cut };
+      const base = { title: d.title, binds: key, source: 'deep dive · ' + d.label };
+      const empty = d.kind === 'entities' ? { groups: [] } : { md: '' };
+      const tok = runs[dk] = {};
+      await this.call('canvas.add', { kind: d.kind, key: dk, at: b.state === 'pinned' ? 'pinned' : 'now', size: 'm', content: Object.assign({}, base, empty, { dive }) });
+      const tr = await this._traceSteps(() => { /* the card says running; the steps are on the trace */ });
+      const t0 = Date.now(); let r = null;
+      try { r = await this.callResult(d.cap, d.args(text, key), { trace: tr.tid }); } catch (e) { r = { ok: false, error: String((e && e.message) || e) }; }
+      finally { tr.close(); }
+      if (runs[dk] !== tok) return null;   /* closed while it ran */
+      delete runs[dk];
+      const err = !r ? 'no answer' : (r.ok === false || r.error) ? String(r.error || 'it failed') : '';
+      const got = err ? null : d.read(r);
+      const fin = Object.assign({}, dive, { state: err || !got ? 'error' : 'done', error: err || (got ? '' : 'the model gave nothing back'), ms: Date.now() - t0 });
+      return this.call('canvas.update', { key: dk, content: Object.assign({}, base, got || empty, { dive: fin }) });
     }
     /* the bridge asked from an item: the readout on the item, the reply to the host */
     async _bridge(key, id, name, args) {
@@ -8620,7 +8781,7 @@
     }
   }
 
-  const api = { NATURAL, NAT, divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
+  const api = { NATURAL, NAT, divesOf, modelDivesOf, diveText, diveStrip, MODEL_DIVES, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

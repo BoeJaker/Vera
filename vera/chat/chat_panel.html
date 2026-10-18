@@ -2329,6 +2329,8 @@ html[data-harness="yes"] #rightRail .lhm-rail .lhm-ico.top{display:none!importan
       <select id="cfgCvRoom" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Make room for the items</option><option value="off">Stay where they are</option></select></div>
     <div class="row"><label style="min-width:70px" title="On a Desk canvas: when a reply lands, the items the turn is about (the canvas's relevance for that turn, best first) come in beside the chat. Off: the desk keeps its order - nothing moves unless you move it; new items join at the border.">Turn brings</label>
       <select id="cfgCvBring" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Its items in, beside the chat</option><option value="off">Nothing - only I move things</option></select></div>
+    <div class="row"><label style="min-width:70px" title="On a Desk canvas while an agent loop runs: what the desk's topic follows. Auto - whichever moved last (the turn you scroll to, or the loop's step). The chat - the loop's steps still land their items, but the desk keeps following the chat. The loop - while a loop runs, the desk follows its steps and scrolling the chat does not move it.">Desk follows</label>
+      <select id="cfgCvFollow" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="auto">Auto - whichever moved last</option><option value="chat">The chat</option><option value="loop">The running loop</option></select></div>
     <!-- the desk's own switches (WSU-48): the canvas reads them as desk-combine / desk-fill / desk-settle / desk-fit -->
     <div class="row"><label style="min-width:70px" title="On a Desk canvas: items of one family about the same turn or subject share one card as tabs, the one the conversation is about in front. Off: every item is its own card.">Combine</label>
       <select id="cfgCvCombine" onchange="CH._persistCanvasCfg()" style="flex:1;min-width:0;font-size:10px"><option value="on">Related items as tabs of one card</option><option value="off">Every item its own card</option></select></div>
@@ -6252,7 +6254,7 @@ IMPORTANT:
   const _CV_CFG_KEY='vera_canvas_cfg';
   /* the desk is the chat's canvas (owner, 2026-10-08: "the desk is the replacement for the chat canvas"): it is the
      default alignment; Held and Strict stay for whoever chose them (a saved choice is kept) */
-  const _CV_CFG={ cfgCvAlign:['align','desk'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'], cfgCvBring:['bring-in','on'], cfgCvArrange:['desk-arrange','auto'], cfgCvRoom:['panel-room','on'], cfgCvCombine:['desk-combine','on'], cfgCvFill:['desk-fill','on'], cfgCvSettle:['desk-settle','on'], cfgCvFit:['desk-fit','on'], cfgCvWindows:['desk-windows','on'] };
+  const _CV_CFG={ cfgCvAlign:['align','desk'], cfgCvPreview:['preview','on'], cfgCvExplode:['explode-offer','both'], cfgCvWhere:['', 'canvas'], cfgCvFuse:['fuse','on'], cfgCvSide:['chat-side','left'], cfgCvBack:['back','column'], cfgCvPanel:['panel-layer','beside'], cfgCvBring:['bring-in','on'], cfgCvArrange:['desk-arrange','auto'], cfgCvFollow:['desk-follow','auto'], cfgCvRoom:['panel-room','on'], cfgCvCombine:['desk-combine','on'], cfgCvFill:['desk-fill','on'], cfgCvSettle:['desk-settle','on'], cfgCvFit:['desk-fit','on'], cfgCvWindows:['desk-windows','on'] };
   function _cvCfg(id){ const el=document.getElementById(id); const v=el&&el.value?String(el.value):''; return v||_CV_CFG[id][1]; }
   function _cvApplyCfg(){
     const el=document.querySelector('#canvasColumnBody vera-canvas');
@@ -7422,6 +7424,8 @@ IMPORTANT:
   }
   function _cvTopicFollow(mid){
     if(!mid||!_cvTopicOn()) return;
+    /* the desk follows the running loop (LV-12 pin): the chat's turns do not move it while a loop runs */
+    try{ if(_cvCfg('cfgCvFollow')==='loop'&&typeof _LOOP_RUNS!=='undefined'&&Object.values(_LOOP_RUNS).some(R=>R&&R.status==='running')) return; }catch(_){}
     const cv=document.querySelector('#canvasColumnBody vera-canvas'); if(!cv||typeof cv.setTopic!=='function') return;
     const c=_cvTopicCache[mid];
     if(c&&Date.now()-c.t<20000){ cv.setTopic(c.keys, c.scores, mid); return; }
@@ -9346,7 +9350,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     const key=R.key+':s'+String(ev.step_id||0)+':'+(R.stepN=(R.stepN||0)+1);
     R.stepKeys=(R.stepKeys||[]).concat([key]).slice(-12);
     try{ const r=await _capCall('canvas.add',{session_id:SID, kind:made.kind, key, content:made.content, at:'now', size:'m', anchor:{mid:R.mid, turn:R.mid, beside:R.key}}); if(r&&r.ok===false) return; }catch(_){ return; }
-    try{ if(typeof _cvTopicOn==='function'&&!_cvTopicOn()) return; const cv=document.querySelector('#canvasColumnBody vera-canvas');
+    try{ if(typeof _cvTopicOn==='function'&&!_cvTopicOn()) return; if(_cvCfg('cfgCvFollow')==='chat') return;   /* the desk follows the chat (LV-12 pin) */ const cv=document.querySelector('#canvasColumnBody vera-canvas');
       if(cv&&typeof cv.setTopic==='function') cv.setTopic([R.key].concat(R.stepKeys.slice(-4)), {}, 'loop:'+R.rid+':'+String(ev.step_id||0)); }catch(_){}
   }
   function _loopRunContent(R){
