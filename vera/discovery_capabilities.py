@@ -154,5 +154,9 @@ async def cap_discovery_benchmark_evaluate(trace_id=None):
     result = evaluate_corpus(load_corpus(corpus_path))
     projection = None
     if result.get("comparison") is not None:
-        projection = DISCOVERY_OPERATOR_LEDGER.record_benchmark(result["comparison"])
+        projection = DISCOVERY_OPERATOR_LEDGER.record_benchmark(
+            result["comparison"], evidence_scope=result["decision_scope"],
+            production_ready=result["production_ready"],
+            authority_changed=result["authority_changed"],
+            providers_invoked=result["providers_invoked"])
     return {**result, "operator_projection": projection}

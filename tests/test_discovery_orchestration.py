@@ -157,6 +157,16 @@ async def test_two_stage_route_isolates_failed_scout_and_returns_cited_context()
     operator_view = DISCOVERY_OPERATOR_LEDGER.snapshot()["routes"][0]
     assert operator_view["request_id"] == req.request_id
     assert operator_view["counts"]["context"] == 2
+    assert operator_view["execution_authority"] == "discovery.route"
+    assert operator_view["consumer_routing_changed"] is False
+    assert operator_view["control_authority"] is False
+    assert {value["source_id"] for value in operator_view["selections"]} == {
+        "best", "lower"}
+    assert all(value["method"] == "api" for value in operator_view["selections"])
+    assert all(value["provider_revision"] == "rev-1"
+               for value in operator_view["selections"])
+    assert all(value["worker_evidence_id"].startswith("dwo_")
+               for value in operator_view["selections"])
     assert "find useful evidence" not in str(operator_view)
 
 
