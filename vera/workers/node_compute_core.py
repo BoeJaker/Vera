@@ -88,6 +88,10 @@ def threads_for(fn: str, default: int) -> int:
 #: four-core gate chunks at once on 12 cores (2026-10-12). Reservations now
 #: count for the job's whole run again (reserved_now).
 RESERVE_LAG_S = 15
+#: A worker that reports cpu_scope "pinned" measures its own cores (P0-1, 18 Oct 2026), so its 60 s average shows
+#: a job once it has run that long: a reservation older than this stops counting toward CPU. Memory is an instant
+#: reading, so a reservation stops counting toward memory after RESERVE_LAG_S.
+PINNED_CPU_SEEN_S = 75
 
 
 def compute_slots_default(ncpu: int) -> int:
@@ -102,13 +106,27 @@ def run_detached(cap_name: str, is_worker: bool, slots: int) -> bool:
     return bool(is_worker and int(slots or 0) > 1 and cap_name == "compute.run")
 
 
-def reserved_now(res: Optional[Dict[str, Any]], metrics_at: float) -> Tuple[float, float]:
+def reserved_now(res: Optional[Dict[str, Any]], metrics_at: float, scope: str = "host") -> Tuple[float, float]:
     """(cpu, mem_gb) this host has in flight on a node: every job it sent and
-    has not heard back about, for the job's whole run. A node's metrics cannot
-    be trusted to show its own jobs (its psutil reads the Proxmox host), so a
-    reservation is never dropped early (2026-10-12, see RESERVE_LAG_S)."""
+    has not heard back about. A node whose metrics read the Proxmox host
+    (scope "host") cannot show its own jobs, so its reservations count for the
+    job's whole run (2026-10-12, see RESERVE_LAG_S). A node that measures its
+    own pinned cores (scope "pinned", P0-1 18 Oct 2026) shows a job once its
+    average has covered it: only jobs sent too recently for that still count."""
     res = res or {}
-    return float(res.get("cpu", 0.0)), float(res.get("mem_gb", 0.0))
+    if scope != "pinned" or not metrics_at or not isinstance(res.get("sent"), list):
+        return float(res.get("cpu", 0.0)), float(res.get("mem_gb", 0.0))
+    cpu = mem = 0.0
+    for e in res["sent"]:
+        try:
+            t, c, m = float(e[0]), float(e[1]), float(e[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if t > metrics_at - PINNED_CPU_SEEN_S:
+            cpu += c
+        if t > metrics_at - RESERVE_LAG_S:
+            mem += m
+    return cpu, mem
 
 
 #: Node metrics older than this are not trusted for admission.
@@ -312,12 +330,14 @@ def capacity(w: Dict[str, Any]) -> Dict[str, float]:
     (from the CPU % across all cores) and free memory (available, not just
     unused - page cache counts as free)."""
     cores = _f(w, "ncpu") or 1.0
-    busy = max(0.0, min(100.0, _f(w, "cpu_pct"))) / 100.0
+    # the node's own cores averaged over a minute when the worker reports them (P0-1/P0-2), else the old reading
+    pinned = str(w.get("cpu_scope") or "") == "pinned" and w.get("cpu_pct_avg") not in (None, "")
+    busy = max(0.0, min(100.0, _f(w, "cpu_pct_avg") if pinned else _f(w, "cpu_pct"))) / 100.0
     mem_total = _f(w, "ram_total_gb")
     mem_free = _f(w, "mem_avail_gb") or max(0.0, mem_total - _f(w, "ram_used_gb"))
     return {"cores": cores, "cpu_free": round(cores * (1.0 - busy), 2),
             "mem_free_gb": round(mem_free, 2), "mem_total_gb": round(mem_total, 2),
-            "load1": _f(w, "load1")}
+            "load1": _f(w, "load1"), "scope": "pinned" if pinned else "host"}
 
 
 def admit(fn: str, w: Dict[str, Any], cfg: Dict[str, Any],
@@ -349,15 +369,19 @@ def admit(fn: str, w: Dict[str, Any], cfg: Dict[str, Any],
     cap = capacity(w)
     r_cpu = float(cfg.get("reserve_cpu", 2.0))
     r_mem = float(cfg.get("reserve_mem_gb", 8.0))
-    rc, rm = reserved_now(res, _f(w, "metrics_at"))
+    rc, rm = reserved_now(res, _f(w, "metrics_at"), cap.get("scope", "host"))
     cpu_left = cap["cpu_free"] - r_cpu - rc
     mem_left = cap["mem_free_gb"] - r_mem - rm
+    # P0-8: a refusal names everything it counted - the reading, its kind, and what this host has in flight there
+    src = "own cores, 60 s avg" if cap.get("scope") == "pinned" else "host reading"
+    inflight = f", {rc:.0f} held by {int(res.get('jobs', 0) or 0)} job(s) sent here" if rc else ""
     if cpu_left < need["cpu"]:
-        return False, (f"CPU: {cap['cpu_free']:.1f} of {cap['cores']:.0f} cores free, "
-                       f"needs {need['cpu']:.1f} + {r_cpu:.0f} reserved"), 0.0
+        return False, (f"CPU: {cap['cpu_free']:.1f} of {cap['cores']:.0f} cores free ({src}){inflight}; "
+                       f"needs {need['cpu']:.1f} + {r_cpu:.0f} kept spare"), 0.0
     if mem_left < need["mem_gb"]:
-        return False, (f"memory: {cap['mem_free_gb']:.0f} GB free, needs "
-                       f"{need['mem_gb']:.0f} + {r_mem:.0f} GB reserved"), 0.0
+        held = f", {rm:.0f} GB held by jobs sent here" if rm else ""
+        return False, (f"memory: {cap['mem_free_gb']:.0f} GB free{held}; needs "
+                       f"{need['mem_gb']:.0f} + {r_mem:.0f} GB kept spare"), 0.0
     score = min(cpu_left / need["cpu"], mem_left / need["mem_gb"])
     return True, f"{cap['cpu_free']:.1f} cores, {cap['mem_free_gb']:.0f} GB free", score
 
