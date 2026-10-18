@@ -154,6 +154,10 @@ def _sqlite_init():
         CREATE TABLE IF NOT EXISTS ontologies (
             id TEXT PRIMARY KEY, name TEXT, data TEXT, updated_at TEXT
         );
+        -- ids deleted by the user: the fabric copy (append-only) must not bring them back at startup
+        CREATE TABLE IF NOT EXISTS tombstones (
+            kind TEXT, id TEXT, deleted_at TEXT, PRIMARY KEY (kind, id)
+        );
     """)
     conn.commit()
     return conn
@@ -174,6 +178,7 @@ def _sqlite_save(table: str, record: dict):
             (record["id"], record.get("name", ""),
              json.dumps(record), record.get("updated", now_iso()))
         )
+        conn.execute("DELETE FROM tombstones WHERE kind=? AND id=?", (table, record["id"]))  # re-created
         conn.commit()
         conn.close()
     except Exception as e:
@@ -184,10 +189,23 @@ def _sqlite_delete(table: str, item_id: str):
     try:
         conn = sqlite3.connect(str(_SQLITE_PATH), timeout=5, check_same_thread=False)
         conn.execute(f"DELETE FROM {table} WHERE id=?", (item_id,))
+        conn.execute("INSERT OR REPLACE INTO tombstones (kind, id, deleted_at) VALUES (?,?,?)",
+                     (table, item_id, now_iso()))
         conn.commit()
         conn.close()
     except Exception as e:
         log.warning("skills sqlite_delete %s: %s", table, e)
+
+
+def _sqlite_tombstones(table: str) -> set:
+    try:
+        conn = sqlite3.connect(str(_SQLITE_PATH), timeout=5, check_same_thread=False)
+        rows = conn.execute("SELECT id FROM tombstones WHERE kind=?", (table,)).fetchall()
+        conn.close()
+        return {r[0] for r in rows}
+    except Exception as e:
+        log.warning("skills sqlite_tombstones %s: %s", table, e)
+        return set()
 
 
 def _sqlite_load_all(table: str) -> list:
@@ -392,8 +410,11 @@ async def _record_to_fabric(item: dict, dataset_id: str, tags: list):
         log.debug("skills _record_to_fabric: %s", e)
 
 
-async def _load_from_fabric(dataset_id: str, store: dict):
-    """Pull all records from a fabric dataset into the in-memory store."""
+async def _load_from_fabric(dataset_id: str, store: dict, skip=()):
+    """Fill ids missing from the in-memory store from the fabric copy (a fallback: SQLite is the authority).
+
+    The fabric is append-only, so one id can have several rows (create, then each update); the newest by
+    `updated`/`created` wins. Ids in `skip` (deleted by the user) are never brought back."""
     try:
         fabric = sys.modules.get("data_fabric")
         if not fabric:
@@ -402,14 +423,17 @@ async def _load_from_fabric(dataset_id: str, store: dict):
             dataset_id=dataset_id,
             query={"limit": 2000, "include_data": True},
         )
-        count = 0
+        newest = {}
         for r in (results or []):
             data = r.get("data") or {}
-            item_id = data.get("id")
-            if item_id and item_id not in store:
-                store[item_id] = data
-                count += 1
-        return count
+            item_id = data.get("id") if isinstance(data, dict) else None
+            if not item_id or item_id in store or item_id in skip:
+                continue
+            stamp = str(data.get("updated") or data.get("created") or "")
+            if item_id not in newest or stamp > str(newest[item_id].get("updated") or newest[item_id].get("created") or ""):
+                newest[item_id] = data
+        store.update(newest)
+        return len(newest)
     except Exception as e:
         log.debug("_load_from_fabric %s: %s", dataset_id, e)
         return 0
@@ -892,14 +916,13 @@ def _seed_format_skills():
 
 
 async def _startup_load():
-    """Reload skills and ontologies. Order: fabric (primary) → SQLite → Redis."""
+    """Reload skills and ontologies. Order: SQLite (authoritative) → Redis → fabric for ids still missing.
+
+    The fabric copy used to load first: it is written once at create time without the list fields, so every
+    user skill came back as its creation-time version without applies_to_caps, and deleted ones returned (S10)."""
     loop = asyncio.get_event_loop()
 
-    # 1. Try fabric first (most up-to-date across restarts)
-    fabric_skills = await _load_from_fabric("skills", SKILLS)
-    fabric_onts   = await _load_from_fabric("ontologies", ONTOLOGIES)
-
-    # 2. SQLite fallback (always works offline)
+    # 1. SQLite: every create, update and delete lands here first
     try:
         skill_recs = await loop.run_in_executor(None, _sqlite_load_all, "skills")
         ont_recs   = await loop.run_in_executor(None, _sqlite_load_all, "ontologies")
@@ -915,7 +938,7 @@ async def _startup_load():
     except Exception as e:
         log.warning("skills: SQLite startup load: %s", e)
 
-    # 3. Redis cache merge
+    # 2. Redis cache merge
     r = _redis()
     if r:
         try:
@@ -935,6 +958,18 @@ async def _startup_load():
                         await loop.run_in_executor(None, _sqlite_save, "ontologies", rec)
         except Exception as e:
             log.debug("skills: Redis startup merge: %s", e)
+
+    # 3. Fabric: only ids neither store has (a lost SQLite file), never a deleted one
+    fabric_s = fabric_o = 0
+    try:
+        dead_s = await loop.run_in_executor(None, _sqlite_tombstones, "skills")
+        dead_o = await loop.run_in_executor(None, _sqlite_tombstones, "ontologies")
+        fabric_s = await _load_from_fabric("skills", SKILLS, skip=dead_s)
+        fabric_o = await _load_from_fabric("ontologies", ONTOLOGIES, skip=dead_o)
+        if fabric_s or fabric_o:
+            log.info("skills: fabric restored %d skills, %d ontologies missing from SQLite", fabric_s, fabric_o)
+    except Exception as e:
+        log.debug("skills: fabric startup fill: %s", e)
 
     # Register / refresh the built-in guideline skills (idempotent).
     try:
@@ -965,7 +1000,7 @@ async def _startup_load():
         log.warning("skills: delivery-channel bridge failed: %s", e)
 
     log.info("skills: loaded %d skills, %d ontologies (fabric:%d/%d)",
-             len(SKILLS), len(ONTOLOGIES), fabric_skills, fabric_onts)
+             len(SKILLS), len(ONTOLOGIES), fabric_s, fabric_o)
 
 def _extract_variables(content: str) -> list[str]:
     """Detect {{variable}} placeholders in a skill template."""
@@ -1133,6 +1168,9 @@ async def skills_update(
     _sync_delivery_channel(skill)
     await _save_async("skills", skill)
     await emit_event({"type": "skills.updated", "id": id})
+    # a newer fabric row, so a fallback load (no SQLite) sees the edit, not the creation-time copy
+    asyncio.create_task(_record_to_fabric(skill, "skills", ["skill", skill.get("type", ""), skill.get("name", "")]
+                                          + list(skill.get("tags") or [])))
     return skill
 
 
@@ -1407,6 +1445,8 @@ async def ontologies_update(
 
     await _save_async("ontologies", ont)
     await emit_event({"type": "ontologies.updated", "id": id})
+    asyncio.create_task(_record_to_fabric(ont, "ontologies", ["ontology", ont.get("domain", ""), ont.get("name", "")]
+                                          + list(ont.get("tags") or [])))
     return ont
 
 
