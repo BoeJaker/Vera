@@ -3488,6 +3488,18 @@ async def _submit_t3(ds_id: str, items: List[Dict], *, crawl_id: str = "", llm_e
                             total=job["total"])
 
 
+def _record_row(ds_id: str, rid: str):
+    """A crawl record by the id the crawl gave it. fabric_records.id is the store's own id (a uuid); the crawl's id
+    ("p_..." / "f_...") is inside data.id - so the deferred passes looked up by the wrong one and found no text
+    (18 Oct). Either id is accepted; the row's own id is what the entity links must use."""
+    conn = _sqlite_conn()
+    row = conn.execute("SELECT id, text, data FROM fabric_records WHERE id=?", (rid,)).fetchone()
+    if row is None and rid:
+        row = conn.execute("SELECT id, text, data FROM fabric_records WHERE dataset_id=? AND json_extract(data, '$.id')=? "
+                           "ORDER BY rowid DESC LIMIT 1", (ds_id, rid)).fetchone()
+    return row
+
+
 async def _t3_handler(job: Dict, should_continue) -> Dict:
     """The deferred second-order pass: entities (and relations) for each record the crawl stored, one at a time,
     yielding when the box gets busy (the queue re-queues what is left)."""
@@ -3504,10 +3516,10 @@ async def _t3_handler(job: Dict, should_continue) -> Dict:
                 return {"yielded": f"pre-empted: {why}", "items": i}
         rid = rec.get("rid") or ""
         try:
-            row = _sqlite_conn().execute("SELECT text FROM fabric_records WHERE id=?", (rid,)).fetchone()
+            row = _record_row(ds_id, rid)
             text = row["text"] if row else ""
             if text:
-                found += await extract_entities_for_record(text, rid, ds_id, rec.get("ck") or "web",
+                found += await extract_entities_for_record(text, row["id"], ds_id, rec.get("ck") or "web",
                                                            llm_assist=bool(p.get("llm_ent")),
                                                            reconcile=bool(p.get("reconcile")))
         except Exception as e:  # noqa: BLE001
@@ -3563,7 +3575,7 @@ async def _t3_media_handler(job: Dict, should_continue) -> Dict:
     text = _pc.media_text(op, result)
     if not text:
         return {"ok": False, "error": str((result or {}).get("error") or "no text")[:200]}
-    row = _sqlite_conn().execute("SELECT data FROM fabric_records WHERE id=?", (rid,)).fetchone()
+    row = _record_row(ds_id, rid)
     rec = json.loads(row["data"]) if row and row["data"] else {"id": rid, "url": url, "title": url.rsplit("/", 1)[-1]}
     rec.update(id=rid, text=text, word_count=len(text.split()), t3_done=op)
     await _ingest()(ds_id, [rec], source="fabric_discovery", tags=list(rec.get("tags") or []) + ["media", op])
