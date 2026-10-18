@@ -46,6 +46,7 @@ def test_shadow_projection_is_payload_free_and_truthful_about_missing_route_evid
     projected = DiscoveryOperatorLedger().record_research_shadow(observation)
     encoded = repr(projected)
     assert projected["schema"] == SHADOW_SCHEMA
+    assert projected["kind"] == "research_shadow"
     assert projected["native_result_count"] == 3
     assert projected["portable_context_count"] == len(items) == 2
     assert projected["excluded_count"] == 1
