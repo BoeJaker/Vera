@@ -9202,6 +9202,28 @@ def vera_origin_header(job_type: str = "", req_id: str = "", cap: str = "") -> D
     return {"X-Vera-Origin": _re.sub(r"[^\x20-\x7e]", "?", val)[:240]}
 
 
+def _redis_url_for_relaunch(url: str, copy_exists: bool) -> Optional[str]:
+    """The REDIS_URL a re-exec should start with, or None to leave it as it is.
+
+    config.py writes the host's Redis credential INTO os.environ["REDIS_URL"] on the
+    first boot, and skips its sealed copy whenever the URL already carries one. A
+    re-exec keeps the environment, so after a rotation (redis.auth.ensure rotate=true
+    writes the new password to the sealed copy) Vera came back on the OLD password -
+    found 18 Oct 2026, the old one could not be retired. When the sealed copy exists,
+    the re-exec starts from the URL without credentials, so the new process reads the
+    current password from the copy, as a cold start does."""
+    try:
+        try:
+            from Vera.vera.security import redis_auth_core as _rac
+        except Exception:                               # pragma: no cover
+            from vera.security import redis_auth_core as _rac
+        if copy_exists and url and _rac.has_credentials(url):
+            return _rac.without_credentials(url)
+    except Exception:
+        return None
+    return None
+
+
 def _relaunch_argv() -> List[str]:
     """The argv to re-exec this process with — how it was actually started."""
     return [sys.executable, "-m", "Vera.vera.capability_orchestration"]
@@ -9249,6 +9271,13 @@ async def _do_restart(delay: float, gate=None) -> None:
     except Exception:
         pass
     try:
+        try:   # the new process reads the CURRENT Redis password from the sealed copy (see _redis_url_for_relaunch)
+            from Vera.vera.security import redis_auth_core as _rac_r
+            _u = _redis_url_for_relaunch(os.environ.get("REDIS_URL", ""), os.path.isfile(_rac_r.local_file()))
+            if _u:
+                os.environ["REDIS_URL"] = _u
+        except Exception as e:
+            log.warning("restart: REDIS_URL left as it was: %s", e)
         os.execv(sys.executable, _relaunch_argv())
     except Exception as e:                      # execv only returns on failure
         log.error("DEV RESTART FAILED — Vera is still running on the OLD code: %s", e)
