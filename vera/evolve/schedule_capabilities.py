@@ -315,7 +315,24 @@ async def box_state() -> Dict[str, Any]:
     st["loops_running"] = await _loops_running()
     st["census_owner_run"] = owner
     st["declared_busy"] = await _declared_busy()
+    # a release waiting to restart prod holds this key (release_core.DRAIN_KEY): protected entries do not start
+    try:
+        r = _redis()
+        st["release_draining"] = bool(r is not None and await r.get("vera:evolve:release:drain"))
+    except Exception:
+        st["release_draining"] = False
     return st
+
+
+async def protected_running() -> List[Dict[str, Any]]:
+    """Open runs of protected entries (release_capabilities.census_summary -> release_core.may_release)."""
+    try:
+        runs = await _runs(limit=MAX_RUNS)
+        scheds = {s.get("id"): s for s in await _load_all()}
+        return core.protected_runs(runs, scheds, _now())
+    except Exception as e:
+        log.debug("protected runs: %s", e)
+        return []
 
 
 # ── launchers ────────────────────────────────────────────────────────────────
@@ -465,6 +482,8 @@ def _in_background(run_id: str, rec: Dict[str, Any], coro, *, exclusive: bool = 
         await _update_run(run_id, finished_at=fin, result=word, detail=detail)
         cur = await _get(rec["id"]) or rec
         cur["last_finished_at"], cur["last_result"] = fin, word
+        if word not in ("interrupted",):
+            cur["recoveries"] = 0                  # it got through: the next restart may recover it again
         await _save(cur)
         await _board_note(cur, f"{word}" + (f" · {detail}" if detail else ""))
         await emit_event({"type": "evolve.schedule.finished", "schedule_id": rec["id"], "result": word,
@@ -722,6 +741,7 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
         await _append_run(run)
         rec["last_started_at"] = core.iso(now)
         rec["last_result"] = word
+        rec["recover_due"] = ""                    # a recovery, if this was one, is under way
         rec["runs"] = int(rec.get("runs") or 0) + 1
         rec["updated"] = core.iso(now)
         await _save(rec)
@@ -752,6 +772,9 @@ async def _reconcile_runs() -> Dict[str, Any]:
             rec = await _get(run.get("schedule_id", ""))
             if rec and (rec.get("last_finished_at") or "") < (run.get("started_at") or ""):
                 rec["last_finished_at"], rec["last_result"] = fin, "interrupted"
+                # recover (owner, 18 Oct): an entry that recovers runs again once the box allows
+                if core.recover_after_interrupt(rec, fin):
+                    out.setdefault("recovering", []).append(rec.get("id"))
                 await _save(rec)
             out["closed"].append(run["id"])
         if out["closed"]:

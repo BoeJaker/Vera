@@ -52,8 +52,8 @@ DRAIN_TTL_S = 120
 
 
 def waiting_on_gates(why: Any) -> bool:
-    """Is this hold reason a running-gates hold (the release is draining the gate queue)?"""
-    return "gate(s) running" in str(why or "")
+    """Is this hold reason a running-gates or protected-runs hold (the release drains new starts)?"""
+    return "gate(s) running" in str(why or "") or "protected test run(s) going" in str(why or "")
 
 
 def live_loop_ids(tasks: Any) -> List[str]:
@@ -99,6 +99,14 @@ def may_release(mode: str, census: Dict[str, Any], restart: bool = True) -> Tupl
         return False, ("%d gate(s) running (%s) - a restart would kill them; new gates wait for "
                        "this release (force to override)"
                        % (len(gates), ", ".join(str(g.get("branch") or g.get("id"))[:40] for g in gates[:3])))
+    # A protected scheduled test run dies with the process too (owner, 18 Oct 2026: tests "protected like the
+    # censuses are"; that morning a release killed the memory census mid-run). Bounded by each entry's
+    # protect_minutes; a person can still stop one (evolve.schedule.stop_run) or force the release.
+    prot = [p for p in ((census or {}).get("protected") or []) if isinstance(p, dict)] if restart else []
+    if prot:
+        return False, ("%d protected test run(s) going (%s) - a restart would kill them; new protected runs wait "
+                       "for this release (stop one with evolve.schedule.stop_run, or force)"
+                       % (len(prot), ", ".join(str(p.get("title") or p.get("schedule_id"))[:40] for p in prot[:3])))
     if mode == "goal":
         if state in PARKED_STATES or state in CLEAR_STATES:
             return True, f"census {state}"
