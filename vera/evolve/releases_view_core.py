@@ -153,3 +153,19 @@ def events(cards: Iterable[Dict[str, Any]], releases: Iterable[Dict[str, Any]], 
                                                                             len(r.get("carried") or []))})
     out.sort(key=lambda e: e["start"])
     return out
+
+
+def lane_events(lane: Dict[str, Any], start: datetime, end: datetime, now: datetime) -> List[Dict[str, Any]]:
+    """The release lane's queued requests on the calendar (B1.0): one mark at the time the batch fires."""
+    q = (lane or {}).get("queued") or []
+    if not q:
+        return []
+    t = _ts(lane.get("fires_at")) or now
+    if t < start or t > end:
+        return []
+    who = ", ".join(sorted({str(r.get("by") or "?") for r in q}))
+    return [{"id": "lane:%s" % q[0].get("id"), "start": _iso(t), "end": _iso(t + timedelta(minutes=10)),
+             "source": "releases", "kind": "release-request", "read_only": True, "color": "#a3e4b8",
+             "title": "▲ release lane · %d request(s) · %s" % (len(q), who),
+             "detail": "; ".join("%s: %s" % (r.get("by"), str(r.get("reason") or "")[:60]) for r in q[:5])
+                       + (" · waits: %s" % lane.get("why") if lane.get("why") else "")}]

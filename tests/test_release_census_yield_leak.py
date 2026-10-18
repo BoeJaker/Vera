@@ -39,8 +39,10 @@ def test_a_replacing_sync_record_inherits_the_resume_it_owes():
 
 
 def test_both_paths_are_wired():
-    prod = SRC[SRC.index("async def cap_release_prod("):]
-    assert 'if mode == "goal" and core.goal_yield_needed(summary):' in prod
+    # the release body is shared by evolve.release.prod and the release lane (B1.0, 18 Oct 2026)
+    opener = SRC[SRC.index("async def _open_release("):SRC.index('@capability("evolve.release.prod"')]
+    assert 'if mode == "goal" and core.goal_yield_needed(summary):' in opener
+    assert "return await _open_release(" in SRC[SRC.index("async def cap_release_prod("):]
     q = SRC[SRC.index("async def _queue_node_sync("):]
     q = q[:q.index("\ndef ")]
     assert "core.carry_census_resume(await _node_sync_rec(), rec)" in q

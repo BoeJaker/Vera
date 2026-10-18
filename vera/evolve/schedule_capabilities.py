@@ -965,6 +965,7 @@ async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windo
         try:
             _rv = await releases_data(days=max(1, min(31, int((e - s).total_seconds() // 86400) + 2)))
             ev += _rvc.events([c for col in _rv["columns"].values() for c in col], _rv["releases"], s, e)
+            ev += _rvc.lane_events(await _call("evolve.release.lane") or {}, s, e, _now())   # B1.0
         except Exception as _re:
             log.debug("schedule events: releases layer skipped: %s", _re)
     if include_calendar in (True, 1, "1", "true", "yes"):
