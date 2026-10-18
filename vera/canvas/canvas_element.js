@@ -3118,6 +3118,10 @@
   .ti{height:24px;padding:0 8px;border:1px solid var(--bd,var(--border,#2a2f37));border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1c2026));color:var(--t1,var(--fg,#dce1e8));font:inherit;font-size:10.5px;min-width:0;flex:1 1 120px}
   .ti.sm{flex:0 1 84px}.ti:focus{outline:none;border-color:var(--ac,var(--acc,#5a9e8f))}
   .vc-term,.vc-panel,.vc-nb{display:flex;flex-direction:column;min-height:0;height:100%}
+  /* A PANEL IN THE HELD COLUMN (the Canvas tab, or a narrow desk) HAS A PAGE'S HEIGHT (WSU-105: it was a 60-110 px strip - the
+     column sizes cards by their content, and a panel's frame hole has none). On the desk the arrangement sizes it. */
+  :host(:not([align="desk"])) .vc-panel > .vc-live[data-live="frame"],:host([desk-narrow]) .vc-panel > .vc-live[data-live="frame"]{height:min(70vh,720px);min-height:320px;flex:0 0 auto}
+  :host(:not([align="desk"])) .it-bd:has(> .vc-panel),:host([desk-narrow]) .it-bd:has(> .vc-panel){max-height:none}   /* ...and its card grows to hold it (the size cap is for reading cards) */
   .vc-tconnect,.vc-bridge .row,.addpop .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:4px 0}
   /* the slot the overlay is sized to: a hole, not a plate (the ground it used to paint showed through as a tile
      behind every live item, and behind the ones whose content does not fill it, as a large blank area) */
