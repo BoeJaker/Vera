@@ -62,6 +62,7 @@ import time
 import contextlib
 import uuid
 from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -100,6 +101,19 @@ try:
 except Exception:                       # worktree / app-free import
     from vera.agents import turn_needs_core as _turn_needs
     from vera.agents import info_miss_core as _info_miss
+
+
+def _pg_ts(value: Any) -> datetime:
+    """An ISO timestamp (the record's own string, often ending in 'Z') as the aware datetime asyncpg wants for a
+    TIMESTAMPTZ parameter. The agent mirror passed the string itself, and every write failed: 4,512 'AgentRegistry PG
+    save: invalid input for query argument $30' in 25 h (S6 / D17-3, backbone 18 Oct). Unreadable or empty -> now."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    try:
+        d = datetime.fromisoformat(str(value or "").strip().replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return datetime.now(timezone.utc)
 
 
 async def _switch_mode(feature_id: str, minds: Any = None, default: str = "off",
@@ -815,7 +829,7 @@ class AgentRegistry:
                     json.dumps(rec.stop), rec.system_prompt, rec.greeting,
                     rec.voice, rec.tts_speed, rec.tts_engine,
                     json.dumps(rec.domain_caps), rec.domain_description, rec.tool_mode,
-                    rec.created_at, rec.updated_at, rec.archived, rec.author,
+                    _pg_ts(rec.created_at), _pg_ts(rec.updated_at), rec.archived, rec.author,
                     )
             except Exception as e:
                 log.warning("AgentRegistry PG save: %s", e)
