@@ -198,6 +198,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "record (text, tables, archive members, catalogue datasets), indexes it in fabric_pages, and follows the URLs "
        "it points at (catalogue distributions, sitemap and feed entries). Files over the reader's byte cap are "
        "recorded by metadata only.", owner="web-ingress"),
+    _f("web.searxng.self_heal", ("off", "on"), "web", "web-ingress §16",
+       "SearXNG self-healing: 'off' (default) = a probe every 5 minutes when nothing searches, reported in /health and "
+       "web.searxng.heal.status; 'on' = also restart the container on the dead-network signature (every engine times "
+       "out, or SearXNG unreachable - not on CAPTCHA / rate limits), at most once per 30 min and 4 a day, and tell the "
+       "owner on Telegram when two restarts in a row did not bring it back.", owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),
