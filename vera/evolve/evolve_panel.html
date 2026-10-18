@@ -201,6 +201,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="ship" onclick="nav('ship')" title="Every branch &mdash; its pipeline, review, sandbox and tests &mdash; in one table, the commit graph, race lanes, authorship and gate strip below it"><span class="ic">&#8599;</span>Ship</button>
   <button class="btn" data-sec="agents" onclick="nav('agents')" title="Every agent session &mdash; Claude Code, Codex, a Vera loop, an edit-queue agent &mdash; with its board items, pipelines and sandboxes; the board by lane, notes and seats fold up under it"><span class="ic">&#9737;</span>Agents</button>
   <button class="btn" data-sec="mission" onclick="nav('mission')" title="Every event &mdash; actions, errors, gates &mdash; in one table, with what is live and what needs a person above it; the run-once and improve-live theatres fold up under it"><span class="ic">&#9673;</span>Mission control</button>
+  <button class="btn" data-sec="releases" onclick="nav('releases')" title="What is being gated, promoted to bleeding-edge and released to prod - each pipeline's stages and tests, the release in flight, and what every release carried"><span class="ic">&#9650;</span>Releases</button>
   <button class="btn" data-sec="schedule" onclick="nav('schedule')" title="A calendar of Loop Lab work &mdash; censuses, suites, tasks, pipeline steps, board items &mdash; started by the scheduler only when the box is free"><span class="ic">🗓</span>Schedule</button>
   <button class="btn" data-sec="settings" data-vera-settings="#sec-settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
@@ -708,6 +709,29 @@ html.vpb-nav-hosted body{padding-left:0}
      beside a loop). The calendar is <vera-calendar> (reusable; /ui/elements/calendar.js);
      the windows are read-only projections, the runs the scheduler started sit beside
      them. Click an empty slot to make a schedule there; click a window to edit it. -->
+<!-- == RELEASES: gating, promotions, releases (owner 18 Oct 2026: "better vis over the gating and releases -
+     releases and promotions ... have a section of the ui"). Read: evolve.releases.view. Controls in the header and
+     the pipeline drill (openPipe); the live strip carries the release in flight. == -->
+<div class="sec" id="sec-releases" style="display:none">
+  <div class="card">
+    <div class="card-h">
+      <span class="card-t">RELEASES</span>
+      <span class="hint">what is being gated, promoted to bleeding-edge and released to prod</span>
+      <span style="flex:1"></span>
+      <select id="rel-days" onchange="loadReleases()" title="how far back"><option value="2">2 days</option><option value="7" selected>7 days</option><option value="14">14 days</option></select>
+      <button class="btn sm" onclick="loadReleases()">↻</button>
+      <button class="btn sm ok-btn" onclick="relReleaseNow()" title="release bleeding-edge to prod (asks for confirmation; waits for a census goal)">Release to prod…</button>
+    </div>
+    <div id="rel-live"></div>
+    <div id="rel-tiles" class="rel-tiles"></div>
+    <div id="rel-board" class="rel-board"><span class="hint">loading…</span></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Release history</span><span class="hint">every release, what it waited for, what it carried</span></div>
+    <div id="rel-hist" class="hint">loading…</div>
+  </div>
+</div>
+
 <div class="sec" id="sec-schedule" style="display:none">
   <div class="card sch-card">
     <div class="card-h">
@@ -1061,7 +1085,7 @@ function nav(sec){
     // absorbed before it: an old deep-link or injected nav item still lands
     // on the table that holds their data.
     pipelines:()=>nav('ship'),review:()=>nav('ship'),sources:()=>nav('ship'),sandbox:()=>nav('ship'),unittests:()=>nav('ship'),logs:()=>nav('ship'),
-    schedule:loadSchedule,
+    schedule:loadSchedule,releases:loadReleases,
     settings:fillSettings}[sec];
   if(f)f();
   // The address bar says which page is open (a deep link says more).
@@ -1108,14 +1132,15 @@ const SCH_LAYERS=[
   {k:'results',label:'Results',col:'#4ade80',tip:'every census run and suite over time, coloured by its pass rate'},
   {k:'board',label:'Board items',col:'#a78bfa',tip:'work scheduled for board items - its windows and runs'},
   {k:'calendar',label:'Calendar',col:'#4a9eff',tip:'Vera\u2019s own calendar - the Comms panel\u2019s: local, ics, CalDAV, Google'},
+  {k:'releases',label:'Releases & promotions',col:'#4ade80',tip:'promotions to bleeding-edge (◆) and releases to prod (▲)'},
   {k:'agents',label:'Agents',col:'#e0a458',tip:'Claude sessions - their registered timers and the work scheduled for them (agents.work)'}];
 // Owner 18 Oct 2026: "the schedule ui is hard to read there is so much stuff on it" - every layer on at once
 // stacked ~200 events in one week. Default: what ran and the sessions' work; the rest is one click away.
 // windows on too (owner 18 Oct 2026: "really clear from the UI what each slot is doing") - only enabled
 // schedules draw them, and skipped runs are not drawn, which is what made the week unreadable
-const SCH_DEFAULT_LAYERS=['windows','runs','agents'];
+const SCH_DEFAULT_LAYERS=['windows','runs','agents','releases'];
 let _schOn=new Set(SCH_DEFAULT_LAYERS), _schCounts={}, _schBoardItems=[], _schProfiles=[];
-try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers.v3')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
+try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers.v4')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
 let _schShowOff=false; try{_schShowOff=localStorage.getItem('loop-lab.sch.showoff')==='1'}catch(_){}
 let _schCache={schedules:[],next:{},state:{},config:{}};
 async function loadSchedule(){
@@ -1159,6 +1184,56 @@ function schList(){
       +'<button class="btn sm" onclick="schOpen(\''+s.id+'\')" title="edit">✎</button>'
       +'<button class="btn sm" onclick="schDelete(\''+s.id+'\')" title="delete">✕</button></div></div>';
   }).join('');
+}
+/* ═══ RELEASES (owner 18 Oct 2026) ═══ */
+const REL_COLS=[['adopted','Adopted','#9aa0a6'],['gating','Gating','#e0a458'],['ready','Gate passed, ready to promote','#c4b5f5'],['edge','On an edge, not on prod','#7aa2f7'],['released','Released to prod','#4ade80'],['failed','Failed','#f87171']];
+const REL_MAX=8; let _relAll={};
+// local time, short: the records are UTC
+function relT(s){if(!s)return '';const d=new Date(s);if(isNaN(d))return String(s).replace('T',' ').slice(5,16);
+  return d.toLocaleDateString(undefined,{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}
+function relMore(k){_relAll[k]=!_relAll[k];loadReleases()}
+function relStageChip(s){const c=s.ok===false?'#f87171':s.ok?'#4ade80':'#e0a458';return '<span class="rel-chip" style="--c:'+c+'" title="'+esc(s.detail||'')+'">'+esc(s.stage)+(s.ok===false?' ✗':s.ok?' ✓':' …')+'</span>'}
+function relCard(c){
+  const t=c.tests||{}; const st=(c.stages||[]).filter(s=>s.stage!=='test-pool'||s===c.stages[c.stages.length-1]);
+  return '<div class="rel-card" onclick="openPipe(\''+esc(c.id)+'\')" title="open the pipeline">'
+    +'<div class="t">'+esc(c.branch||c.id)+'</div>'
+    +'<div class="m">→ <b>'+esc(c.to||'bleeding-edge')+'</b> · '+esc(c.id)+(c.commits!=null?' · '+esc(c.commits)+' commit(s)':'')+(c.changed_files!=null?' · '+esc(c.changed_files)+' file(s)':'')+'</div>'
+    +'<div class="rel-chips">'+st.slice(-6).map(relStageChip).join('')+'</div>'
+    +(t.passed!=null?'<div class="m">tests '+t.passed+' passed'+(t.failed?' · <b style="color:#f87171">'+t.failed+' failed</b>':'')+'</div>':'')
+    +'<div class="m">'+(c.promoted_at?'promoted '+esc(relT(c.promoted_at))+(c.merge_sha?' @ '+esc(c.merge_sha.slice(0,8)):''):(c.last_at?'last step '+esc(relT(c.last_at)):''))+(c.minutes!=null?' · '+c.minutes+' min':'')+'</div></div>';
+}
+async function loadReleases(){
+  const days=(($('rel-days')||{}).value||'7');
+  const d=await api('/evolve/releases/view?days='+encodeURIComponent(days));
+  if(!d||d.error){$('rel-board').innerHTML='<div class="empty">'+esc((d&&d.error)||'releases unavailable')+'</div>';return}
+  const p=d.pending, cs=d.census||{};
+  $('rel-live').innerHTML=p?'<div class="rel-live"><b>RELEASING</b> '+esc(p.id||p.release_id||'')+' · '+esc(p.status||'')+' ('+esc(p.mode||'')+')'
+    +(p.last_why?' · '+esc(p.last_why):'')+(cs.goal?' · census goal '+esc(cs.goal):'')
+    +' <button class="btn sm" onclick="releaseCancel().then(loadReleases)">cancel</button>'+(p.status==='waiting'?' <button class="btn sm" onclick="releaseForce().then(loadReleases)">force now</button>':'')+'</div>':'';
+  const n=d.counts||{}, last=(d.releases||[])[0]||{};
+  const tile=(label,big,sub,col)=>'<button class="rel-tile" onclick="relFocus(\''+(col||'')+'\')"><span class="l">'+esc(label)+'</span><span class="b">'+esc(big)+'</span><span class="s">'+esc(sub||'')+'</span></button>';
+  $('rel-tiles').innerHTML=tile('Gating now',String(n.gating||0),(n.adopted||0)+' adopted, waiting · '+(n.ready||0)+' passed, not promoted','gating')
+    +tile('On an edge, not on prod',String(n.edge||0)+' change(s)',d.edge_ahead!=null?d.edge_ahead+' commit(s) ahead of main':'','edge')
+    +tile('Last release',last.finished_at?relT(last.finished_at):(last.status||'-'),last.id?(last.status+' · '+(last.carried||[]).length+' change(s) carried'):'','released')
+    +tile('Failed gates',String(n.failed||0),'in the last '+days+' days','failed');
+  $('rel-board').innerHTML=REL_COLS.map(([k,label,col])=>{const L=(d.columns||{})[k]||[];
+    return '<div class="rel-col" data-col="'+k+'"><div class="rel-ch" style="color:'+col+'">'+esc(label)+' · '+L.length+'</div>'
+      +(L.length?L.slice(0,_relAll[k]?200:REL_MAX).map(relCard).join(''):'<div class="hint">none</div>')
+      +(L.length>REL_MAX?'<a class="hint" style="cursor:pointer" onclick="relMore(\''+k+'\')">'+(_relAll[k]?'show fewer':'show all '+L.length)+'</a>':'')+'</div>'}).join('');
+  $('rel-hist').innerHTML=(d.releases||[]).length?'<table><thead><tr><th>release</th><th>requested → done</th><th>waited for</th><th>main @</th><th>carried</th><th>nodes</th></tr></thead><tbody>'
+    +(d.releases||[]).map((r,i)=>'<tr><td>'+esc(r.id)+' <span class="hint">'+esc(r.status)+'</span></td><td class="mono">'+esc(relT(r.requested_at))+' → '+esc(relT(r.finished_at))+(r.minutes!=null?' ('+r.minutes+' min)':'')+'</td><td>'+esc(r.waited_for||'-')+'</td><td class="mono">'+esc(r.commit)+'</td>'
+      +'<td>'+((r.carried||[]).length?'<details><summary>'+r.carried.length+' change(s)</summary>'+r.carried.map(c=>'<div class="mono" style="font-size:11.5px">'+esc(c.sha)+' '+(c.pipeline?'<a style="cursor:pointer" onclick="openPipe(\''+esc(c.pipeline)+'\')">'+esc(c.branch||c.subject)+'</a>':esc(c.subject))+'</div>').join('')+'</details>':'<span class="hint">-</span>')+'</td><td>'+esc(r.nodes||'')+'</td></tr>').join('')+'</tbody></table>'
+    :'<span class="hint">no releases on record</span>';
+}
+function relFocus(col){const el=document.querySelector('.rel-col[data-col="'+col+'"]');if(el)el.scrollIntoView({behavior:'smooth',block:'nearest',inline:'start'})}
+async function relReleaseNow(){
+  const f=await askForm('Release bleeding-edge to prod',[
+      {id:'go',type:'check',label:'I have the owner’s explicit go-ahead for this release',required:true},
+      {id:'mode',label:'If a census is in flight',type:'select',value:'goal',options:[['goal','yield: the goal in flight finishes, the census parks, release, resume after'],['finish','wait until the census has ended'],['force','release now (the census goal is paused and re-run)']]}],
+    {ok:'Release'});
+  if(!f)return;
+  const r=await post('/evolve/release/prod',{confirm:true,census:f.mode,force:f.mode==='force',reason:'Loop Lab Releases section'});
+  toast(r&&r.held?('release waiting ('+f.mode+'): '+(r.why||'')):r&&r.ok?'releasing':(r&&(r.error||r.refused))||'refused');loadReleases();
 }
 async function schStopRun(id){const d=await api('/evolve/schedule/stop_run',{method:'POST',body:JSON.stringify({run_id:id})});toast(d&&d.ok?'stopped':'not stopped: '+((d&&d.error)||'?'));closeModal();loadSchedule()}
 async function schRuns(){
@@ -1335,7 +1410,7 @@ async function schCfgSave(){const d=await api('/evolve/schedule/config/set',{met
 // The layers. What the server is asked for follows them (results only while that layer is on - it reads every suite;
 // Vera's calendar only while that one is); what is drawn is the calendar's filter over the answer, so switching a
 // layer the answer already holds redraws at once. Per goal places each goal of a census run by its elapsed time.
-function schLayerOf(ev){return ev.layer||(ev.source==='agents-work'?'agents':ev.source==='results'?'results':ev.source==='loop-lab-run'?(ev.board_id||ev.kind==='board'?'board':'runs'):ev.source==='loop-lab'?(ev.board_id||ev.kind==='board'?'board':'windows'):'calendar')}
+function schLayerOf(ev){return ev.layer||(ev.source==='releases'?'releases':ev.source==='agents-work'?'agents':ev.source==='results'?'results':ev.source==='loop-lab-run'?(ev.board_id||ev.kind==='board'?'board':'runs'):ev.source==='loop-lab'?(ev.board_id||ev.kind==='board'?'board':'windows'):'calendar')}
 function schGran(){try{return localStorage.getItem('loop-lab.sch.gran')==='goals'?'goals':'runs'}catch(_){return 'runs'}}
 function schLayersBar(){
   const b=$('sch-layers'); if(!b)return;
@@ -1348,7 +1423,7 @@ function schMode(){
   const g=$('sch-gran'); const gran=g?(g.checked?'goals':'runs'):schGran();
   const res=_schOn.has('results'), sch=_schOn.has('windows')||_schOn.has('runs')||_schOn.has('board');
   const mode=res?(sch?'both':'results'):'windows';
-  try{localStorage.setItem('loop-lab.sch.layers.v3',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
+  try{localStorage.setItem('loop-lab.sch.layers.v4',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
   const src='/evolve/schedule/events?mode='+mode+'&granularity='+gran+(_schOn.has('calendar')?'&include_calendar=1':'');
   if(cal.getAttribute('src')!==src)cal.setAttribute('src',src);
   cal.filter=ev=>_schOn.has(schLayerOf(ev));
@@ -1414,7 +1489,8 @@ document.addEventListener('DOMContentLoaded',()=>{
     schOpen(null,{days:[wd],start:hh+':00',end:(String(Math.min(23,d.hour+3)).padStart(2,'0'))+':00'});
   });
   cal.addEventListener('event-open',e=>{const ev=e.detail.event||{};
-    if(ev.source==='results')schResultModal(ev);
+    if(ev.source==='releases'){if(ev.pipeline_id)openPipe(ev.pipeline_id);else{nav('releases')}}
+    else if(ev.source==='results')schResultModal(ev);
     else if(ev.source==='loop-lab-run')schRunModal(ev);
     else if(ev.schedule_id)schOpen(ev.schedule_id);
     else if(schLayerOf(ev)==='calendar')toast('📅 '+(ev.title||'')+(ev.location?' · '+ev.location:'')+' — edit it in Comms › Calendar');
@@ -6398,6 +6474,16 @@ vera-agent-loop-output.alo-fill{display:block;height:max(360px,calc(100vh - 230p
   --alo-cycles-minh:max(300px,calc(100vh - 330px));--alo-cycles-maxh:max(300px,calc(100vh - 330px))}
 /* Schedule: the calendar takes the page; the lists fold away beside it */
 #sec-schedule .sch-card{display:flex;flex-direction:column;height:max(480px,calc(100vh - 118px));min-height:0;margin-bottom:0;box-sizing:border-box}
+#sec-releases .rel-tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:8px 0}
+#sec-releases .rel-tile{text-align:left;display:flex;flex-direction:column;gap:2px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg1,transparent);color:inherit;cursor:pointer}
+#sec-releases .rel-tile .l{font-size:11.5px;opacity:.7}#sec-releases .rel-tile .b{font-size:20px;font-weight:600}#sec-releases .rel-tile .s{font-size:11.5px;opacity:.7}
+#sec-releases .rel-board{display:grid;grid-template-columns:repeat(6,minmax(190px,1fr));gap:8px;overflow-x:auto;align-items:start}
+#sec-releases .rel-col{display:flex;flex-direction:column;gap:6px;min-width:0}
+#sec-releases .rel-ch{font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+#sec-releases .rel-card{border:1px solid var(--border);border-radius:8px;padding:8px;cursor:pointer;display:flex;flex-direction:column;gap:3px}
+#sec-releases .rel-card:hover{border-color:var(--acc,#7aa2f7)}#sec-releases .rel-card .t{font-weight:600;font-size:12.5px;word-break:break-all}#sec-releases .rel-card .m{font-size:11.5px;opacity:.75}
+#sec-releases .rel-chips{display:flex;flex-wrap:wrap;gap:3px}#sec-releases .rel-chip{font-size:10.5px;padding:1px 5px;border-radius:4px;border:1px solid var(--c);color:var(--c)}
+#sec-releases .rel-live{padding:8px 10px;border:1px solid #2c4a3a;border-radius:8px;margin:6px 0;font-size:12.5px}
 .ask-ov{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.45);z-index:10050}
 .ask-ov.on{display:flex}
 .ask-ov .ask-box{background:var(--bg2,var(--bg));border:1px solid var(--border);border-radius:8px;padding:12px;width:min(520px,92vw);max-height:90%;overflow:auto;box-shadow:0 8px 30px rgba(0,0,0,.4)}
