@@ -10,6 +10,8 @@ from the same copy.
   /ui/iso-lattice.js -> vera/ui/iso_lattice.js  window.VeraLattice  the iso lattice: planes x areas,
                                                        pipes, widgets, the view (Live ops, graph modes)
   /ui/menus.js  -> vera/ui/menus.js  window.MENUS     every context menu
+  /ui/vera-kit.js -> vera/ui/vera_kit.js  window.VeraDrill / VeraLive / VeraStates + <vera-drill>, <vera-live-strip>:
+                                           THE drill panel, live strip and states (looplab-control §9 K3)
   /ui/vera-timeline.js -> vera/ui/vera_timeline.js  window.VeraTimeline + <vera-timeline>: THE timeline
                                                        (lanes are records; looplab-control §9 K1)
   /ui/vera-matrix.js -> vera/ui/vera_matrix.js  window.VeraMatrix + <vera-matrix>: THE matrix (K2)
@@ -57,6 +59,11 @@ async def _serve_iso_js():
 @APP.get("/ui/iso-lattice.js", include_in_schema=False)
 async def _serve_iso_lattice_js():
     return _script("iso_lattice.js")
+
+
+@APP.get("/ui/vera-kit.js", include_in_schema=False)
+async def _serve_vera_kit_js():
+    return _script("vera_kit.js")
 
 
 @APP.get("/ui/vera-timeline.js", include_in_schema=False)
