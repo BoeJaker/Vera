@@ -165,11 +165,11 @@ CANVAS_MODES = ("dynamic", "static")
 
 # ── The SESSION canvas (Notes/38): one document per chat session, its items KEYED so the same thing is never on
 #    the canvas twice. A keyed block carries key (<kind>:<ref>), state (now · parked · pinned · hidden), size
-#    (s · m · l · xl) and its anchors (the turns that used it — additive, never replaced). The document carries a
+#    (xs · s · m · l · xl) and its anchors (the turns that used it — additive, never replaced). The document carries a
 #    revision (bumped on every write) and a timeline ([{rev, ts, op, key}], append-only; bounded so a runaway loop
 #    cannot grow it forever). Keyless blocks — the existing canvases — are untouched by all of this. ─────────────
 ITEM_STATES = ("now", "parked", "pinned", "hidden")
-ITEM_SIZES = ("s", "m", "l", "xl")
+ITEM_SIZES = ("xs", "s", "m", "l", "xl")   # = item_core.SIZES (WSU-58 S8, Decision 5.1: the canvas gains xs)
 _MAX_TIMELINE = 2000
 _SESSION_PREFIX = "cv_session_"
 
@@ -793,7 +793,7 @@ async def cap_canvas_session_resolve(session_id: str = "", trace_id=None):
                 "key already exists is not added again, it is brought back into the NOW band (resolved: "
                 "'shown'). Inputs: kind (block type), content (JSON for the kind), key (str, <kind>:<ref>; "
                 "generated if absent), id (canvas id) or session_id (its session canvas), at "
-                "('now'|'pinned'|'parked'|'hidden', default now), size ('s'|'m'|'l'|'xl'), anchor "
+                "('now'|'pinned'|'parked'|'hidden', default now), size ('xs'|'s'|'m'|'l'|'xl'), anchor "
                 "({turn, mid, step} — the turn using it). Output: {ok, resolved: 'added'|'shown', existing, "
                 "key, item, id, revision}.",
 )
@@ -875,7 +875,7 @@ async def cap_canvas_park(key: str = "", id: str = "", session_id: str = "", tra
 @capability(
     "canvas.size", memory="off",
     http_method="POST", http_path="/canvas/size", http_tags=["canvas"],
-    description="Resize a session-canvas item. Inputs: key (str!), size ('s'|'m'|'l'|'xl'), id or session_id. "
+    description="Resize a session-canvas item. Inputs: key (str!), size ('xs'|'s'|'m'|'l'|'xl'), id or session_id. "
                 "Output includes prev so it can be undone.",
 )
 async def cap_canvas_size(key: str = "", size: str = "m", id: str = "", session_id: str = "", trace_id=None):

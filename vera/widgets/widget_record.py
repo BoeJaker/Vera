@@ -261,6 +261,16 @@ FORMS: List[Dict[str, Any]] = [
     _F("trend-layers", "series", glyph="trend-layers", options=("series", "facets", "t", "range", "mode"), name="Trend layers", boards=("widgets", "reply")),
     _F("element", "panel", glyph="element", sizes=("s", "m", "l", "xl"), options=("tag", "attrs"), name="Page element", boards=("widgets",)),
 ]
+# THE WIDEST A CARD OF THE FORM IS ON THE DESK, in px (WSU-69; WSU-58 S8, DEEP-29 11A.4 Decision 5.3 - it was the canvas
+# element's DESK_FORM_MAXW): the short-content forms - lists, checklists, fields, notices, single figures - wrap short, and
+# wider was an empty band. Charts, tables, maps, graphs and calendars have none (not capped). The browser's catalogue
+# (widget_element.js FORM_MAXW, read by VeraWidget.forms) holds the same numbers (tests/test_widget_form_maxw.py).
+DESK_MAXW = {"checklist": 420, "list": 440, "links": 440, "notices": 460, "people": 460, "kv": 520, "pills": 480, "string": 460,
+             "announcement": 460, "counter": 380, "hero": 400, "ring": 360, "radial": 360, "dial": 360, "gauge": 420, "meter": 420,
+             "level": 380, "glance": 460, "numbers": 520, "status": 480, "stepper": 640, "files": 520}
+for _f in FORMS:
+    if _f["id"] in DESK_MAXW:
+        _f["maxW"] = DESK_MAXW[_f["id"]]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
 # the context graph's line above is held verbatim by the chat's explode test; its name and board ride in here
 _FORM_BY_ID["context_graph"].update({"name": "Context graph", "boards": ["spec"]})
