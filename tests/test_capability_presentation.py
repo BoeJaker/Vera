@@ -263,3 +263,20 @@ def test_a_contract_that_only_says_how_it_is_drawn_is_not_a_declared_contract():
     plain = evaluate_policy_shadow("x", {})
     drawn = evaluate_policy_shadow("x", {"presentation": {"kind": "status", "form": "status"}})
     assert plain == drawn
+
+
+def test_a_series_keyed_by_name_is_a_flag_on_the_series_map():
+    # DA-01e: map.keyed true reads map.points as {name: [{t, v}, ...]} - one line per key
+    ok = {"kind": "series", "map": {"points": "series", "keyed": True, "t": "t", "v": "ping_ms"}}
+    assert presentation_problems(ok) == []
+    assert P.series("series", keyed=True, t="t", v="ping_ms") == {"kind": "series", "map": {"points": "series", "t": "t", "v": "ping_ms", "keyed": True}}
+    assert "presentation.map_keyed_invalid" in _codes(presentation_problems({"kind": "series", "map": {"points": "s", "keyed": "yes"}}))
+    assert "presentation.map_keyed_split" in _codes(presentation_problems({"kind": "series", "map": {"points": "s", "keyed": True, "split": ["a"]}}))
+    # a flag is a series word only: another kind does not read it
+    assert "presentation.map_key_unknown" in _codes(presentation_problems({"kind": "table", "map": {"rows": "r", "keyed": True}}))
+    # the row keys are checked one level down, inside each named series
+    schema = {"type": "object", "properties": {"series": {"type": "object", "additionalProperties": {"type": "array", "items": {
+        "type": "object", "properties": {"t": {"type": "number"}, "ping_ms": {"type": "number"}}}}}}}
+    assert presentation_problems(ok, schema) == []
+    off = {"kind": "series", "map": {"points": "series", "keyed": True, "t": "t", "v": "pong"}}
+    assert [(p[0], p[1], p[2]) for p in presentation_problems(off, schema)] == [("presentation.map_unresolved", "warning", "presentation.map.v")]

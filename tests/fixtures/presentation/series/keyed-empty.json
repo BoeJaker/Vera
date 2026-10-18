@@ -1,0 +1,31 @@
+{
+ "cap": "demo.container_metrics",
+ "args": {},
+ "presentation": {
+  "kind": "series",
+  "map": {
+   "points": "metrics",
+   "keyed": true,
+   "t": "ts",
+   "v": "cpu_pct"
+  },
+  "empty": "No samples yet"
+ },
+ "result": {
+  "metrics": {
+   "web": [],
+   "redis": "not a series"
+  },
+  "containers": [
+   "web",
+   "redis"
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "series",
+  "title": "demo.container_metrics",
+  "forms": [],
+  "empty": "No samples yet"
+ }
+}

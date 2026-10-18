@@ -1,0 +1,81 @@
+{
+ "cap": "demo.container_metrics",
+ "args": {},
+ "presentation": {
+  "kind": "series",
+  "map": {
+   "points": "metrics",
+   "keyed": true,
+   "t": "ts",
+   "v": "cpu_pct"
+  },
+  "title": "CPU %"
+ },
+ "result": {
+  "ok": true,
+  "result": {
+   "metrics": {
+    "web": {
+     "ts": [
+      "2026-10-18T09:24:18Z",
+      "2026-10-18T09:25:25Z",
+      "2026-10-18T09:32:19Z"
+     ],
+     "cpu_pct": [
+      0.5,
+      "2",
+      7
+     ]
+    },
+    "redis": {
+     "ts": [
+      "2026-10-18T09:24:20Z",
+      "2026-10-18T09:25:27Z"
+     ],
+     "cpu_pct": [
+      0,
+      0.25
+     ]
+    }
+   },
+   "containers": [
+    "web",
+    "redis"
+   ]
+  }
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "series",
+  "title": "CPU %",
+  "forms": [
+   "trace"
+  ],
+  "data": {
+   "web": [
+    {
+     "t": "2026-10-18T09:24:18Z",
+     "v": 0.5
+    },
+    {
+     "t": "2026-10-18T09:25:25Z",
+     "v": 2
+    },
+    {
+     "t": "2026-10-18T09:32:19Z",
+     "v": 7
+    }
+   ],
+   "redis": [
+    {
+     "t": "2026-10-18T09:24:20Z",
+     "v": 0
+    },
+    {
+     "t": "2026-10-18T09:25:27Z",
+     "v": 0.25
+    }
+   ]
+  }
+ }
+}
