@@ -203,8 +203,14 @@ class RunLedger:
         self._send(d, inputs)
 
     def tier(self, tier: str, info: Dict[str, Any], model: str = "",
-             inputs: Optional[Dict[str, Any]] = None) -> None:
+             inputs: Optional[Dict[str, Any]] = None, by: str = "",
+             student: Optional[Dict[str, Any]] = None) -> None:
+        """The tier, and a System 1 student's answer to the same goal as its shadow (compute-roles, 18 Oct
+        2026: the loop.tier hook - kNN 0.979 vs live 0.873 on the first matrix night)."""
+        n = len(self.decisions)
         self._decide(LD.tier_decision, tier, info or {}, model, inputs)
+        if len(self.decisions) > n:
+            self._student_shadow(self.decisions[-1], by or ("llm" if (info or {}).get("llm") else "rule"), student)
 
     def intent(self, intent: str, info: Dict[str, Any], model: str = "",
                inputs: Optional[Dict[str, Any]] = None) -> None:
