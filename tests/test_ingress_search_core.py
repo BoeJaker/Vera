@@ -178,3 +178,11 @@ def test_the_web_map_pane_is_read_only_and_lives_in_the_fabric_panel():
     fab = (ROOT / "vera" / "fabric" / "fabric_panel.html").read_text(encoding="utf-8")
     assert 'id="fnav-webmap"' in fab and 'id="fsec-webmap"' in fab and "'/fabric/map/panel'" in fab
     assert fab.count("'webmap'") >= 2
+
+
+def test_seeded_pages_carry_their_concept_and_the_on_target_share():
+    assert sc.seed_tag(17) == "worldview_seed:17"
+    assert sc.on_target_share([(5, [5, 5, 3]), (9, [9]), (2, [])]) == {"pages": 4, "on_target": 3, "share": 0.75}
+    assert sc.on_target_share([]) == {"pages": 0, "on_target": 0, "share": None}
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert 'sc.seed_tag(seed["idx"])' in caps and '"worldview.encode", record_id=rid' in caps

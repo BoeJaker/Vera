@@ -804,7 +804,8 @@ async def _seed_concepts(disc, budget_s: float, cap: int, search_limit: int, ppr
                 p = max(1, min(ppr, 5))
                 cr = await disc.discover_crawl_urls(urls, dataset_id=CONCEPT_DATASET, topic=seed["label"], max_depth=1,
                                                     breadth=p, max_pages=len(urls) * (p + 1), same_domain=False,
-                                                    reconcile=False, tags="web,discovery,worldview_seed")
+                                                    reconcile=False,
+                                                    tags="web,discovery,worldview_seed," + sc.seed_tag(seed["idx"]))
                 pages = int((cr or {}).get("pages_fetched") or 0)
             except Exception as e:  # noqa: BLE001
                 log.warning("concept seed crawl [%s]: %s", seed["label"][:60], e)
@@ -830,7 +831,7 @@ async def _seed_concepts(disc, budget_s: float, cap: int, search_limit: int, ppr
                         "(worldview.concepts), the change, how often it was seeded and how many pages that fetched. "
                         "Input: days (int, default 30). Output: {concepts:[{idx, label, population_at_first_seed, "
                         "population_now, change, seedings, pages}], next:[the seeds tonight would pick]}.")
-async def cap_map_concept_seeds(days: int = 30, trace_id=None):
+async def cap_map_concept_seeds(days: int = 30, on_target: bool = False, sample: int = 30, trace_id=None):
     pool = _pool()
     if pool is None:
         return {"error": "the web map's store is not connected"}
@@ -846,8 +847,36 @@ async def cap_map_concept_seeds(days: int = 30, trace_id=None):
     wc = await _call("worldview.concepts") if _has("worldview.concepts") else {}
     cs = wc.get("concepts") or []
     current = {int(c.get("idx")): int(c.get("population") or 0) for c in cs}
-    return {"concepts": sc.seed_effect(rows, current),
-            "next": [{k: s[k] for k in ("idx", "label", "population")} for s in sc.concept_seeds(cs, last)]}
+    effect = sc.seed_effect(rows, current)
+    out: Dict[str, Any] = {"concepts": effect,
+                           "next": [{k: s[k] for k in ("idx", "label", "population")} for s in sc.concept_seeds(cs, last)]}
+    if on_target and _has("worldview.encode"):
+        pairs = []
+        for c in effect:
+            rids = await asyncio.to_thread(_seeded_record_ids, c["idx"], max(1, min(int(sample or 30), 200)))
+            got = []
+            for rid in rids:
+                try:
+                    e = await asyncio.wait_for(_call("worldview.encode", record_id=rid), 20)
+                except Exception:  # noqa: BLE001
+                    continue
+                if isinstance(e, dict) and e.get("concept") is not None:
+                    got.append(int(e["concept"]))
+            pairs.append((c["idx"], got))
+            c["on_target"] = sc.on_target_share([(c["idx"], got)])
+        out["on_target"] = sc.on_target_share(pairs)
+    return out
+
+
+def _seeded_record_ids(idx: int, limit: int) -> List[str]:
+    """The fabric record ids a concept's seedings fetched (tagged worldview_seed:<idx> by the gap fill)."""
+    df = _data_fabric()
+    if df is None:
+        return []
+    rows = df._sqlite_conn().execute(
+        "SELECT id FROM fabric_records WHERE dataset_id = ? AND tags LIKE ? ORDER BY rowid DESC LIMIT ?",
+        (CONCEPT_DATASET, "%" + sc.seed_tag(idx) + "%", int(limit))).fetchall()
+    return [r[0] for r in rows]
 
 
 # ── the node crawl class (WI-12a, PLAN §13.2) ─────────────────────────────────

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 TOPIC_BOOST = 0.3
 FRESH_DAYS = 30
@@ -315,3 +315,19 @@ def seed_effect(seeded: Iterable[Mapping[str, Any]], current: Mapping[int, int])
                     "population_now": now, "change": (now - before) if now is not None else None,
                     "seedings": r["times"], "pages": r["pages"]})
     return sorted(out, key=lambda x: x["idx"])
+
+
+def seed_tag(idx: int) -> str:
+    """The tag a seeding's pages carry, so they can be traced to the concept they were fetched for."""
+    return "worldview_seed:%d" % int(idx)
+
+
+def on_target_share(pairs: Iterable[Tuple[int, Sequence[int]]]) -> Dict[str, Any]:
+    """vera-62's measure: of the seeded pages worldview encoded, the share whose concept is the one they were
+    seeded for. pairs = [(seed concept, [encoded concepts of its pages])]."""
+    n = hit = 0
+    for seed, got in pairs or ():
+        for g in got or ():
+            n += 1
+            hit += int(g) == int(seed)
+    return {"pages": n, "on_target": hit, "share": round(hit / n, 3) if n else None}
