@@ -391,3 +391,20 @@ def test_info_seek_asks_the_page_index_bounded():
     d = ast.dump(fn)
     assert "discovery.recall_index.search" in d and "known_items" in d
     assert '"discovery.recall_index.search", 3' in src
+
+
+def test_known_pages_must_be_about_the_question():
+    """web-ingress WI-14a: the index ORs words, so 'zubrowka coumarin limits 2026' ranked a paper list and an ONS
+    bulletin (prod, 18 Oct). A known page needs half the subject's words; years do not count."""
+    assert C.cover_terms("what are the zubrowka coumarin limits in 2026") == ["zubro", "couma", "limit"]
+    assert C.coverage("zubrowka coumarin limits 2026", "Paper list 2026: limits of LLMs") == 1 / 3
+    assert C.coverage("Cambridge lab space", "lab space vacancy in Cambridge") == 1.0 and C.coverage("in 2026", "x") == 1.0
+    body = "Lab space vacancy in Cambridge fell to 2.1 per cent as demand from life science firms continued. " * 4
+    other = "Private rent and house prices rose 5 per cent in the year to 2026, the ONS said today in its bulletin. " * 4
+    pages = [{"url": "https://ons.example/rent", "title": "Rents", "full_text": other},
+             {"url": "https://bidwells.example/lab", "title": "Lab market", "full_text": body}]
+    k = C.known_items(pages, [], query="Cambridge lab space vacancy 2026")
+    assert [x["url"] for x in k] == ["https://bidwells.example/lab"]
+    assert len(C.known_items(pages, [])) == 2
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "web", "web_capabilities.py"), encoding="utf-8").read()
+    assert "chars=chars, query=subject)" in src
