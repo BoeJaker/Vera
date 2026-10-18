@@ -241,6 +241,11 @@
   /* the surface an item shows, in the curator's terms: the capability or panel behind it, else its type */
   function surfaceOf(b) { const c = (b && b.content) || {}; return String(c.surface || c.cap || c.panel || (b && b.type) || ''); }
 
+  /* WHERE A CALL CAME FROM (DO-0.5, the usage counter of vera-c7's B0.11 R0): every call this element makes says its surface - the
+     desk, or the Canvas tab's held column - and whether a person just acted (the browser's own user activation) or it is a
+     read the element makes by itself. The server counts day x cap x actor x surface x trigger; nothing else reads it. */
+  const surfOf = (el) => { try { return el && el.deskAlign && !el.deskAlign() ? 'panel:canvas' : 'desk'; } catch (e) { return 'desk'; } };   /* never stops a call */
+  const surfHdr = (el) => ({ 'X-Vera-Surface': surfOf(el) + '; trigger=' + (root.navigator && root.navigator.userActivation && root.navigator.userActivation.isActive ? 'person' : 'auto') });
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -4412,7 +4417,7 @@
            field is sent again a field at a time: only the field the record refuses is lost, never a place or lock queued
            beside it, and the refusal is told on the console, not swallowed */
         const id = this.canvasId;
-        const send = (k, f) => fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        const send = (k, f) => fetch(base + '/mcp/call', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)),
           body: JSON.stringify({ name: 'canvas.item.set', arguments: Object.assign({ id, key: k }, f) }) })
           .then((r) => r.json()).then((j) => { const a = unwrap(j); return a && typeof a === 'object' && a.ok === false ? a : null; })
           .catch(() => null /* unreachable: the cache keeps it */);
@@ -5745,7 +5750,7 @@
       let doc;
       try {
         const r = await fetch(`/canvas/get?id=${encodeURIComponent(id)}`,
-                              { headers: { Accept: 'application/json' } });
+                              { headers: Object.assign({ Accept: 'application/json' }, surfHdr(this)) });   /* the desk's own poll: trigger auto unless a person just acted */
         const j = await r.json();
         doc = (j && j.content !== undefined) ? j.content : j;
         if (doc && doc.canvas) doc = doc.canvas;
@@ -7408,7 +7413,7 @@
       if (act === 'tagainok') { const c = this._contentOf(key) || {}; (this._ranAsk = this._ranAsk || {})[key] = false; if (!c.cap) return;
         (this._ranBusy = this._ranBusy || {})[key] = true; if (this._doc) this.render(this._doc);
         const base = (window._veraBase || '').replace(/\/$/, '');
-        (async () => { let a = null; try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: c.cap, arguments: c.args || {} }) }); const j = await r.json(); a = j && j.type === 'tool_result' ? j.content : j; } catch (e) { a = { stderr: String(e && e.message || e), rc: -1 }; }
+        (async () => { let a = null; try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)), body: JSON.stringify({ name: c.cap, arguments: c.args || {} }) }); const j = await r.json(); a = j && j.type === 'tool_result' ? j.content : j; } catch (e) { a = { stderr: String(e && e.message || e), rc: -1 }; }
           const out = a && typeof a === 'object' ? [String(a.stdout || a.output || ''), String(a.stderr || '')].filter((x) => x.trim()).join('\n') : String(a == null ? '' : a);
           const rc = a && typeof a === 'object' ? (a.rc != null ? a.rc : a.returncode != null ? a.returncode : a.exit_code) : null;
           this._ranBusy[key] = false;
@@ -8075,7 +8080,7 @@
     }
     async callResult(name, args, opts) {
       const base = (window._veraBase || '').replace(/\/$/, '');
-      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name, arguments: args || {} }, opts && opts.trace ? { trace_id: opts.trace } : {})) }); const j = await r.json(); return unwrap(j); }
+      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)), body: JSON.stringify(Object.assign({ name, arguments: args || {} }, opts && opts.trace ? { trace_id: opts.trace } : {})) }); const j = await r.json(); return unwrap(j); }
       catch (e) { return { ok: false, error: String(e && e.message || e) }; }
     }
     /* A MODEL DIVE, PICKED (DA-09; MODEL_DIVES): its card goes up at once saying it is running, the cap is called once with
@@ -8879,7 +8884,7 @@
       this._engT = 0; const q = this._engQ || []; this._engQ = []; if (!q.length) return;
       const base = (window._veraBase || '').replace(/\/$/, '');
       try {
-        fetch(base + '/mcp/call', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' },
+        fetch(base + '/mcp/call', { method: 'POST', keepalive: true, headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)),
           body: JSON.stringify({ name: 'canvas.engagement.record', arguments: { events: q } }) }).catch(() => {});
       } catch (e) { /* dropped */ }
     }
@@ -8888,7 +8893,7 @@
     async call(name, args, opts) {
       const base = (window._veraBase || '').replace(/\/$/, '');
       try {
-        await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        await fetch(base + '/mcp/call', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)),
           body: JSON.stringify(Object.assign({ name, arguments: Object.assign({ id: this.canvasId }, args || {}) }, opts && opts.trace ? { trace_id: opts.trace } : {})) });
       } catch (e) { /* the poll shows whatever state the backend has */ }
       this._rev = null;

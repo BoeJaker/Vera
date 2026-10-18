@@ -98,7 +98,7 @@
        first connection has nothing to catch up from); a socket that does not open in 1.5 s does not hold the call */
     await ready(opts.wait);
     try {
-      const r = await root.fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cap, arguments: args || {}, trace_id: tid }) });
+      const r = await root.fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vera-Surface': (opts.surface || root.__VERA_SURFACE || 'chat') + '; trigger=' + (root.navigator && root.navigator.userActivation && root.navigator.userActivation.isActive ? 'person' : 'auto') }, body: JSON.stringify({ name: cap, arguments: args || {}, trace_id: tid }) });
       const j = await r.json(); const ans = j && j.type === 'tool_result' && 'content' in j ? j.content : j;
       if (opts.onDone) { try { opts.onDone(ans, tid); } catch (_) { /* the caller's */ } }
       return ans;

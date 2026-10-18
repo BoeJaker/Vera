@@ -396,7 +396,8 @@
     async _mktLoad(seq) {
       const B = this._B; if (!B || !this._candle) return; const id = this._prov + ':' + this._sym + ':' + this._tf;
       if (!this._mkt || this._mkt.id !== id || Date.now() - this._mkt.at > 60000) {
-        const call = async (name, args) => { try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
+        const surf = (() => { try { const h = this.getRootNode && this.getRootNode().host; return h && /^VERA-CANVAS$/i.test(h.tagName) ? (h.deskAlign && h.deskAlign() ? 'desk' : 'panel:canvas') : 'panel:markets'; } catch (e) { return 'panel:markets'; } })();
+        const call = async (name, args) => { try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vera-Surface': surf + '; trigger=' + (root.navigator && root.navigator.userActivation && root.navigator.userActivation.isActive ? 'person' : 'auto') }, body: JSON.stringify({ name, arguments: args || {} }) });
           const j = await r.json(); return j && j.type === 'tool_result' ? j.content : j; } catch (e) { return null; } };
         let got = null; try { got = await M.marketMarkers(call, this._prov, this._sym, B.t.slice()); } catch (e) { got = null; }
         if (seq !== this._seq || !got) return; this._mkt = Object.assign({ id, at: Date.now() }, got); }
