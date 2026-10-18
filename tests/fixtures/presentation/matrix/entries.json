@@ -1,0 +1,92 @@
+{
+ "cap": "demo.runtime_matrix",
+ "args": {},
+ "presentation": {
+  "kind": "matrix",
+  "map": {
+   "cells": "candidates",
+   "row": "label",
+   "entries": "assessments",
+   "column": "dimension",
+   "value": "state"
+  }
+ },
+ "result": {
+  "candidates": [
+   {
+    "runtime_id": "a",
+    "label": "Agno",
+    "assessments": [
+     {
+      "dimension": "tools",
+      "state": "ok"
+     },
+     {
+      "dimension": "mcp",
+      "state": "warn"
+     },
+     {
+      "dimension": "streaming",
+      "state": null
+     }
+    ]
+   },
+   {
+    "runtime_id": "b",
+    "label": "LangGraph",
+    "assessments": [
+     {
+      "dimension": "mcp",
+      "state": "down"
+     },
+     {
+      "dimension": "tools",
+      "state": true
+     },
+     {
+      "dimension": "sandbox",
+      "state": false
+     }
+    ]
+   },
+   {
+    "runtime_id": "c",
+    "assessments": [
+     {
+      "dimension": "tools",
+      "state": "ok"
+     },
+     "not a cell"
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "matrix",
+  "title": "demo.runtime_matrix",
+  "forms": [
+   "matrix"
+  ],
+  "data": {
+   "Agno": {
+    "tools": "ok",
+    "mcp": "warn",
+    "streaming": "",
+    "sandbox": ""
+   },
+   "LangGraph": {
+    "tools": true,
+    "mcp": "down",
+    "streaming": "",
+    "sandbox": false
+   },
+   "#3": {
+    "tools": "ok",
+    "mcp": "",
+    "streaming": "",
+    "sandbox": ""
+   }
+  }
+ }
+}

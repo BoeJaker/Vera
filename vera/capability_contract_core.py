@@ -60,6 +60,13 @@ PRESENTATION_KINDS: dict[str, dict[str, tuple[str, ...]]] = {
     "diff": {"keys": ("diff",), "row": (), "views": ("diff", "split")},
     "kv": {"keys": ("fields",), "row": (), "views": ("tiles", "rows", "graph")},
     "calendar": {"keys": ("events", "start", "end", "title"), "row": ("start", "end", "title"), "views": ("month", "agenda", "schedule")},
+    # DA-01e (1): three kinds drawn by forms the widget already has - dated spans on the gantt, rows x columns of a measure
+    # on the heat map (numbers) or the status matrix (anything else), shares of a whole on the donut
+    "timeline": {"keys": ("spans", "name", "start", "end", "duration", "status"), "row": ("name", "start", "end", "duration", "status"),
+                 "views": ("gantt", "stepper", "table")},
+    "matrix": {"keys": ("cells", "row", "column", "value", "entries"), "row": ("row", "column", "value", "entries"),
+               "views": ("heat", "matrix", "table")},
+    "parts": {"keys": ("parts", "name", "value"), "row": ("name", "value"), "views": ("donut", "treemap", "waffle", "table")},
     "entities": {"keys": ("groups", "entities"), "row": (), "views": ("chips", "list", "graph")},
     "receipt": {"keys": ("ok", "id", "message", "changed"), "row": (), "views": ()},
     "job": {"keys": ("job_id", "stream"), "row": (), "views": ()},
@@ -70,7 +77,8 @@ _PRESENTATION_NEEDS = {"table": ("rows",), "records": ("rows",), "reading": ("ro
                        "status": ("verdict",), "metric": ("value",), "series": ("points",), "graph": ("nodes",),
                        "log": ("events",), "progress": ("steps",), "terminal": ("stdout",), "media": ("url", "b64"),
                        "code": ("code",), "diff": ("diff",), "kv": ("fields",), "calendar": ("events",),
-                       "entities": ("groups", "entities"), "job": ("job_id",)}
+                       "entities": ("groups", "entities"), "job": ("job_id",),
+                       "timeline": ("spans",), "matrix": ("cells",), "parts": ("parts",)}
 # series keyed by name (DA-01e): map.keyed true reads map.points as {name: [{t, v}, ...]} (or {name: {t: [...], v: [...]}})
 # - one line per key, map.t / map.v the fields inside each point. A flag, not a path.
 _PRESENTATION_FLAGS = {"series": ("keyed",)}
@@ -192,13 +200,28 @@ def presentation_problems(presentation: Any, output_schema: Any = None) -> list[
             # the rows are one level down: the series under each name
             each = content_node.get("additionalProperties")
             content_node = each if isinstance(each, Mapping) else None
+        elif (kind in ("matrix", "parts") and isinstance(content_node, Mapping) and not content_node.get("properties")
+              and isinstance(content_node.get("additionalProperties"), Mapping)):
+            # a grid or a dict of parts keyed by name (DA-01e): the row is one level down, under each name
+            content_node = content_node["additionalProperties"]
+        # a matrix row's cells in a list of their own (map.entries): the column and the value are read inside each entry
+        entry_node = None
+        if kind == "matrix" and content_node is not None and isinstance(mapping.get("entries"), str):
+            entry_node = _schema_at(content_node, mapping["entries"])
+            if isinstance(entry_node, Mapping) and entry_node.get("type") == "array" and isinstance(entry_node.get("items"), Mapping):
+                entry_node = entry_node["items"]
         for key, path in sorted(mapping.items()):
             if not isinstance(path, str) or not path.strip():
                 continue
             if key in spec["row"] and key != content:
                 if content_node is None:
                     continue   # the rows' own shape is not declared: nothing to check a row key against
-                node = _schema_at(content_node, path)
+                if kind == "matrix" and mapping.get("entries") and key in ("column", "value"):
+                    if entry_node is None:
+                        continue
+                    node = _schema_at(entry_node, path)
+                else:
+                    node = _schema_at(content_node, path)
             else:
                 node = _schema_at(output_schema, path)
             if node is None:

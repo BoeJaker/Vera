@@ -337,6 +337,9 @@ async def _verdicts() -> Tuple[Dict[str, Tuple[str, str]], Dict[str, Any]]:
                 "host (why) - summarised per namespace. Input: namespace (str - list that "
                 "namespace's capabilities). Output: {totals, namespaces, caps?, static_at, "
                 "tracer}.",
+    # DA-01e (1): namespaces x verdicts (host, vetted, unproven, safe) - the counts on the heat map
+    contract={"presentation": {"kind": "matrix", "map": {"cells": "namespaces"}, "title": "Node parity by namespace",
+                               "empty": "No parity audit yet"}},
 )
 async def cap_parity_status(namespace: str = "", trace_id=None) -> Dict:
     v, meta = await _verdicts()

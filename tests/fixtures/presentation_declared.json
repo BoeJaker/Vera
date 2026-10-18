@@ -1450,15 +1450,16 @@
   }
  },
  "evolve.schedule.history": {
-  "empty": "The scheduler has started nothing yet",
-  "kind": "log",
+  "empty": "No scheduled runs yet",
+  "kind": "timeline",
   "map": {
-   "events": "runs",
-   "kind": "kind",
-   "level": "result",
-   "t": "started_at",
-   "text": "title"
-  }
+   "end": "finished_at",
+   "name": "title",
+   "spans": "runs",
+   "start": "started_at",
+   "status": "result"
+  },
+  "title": "Scheduler runs"
  },
  "evolve.schedule.list": {
   "draw": {
@@ -3333,6 +3334,14 @@
    "rows": "nodes"
   }
  },
+ "nodes.parity.status": {
+  "empty": "No parity audit yet",
+  "kind": "matrix",
+  "map": {
+   "cells": "namespaces"
+  },
+  "title": "Node parity by namespace"
+ },
  "nodes.runner.list": {
   "draw": {
    "columns": [
@@ -3352,6 +3361,14 @@
   "map": {
    "rows": "runners"
   }
+ },
+ "nodes.storage": {
+  "empty": "No Docker host read",
+  "kind": "parts",
+  "map": {
+   "parts": "docker[0]"
+  },
+  "title": "Docker disk by type"
  },
  "nodes.testenv.status": {
   "draw": {

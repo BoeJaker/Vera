@@ -1,0 +1,25 @@
+{
+ "cap": "demo.docker_disk",
+ "args": {},
+ "presentation": {
+  "kind": "parts",
+  "map": {
+   "parts": "by_type"
+  },
+  "empty": "Nothing stored"
+ },
+ "result": {
+  "by_type": {
+   "images": 0,
+   "volumes": "n/a",
+   "cache": null
+  }
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "parts",
+  "title": "demo.docker_disk",
+  "forms": [],
+  "empty": "Nothing stored"
+ }
+}
