@@ -224,3 +224,13 @@ def test_the_panel_script_parses(src):
     bodies = re.findall(r"<script[^>]*>(.*?)</script>", src, re.S)
     p = subprocess.run([node, "--check", "-"], input="\n;\n".join(bodies), text=True, capture_output=True)
     assert p.returncode == 0, "panel JS does not parse:\n" + (p.stderr or "")[-2000:]
+
+
+def test_the_host_menu_lists_every_rail_section_in_order(src):
+    """18 Oct 2026, the owner: "the releases page isnt displayed on the harness absorbed menu". The docked menu reads
+    registerNav, not the rail - a section added to the rail alone is missing there. They must match, in order."""
+    rail = re.findall(r'<button class="btn[^"]*" data-sec="([a-z]+)"', src)
+    assert len(rail) >= 10, rail
+    nav = src[src.index("VeraPanelBridge.registerNav(["):]
+    nav = nav[:nav.index("]);")]
+    assert re.findall(r"\{id:'([a-z]+)'", nav) == rail

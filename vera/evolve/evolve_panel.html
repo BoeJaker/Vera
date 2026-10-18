@@ -1168,8 +1168,11 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   {id:'ship', label:'Ship', icon:'\u2197', desc:'Every branch and its pipeline', desc_long:'Every branch - its pipeline, review, sandbox and tests - in one table, with the commit graph, race lanes, authorship and gate strip below it.'},
   {id:'agents', label:'Agents', icon:'\u2609', desc:'Every agent session', desc_long:'Every agent session - Claude Code, Codex, a Vera loop, an edit-queue agent - with its board items, pipelines and sandboxes, and the board by lane.'},
   {id:'mission', label:'Mission control', icon:'\u25c9', desc:'Every event; what needs a person', desc_long:'Every event - actions, errors, gates - in one table, with what is live and what needs a person above it.'},
+  {id:'releases', label:'Releases', icon:'\u25b2', desc:'Gating, promotions and releases', desc_long:'What is being gated, promoted to bleeding-edge and released to prod - each pipeline\'s stages and tests, the release in flight, and what every release carried.'},
   {id:'schedule', label:'Schedule', icon:'\u25a6', desc:'A calendar of Loop Lab work', desc_long:'A calendar of Loop Lab work - censuses, suites, tasks, pipeline steps, board items - started by the scheduler only when the box is free.'},
   {id:'tests', label:'Tests', icon:'\u2713', desc:'Scheduled tests and their health', desc_long:'Every scheduled test (four-minds matrix, claims, tool shortlist, memory census, chat corpus, census arms) - its schedule entries, next fire, health (failed / interrupted / missed / recovering / running / ok), last runs and report headline.'},
+  {id:'models', label:'Models', icon:'\u25c8', desc:'Every model: speed, jobs, benchmarks', desc_long:'Every model Vera uses - which jobs it serves, how fast it runs on real traffic, its benchmarks, and the students scored in shadow.'},
+  {id:'performance', label:'Performance', icon:'\u26a1', desc:'Loop Lab and Vera use, side by side', desc_long:'How well things run - Loop Lab (censuses, gates, releases, the background queue) beside Vera\'s normal use (chat reply time, the chat corpus, services), each number with its source.'},
   {id:'settings', label:'Settings', icon:'\u2699', desc:'Loop Lab settings', desc_long:'Loop Lab settings.'},
 ]);
 
