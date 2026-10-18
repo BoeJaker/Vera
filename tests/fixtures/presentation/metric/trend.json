@@ -1,0 +1,29 @@
+{
+ "cap": "demo.pending",
+ "args": {},
+ "presentation": {
+  "kind": "metric",
+  "map": {
+   "value": "count",
+   "trend": "hist"
+  },
+  "status": "declared"
+ },
+ "result": {
+  "count": 5,
+  "hist": [
+   1,
+   2,
+   3,
+   5
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "metric",
+  "title": "demo.pending",
+  "forms": [
+   "hero"
+  ]
+ }
+}

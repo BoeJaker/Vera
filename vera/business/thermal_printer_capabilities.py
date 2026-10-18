@@ -708,6 +708,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "print.status", http_method="GET", http_path="/print/status",
+        contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "printers"}, "draw": {"columns": ["name", "transport", "port", "width_mm", "is_default"]}, "title": "Printers"}, {"kind": "kv", "map": {"fields": "$"}, "title": "Subsystem"}]}},
         http_tags=["print"], memory="off", silent=True,
         description="Thermal-printer subsystem status: whether server-side serial "
                     "is available (pyserial), detected serial ports, and configured "
@@ -729,6 +730,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "print.printers", http_method="GET", http_path="/print/printers",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "printers"}, "draw": {"columns": ["name", "transport", "port", "baud", "width_mm", "is_default", "node_id", "updated_at"]}, "empty": "No printers configured"}},
         http_tags=["print"], memory="off", silent=True,
         description="List configured printers. Output: {printers:[...]}.")
     async def cap_print_printers(trace_id=None):
@@ -1096,6 +1098,7 @@ if _CAP_AVAILABLE:
         return cur
 
     @capability("print.config.get", http_method="GET", http_path="/print/config",
+                contract={"presentation": {"kind": "kv", "map": {"fields": "config"}}},
                 http_tags=["print"], memory="off", silent=True,
                 description="Get daily auto-print settings {enabled, hour, minute, items, printer_id}.")
     async def cap_print_config_get(trace_id=None):
@@ -1217,6 +1220,7 @@ if _CAP_AVAILABLE:
         return bool((s.get("sources") or {}).get(source, source == "system"))
 
     @capability("print.subs.get", http_method="GET", http_path="/print/subs",
+                contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "subs"}, "title": "Printing"}, {"kind": "kv", "map": {"fields": "subs.sources"}, "title": "Sources"}]}},
                 http_tags=["print"], memory="off", silent=True,
                 description="Get printer notification subscriptions {master, sources:{system,dreams,narrator,chat}}.")
     async def cap_print_subs_get(trace_id=None):

@@ -2069,6 +2069,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "ml.data.list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "datasets"}, "draw": {"columns": ["dataset_id", "record_count", "is_internal", "updated_at"]}, "empty": "No datasets"}},
         http_method="GET", http_path="/ml/data/list", http_tags=["ml", "data"],
         memory="off", silent=True,
         description="List all ML-tagged datasets in the Data Fabric.",
@@ -2480,6 +2481,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "ml.train.status",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "jobs"}, "draw": {"columns": ["job_id", "module_id", "status", "epoch", "progress", "best_val_loss", "created_at"]}, "empty": "No training jobs"}},
         http_method="GET", http_path="/ml/train/status", http_tags=["ml"],
         memory="off", silent=True,
         description="Get status of a training job. Pass job_id or omit for all jobs.",

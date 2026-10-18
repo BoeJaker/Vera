@@ -84,7 +84,7 @@ t('a record reads its page in reader mode', /const rd = await this\._readPage\(S
 t('so does a source item', /open && rdr \? `<div class="vc-src-body rd">\$\{readerHtml\(rdr\)\}<\/div>`/.test(CV));
 
 // ── the fold ──────────────────────────────────────────────────────────────────────────────────────────────────────
-t('every keyed item has a fold on its header', /<span class="fd" data-act="fold"/.test(CV) && /if \(act === 'fold'\) return this\._setFold\(key, !\(it && it\.classList\.contains\('ufold'\)\)\);/.test(CV));
+t('every keyed item has a fold in its head\'s row (the column\'s pill control)', /hb\('fold', 'pill'/.test(CV) && /if \(act === 'fold'\) return this\._setFold\(key, !\(it && it\.classList\.contains\('ufold'\)\)\);/.test(CV));
 t('a folded item is its header line', /const compact = \(wouldFold && !hovered\) \|\| ufold;/.test(CV));
 t('what the canvas brings forth unasked starts folded', /return from === 'enrich' \|\| key\.indexOf\('enrich:'\) === 0;/.test(CV));
 t('your fold is remembered per canvas', /localStorage\.setItem\('vera:canvas:fold:' \+ this\._foldsFor/.test(CV));
@@ -92,7 +92,7 @@ t('a click on a folded header opens it', /if \(it\.classList\.contains\('ufold'\
 
 // ── research on the canvas ────────────────────────────────────────────────────────────────────────────────────────
 // (2026-10-03: through the shared output kit when it is on the page - the same cards as the chat's - and mdx without it)
-t('a document item draws with the reader\'s renderer', /markdown: \(c, size, key, el\) => \{[\s\S]{0,300}VO\.render\(md, \{ canvas: false \}\) : mdx\(md\)/.test(CV));
+t('a document item draws with the reader\'s renderer', /markdown: \(c, size, key, el\) => \{[\s\S]{0,700}VO\.render\(shown, \{ canvas: false \}\)\)? : mdx\(shown\)/.test(CV));   /* WSU-58 S6: kitDeclare(el, VO.render(...)) */
 t('the report lands, with its citations', /_cvLandReport\(fullText, _cvRelMid\|\|'', jobId, cits\)/.test(CHAT) && /md\+='\\n\\n## Sources\\n\\n'/.test(CHAT));
 t('the citations are kept from either path', /if\(m\.type==='citations'&&Array\.isArray\(m\.citations\)\) cits=m\.citations;/.test(CHAT) && /if\(Array\.isArray\(res\.citations\)\) cits=res\.citations;/.test(CHAT));
 

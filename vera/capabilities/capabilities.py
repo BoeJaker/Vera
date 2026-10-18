@@ -91,6 +91,7 @@ GPU_INFER_URL = cfg.GPU_INFER_URL
 
 @capability(
     "gpu.health",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["status", "gpu", "cuda", "whisper", "stable_diffusion", "sd_device", "tts", "tts_engine", "sample_rate"]}}},
     http_method="GET", http_path="/gpu/health", http_tags=["gpu", "obs"],
     memory="off",
     description="Health status of the GPU inference server. "
@@ -2692,6 +2693,7 @@ async def system_ping(host: str, timeout: int = 5, trace_id=None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @capability("ollama.list_models",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["status", "has_gpu", "count", "url"]}}},
     http_method="GET", http_path="/ollama/models", http_tags=["ollama"],
     memory="off",
     description="List models available on one or all Ollama cluster nodes. "
@@ -2711,36 +2713,8 @@ async def ollama_list_models(instance_id: str = None, trace_id=None):
     await asyncio.gather(*[_f(iid,inst) for iid,inst in targets.items()])
     return result
 
-@capability("ollama.instances",
-    http_method="GET", http_path="/ollama/cluster", http_tags=["ollama"],
-    memory="off",
-    description="Live status of all Ollama cluster nodes. Output: {instance_id: {url,status,models,in_use,latency_ms,has_gpu,num_thread}} - num_thread is what a request to the node carries (0 = none: a GPU node).")
-async def ollama_instances_status(trace_id=None):
-    # This registration is the one that serves ollama.instances (it loads after
-    # the orchestrator's own and replaces it).
-    import Vera.vera.capability_orchestration as _o
-    def _nt(i):
-        return _o._node_threads_core.threads_for(
-            has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
-            default=_o._CPU_NODE_THREADS)
-    # A superset of the orchestrator's registration it replaces (enabled and
-    # num_ctx came from there), so no caller loses a field to the load order.
-    return {iid:{"url":i["url"],"label":i["label"],"has_gpu":i["has_gpu"],"status":i["status"],
-                 "enabled":i.get("enabled", True),
-                 "latency_ms":i["latency_ms"],"models":i["models"],"in_use":i["in_use"],
-                 "errors":i["errors"],"last_check":i["last_check"],"num_thread":_nt(i),
-                 "num_ctx":i.get("num_ctx", 4096),
-                 # a node switched to vLLM: served by that server (status is its)
-                 "backend":i.get("backend","ollama"),"served_by":i.get("served_by","")}
-            for iid,i in OLLAMA_INSTANCES.items()}
-
-
-@APP.get("/ollama/instances", tags=["ollama"], include_in_schema=False)
-async def _ollama_instances_get_alias():
-    """GET /ollama/instances — the path the orchestrator's (replaced)
-    registration declared. Panels still call it, and this registration is
-    mounted at /ollama/cluster, so keep both answering the same thing."""
-    return await ollama_instances_status()
+# ollama.instances lives in capability_orchestration.py alone (D11 a), which
+# also serves GET /ollama/cluster.
 
 @capability("ollama.generate_raw",
     http_method="POST", http_path="/ollama/generate_raw", http_tags=["ollama", "llm"],

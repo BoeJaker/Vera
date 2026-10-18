@@ -11,7 +11,7 @@ const CHAT = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_pa
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
 
 /* ── the settings exist, with the defaults being what the canvas already did ─────────────────────────────────── */
-t('the element takes the settings as attributes', /'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse'\]/.test(SRC));
+t('the element takes the settings as attributes', /'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse'[,\]]/.test(SRC)   /* the desk's attributes follow */);
 t('each is read in ONE place, and defaults to today\'s behaviour',
   /strictAlign\(\) \{ return String\(this\.getAttribute\('align'\) \|\| 'held'\)/.test(SRC) &&
   /previewOn\(\) \{ return String\(this\.getAttribute\('preview'\) \|\| 'on'\)[^}]*!== 'off'/.test(SRC) &&
@@ -23,7 +23,7 @@ t('the page offers them in Settings, each with its own persisted value',
   /id="cfgCvAlign"[\s\S]*?value="held"[\s\S]*?value="strict"/.test(CHAT) &&
   /id="cfgCvPreview"[\s\S]*?value="on"[\s\S]*?value="off"/.test(CHAT) &&
   /id="cfgCvExplode"[\s\S]*?value="both"[\s\S]*?value="code"[\s\S]*?value="never"/.test(CHAT) &&
-  /_CV_CFG=\{ cfgCvAlign:\['align','held'\], cfgCvPreview:\['preview','on'\], cfgCvExplode:\['explode-offer','both'\], cfgCvWhere:\['', 'canvas'\], cfgCvFuse:\['fuse','on'\] \}/.test(CHAT));
+  /_CV_CFG=\{ cfgCvAlign:\['align','desk'\], cfgCvPreview:\['preview','on'\], cfgCvExplode:\['explode-offer','both'\], cfgCvWhere:\['', 'canvas'\], cfgCvFuse:\['fuse','on'\][, ]/.test(CHAT)   /* the desk is the default now (feat/desk-default); the desk's settings follow */);
 // and WHERE a canvas-compatible element is drawn while the column is open — a page-side setting (empty attribute name),
 // because the element draws its items either way: what changes is whether the REPLY draws them a second time
 t('...including where they are drawn, which the element knows nothing about',
@@ -73,7 +73,7 @@ t('the frame it draws in is the sandboxed one, with no network and no same-origi
 t('the setting decides which way it starts, and the item keeps its own switch either way',
   /const pdef = !el \|\| typeof el\.previewOn !== 'function' \|\| el\.previewOn\(\);/.test(SRC) &&
   /const prev = key \? \(pset \? !!el\._prevOn\[key\] : pdef\) : pdef;/.test(SRC) &&
-  /data-act="cprev"[\s\S]{0,120}Show the source/.test(SRC));
+  /act: 'cprev'[\s\S]{0,120}Show the source/.test(SRC));
 t('a whole-page code block also answers the setting', /const prev = PREVIEWABLE\(c\.lang\) && \(pset \? !!el\._prevOn\[key\] : \(pdef && WHOLE_PAGE\(c\.lang, c\.code\)\)\);/.test(SRC));
 t('an html item with nothing in it says so rather than drawing an empty frame', /nothing to draw yet/.test(SRC));
 
@@ -90,6 +90,17 @@ t('an html item with nothing in it says so rather than drawing an empty frame', 
   t('the document\'s own suggestions are never suppressed by it',
     V.suggestionsOf({ suggestions: [{ n: 'Open the diary', kind: 'calendar' }] }, [code], '', { explodeOffer: 'never' }).map((s) => s.n).join('') === 'Open the diary');
   t('the item asks the element for the reader\'s setting', /canExplode\(b, this\.explodeOffer\(\)\)/.test(SRC));
+}
+
+// the desk's own switches on the shared Settings page (WSU-48): each a persisted setting handed to the element, which
+// reads it in one place and keeps today's behaviour when it is on (the default)
+for (const [id, attr, read] of [['cfgCvCombine', 'desk-combine', "this.getAttribute('desk-combine') === 'off'"],
+                                ['cfgCvFill', 'desk-fill', "this.getAttribute('desk-fill') !== 'off'"],
+                                ['cfgCvSettle', 'desk-settle', "this.getAttribute('desk-settle') !== 'off'"],
+                                ['cfgCvFit', 'desk-fit', "this.getAttribute('desk-fit') === 'off'"]]) {
+  t(`the desk switch ${attr}: a Settings row, persisted, read by the element`,
+    new RegExp(`id="${id}"[^>]*onchange="CH\\._persistCanvasCfg\\(\\)"[\\s\\S]*?value="on"[\\s\\S]*?value="off"`).test(CHAT)
+    && CHAT.includes(`${id}:['${attr}','on']`) && SRC.includes(read));
 }
 
 console.log(fails ? fails + ' FAILED' : 'all passed');

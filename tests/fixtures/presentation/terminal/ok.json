@@ -1,0 +1,25 @@
+{
+ "cap": "demo.exec",
+ "args": {},
+ "presentation": {
+  "kind": "terminal",
+  "map": {
+   "command": "cmd",
+   "stdout": "out",
+   "rc": "code"
+  }
+ },
+ "result": {
+  "cmd": "uptime",
+  "out": " 10:00 up 3 days",
+  "code": 0
+ },
+ "expect": {
+  "element": "session",
+  "kind": "terminal",
+  "title": "demo.exec",
+  "forms": [
+   "terminal"
+  ]
+ }
+}

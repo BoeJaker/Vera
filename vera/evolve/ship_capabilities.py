@@ -55,6 +55,7 @@ def _truthy(v: Any, default: bool) -> bool:
 
 @capability(
     "evolve.ship.branches", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "branches"}, "draw": {"columns": ["branch", "role", "stage", "owner", "pipelines_n", "pending_n", "merged", "last_activity"]}}},
     http_method="GET", http_path="/evolve/ship/branches", http_tags=["evolve"],
     description=(
         "Every BRANCH Loop Lab knows, in one shape: its latest pipeline (and how many "

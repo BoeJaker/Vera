@@ -816,6 +816,7 @@ schedule(_tick, _TICK_S, name="evolve.schedule.tick", skip_in_sandbox=True, sing
 # ── capabilities ─────────────────────────────────────────────────────────────
 
 @capability("evolve.schedule.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "schedules"}, "draw": {"columns": ["title", "kind", "days", "start", "end", "repeat", "enabled", "last_result", "last_started_at"]}, "empty": "No schedules"}},
             http_method="GET", http_path="/evolve/schedule/list", http_tags=["evolve", "schedule"],
             description="Loop Lab schedules: when censuses, suites, tasks, pipeline steps, board items "
                         "or capabilities may run (weekly windows in a timezone, or one-shot). "
@@ -933,6 +934,7 @@ async def cap_schedule_tick(trace_id=None) -> Dict[str, Any]:
 
 
 @capability("evolve.schedule.events", memory="off", silent=True,
+            contract={"presentation": {"kind": "calendar", "map": {"events": "events", "start": "start", "end": "end", "title": "title"}}},
             http_method="GET", http_path="/evolve/schedule/events", http_tags=["evolve", "schedule", "calendar"],
             description="Calendar events for the Loop Lab schedules. mode=windows (default): one "
                         "read-only event per window per day (source loop-lab) plus the runs the "
@@ -984,8 +986,13 @@ async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windo
 
 
 @capability("evolve.schedule.history", memory="off", silent=True,
+            contract={"presentation": {"kind": "log", "map": {"events": "runs", "t": "started_at", "text": "title", "kind": "kind", "level": "result"}, "empty": "The scheduler has started nothing yet"}},
             http_method="GET", http_path="/evolve/schedule/history", http_tags=["evolve", "schedule"],
-            description="Runs the scheduler started, newest first. Input: limit (int, default 50).")
+            description="Runs the scheduler started, newest first. Input: limit (int, default 50).",
+            # DA-01e (1): each run a span on the gantt, coloured by how it ended
+            contract={"presentation": {"kind": "timeline", "map": {"spans": "runs", "name": "title", "start": "started_at",
+                                                                   "end": "finished_at", "status": "result"},
+                                       "title": "Scheduler runs", "empty": "No scheduled runs yet"}})
 async def cap_schedule_history(limit: int = 50, trace_id=None) -> Dict[str, Any]:
     runs = await _runs(max(1, min(MAX_RUNS, int(limit or 50))))
     return {"runs": runs, "count": len(runs)}

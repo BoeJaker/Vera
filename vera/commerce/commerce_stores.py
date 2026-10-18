@@ -184,6 +184,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.store.list", http_method="GET", http_path="/business/store/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "stores"}, "draw": {"columns": ["name", "platform", "status", "product_count", "inventory_retail", "listings_live", "open_orders", "net_30d"]}, "empty": "No stores"}},
         http_tags=["commerce"], memory="off", silent=True,
         description="List the stores (e-commerce income streams) with headline metrics "
                     "(products, live listings, open orders, 30-day revenue/profit, "
@@ -252,6 +253,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.store.master", http_method="GET", http_path="/business/store/master",
+        contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "stores"}, "title": "Stores", "form": "table", "draw": {"columns": ["name", "platform", "product_count", "inventory_retail", "listings_live", "open_orders", "net_30d", "net_all"]}}, {"kind": "kv", "map": {"fields": "totals"}, "title": "Totals"}]}},
         http_tags=["commerce"], memory="off", silent=True,
         description="Master view across every store: per-store revenue/profit/inventory/"
                     "orders (plus an Unassigned bucket) and combined totals. "

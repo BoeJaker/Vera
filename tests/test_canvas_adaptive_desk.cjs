@@ -18,7 +18,7 @@ test('manual placement is stored as normalized coordinates scoped to the canvas'
   src.includes("'vera:canvas:deskpos:' + this.canvasId") &&
   src.includes('fx: +(d.cx / g.W).toFixed(4)') && src.includes('fy: +(d.cy / g.H).toFixed(4)'));
 test('the layout kernel owns arrangement, collision separation, and responsive sizing',
-  src.includes('D.arrange(mode, R, ranked.map') && src.includes('D.separate(plan, R') && src.includes('D.sizeAt(R, it.x, it.y'));
+  src.includes("D.arrange('orbit', R, info, desk)") && src.includes('D.layoutMode(mode, R, info, desk') && src.includes('D.separate(withStrip(bySize(plan)), R') && src.includes('D.sizeAt(R, it.x, it.y'));
 test('panel obstacle messages contain normalized rectangles and no panel content',
   src.includes("type: 'vera:desk:obstacles', rects: shares, makeRoom: on") &&
   src.includes('l: +Math.max(0, (r.left - F.left) / F.width).toFixed(4)') &&
@@ -29,7 +29,7 @@ test('panel obstacle delivery targets only live panel frames',
   src.includes("fr.contentWindow.postMessage({ type: 'vera:desk:obstacles'"));
 test('live overlays compensate for UI scale and clip to their owning card',
   src.includes('(B.width / body.offsetWidth)') && src.includes('el.style.clipPath') &&
-  src.includes("const z = card.style.zIndex || ''"));
+  src.includes("const z = m.z != null ? m.z : (card.style.zIndex || '');"));
 test('layer state is browser-local presentation state',
   src.includes("const LAYER_KEY = 'vera:canvas:layers'") &&
   src.includes('localStorage.setItem(LAYER_KEY') && src.includes('setLayer(key, mode)'));

@@ -212,9 +212,15 @@ def test_widget_fence_and_rule_share_one_record_and_one_block():
         assert form in shape, form
     assert "ruleWidget=_widgetBlock(_widgetRecord({form:f,source:capName,args:capArgs,name:capName},'rule'),'rule',content)" in HTML
     block = _fn("_widgetBlock")
-    for act in ("CH._wPin(", "CH._wXl(", "CH._wForm("):
-        assert act in block, act
-    assert "by <b>rule</b>" in block and "chosen by <b>aide</b>" in block
+    # the block's head is the item's (DEEP-29 11A.4 step 5): the row - view (another form), pill, max (XL), more - and the
+    # menu holds the pin, how it was chosen and its record
+    assert "${_wRow(id)}" in block
+    row, menu, act = _fn("_wRow"), _fn("_wMenu"), _fn("_wAct")
+    for a in ("hb('form','view'", "hb('fold','pill'", "hb('xl','max'", "hb('more','more'", "CH._wAct("):
+        assert a in row, a
+    assert "return _wForm(id);" in act and "return _wXl(id, btn);" in act
+    assert "CH._wPin(" in row and "Pin to canvas</button>" in row, "its own control is in its head"
+    assert "by <b>rule</b>" in menu and "chosen by <b>aide</b>" in menu
 
 
 def test_pin_to_canvas_copies_the_record_and_dedupes_on_its_key():

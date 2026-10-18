@@ -1,0 +1,130 @@
+{
+ "cap": "demo.storage_by_pool",
+ "args": {},
+ "presentation": {
+  "kind": "parts",
+  "map": {
+   "parts": "pools",
+   "name": "pool",
+   "value": "used.gb"
+  }
+ },
+ "result": {
+  "pools": [
+   {
+    "pool": "p0",
+    "used": {
+     "gb": 5
+    }
+   },
+   {
+    "pool": "p1",
+    "used": {
+     "gb": 40.5
+    }
+   },
+   {
+    "pool": "p2",
+    "used": {
+     "gb": "12"
+    }
+   },
+   {
+    "pool": "p3",
+    "used": {
+     "gb": 3
+    }
+   },
+   {
+    "pool": "p4",
+    "used": {
+     "gb": 0
+    }
+   },
+   {
+    "pool": "p5",
+    "used": {
+     "gb": -2
+    }
+   },
+   {
+    "pool": "p6",
+    "used": {
+     "gb": 7
+    }
+   },
+   {
+    "pool": "p7",
+    "used": {
+     "gb": 9
+    }
+   },
+   {
+    "pool": "p8",
+    "used": {
+     "gb": 1.25
+    }
+   },
+   {
+    "pool": "p9",
+    "used": {
+     "gb": 30
+    }
+   },
+   {
+    "pool": "p10",
+    "used": {
+     "gb": 2
+    }
+   },
+   {
+    "pool": null,
+    "used": {
+     "gb": 4
+    }
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "parts",
+  "title": "demo.storage_by_pool",
+  "forms": [
+   "donut"
+  ],
+  "data": [
+   {
+    "name": "p1",
+    "value": 40.5
+   },
+   {
+    "name": "p9",
+    "value": 30
+   },
+   {
+    "name": "p2",
+    "value": 12
+   },
+   {
+    "name": "p7",
+    "value": 9
+   },
+   {
+    "name": "p6",
+    "value": 7
+   },
+   {
+    "name": "p0",
+    "value": 5
+   },
+   {
+    "name": "#12",
+    "value": 4
+   },
+   {
+    "name": "other",
+    "value": 6.25
+   }
+  ]
+ }
+}

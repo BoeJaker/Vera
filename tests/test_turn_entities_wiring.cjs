@@ -6,7 +6,7 @@ const R = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const H = R('vera/chat/chat_panel.html'), C = R('vera/canvas/canvas_element.js'), CC = R('vera/canvas/canvas_capabilities.py'), E = R('vera/canvas/enrich_capabilities.py');
 let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
 
-t('after a reply lands, the chat asks what it names', H.includes("try{ _cvEntities(_cvRelMid, String(fullText||'')); }catch(_){}") && H.includes("r=await _capCall('turn.understand',{ text:t.slice(0,12000), session_id:SID, mid:String(mid||''), place:true });"));
+t('after a reply lands, the chat asks what it names', H.includes("try{ _cvEntities(_cvRelMid, String(fullText||'')); }catch(_){}") && H.includes("r=await _capCall('turn.understand',{ text:t.slice(0,12000), session_id:SID, mid:String(mid||''), place:true")   /* look:N fetches for the leading names (c2c70d6c) */);
 t('...only for a reply with some prose, and the canvas switch turns it off', H.includes("if(!SID||!_cvEnrichOn()||t.replace(/```[\\s\\S]*?```/g,'').trim().length<160) return null;"));
 t('...and the answer is kept with the message', H.includes('_MSG_REGISTRY[mid].entities=r.entities||[];'));
 t('the stale "nlp.ner does not work" note is corrected', H.includes('nlp.ner answers on the CPU nodes in about half a'));

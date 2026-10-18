@@ -99,7 +99,7 @@ const { D, E } = ctx;
 // ── and the canvas can draw one ────────────────────────────────────────────────────────────────────────────────
 {
   const cv = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js'), 'utf8');
-  t('the canvas draws a timeline', /^    timeline: \(c\) => \{/m.test(cv));
+  t('the canvas draws a timeline', /^    timeline: \(c(, size, key, el)?\) => \{/m.test(cv));
   const py = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_capabilities.py'), 'utf8');
   t('and the block type is declared server-side', /"timeline": \{"desc"/.test(py));
   t('the type says why `when` is loose', /did\s*\n?\s*"?\s*not have|not have\./.test(py) || /precision the prose did/.test(py));

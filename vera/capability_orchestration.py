@@ -641,6 +641,8 @@ CAPABILITY_REGISTRY: Dict[str, dict]           = {}
 WORKER_REGISTRY:     Dict[str, dict]           = {}
 STREAM_SUBS:         Dict[str, List[Callable]] = {}
 WS_CONNECTIONS:      List[tuple]               = []
+# a /ws/mcp event subscriber's filter (DA-03a, live_events_core): id(ws) -> {sid, trace, types}; none = every event
+WS_EVENT_FILTERS:    Dict[int, dict]           = {}
 SCHEDULED_TASKS:     List[dict]                = []
 PENDING_RESULTS:     Dict[str, asyncio.Future] = {}
 RUNNING_TASKS:       Dict[str, asyncio.Task]   = {}   # task_id -> in-flight cap Task (for cancel)
@@ -5899,9 +5901,14 @@ async def emit_event(event: dict):
     # the actual sending.
     _seen = set()
     payload = {"type": "event", "data": event}
+    from .live_events_core import event_matches as _ev_match
     for ws, sub in list(WS_CONNECTIONS):
         if sub == "__events__" and id(ws) not in _seen:
             _seen.add(id(ws))
+            # a subscriber that asked for some events gets those (DA-03a); one that did not, every event as before
+            _flt = WS_EVENT_FILTERS.get(id(ws))
+            if _flt and not _ev_match(event, _flt):
+                continue
             _ws_enqueue(ws, payload)
 
 async def emit_stream(name: str, trace_id: str, payload: Any, capability: str):
@@ -8444,6 +8451,7 @@ async def scheduler_loop():
 # ── Observability ─────────────────────────────────────────────────────────────
 
 @capability("obs.provenance", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["branch", "git_sha_short", "dirty", "source", "instance", "pid", "started_at"]}}},
             http_method="GET", http_path="/obs/provenance", http_tags=["obs"],
             description="Git provenance of the RUNNING process: which commit/branch it "
                         "is on, whether the checkout is dirty (uncommitted code), plus "
@@ -8464,10 +8472,17 @@ async def cap_obs_provenance(trace_id=None):
             mcp_expose=False,
             description="List all registered capabilities (MCP tool manifest).")
 async def mcp_tools(trace_id=None):
+    # a capability that declares how its answer is drawn carries it here (DA-01a); the others are listed as before
+    from .capability_contract_core import project_presentation
+    def _pres(v):
+        c = v.get("contract")
+        if not isinstance(c, dict) or "presentation" not in c:
+            return {}
+        return {"presentation": project_presentation(c, c.get("output_schema"))}
     return [
         {"name":k,"description":v.get("description",""),"schema":v.get("schema",{}),
          "mode":v.get("mode","local"),"source":v.get("source","local"),
-         "streams":v.get("streams",[]),"tags":v.get("tags",[])}
+         "streams":v.get("streams",[]),"tags":v.get("tags",[]), **_pres(v)}
         for k,v in CAPABILITY_REGISTRY.items()
         if v.get("mcp_expose",True)
     ]
@@ -9477,6 +9492,7 @@ async def cap_sys_activity_status(trace_id=None):
 
 
 @capability("sys.debug.tasks", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "tasks"}, "draw": {"columns": ["name", "coro", "done", "chain"]}, "empty": "No tasks match"}},
             http_method="GET", http_path="/sys/debug/tasks", http_tags=["sys"],
             description="READ-ONLY. Where every asyncio task in this process is waiting: each "
                         "task's await chain (file:line in function, down to the future it is "
@@ -9929,7 +9945,7 @@ def _health_files() -> Dict[str, Any]:
                         "action=yield and wait for acked, resume after). `activity` "
                         "{busy, summary, loops, gates, declared} is everything else in "
                         "flight: agent loops, gates, and tests/probes declared with "
-                        "sys.activity.declare.")
+                        "sys.activity.declare.", contract={"presentation": {'kind': 'status', 'form': 'status'}})
 async def obs_health(trace_id=None):
     return {"redis":await _backend_answers("redis"),
             "postgres":await _backend_answers("postgres"),"chroma":bool(CHROMA),
@@ -9963,6 +9979,7 @@ async def _health_search() -> Dict[str, Any]:
 
 
 @capability("obs.neo4j_diag", memory="off", silent=True,
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "Driver"}, {"kind": "table", "form": "table", "map": {"rows": "probe.attempts"}, "draw": {"columns": ["auth", "ok", "error_type", "error"]}, "title": "Probe"}]}},
             http_method="GET", http_path="/health/neo4j", http_tags=["obs"],
             description="Diagnose why the Neo4j backend is up/down: shows the driver "
                         "package presence, the RESOLVED uri/user (from cfg/env — password "
@@ -10010,6 +10027,7 @@ async def obs_neo4j_diag(trace_id=None):
     return out
 
 @capability("ollama.gate.status", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["node", "has_gpu", "gated", "capacity", "held", "free", "owners"]}}},
             http_method="GET", http_path="/ollama/gate", http_tags=["ollama", "obs"],
             description="Cross-process Ollama GPU gate ('one big queue') status: "
                         "whether it is enabled, the coordination Redis DB, and per-node "
@@ -10050,6 +10068,7 @@ async def ollama_gate_status(trace_id=None):
 
 
 @capability("obs.workers", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["name", "host", "role", "status", "current_task", "cpu_pct", "ram_pct", "tasks_done"]}, "empty": "No workers registered"}},
             http_method="GET", http_path="/workers", http_tags=["obs"],
             description="Worker registry — all hosts merged from Redis + local fallback.")
 async def obs_workers(trace_id=None):
@@ -10132,12 +10151,14 @@ async def obs_workers(trace_id=None):
     return merged
 
 @capability("obs.pending", memory="off", silent=True,
+            contract={"presentation": {"kind": "metric", "map": {"value": "count"}, "title": "Pending results"}},
             http_method="GET", http_path="/pending", http_tags=["obs"],
             description="Pending result futures (tasks awaiting distributed completion).")
 async def obs_pending(trace_id=None):
     return {"count":len(PENDING_RESULTS),"ids":list(PENDING_RESULTS.keys())}
 
 @capability("obs.scheduler", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["name", "interval", "runs", "last"]}, "empty": "No scheduled jobs"}},
             http_method="GET", http_path="/scheduler", http_tags=["obs"],
             description="Scheduled background jobs — name, interval, run count, last run.")
 async def obs_scheduler(trace_id=None):
@@ -10150,11 +10171,15 @@ async def obs_scheduler(trace_id=None):
 
 @capability("obs.events", memory="off", silent=True,
             http_method="GET", http_path="/events", http_tags=["obs"],
-            description="Recent events from Redis event stream.")
-async def obs_events(limit: int = 100, trace_id=None):
+            description="Recent events from Redis event stream.", contract={"presentation": {'kind': 'log', 'form': 'log', 'map': {'events': '$', 't': 'ts', 'kind': 'type', 'text': 'name'}}})
+async def obs_events(limit: int = 100, since: str = "", trace_id=None):
+    """newest first; since (an event ts): only the ones after it - what a live page missed while its socket was down
+    (VeraLive's catch-up, DA-03b)"""
     if not REDIS: return []
-    data=await REDIS.xrevrange(EVENT_STREAM,count=min(limit,500))
-    return [json.loads(x[1][b"data"]) for x in data]
+    data=await REDIS.xrevrange(EVENT_STREAM,count=min(int(limit or 100),500))
+    out=[json.loads(x[1][b"data"]) for x in data]
+    since=str(since or "").strip()
+    return [e for e in out if str(e.get("ts") or "") > since] if since else out
 
 @capability("obs.stream_history", memory="off", silent=True,
             http_method="GET", http_path="/streams/history", http_tags=["obs"],
@@ -10165,6 +10190,7 @@ async def obs_stream_history(name: str = "", limit: int = 50, trace_id=None):
     return [json.loads(x[1][b"data"]) for x in data]
 
 @capability("obs.redis", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["connected_clients", "used_memory_human", "uptime_days"]}}},
             http_method="GET", http_path="/redis/inspect", http_tags=["obs"],
             description="Redis server info and vera:* stream key statistics. keys (bool=true): "
                         "false answers the server figures alone (clients, memory, uptime) - the "
@@ -10201,6 +10227,7 @@ def _redact_redis_url(url):
         return "redis://***"
 
 @capability("obs.diagnostics", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["host", "mode", "redis_connected", "redis_ping", "redis_version", "redis_port", "workers_in_redis", "worker_count_local", "caps"]}}},
             http_method="GET", http_path="/diagnostics", http_tags=["obs"],
             description="Full connection diagnostics — Redis reachability, bind config, "
                         "worker count, host identity. Use to debug multi-host setup.")
@@ -10256,7 +10283,7 @@ async def obs_diagnostics(trace_id=None):
 
 @capability("obs.modules", memory="off", silent=True,
             http_method="GET", http_path="/modules", http_tags=["obs"],
-            description="List all capability modules loaded at startup — name, path, caps added, status.")
+            description="List all capability modules loaded at startup — name, path, caps added, status.", contract={"presentation": {'kind': 'table', 'form': 'treemap', 'map': {'parts': 'modules', 'name': 'name', 'value': 'caps_added'}}})
 async def obs_modules(trace_id=None):
     return {"modules": LOADED_MODULES, "count": len(LOADED_MODULES)}
 
@@ -10356,7 +10383,7 @@ def _dot_state(ok: bool, exists: bool, warn: bool = False) -> str:
                         "(proxmox, docker, ollama, mesh, loop_lab, sandboxes, "
                         "mimic, fabric, redis) for the main-dashboard health "
                         "strip. Fans out via _gather_subsystem_snapshot(), "
-                        "never raises.")
+                        "never raises.", contract={"presentation": {'kind': 'status', 'form': 'pills', 'map': {'values': '$', 'entries': 'status'}}})
 async def dash_health_summary(trace_id=None) -> Dict:
     snap = await _gather_subsystem_snapshot()
     sysmon = snap["sysmon"] if isinstance(snap["sysmon"], dict) else {}
@@ -10494,7 +10521,7 @@ def _node_leaf_status(backends: List[str], temp_entry: Optional[Dict]) -> str:
                         "today, and this map doesn't fake a layer off data "
                         "that doesn't exist. "
                         "Output: {nodes:[{id,label,kind,status,detail,temp_c}], "
-                        "edges:[{from,to,kind}], ts}.")
+                        "edges:[{from,to,kind}], ts}.", contract={"presentation": {'kind': 'graph', 'form': 'vgraph'}})
 async def topology_snapshot(trace_id=None) -> Dict:
     snap = await _gather_subsystem_snapshot()
     nodes_out: List[Dict] = [{"id": "hub", "label": "Vera", "kind": "hub", "status": "ok", "detail": ""}]
@@ -10798,15 +10825,31 @@ async def topology_snapshot(trace_id=None) -> Dict:
 
 @capability("ollama.instances", memory="off", silent=True,
             http_method="GET", http_path="/ollama/instances", http_tags=["ollama"],
-            description="Live status of all Ollama cluster nodes.")
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["name", "label", "status", "has_gpu", "latency_ms", "in_use", "errors", "num_ctx", "backend"]}}},
+            description="Live status of all Ollama cluster nodes. Output: {instance_id: {url,status,models,in_use,latency_ms,has_gpu,num_thread,...}} - num_thread is what a request to the node carries (0 = none: a GPU node).")
 async def cap_ollama_instances(trace_id=None):
+    # The one registration of ollama.instances (D11 a): capabilities.py's copy,
+    # which added num_thread and the /ollama/cluster mount, is folded in here.
+    def _nt(i):
+        return _node_threads_core.threads_for(
+            has_gpu=bool(i.get("has_gpu")), node_num_thread=i.get("num_thread"),
+            default=_CPU_NODE_THREADS)
     return {iid:{"url":i["url"],"label":i["label"],"has_gpu":i["has_gpu"],
                  "enabled":i.get("enabled", True),
                  "status":i["status"],"latency_ms":i["latency_ms"],"models":i["models"],
                  "in_use":i["in_use"],"errors":i["errors"],"last_check":i["last_check"],
+                 "num_thread":_nt(i),
                  "num_ctx":i.get("num_ctx", 4096),
+                 # a node switched to vLLM: served by that server (status is its)
                  "backend":i.get("backend", "ollama"),"served_by":i.get("served_by", "")}
             for iid,i in OLLAMA_INSTANCES.items()}
+
+
+async def _ollama_cluster_get_alias():
+    """GET /ollama/cluster - the path capabilities.py's (removed) copy of
+    ollama.instances was mounted at; the dream panel and the docs still use it.
+    Registered on APP right after APP is created (APP does not exist yet here)."""
+    return await cap_ollama_instances()
 
 @capability("ollama.add_instance", memory="off",
             http_method="POST", http_path="/ollama/instances/add", http_tags=["ollama"],
@@ -11371,7 +11414,7 @@ async def cap_media_ping(id: str, trace_id=None):
                         "EMA elapsed seconds, output tokens, tokens/sec and prompt size — "
                         "the data the router uses to gauge how long a request will take. "
                         "Query: model (str, filter), instance (str, filter), "
-                        "estimate_prompt_chars (int — include a per-key duration estimate).")
+                        "estimate_prompt_chars (int — include a per-key duration estimate).", contract={"presentation": {'kind': 'table', 'form': 'ranked', 'map': {'values': 'stats', 'count': 'model', 'sum': 'n'}}})
 async def cap_ollama_route_stats(model: str = "", instance: str = "",
                                  estimate_prompt_chars: int = 0, trace_id=None):
     out = []
@@ -11415,7 +11458,7 @@ async def cap_ollama_pull(model: str, instance_id: str, trace_id=None):
             description="Return the recent Ollama request log (in-process ring buffer). "
                         "Shows caller, model, instance, timing, and status for every "
                         "ollama_generate call. Query: limit (int, default 50), "
-                        "caller_file (str, filter), status (str, filter).")
+                        "caller_file (str, filter), status (str, filter).", contract={"presentation": {'kind': 'log', 'form': 'log', 'map': {'events': 'entries', 't': 'ts', 'kind': 'instance', 'text': 'model'}}})
 async def cap_ollama_request_log(limit: int = 50, caller_file: str = "",
                                   status: str = "", trace_id=None):
     # Sanitise again on read so a hot-upgraded process or a legacy/direct caller
@@ -13362,6 +13405,9 @@ async def cap_auth_edge_status(trace_id=None):
     if g is None:
         return {"mode": "not started", "note": "the guard is built on the first request"}
     return g.status()
+# ollama.instances is mounted at /ollama/instances; /ollama/cluster answers the same (see the cap)
+APP.add_api_route("/ollama/cluster", _ollama_cluster_get_alias, methods=["GET"],
+                  tags=["ollama"], include_in_schema=False)
 
 @APP.get("/ui/elements/research_card.js", include_in_schema=False)
 async def _serve_research_card_js():
@@ -14354,10 +14400,18 @@ async def ws_mcp(ws: WebSocket):
                 WS_CONNECTIONS.append((ws,msg.get("stream")))
                 _ws_enqueue(ws, {"type":"subscribed","stream":msg.get("stream")})
             elif action=="subscribe_events":
-                WS_CONNECTIONS.append((ws,"__events__"))
-                _ws_enqueue(ws, {"type":"subscribed","stream":"__events__"})
+                # {filter: {sid?, trace?: [...], types?: [prefixes]}} - only those events (DA-03a); no filter, all of them.
+                # Subscribing again replaces the filter (a page adds its new call's trace as it goes).
+                from .live_events_core import normalize_event_filter, filter_summary
+                _flt = normalize_event_filter(msg.get("filter"))
+                if _flt: WS_EVENT_FILTERS[id(ws)] = _flt
+                else: WS_EVENT_FILTERS.pop(id(ws), None)
+                if (ws,"__events__") not in WS_CONNECTIONS:
+                    WS_CONNECTIONS.append((ws,"__events__"))
+                _ws_enqueue(ws, {"type":"subscribed","stream":"__events__","filter":filter_summary(_flt)})
             elif action=="unsubscribe":
                 _remove_ws(ws,msg.get("stream"))
+                if msg.get("stream")=="__events__": WS_EVENT_FILTERS.pop(id(ws), None)
                 _ws_enqueue(ws, {"type":"unsubscribed","stream":msg.get("stream")})
 
             elif action=="dag_run":
@@ -14397,6 +14451,7 @@ async def ws_mcp(ws: WebSocket):
     except Exception as e: log.error("WS error [%s]: %s",client_id,e)
     finally:
         WS_CONNECTIONS[:]=[p for p in WS_CONNECTIONS if p[0] is not ws]
+        WS_EVENT_FILTERS.pop(id(ws), None)
         _ws_stop_writer(ws)
 
 

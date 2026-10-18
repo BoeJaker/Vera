@@ -226,6 +226,7 @@ def _note_searxng(body: Optional[Dict[str, Any]], error: str = "") -> None:
 
 @capability(
     "web.engines.health",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["state", "message", "reachable", "unresponsive", "empty_streak", "last_count", "ok_at", "checked_at"]}}},
     http_method="GET", http_path="/web/engines/health",
     http_tags=["web"], memory="off", silent=True,
     description="Is web search getting real results? What the last SearXNG answers looked like: state "
@@ -1174,6 +1175,23 @@ async def cap_web_research(
     max_chars = max(200, min(MAX_PAGE_CHARS, int(max_chars)))
     t0 = time.monotonic()
 
+    # HOW IT STANDS, AS IT GOES (WSU-41): the same info.seek.step events info.seek sends - the stage, what
+    # it has checked, the pages in hand (read or not yet) - keyed by the query, which is the question the chat's live
+    # item for this call holds. Best effort: a lost event changes nothing.
+    checked: List[str] = []
+    have: List[Dict[str, Any]] = []
+    async def step(stage: str) -> None:
+        try:
+            await emit_event({"type": "info.seek.step", "question": query[:300], "need": "lookup", "subject": query[:120],
+                              "trace_id": str(trace_id or ""),   # the call's own key (DA-04a: lookups matched by trace)
+                              "stage": stage, "checked": checked[-8:], "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                              "items": [{"title": str(h.get("title") or "")[:160], "url": h.get("url") or "",
+                                         "site": h.get("site") or h.get("domain") or "", "published": h.get("published") or "",
+                                         "read": bool(h.get("read"))} for h in have[:12]]})
+        except Exception:
+            pass
+    await step("searching the web")
+
     # 1. Broad search. discover="off" — we do our own content pull below and don't
     #    want to also kick off the background snippet/crawl processing here. Ask for
     #    more hits than we fetch so `more_links` has real follow-up candidates.
@@ -1181,6 +1199,9 @@ async def cap_web_research(
                               engine=engine, discover="off")
     hits = [h for h in (sr.get("results") or []) if h.get("url")]
     top  = hits[:results]
+    checked.append(f"search: {len(hits)} results" + (f" ({sr.get('engine_used')})" if sr.get("engine_used") else ""))
+    have.extend({"title": h.get("title") or "", "url": h.get("url"), "domain": h.get("domain") or ""} for h in top)
+    await step(f"reading the top {len(top)} pages" if top else "no results")
 
     # 2. Pull the useful content from the top results IN PARALLEL. ingest_to_fabric
     #    stays False — this is a fast read, not a crawl-and-store.
@@ -1204,7 +1225,20 @@ async def cap_web_research(
                 log.debug("web.research reader [%s]: %s", h.get("url"), e)
         return await cap_web_fetch(url=h["url"], timeout=fetch_timeout, max_chars=max_chars, ingest_to_fabric=False)
 
-    fetches = await asyncio.gather(*[_read(h) for h in top], return_exceptions=True)
+    async def _read_told(i, h):
+        f = await _read(h)
+        try:                                                     # this page is in hand: the item shows it read
+            ok = isinstance(f, dict) and not f.get("error")
+            have[i]["read"] = ok and bool(f.get("text"))
+            if ok and f.get("published"):
+                have[i]["published"] = f["published"]
+            n = sum(1 for x in have if x.get("read"))
+            await step(f"read {n} of {len(top)} pages")
+        except Exception:
+            pass
+        return f
+
+    fetches = await asyncio.gather(*[_read_told(i, h) for i, h in enumerate(top)], return_exceptions=True)
 
     sources: List[Dict[str, Any]] = []
     for h, f in zip(top, fetches):
@@ -1231,6 +1265,8 @@ async def cap_web_research(
         sources.append(src)
 
     elapsed_ms = int((time.monotonic() - t0) * 1000)
+    checked.append(f"read: {sum(1 for x in sources if x.get('chars'))} of {len(sources)} pages")
+    await step("done")
     await emit_event({
         "type":       "web.research.done",
         "query":      query[:100],
@@ -1506,6 +1542,22 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
     extra: Dict[str, Any] = {}
     items: List[Dict[str, Any]] = []
 
+    # HOW THE LOOKUP STANDS, AS IT GOES (owner, 2026-10-11: "the research family of caps has rich output while its
+    # running that need to be communicated"): each stage is an info.seek.step event - what it is doing, what it has
+    # checked so far, the pages it has in hand - keyed by the question, so the chat's item for this call can show the
+    # lookup working rather than a card that appears only at the end. Best effort: a lost event changes nothing.
+    async def step(stage: str, have: Optional[List[Dict[str, Any]]] = None) -> None:
+        try:
+            await emit_event({"type": "info.seek.step", "question": question[:300], "need": need, "subject": subject[:120],
+                              "trace_id": str(trace_id or ""),   # the call's own key (DA-04a), as web.research's steps
+                              "stage": stage, "checked": checked[-8:], "elapsed_ms": int((time.monotonic() - t0) * 1000),
+                              "items": [{"title": str(h.get("title") or "")[:160], "url": h.get("url") or "",
+                                         "site": h.get("site") or h.get("domain") or "", "published": h.get("published") or "",
+                                         "read": bool(h.get("text"))} for h in (have or [])[:12]]})
+        except Exception:
+            pass
+    await step("planning: need " + need + " · " + subject[:80])
+
     # what Vera already tracks on the subject - milliseconds, so always asked
     intel_task = asyncio.create_task(_seek_call("intel.lookup", 8, query=subject, since=since))
     # what the fabric has already read on it (the page index; web-ingress WI-10b) - bounded, never waited on long
@@ -1520,6 +1572,7 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         queries = _seek.latest_queries(subject, question, now)
         span = "week" if (now - (_seek.parse_date(since) or now)).days <= 8 else "month"
         news_task = asyncio.create_task(_searxng_news(subject, 12, span))
+        await step(f"searching: the news of the past {span} and {len(queries)} web searches")
         feed_task = asyncio.create_task(_feed_hits(subject))
         res = await _seek_searches(queries, first_slot=1)        # the news search has slot 0
         try:
@@ -1542,30 +1595,37 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
         hits = [h for h in hits if h not in dropped]
         if dropped:
             checked.append(f"dropped {len(dropped)} market-report sellers")
+        await step(f"ranking {len(hits)} results")
         hits = await _seek_rerank(subject, hits)
         items = [dict(h, kind="web") for h in _seek.per_site(hits, 2)][:12]
         # newest first BEFORE reading: the pages read are the new ones, not the evergreen explainers relevance
         # ranks high (prod, 10 Oct: every read page was an undated explainer while the dated news went unread)
         items = _seek.order_latest(items, since, now)
+        await step(f"reading the {min(pages, len(items))} newest pages", items)
         got = await _seek_read(items, pages, chars)
         checked.append(f"read {got} of the top pages")
         items = _seek.order_latest(items, since, now)          # a page read may have given its own date
+        await step("read the pages; checking what Vera tracks", items)
     else:
         # fact / overview / deep: the subject's keywords first, then other angles; ranked against the QUESTION (the
         # cross-encoder judges "does this page answer it"), at most two pages a site, the best pages read
         queries = (_seek.fact_queries(subject, question) if need == "fact"
                    else _seek.overview_queries(subject, question, now))
+        await step(f"searching: {len(queries)} web searches")
         res = await _seek_searches(queries)
         hits = _seek.merge_hits([r.get("results") or [] for r in res])
         engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
         checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
         _seek.fill_dates(hits, now)
+        await step(f"ranking {len(hits)} results against the question")
         hits = await _seek_rerank(question, hits)
         cap = 2 if need == "fact" else 1          # an overview wants many sites, a fact may take two pages of one
         items = [dict(h, kind="web") for h in _seek.per_site(hits, cap)][:10]
         n_read = pages if need == "fact" else min(8, pages + 2)
+        await step(f"reading the {min(n_read, len(items))} best pages", items)
         got = await _seek_read(items, n_read, chars)
         checked.append(f"read {got} of the top pages")
+        await step("read the pages", items)
         if need == "fact" and got < 2 and len(queries) < 3:
             # depth over speed: the pages did not carry an answer - one sharper round before giving up
             q3 = f"{subject} {now.year}"

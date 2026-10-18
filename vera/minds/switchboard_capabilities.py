@@ -47,7 +47,11 @@ except Exception:                        # worktree / app-free import
 
 @capability(
     "minds.switch.list", http_method="GET", http_path="/minds/switches",
-    contract=_MC.contract("switchboard.switch.list", effects=["read"], idempotency="idempotent"),
+    contract=_MC.contract("switchboard.switch.list", effects=["read"], idempotency="idempotent",
+                          presentation={"kind": "table", "form": "table", "map": {"rows": "switches"},
+                                        "draw": {"columns": ["id", "default", "modes", "surface", "package",
+                                                             "owner", "census"]},
+                                        "empty": "No switches"}),
     http_tags=["minds"], memory="off", silent=True,
     description="Every registered switch (four-minds switchboard): id, modes (first is the "
                 "default), surface, roadmap package, owner, whether a census arm may set it. "

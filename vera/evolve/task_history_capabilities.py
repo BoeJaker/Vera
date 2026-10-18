@@ -484,6 +484,7 @@ async def cap_evolve_loop_record(session_id: str = "", where: str = "", trace_id
 
 @capability(
     "evolve.results", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "results"}, "draw": {"columns": ["goal", "template", "source", "status", "ok", "pass_rate", "elapsed_s", "model", "ts"]}, "empty": "No task results"}},
     http_method="GET", http_path="/evolve/results", http_tags=["evolve", "census"],
     description=(
         "EVERY task result Vera holds, in one shape, from every driver: census "
@@ -564,7 +565,7 @@ async def cap_evolve_task_history(id: str = "", include_excluded: bool = False,
         "(oldest first) for a sparkline. Tasks come from the task store (filter by "
         "tag / template); results from every driver. Inputs: tag (str), template "
         "(str), include_excluded (bool=false), limit (int=500). "
-        "Output: {tasks[], count}."),
+        "Output: {tasks[], count}."), contract={"presentation": {'kind': 'status', 'form': 'status-matrix'}}
 )
 async def cap_evolve_tasks_overview(tag: str = "", template: str = "", include_excluded: bool = False,
                                     limit: int = 500, trace_id=None) -> Dict[str, Any]:
@@ -621,6 +622,7 @@ async def _safe(coro, default):
 
 @capability(
     "evolve.work.drivers", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "drivers"}, "draw": {"columns": ["label", "kind", "template", "status", "tasks_n", "done", "failed", "pass_rate", "ts"]}, "empty": "No driver runs"}},
     http_method="GET", http_path="/evolve/work/drivers", http_tags=["evolve", "census"],
     description=(
         "Every DRIVER RUN Loop Lab knows, in one shape, newest first, the live one "

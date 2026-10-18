@@ -1,0 +1,21 @@
+{
+ "cap": "demo.diff",
+ "args": {},
+ "presentation": {
+  "kind": "diff",
+  "map": {
+   "diff": "patch"
+  }
+ },
+ "result": {
+  "patch": "--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n"
+ },
+ "expect": {
+  "element": "code",
+  "kind": "diff",
+  "title": "demo.diff",
+  "forms": [
+   "diff"
+  ]
+ }
+}

@@ -6,18 +6,19 @@ const R = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const H = R('vera/chat/chat_panel.html'), A = R('vera/agents/agents.py');
 let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
 
-t('the stream builds frames only for a client that asks', A.includes('if body.get("phase_frames") else None)'));
+t('the stream builds frames only for a client that asks', A.includes('silent=not body.get("phase_frames"))')   /* always a clock (the turn record, FM-0.3); silent unless asked */);
 t('...reports the steps done before the stream opened, with their real times', A.includes('for _f in _phases.from_marks(_ph, _ep_marks):'));
 t('...names the web search when it starts and when it finishes, even on the two-tier path',
   A.includes('_ph.sse("acquire", "web", _phases.web_label(_web_query), "start", t=_web_t0)') && A.includes('_web_phase = asyncio.create_task(_web_phase_done())'));
 t('...marks the first token on the model stage, then the end', A.includes('yield _ph.sse("model", "answer", "writing the answer", "first")')
   && A.includes('yield _ph.sse("model", "answer", "writing the answer", "done",'));
-t('...and its web watcher is torn down with the rest', A.includes('for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase):'));
+t('...and its web watcher is torn down with the rest', A.includes('for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase')   /* the memory tasks joined the teardown */);
 t('the page asks for them (off with vera:chat:phases = 0) and sends the turn id', H.includes("phase_frames:_phasesOn()||undefined, turn_id:_phaseTurnId(aMsg.wrap)||undefined,")
   && H.includes("localStorage.getItem('vera:chat:phases')!=='0'"));
 t('...hands each frame to its message', H.includes("else if(ev.type==='phase'){ _phaseNote(aMsg.wrap, ev); }"));
 t('...names its own steps before the request', ['finding the agent', 'gathering skills and context', 'checking memory for this question', 'noting what is open']
-  .every(l => (H.match(new RegExp("_phaseLocal\\(aMsg\\.wrap,'[a-z]+','[a-z]+','" + l + "','(start|done)'\\)", 'g')) || []).length === 2));
+  .every(l => (H.match(new RegExp("_phaseLocal\\(aMsg\\.wrap,'[a-z]+','[a-z]+','" + l + "','start'\\)", 'g')) || []).length === 1
+    && (H.match(new RegExp("_phaseLocal\\(aMsg\\.wrap,'[a-z]+','[a-z]+','" + l + "','done'\\)", 'g')) || []).length >= 1));   /* a step may end on success and on failure */
 t('the stock phrases leave a phrase that names a running step alone', H.includes('if(el.dataset.phase) return;'));
 
 // behaviour of _phaseNote, run from the page's own source

@@ -1,0 +1,95 @@
+{
+ "cap": "demo.schedule_history",
+ "args": {},
+ "presentation": {
+  "kind": "timeline",
+  "map": {
+   "spans": "runs",
+   "name": "title",
+   "start": "started_at",
+   "end": "finished_at",
+   "status": "result"
+  }
+ },
+ "result": {
+  "runs": [
+   {
+    "id": "r4",
+    "title": "nightly census",
+    "started_at": "2026-10-18T06:00:20+00:00",
+    "finished_at": "2026-10-18T08:59:49+00:00",
+    "result": "ended"
+   },
+   {
+    "id": "r3",
+    "title": "memory probe",
+    "started_at": "2026-10-18T09:05:49Z",
+    "finished_at": "2026-10-18T09:07:33.25Z",
+    "result": "interrupted"
+   },
+   {
+    "id": "r2",
+    "title": "live check",
+    "started_at": "2026-10-18T09:24:57",
+    "finished_at": null,
+    "result": "running"
+   },
+   {
+    "id": "r1",
+    "title": "backup window",
+    "started_at": "2026-10-18T10:10:00+01:00",
+    "finished_at": "2026-10-18T10:40:00+01:00",
+    "result": "skipped"
+   },
+   {
+    "id": "r0",
+    "title": "never started",
+    "started_at": null,
+    "finished_at": null,
+    "result": "queued"
+   }
+  ],
+  "count": 5
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "timeline",
+  "title": "demo.schedule_history",
+  "forms": [
+   "gantt"
+  ],
+  "data": [
+   {
+    "name": "nightly census",
+    "start": 0,
+    "end": 10769,
+    "at": "2026-10-18T06:00:20+00:00",
+    "status": "ended",
+    "state": "done"
+   },
+   {
+    "name": "memory probe",
+    "start": 11129,
+    "end": 11233.25,
+    "at": "2026-10-18T09:05:49Z",
+    "status": "interrupted",
+    "state": "failed"
+   },
+   {
+    "name": "live check",
+    "start": 12277,
+    "end": 13180,
+    "at": "2026-10-18T09:24:57",
+    "status": "running",
+    "state": "running"
+   },
+   {
+    "name": "backup window",
+    "start": 11380,
+    "end": 13180,
+    "at": "2026-10-18T10:10:00+01:00",
+    "status": "skipped"
+   }
+  ]
+ }
+}

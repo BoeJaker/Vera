@@ -39,7 +39,9 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_pan
 
 // ── the rules still lift what they lifted ──────────────────────────────────────────────────────────────────────
 {
-  for (const k of ["k:'cap'", "k:'code'", "k:'diagram'", "k:'table'", "k:'widget'", "k:'image'"]) {
+  /* k:'cap' was the fallback dump of a tool card's text - removed (owner, 2026-10-11): a tool card lands through its
+     result's adapter or not at all */
+  for (const k of ["k:'code'", "k:'diagram'", "k:'table'", "k:'widget'", "k:'image'"]) {
     t('still lifts ' + k, src.indexOf(k) >= 0);
   }
   t('a mermaid fence is still a diagram', /if\(lang==='mermaid'\)/.test(src));

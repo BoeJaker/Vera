@@ -561,10 +561,10 @@ async def cap_session_close(session_id: str = "", trace_id=None) -> Dict[str, An
 # ─────────────────────────────────────────────────────────────────────────────
 @capability("operator.connect.list", memory="off", silent=True,
             http_method="GET", http_path="/operator/connect/list", http_tags=["operator"],
-            contract=_operator_contract(
+            contract={**_operator_contract(
                 "browser.connection.list", effects=["read"],
                 trust="registry_metadata_only", tenant="request_scoped",
-                pagination="bounded_registry", resources=["cpu"]),
+                pagination="bounded_registry", resources=["cpu"]), "presentation": {"kind": "table", "form": "table", "map": {"rows": "connectables"}, "draw": {"columns": ["label", "group", "type", "source", "url", "driveable", "detail"]}, "empty": "Nothing to connect to"}},
             description="List everything the operator can connect to across Vera's "
                         "registries — Integrations Hub apps, Ollama instances, "
                         "worker/nodes, Docker containers (published ports), Proxmox "
@@ -1105,9 +1105,9 @@ def _mission_ctx() -> Dict[str, Any]:
 
 @capability("operator.mission.list", memory="off", silent=True,
             http_method="GET", http_path="/operator/mission/list", http_tags=["operator"],
-            contract=_operator_contract(
+            contract={**_operator_contract(
                 "browser.mission.list", effects=["read"],
-                trust="internal_mission_registry", tenant="global_read_only"),
+                trust="internal_mission_registry", tenant="global_read_only"), "presentation": {"kind": "kv", "map": {"fields": "missions"}}},
             description="List available operator missions. Output: {missions:{name:desc}}.")
 async def cap_mission_list(trace_id=None) -> Dict[str, Any]:
     return {"missions": list_missions()}
@@ -1649,10 +1649,10 @@ async def cap_operator_cancel(run_id: str = "", trace_id=None) -> Dict[str, Any]
 
 @capability("operator.runs", memory="off", silent=True,
             http_method="GET", http_path="/operator/runs", http_tags=["operator", "obs"],
-            contract=_operator_contract(
+            contract={**_operator_contract(
                 "browser.run.list", effects=["read"],
                 trust="persisted_operator_events", tenant="global_aggregate",
-                pagination="bounded_limit", resources=["cpu", "redis"]),
+                pagination="bounded_limit", resources=["cpu", "redis"]), "presentation": {"kind": "table", "form": "table", "map": {"rows": "runs"}, "draw": {"columns": ["goal", "target", "reason", "steps", "errors", "duration_s", "completed", "started_at"]}, "empty": "No operator runs"}},
             description=(
                 "LIST recent operator (browser) runs, newest first — goal, target, "
                 "steps, errors, repeated actions, whether it hit its step ceiling, "

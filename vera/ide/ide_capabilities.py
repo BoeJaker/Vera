@@ -704,6 +704,7 @@ async def _agent_generate(agent_name: str, prompt: str, system: str = "",
 
 @capability(
     "ide.agent.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "agents"}, "draw": {"columns": ["label", "name", "model", "temperature", "prefer_gpu", "registered"]}}},
     http_method="GET", http_path="/ide/agents", http_tags=["ide", "agents"],
     memory="off",
     description="List the three IDE agents: thinker, writer, analyser. "
@@ -806,6 +807,7 @@ async def ide_agent_chat(
 
 @capability(
     "ide.instances",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "instances"}, "draw": {"columns": ["label", "status", "tier", "backend", "has_gpu", "latency_ms", "in_use", "url"]}}},
     http_method="GET", http_path="/ide/instances", http_tags=["ide", "ollama"],
     memory="off",
     description="List Ollama instances available to the IDE with tier labels, "
@@ -846,6 +848,7 @@ async def ide_instances(trace_id=None):
 
 @capability(
     "ide.models",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "models"}, "draw": {"columns": ["name", "instances"]}}},
     http_method="GET", http_path="/ide/models", http_tags=["ide", "ollama"],
     memory="off",
     description="List all models available across all online Ollama instances. "
@@ -1474,6 +1477,7 @@ async def ide_fs_delete(path: str, session_id: str = "", trace_id=None):
 
 @capability(
     "ide.fs.roots",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "roots"}, "draw": {"columns": ["name", "kind", "path"]}}},
     http_method="GET", http_path="/ide/fs/roots", http_tags=["ide", "fs"],
     memory="off", silent=True,
     description="List filesystem root mount points available to the IDE. "
@@ -1589,6 +1593,7 @@ async def ide_fs_browse(path: str = "", session_id: str = "", trace_id=None):
 # readable field added. Override the existing registration.
 @capability(
     "ide.fs.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "entries"}, "draw": {"columns": ["name", "kind", "size", "mtime", "readable"]}, "empty": "The directory is empty"}},
     http_method="GET", http_path="/ide/fs/list", http_tags=["ide", "fs"],
     memory="off", silent=True,
     description="List a directory. GET with ?path=... query param. "
@@ -2427,6 +2432,7 @@ async def ide_git_branches(path: str = "", base: str = "main", trace_id=None):
     description="Get git diff for a repository. "
                 "Input: path (str!), staged (bool). "
                 "Output: {diff, path}.",
+    contract={"presentation": {"kind": "diff", "map": {"diff": "diff"}}},
 )
 async def ide_git_diff(path: str, staged: bool = False, trace_id=None):
     args = ["diff"]

@@ -14,7 +14,7 @@ test('the desk is the new default while held and strict remain selectable',
   src.includes('<option value="strict">Strict — level with the turn</option>'));
 test('all adaptive desk choices are explicit persisted canvas settings',
   ["cfgCvBack:['back','column']", "cfgCvPanel:['panel-layer','beside']", "cfgCvBring:['bring-in','on']",
-   "cfgCvArrange:['desk-arrange','orbit']", "cfgCvRoom:['panel-room','on']"].every((s) => src.includes(s)));
+   "cfgCvArrange:['desk-arrange','auto']", "cfgCvRoom:['panel-room','on']"].every((s) => src.includes(s)));
 test('the floating chat has a visible grip and deterministic dock targets',
   src.includes('id="chatGrip"') && src.includes('id="chatDockHint"') &&
   src.includes("d.hint=(e.clientX-d.c.left<60)?'left':((d.c.right-e.clientX<60)?'right':'')"));
@@ -32,9 +32,11 @@ test('turn relevance changes desk order only on the reply apply path',
   src.includes("_cvCfg('cfgCvBring')==='on'"));
 test('split-frame menu requests open the canvas before refreshing it',
   src.includes("m.act==='pageOpen'") && src.includes("m.act==='canvasRefresh'"));
-test('the exploded desk uses the canonical layout snapshot and restores the selected item',
-  src.includes('VeraDesk.latticeOf({ items, turns, graph') &&
-  src.includes('cv&&cv.flash&&cv.flash(k)') && src.includes("widgets:false"));
+/* Explode on the desk is the turn scene (Cards, Front, Iso) like everywhere else: the desk lattice that took its place
+   broke those modes (owner, 2026-10-10), and the design's exploded desk comes later as a mode of its own */
+test('explode on the desk opens the turn scene, not a desk lattice in its place',
+  !src.includes('_deskXpl') && !src.includes('id=\'deskXpl\'') &&
+  src.includes("function _xplToggle(){ if(_xpl.on) _xplClose(); else explode(true); }"));
 test('context and canvas activity runs stand down behind graph and panel layers',
   src.includes("document.body.dataset.graphBehind==='1'") &&
   src.includes(".it[data-desk-face^=\"layer-\"]"));

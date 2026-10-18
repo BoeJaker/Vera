@@ -1,0 +1,83 @@
+{
+ "cap": "demo.node_history",
+ "args": {},
+ "presentation": {
+  "kind": "series",
+  "map": {
+   "points": "series",
+   "keyed": true,
+   "t": "t",
+   "v": "ping_ms"
+  }
+ },
+ "result": {
+  "series": {
+   "cpu-1": [
+    {
+     "t": 1792314707.1,
+     "tps": 5.3,
+     "ping_ms": 36.7
+    },
+    {
+     "t": 1792314722.1,
+     "tps": 5.3,
+     "ping_ms": "14.5"
+    },
+    {
+     "t": 1792314737.1,
+     "tps": 5.3,
+     "ping_ms": null
+    }
+   ],
+   "gpu-1": [
+    {
+     "t": 1792314707.4,
+     "tps": 40,
+     "ping_ms": 2
+    },
+    {
+     "t": 1792314722.4,
+     "tps": 41,
+     "ping_ms": 3
+    }
+   ],
+   "gone": []
+  },
+  "interval_s": 15.0,
+  "count": 5
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "series",
+  "title": "demo.node_history",
+  "forms": [
+   "trace"
+  ],
+  "data": {
+   "cpu-1": [
+    {
+     "t": 1792314707.1,
+     "v": 36.7
+    },
+    {
+     "t": 1792314722.1,
+     "v": 14.5
+    },
+    {
+     "t": 1792314737.1,
+     "v": null
+    }
+   ],
+   "gpu-1": [
+    {
+     "t": 1792314707.4,
+     "v": 2
+    },
+    {
+     "t": 1792314722.4,
+     "v": 3
+    }
+   ]
+  }
+ }
+}

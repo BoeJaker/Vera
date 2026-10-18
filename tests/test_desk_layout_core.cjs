@@ -200,4 +200,66 @@ t('a widget that says where it sits keeps that home: only the covered one moves'
   assert.ok(!cr.find((x) => x.id === 't0').covered);
 });
 
+t('a chip that only fits at its own size is moved clear at that size, not left inside a card the person grew', () => {
+  /* a card grown out to the right border (fixed: the person's rectangle) and two border chips it now covers; the size a
+     spot would give a chip near the chat is a full card, for which no room is left anywhere */
+  const R = { l: -440, t: 0, r: 0, b: 700 }, d = { W: 900, H: 700 };
+  const big = { id: 'grown', x: 380, y: 300, w: 760, h: 520, fixed: true };
+  const chips = [{ id: 'c1', x: 820, y: 120, w: 150, h: 34 }, { id: 'c2', x: 820, y: 170, w: 150, h: 34 }];
+  const res = D.separate([big].concat(chips), R, () => ({ w: 700, h: 500 }), d);
+  const hit = (a, b) => Math.abs(a.x - b.x) < (a.w + b.w) / 2 && Math.abs(a.y - b.y) < (a.h + b.h) / 2;
+  chips.forEach((c) => { const o = res.find((x) => x.id === c.id); assert.ok(!hit(o, big), c.id + ' still inside the grown card');
+    assert.deepStrictEqual([o.w, o.h, !!o.keepSize], [150, 34, true], c.id + ' kept its size'); });
+  assert.ok(!hit(res.find((x) => x.id === 'c1'), res.find((x) => x.id === 'c2')), 'the chips clear of each other');
+  assert.deepStrictEqual([big.x, big.y, big.w, big.h], [380, 300, 760, 520], 'the grown card did not move');
+});
+
+t('an item out of the topic is a border chip even when the bands beside the chat have room', () => {
+  const R = D.chatRect('left', null), d = { W: 1600, H: 900 };
+  const items = [{ id: 'in1' }, { id: 'out1', border: true }, { id: 'in2' }, { id: 'out2', border: true }];
+  ['orbit', 'kind', 'timeline', 'stack'].forEach((mode) => {
+    const pos = D.arrange(mode, R, items.map((x) => Object.assign({ kind: 'records', age: 0 }, x)), d);
+    ['out1', 'out2'].forEach((k) => { assert.ok(pos[k], mode + ': ' + k + ' placed'); assert.strictEqual(D.sizeAt(R, pos[k][0], pos[k][1], {}, d).face !== 'max' && D.sizeAt(R, pos[k][0], pos[k][1], {}, d).face !== 'card', true, mode + ': ' + k + ' is a border face'); });
+    ['in1', 'in2'].forEach((k) => assert.ok(pos[k] && ['max', 'card'].indexOf(D.sizeAt(R, pos[k][0], pos[k][1], {}, d).face) >= 0, mode + ': ' + k + ' beside the chat'));
+  });
+});
+
+t('cards grow into the free desk round them, never into each other, the chat or past the edge', () => {
+  const R = { l: -440, t: 0, r: 0, b: 900 }, d = { W: 1200, H: 900 };
+  const box = (it) => ({ l: it.x - it.w / 2, t: it.y - it.h / 2, r: it.x + it.w / 2, b: it.y + it.h / 2 });
+  const a = { id: 'a', x: 200, y: 150, w: 300, h: 196 }, b = { id: 'b', x: 560, y: 150, w: 300, h: 196 };
+  const chip = { id: 'c', x: 1100, y: 40, w: 150, h: 34, chip: true }, fixed = { id: 'f', x: 300, y: 700, w: 400, h: 200, fixed: true };
+  const items = [a, b, chip, fixed].map((x) => Object.assign({}, x));
+  D.grow(items, R, d, { gap: 14 });
+  const [A, B, C, F] = items;
+  assert.ok(A.grown && B.grown, 'both cards grew');
+  assert.ok(A.w * A.h > 300 * 196 * 1.5 && B.w * B.h > 300 * 196 * 1.5, 'by a good deal: ' + [A.w, A.h, B.w, B.h]);
+  assert.deepStrictEqual([C.x, C.y, C.w, C.h], [1100, 40, 150, 34], 'a chip stays as it is');
+  assert.deepStrictEqual([F.x, F.y, F.w, F.h], [300, 700, 400, 200], 'a fixed card stays as it is');
+  const hit = (p, q, g) => p.l < q.r + g && q.l < p.r + g && p.t < q.b + g && q.t < p.b + g;
+  for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) assert.ok(!hit(box(items[i]), box(items[j]), 13), items[i].id + ' and ' + items[j].id + ' clear');
+  items.forEach((it) => { const q = box(it); assert.ok(q.l >= 0 && q.t >= 0 && q.r <= d.W && q.b <= d.H, it.id + ' within the desk'); });
+  [A, B].forEach((it) => assert.ok(it.w / it.h <= 2.2 + 0.05 && it.h / it.w <= 2.2 + 0.05, it.id + ' a page, not a ribbon: ' + it.w + 'x' + it.h));
+});
+
+t('cards rise up the desk into the room above them; fixed ones stay; none meet', () => {
+  const R = { l: -440, t: 0, r: 0, b: 900 }, d = { W: 900, H: 900 };
+  const items = [{ id: 'a', x: 170, y: 400, w: 300, h: 200 }, { id: 'b', x: 170, y: 640, w: 300, h: 200 },
+                 { id: 'c', x: 482, y: 500, w: 300, h: 200 }, { id: 'f', x: 482, y: 160, w: 300, h: 100, fixed: true }];
+  D.settle(items, R, d, { gap: 12 });
+  const [A, B, C, F] = items;
+  assert.strictEqual(A.y - A.h / 2, 4, 'the first card is at the top: ' + A.y);
+  assert.strictEqual(B.y - B.h / 2 >= A.y + A.h / 2 + 12 && B.y - B.h / 2 <= A.y + A.h / 2 + 16, true, 'the next sits under it, a gap apart: ' + B.y);
+  assert.deepStrictEqual([F.x, F.y], [482, 160], 'a fixed card stays');
+  assert.ok(C.y - C.h / 2 >= F.y + F.h / 2 + 12 && C.y - C.h / 2 <= F.y + F.h / 2 + 16, 'the card under a fixed one rises to it: ' + C.y);
+  assert.ok(A.settled && B.settled && C.settled && !F.settled);
+});
+
+t('a card with the desk to itself grows to a page of it, not past the aspect', () => {
+  const it = [{ id: 'x', x: 600, y: 450, w: 300, h: 196 }];
+  D.grow(it, { l: -440, t: 0, r: 0, b: 900 }, { W: 1200, H: 900 }, {});
+  assert.ok(it[0].w >= 1100 || it[0].h >= 800, 'it reaches an edge: ' + it[0].w + 'x' + it[0].h);
+  assert.ok(it[0].w / it[0].h <= 2.25, 'within 1:2.2');
+});
+
 console.log(n + ' passed');

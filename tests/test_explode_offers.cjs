@@ -21,7 +21,10 @@ const codeBlock = (key, lines, extra) => Object.assign({ key, type: 'code', stat
    drawn: the item that can be exploded carries the switch, and taking it still builds the bound explode item. */
 { const src2 = CANVAS.match(/function canExplode\(b, offer\) \{[\s\S]*?\n  \}/);
   t('the rule is there to be tested', !!src2);
-  const canExplode = src2 ? eval('(' + src2[0] + ')') : () => '';
+  /* canExplode asks proseLike whether a fenced block is really a passage (owner, 2026-10-09: prose in a fence is prose) */
+  const srcP = CANVAS.match(/const PROSE_LANGS = new Set\([^\n]*\);\n  function proseLike\(t, lang\) \{[\s\S]*?\n  \}/);
+  t('the prose rule it leans on is there too', !!srcP);
+  const canExplode = src2 ? eval('(() => { ' + (srcP ? srcP[0] : 'function proseLike(){ return false; }') + '\n return (' + src2[0] + '); })()') : () => '';
   t('a code item of more than a screenful can be exploded', canExplode(codeBlock('a', 30), 'both') === 'code');
   t('a short snippet is its own best picture — it does not offer', canExplode(codeBlock('b', 6), 'both') === '');
   t('a passage long enough to have structure offers too',
@@ -34,10 +37,10 @@ const codeBlock = (key, lines, extra) => Object.assign({ key, type: 'code', stat
   t('the item carries the switch, and knows which way round it is',
     /const xplodable = !bid && !!canExplode\(b, this\.explodeOffer\(\)\);/.test(CANVAS) &&
     /const xploded = xplodable && xplodedKeys\.has\(String\(b\.key\)\);/.test(CANVAS) &&
-    /data-act="explode"/.test(CANVAS));
+    /row\('explode'/.test(CANVAS));
   t('taking it builds the bound item, and taking it back removes it',
     /this\.call\('canvas\.add', Object\.assign\(\{ kind: 'explode', key: 'explode:' \+ key, content, at: b\.state === 'pinned' \? 'pinned' : 'now', size: 'l' \}/.test(CANVAS) &&
-    /if \(bound\) return this\.call\('canvas\.remove'/.test(CANVAS));
+    /if \(bound\) (?:\{ if \(this\.deskAlign\(\) && this\._max === key\) this\._toggleMax\(key\); )?return this\.call\('canvas\.remove'/.test(CANVAS));
   t('the document\'s own suggestions are untouched by any of it',
     suggestionsOf({ suggestions: [{ n: 'Draw the plan', kind: 'diagram' }] }, [codeBlock('a', 30)], 'm1')[0].n === 'Draw the plan');
   t('and an item no longer adds itself to the band', suggestionsOf({}, [codeBlock('a', 30)], 'm1').length === 0); }

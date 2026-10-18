@@ -15,7 +15,7 @@ const LETTERS = /^[A-Za-z0-9]{1,2}$/;
 {
   const a = BR.indexOf('  var _navLhmOpts = null;'), b = BR.indexOf('  // ── DOM helpers');
   const ctx = { document: { title: 'Vera — Estate', querySelector: () => null } }; vm.createContext(ctx);
-  vm.runInContext('var _navItems = null, _navActiveId = "";\n' + BR.slice(a, b) + '\nthis.lhm=_navLhm; this.set=function(i,a){ _navItems=i; _navActiveId=a; };', ctx);
+  vm.runInContext('var _navItems = null, _navActiveId = ""; function _shownKidCta(){ return null; }  /* no nested panel shown: the nested primary action is tested in test_ui_bootstrap */\n' + BR.slice(a, b) + '\nthis.lhm=_navLhm; this.set=function(i,a){ _navItems=i; _navActiveId=a; };', ctx);
   // grouped: two named groups, the first with its own mark and descriptions on its heading
   ctx.set([
     { id: 'ov', label: 'Overview', group: 'Overview', icon: '', desc: 'The estate at a glance', desc_long: 'Every machine and service, healthy or not.', group_icon: '◫', group_desc: 'Start here', group_desc_long: 'The estate summary pages.' },
@@ -73,8 +73,8 @@ t('the host can map a name to its glyph', /window\.VeraLHM = \{ glyphFor: glyphF
   const a = CHAT.indexOf('  const LHM_MENUS=['), b = CHAT.indexOf('  ];', a);
   const block = CHAT.slice(a, b);
   const menus = block.match(/\{id:'[a-z]+',\s*icon:/g) || [];
-  t('the chat has its eight menus', menus.length === 8, menus.length);
-  t('each menu has a short and a long description', (block.match(/icon:'[^']+',\s*label:'[^']+',\s*desc:'/g) || []).length === 8 && (block.match(/\n\s*desc_long:'/g) || []).length === 8);
+  t('the chat has its ten menus (Settings joined the eight; Canvas - the session canvas controls - 2026-10-11)', menus.length === 10, menus.length);
+  t('each menu has a short and a long description', (block.match(/icon:'[^']+',\s*label:'[^']+',\s*desc:'/g) || []).length === 10 && (block.match(/\n\s*desc_long:'/g) || []).length === 10);
   const tabs = block.match(/\{id:'[A-Za-z]+',label:'[^']+'[^}]*\}/g) || [];
   t('each tab has both too', tabs.length >= 12 && tabs.every((x) => /desc:'/.test(x) && /desc_long:'/.test(x)), tabs.filter((x) => !/desc_long/.test(x)).join(' | '));
 }

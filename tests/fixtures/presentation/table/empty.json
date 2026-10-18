@@ -1,0 +1,25 @@
+{
+ "cap": "demo.quotes",
+ "args": {
+  "symbols": [
+   "XYZ"
+  ]
+ },
+ "presentation": {
+  "kind": "table",
+  "map": {
+   "rows": "quotes"
+  },
+  "empty": "No quotes for {symbols}"
+ },
+ "result": {
+  "quotes": []
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.quotes",
+  "forms": [],
+  "empty": "No quotes for XYZ"
+ }
+}

@@ -114,7 +114,7 @@
       this._h = height;
       if ((this.getAttribute('renderer') || '') === 'struct' && this.getAttribute('resize') !== 'off') this._mkGrip();
 
-      this._note = document.createElement('div');
+      this._note = document.createElement('div'); this._note.className = 'vge-note';   /* a host can quiet it (the canvas's minimal cards) */
       this._note.style.cssText =
         'font-size:8.5px;color:var(--dim,#6a6058);font-family:var(--mono,monospace);' +
         'margin-top:3px;display:flex;justify-content:space-between;align-items:center;gap:8px';
@@ -249,7 +249,9 @@
        grip under the diagram for a taller box, or "enlarge" for the whole window (Esc, the backdrop or "back to size"
        puts it back). The structured renderer refits itself when its box changes (its ResizeObserver). */
     _setHeight(h) {
-      h = Math.max(160, Math.min(Math.round(h), Math.round((window.innerHeight || 900) * 0.92)));
+      /* min-h: a host whose box is smaller (a desk card) says how small; the box is never taller than what holds it */
+      var mn = parseInt(this.getAttribute('min-h'), 10); if (!(mn >= 40)) mn = 160;
+      h = Math.max(mn, Math.min(Math.round(h), Math.round((window.innerHeight || 900) * 0.92)));
       this._h = h; this._host.style.height = h + 'px';
       if (this._struct) this._struct.style.height = h + 'px';
     }
@@ -343,9 +345,23 @@
         actionsEnabled: false,
         memoryLayer: false,
         memoryStore: false,
+        calm: this.hasAttribute('calm'),   /* settled before it is shown, still after: a graph among other things */
+        /* A GRAPH OF THE HOST'S OWN DATA TAKES NO ESTATE EVENTS (owner, 2026-10-11: the desk's graph "flickers like a broken
+           lightbulb"): every graph subscribed to the fabric's live events (record ingested, loom, acquire progress) and
+           each one ADDED a node to it and pulsed it - on a busy estate a stream of foreign nodes into a desk card's graph of
+           a search, re-laid out each time. A graph the host draws from its own data (renderer=data, setGraph), or a calm one,
+           shows that data only. */
+        subscribeLiveEvents: !(this.getAttribute('renderer') === 'data' || this.hasAttribute('calm')),
         defaultLayer: layer,
         layerOpts: params,
         onNodeClick: function (node) {
+          // With `details` (the desk, owner 2026-10-17: "i need to be able to click nodes to see details etc - vera graph
+          // js already has all of this its just not usable from the desk") a click opens vera_graph's own detail drawer and
+          // the host hears it as `vera-graph-detail`; a double click is the host's action (`vera-graph-node`).
+          if (self.hasAttribute('details')) {
+            self.dispatchEvent(new CustomEvent('vera-graph-detail', { detail: { node: node }, bubbles: true, composed: true }));
+            return undefined;
+          }
           self.dispatchEvent(new CustomEvent('vera-graph-node', {
             detail: { node: node },
             bubbles: true,
@@ -353,6 +369,11 @@
           }));
           // Returning false leaves the detail drawer closed — inline graphs are
           // a glance, not a workbench. The full view is one click away.
+          return false;
+        },
+        onNodeDblClick: function (node) {
+          if (!self.hasAttribute('details')) return undefined;   /* unchanged without it: vera_graph's own (expand / collapse) */
+          self.dispatchEvent(new CustomEvent('vera-graph-node', { detail: { node: node }, bubbles: true, composed: true }));
           return false;
         },
       });

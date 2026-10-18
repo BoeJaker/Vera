@@ -311,6 +311,7 @@ async def cap_seed(overwrite: bool = False, trace_id=None) -> Dict:
 
 @capability(
     "foundry.image.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "images"}, "draw": {"columns": ["id", "os", "version", "type", "arch", "status", "is_latest", "size"]}, "empty": "No OS images catalogued"}},
     http_method="GET", http_path="/foundry/image/list", http_tags=["foundry"],
     memory="off", silent=True,
     description="List catalogued OS images. Optional filters: os, type "
@@ -594,6 +595,7 @@ FEATURES: List[Dict[str, Any]] = [
 
 @capability(
     "foundry.features",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "features"}, "draw": {"columns": ["label", "id", "status", "default", "targets", "desc"]}}},
     http_method="GET", http_path="/foundry/features", http_tags=["foundry"],
     memory="off", silent=True,
     description="List the composable feature bundles and which target types each "
@@ -1245,6 +1247,7 @@ async def cap_provision(target: str = "", image_id: str = "", name: str = "",
 
 @capability(
     "foundry.jobs",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "jobs"}, "draw": {"columns": ["name", "target", "image", "status", "vmid", "features", "id"]}, "empty": "No provision jobs"}},
     http_method="GET", http_path="/foundry/jobs", http_tags=["foundry"],
     memory="off", silent=True,
     description="Recent provision jobs (newest first). Output: {jobs:[...]}.",
@@ -1530,6 +1533,7 @@ async def _pxe_cfg() -> Dict:
 
 @capability(
     "foundry.pxe.config", http_method="GET", http_path="/foundry/pxe/config",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_tags=["foundry"], memory="off", silent=True,
     description="PXE/netboot server config (bridge/VLAN, DHCP range, gateway, "
                 "deploy host, enabled/deployed). Output: the config.",
@@ -1663,6 +1667,7 @@ async def cap_pxe_mac_add(mac="", profile_id="", hostname="", ip="", trace_id=No
 
 @capability(
     "foundry.pxe.macs", http_method="GET", http_path="/foundry/pxe/macs",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "macs"}, "draw": {"columns": ["mac", "hostname", "ip", "status", "profile_id"]}, "empty": "No machines in the waiting room"}},
     http_tags=["foundry"], memory="off", silent=True,
     description="The PXE waiting-room — physical machines seen/registered by MAC + "
                 "their assigned profile. Output: {macs:[...]}.",
@@ -1683,6 +1688,7 @@ async def cap_pxe_macs(trace_id=None) -> Dict:
 
 @capability(
     "foundry.pxe.status", http_method="GET", http_path="/foundry/pxe/status",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_tags=["foundry"], memory="off", silent=True,
     description="PXE subsystem status: config + counts + whether the netboot server "
                 "is deployed. Output: {deployed, enabled, profiles, macs, config, note}.",
@@ -2771,6 +2777,7 @@ async def _sec_exec(cluster_id: str, target: str, script: str,
 
 @capability(
     "foundry.security.standards",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "profiles"}, "draw": {"columns": ["label", "name", "control_count", "description"]}, "title": "Profiles"}, {"kind": "table", "form": "table", "map": {"rows": "controls"}, "draw": {"columns": ["title", "severity", "standard", "id", "why"]}, "title": "Controls"}]}},
     http_method="GET", http_path="/foundry/security/standards", http_tags=["foundry"],
     memory="off", silent=True,
     description="The security standard Foundry applies, in full: every control, "

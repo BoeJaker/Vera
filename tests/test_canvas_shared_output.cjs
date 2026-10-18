@@ -5,7 +5,7 @@ const path = require('node:path'), fs = require('node:fs');
 const C = fs.readFileSync(path.join(__dirname, '..', 'vera', 'canvas', 'canvas_element.js'), 'utf8');
 let fails = 0; const t = (name, cond) => { console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
 
-t('a code item IS the kit\'s card (VeraOut.card): every action the chat\'s has', C.includes("const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false });"));
+t('a code item IS the kit\'s card (VeraOut.card): every action the chat\'s has', C.includes("const cardHtml = kitDeclare(el, VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false, bar: false }));")   /* WSU-58 S6: the body declares the kit's actions */);
 t('...inside the wrap an explode item binds to (its numbered lines are the kit\'s)', C.includes('return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : \'\'}>${cardHtml}</div>`;'));
 t('...the streaming card while the chat is writing into it', C.includes('const streaming = !!(el && el._liveOv && el._liveOv[key]);'));
 t('the canvas plugs in only what it does its own way: Preview (live layer), Explode (bound item), an edit kept with the item',

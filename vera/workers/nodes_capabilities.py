@@ -355,6 +355,7 @@ async def _build_nodes() -> List[Dict]:
 
 @capability(
     "nodes.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "addr", "user", "docker_kind", "tags", "id"]}}},
     http_method="GET", http_path="/nodes", http_tags=["nodes"],
     memory="off", silent=True,
     description="Unified Vera node estate: one row per machine, merging the SSH "
@@ -614,6 +615,7 @@ _BACKEND_ORDER = ["docker", "proxmox", "ssh"]
 
 @capability(
     "nodes.components",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "components"}, "draw": {"columns": ["label", "key", "group", "gpu", "heavy", "needs_model", "backends", "desc"]}}},
     http_method="GET", http_path="/nodes/components", http_tags=["nodes"],
     memory="off", silent=True,
     description="Unified catalog of everything provisionable onto a node "
@@ -1242,6 +1244,9 @@ async def cap_nodes_provision(node_id: str = "",
                 "Output: {proxmox:[{cluster_id,node,pools,datasets,mounts,"
                 "storages,guests}], docker:[{host_id,volumes,images_gb,"
                 "containers_gb}], errors}.",
+    # DA-01e (1): the first Docker host's disk by type (volumes, images, containers) as shares of the whole
+    contract={"presentation": {"kind": "parts", "map": {"parts": "docker[0]"}, "title": "Docker disk by type",
+                               "empty": "No Docker host read"}},
 )
 async def cap_nodes_storage(cluster_id: str = "", docker: bool = True,
                             trace_id=None) -> Dict:
@@ -2122,7 +2127,7 @@ except Exception as e:
                 "celsius} (each logical cpu with its physical core's reading), "
                 "virt,temps_from,host_temps?,host_drives?,host_health?,"
                 "host_core_temps?,host_cpu_temps?,"
-                "updated_at,error}], count}.",
+                "updated_at,error}], count}.", contract={"presentation": {'kind': 'table', 'form': 'temps', 'map': {'values': 'hosts', 'name': 'label', 'value': 'max_c'}}}
 )
 async def cap_node_temps(trace_id=None) -> Dict:
     return {"hosts": list(_TEMP_CACHE.values()), "count": len(_TEMP_CACHE)}
@@ -2175,6 +2180,7 @@ def _payload_catalog_special() -> List[Dict]:
 
 @capability(
     "provision.overview",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "targets.nodes"}, "draw": {"columns": ["label", "addr", "backends", "gpu", "target"]}, "title": "Nodes"}, {"kind": "table", "form": "table", "map": {"rows": "targets.docker_engines"}, "draw": {"columns": ["label", "kind", "target"]}, "title": "Docker engines"}, {"kind": "table", "form": "table", "map": {"rows": "targets.proxmox_clusters"}, "draw": {"columns": ["label", "cluster_id", "target"]}, "title": "Proxmox clusters"}, {"kind": "table", "form": "table", "map": {"rows": "payloads.components"}, "draw": {"columns": ["label", "key", "group", "backends", "gpu", "desc"]}, "title": "Components"}, {"kind": "table", "form": "table", "map": {"rows": "payloads.stacks"}, "draw": {"columns": ["label", "key", "image", "desc"]}, "title": "Stacks"}, {"kind": "table", "form": "table", "map": {"rows": "payloads.security"}, "draw": {"columns": ["label", "key", "system", "desc"]}, "title": "Security"}, {"kind": "table", "form": "table", "map": {"rows": "payloads.special"}, "draw": {"columns": ["label", "key", "desc"]}, "title": "Special"}]}},
     http_method="GET", http_path="/provision/overview", http_tags=["nodes", "provision"],
     memory="off", silent=True,
     description="One-call catalog for UNIFORM provisioning: every target "
@@ -2945,6 +2951,7 @@ async def _blob_names(url: str) -> Dict[str, str]:
 
 @capability(
     "nodes.ollama.settings",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "instance", "status", "enabled", "priority", "num_thread", "has_gpu", "unit"]}}},
     http_method="GET", http_path="/nodes/ollama/settings", http_tags=["nodes", "ollama"],
     memory="off", silent=True,
     description="Everything tuned on each Ollama node, read live: Vera's registry values (enabled, "
@@ -3207,6 +3214,7 @@ async def _set_embedding_pin(pin: str) -> None:
 
 @capability(
     "nodes.backend.overview", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "instance", "backend", "status", "has_gpu", "served_by", "url"]}}},
     http_method="GET", http_path="/nodes/backend/overview", http_tags=["nodes"],
     description="The Backend controls' data, without touching the nodes: each Ollama instance "
                 "(node) - what serves it now (ollama | vllm), its live status, its vLLM server's "

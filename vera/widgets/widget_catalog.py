@@ -174,6 +174,7 @@ def source(id_: str) -> Optional[Dict[str, Any]]:
 # ── capabilities ──────────────────────────────────────────────────────────────
 @capability(
     "widget.forms", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "forms"}, "draw": {"columns": ["name", "id", "shape", "boards", "sizes", "options", "motion"]}, "empty": "No forms match"}},
     http_method="GET", http_path="/ui/widgets/forms", http_tags=["ui", "widgets"],
     description="The widget catalogue's FORMS (the Widgets, WidgetsMotion and WidgetsIso galleries + the three the spec "
                 "adds: panel, form, scatter), each under the board's own name. Inputs: shape (str - level, series, values, "
@@ -195,6 +196,7 @@ async def widget_forms(shape: str = "", q: str = "", board: str = "", trace_id=N
 
 @capability(
     "widget.sources", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sources"}, "draw": {"columns": ["cap", "shape", "domain", "tier", "refresh_min", "desc"]}, "empty": "No sources match"}},
     http_method="GET", http_path="/ui/widgets/sources", http_tags=["ui", "widgets"],
     description="The widget catalogue's SOURCES: every quiet read of the live capability registry with the shape a widget "
                 "reads it as (hand > measured > declared), grouped by domain, with its arguments and a one-line description; "
@@ -269,11 +271,31 @@ _capout = _sibling("widget_cap_output")
                 "progress, events, series, files, level, prose, status, table, list, numbers, record, json, text). Each "
                 "record carries its data, so it draws at once; with args it can read again. Input: cap (str - the "
                 "capability that answered), result (any! - what it answered), args (object - the call's arguments), "
-                "title (str), max (int, 3). Output: {ok, records:[{id, form, title, source, read:{args, map}, frame, data, "
-                "why}], forms[] (the result forms), count}.")
-async def widget_from_result(cap: str = "", result: Any = None, args: Optional[dict] = None, title: str = "", max: int = 3, trace_id=None):
-    recs = _capout.from_cap_result(cap, result, args=args if isinstance(args, dict) else None, title=title, max_records=max)
-    return {"ok": True, "records": recs, "count": len(recs), "forms": list(_capout.CAP_FORMS)}
+                "title (str), max (int, 3), presentation (object - a declaration to read it by; default: the "
+                "capability's own Contract v2 presentation). A declared presentation decides first (DA-02b, the same "
+                "precedence as VeraWidget.present). Output: {ok, records:[{id, form, title, source, read:{args, map}, "
+                "frame, data, why}], forms[] (the result forms), count, presentation:{element, kind, title, views, "
+                "detail, why, declared, empty?}}.")
+async def widget_from_result(cap: str = "", result: Any = None, args: Optional[dict] = None, title: str = "", max: int = 3,
+                             presentation: Optional[dict] = None, trace_id=None):
+    pres = presentation if isinstance(presentation, dict) else _declared_presentation(cap)
+    got = _capout.present(cap, result, args=args if isinstance(args, dict) else None, title=title, max_records=max,
+                          presentation=pres)
+    recs = got.pop("records")
+    return {"ok": True, "records": recs, "count": len(recs), "forms": list(_capout.CAP_FORMS), "presentation": got}
+
+
+def _declared_presentation(cap: str) -> Optional[dict]:
+    """The capability's own Contract v2 presentation, validated (DA-01a) - None when it declares none."""
+    entry = getattr(_orch, "CAPABILITY_REGISTRY", {}).get(str(cap or ""))
+    contract = entry.get("contract") if isinstance(entry, dict) else None
+    if not isinstance(contract, dict) or "presentation" not in contract:
+        return None
+    try:
+        from Vera.vera.capability_contract_core import project_presentation
+        return project_presentation(contract, contract.get("output_schema"))
+    except Exception:
+        return contract.get("presentation") if isinstance(contract.get("presentation"), dict) else None
 
 
 # ── the dashboards' layouts (UI redesign M5, Notes/40 section 4; the Dashboard board) ─────────────────────────
@@ -354,6 +376,7 @@ async def widget_read(calls: Optional[List[Dict[str, Any]]] = None, trace_id=Non
 
 @capability(
     "widget.layouts", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "layouts"}, "draw": {"columns": ["key", "dashboard", "widgets", "records"]}, "empty": "No layouts"}},
     http_method="GET", http_path="/ui/widgets/layouts", http_tags=["ui", "widgets"],
     description="The dashboards' layout files: one per VeraDash grid, every widget of the grid as a record. "
                 "Input: key (str - one grid; omit for the list). Output: {ok, layouts:[{key, dashboard, widgets, "

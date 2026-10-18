@@ -176,6 +176,7 @@ async def cap_nodes_testenv_sync(host_id: str = "", dry_run: bool = False, trace
 
 @capability(
     "nodes.testenv.status",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["host", "state", "current", "sha", "python", "failed", "error"]}}},
     http_method="GET", http_path="/nodes/testenv/status", http_tags=["nodes", "evolve"],
     memory="off", silent=True,
     description="Each node's pinned pytest venv against the one the gate image needs: "
@@ -630,6 +631,7 @@ _orch.TEST_DURATIONS = record_durations
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "evolve.test_pool.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "nodes_now"}, "title": "Nodes now"}, {"kind": "kv", "map": {"fields": "config"}, "title": "Config"}]}},
     http_method="GET", http_path="/evolve/test_pool/status", http_tags=["evolve"],
     memory="off", silent=True,
     description="The gate test pool: config (enabled, max_nodes, min_files), the host "

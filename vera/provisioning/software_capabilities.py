@@ -189,6 +189,7 @@ def _parse_kv(text: str) -> Dict[str, str]:
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "provision.targets",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "targets"}, "draw": {"columns": ["label", "key", "default_port", "needs_sudo", "register", "desc"]}}},
     http_method="GET", http_path="/provision/targets", http_tags=["provision"],
     memory="off", silent=True,
     description="List installable runtimes Vera can provision over SSH. Output: "

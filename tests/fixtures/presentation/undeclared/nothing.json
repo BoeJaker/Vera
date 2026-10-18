@@ -1,0 +1,11 @@
+{
+ "cap": "demo.none",
+ "args": {},
+ "result": "",
+ "expect": {
+  "element": "none",
+  "kind": "none",
+  "title": "demo.none",
+  "forms": []
+ }
+}

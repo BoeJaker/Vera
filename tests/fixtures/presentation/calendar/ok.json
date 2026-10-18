@@ -1,0 +1,28 @@
+{
+ "cap": "demo.cal",
+ "args": {},
+ "presentation": {
+  "kind": "calendar",
+  "map": {
+   "events": "items",
+   "start": "from",
+   "title": "summary"
+  }
+ },
+ "result": {
+  "items": [
+   {
+    "from": "2026-10-12T09:00",
+    "summary": "standup"
+   }
+  ]
+ },
+ "expect": {
+  "element": "calendar",
+  "kind": "calendar",
+  "title": "demo.cal",
+  "forms": [
+   "schedule"
+  ]
+ }
+}

@@ -335,13 +335,20 @@ async def cap_cluster_delete(id: str = "", trace_id=None) -> Dict:
     http_method="POST", http_path="/proxmox/status", http_tags=["proxmox"],
     memory="off", silent=True,
     description="Live cluster snapshot via /cluster/resources + /cluster/status. "
-                "Input: cluster_id (str!). Output: {cluster:{name,quorate}, "
+                "Input: cluster_id (str; none: the first registered cluster). Output: {cluster:{name,quorate}, "
                 "nodes:[{node,status,cpu,maxcpu,mem,maxmem,uptime}], "
                 "guests:[{vmid,name,type,node,status,cpu,maxcpu,mem,maxmem,"
                 "maxdisk,uptime,template}], storage:[{storage,node,disk,maxdisk,"
                 "status}], counts}.",
 )
 async def cap_status(cluster_id: str = "", trace_id=None) -> Dict:
+    # the default call (no cluster_id) answered "cluster not found" on every read (DO-0.3): it reads the first
+    # registered cluster instead (by id, so it is the same one every time); with none registered it says so
+    if not cluster_id:
+        ids = sorted(str(c.get("id")) for c in await _all_raw() if isinstance(c, dict) and c.get("id"))
+        if not ids:
+            return {"error": "no Proxmox cluster is registered", "nodes": [], "guests": []}
+        cluster_id = ids[0]
     rec = await _get_cluster(cluster_id, opened=True)
     if not rec:
         return {"error": "cluster not found", "nodes": [], "guests": []}

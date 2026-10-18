@@ -82,6 +82,11 @@
      empty lines - "a counter needs a value", "no numbers to draw" - explain a record the form cannot draw, which is a
      different thing; used for an empty read they made the tile look as though its values had been cleared. A real
      zero never comes here: zero is a reading. */
+  // nothing read to draw, on a host that never shows the sample (DO-0.3): reading · read failed · nothing to show
+  const unreadFace = (state, src, size, err) => state === 'reading' || state === 'failed'
+    ? ((size === 'xs' || size === 's') ? '<span class="vw-xs vw-nodata">' + (state === 'reading' ? 'reading…' : 'read failed') + '</span>'
+      : '<div class="vw-nodata"><b>' + (state === 'reading' ? 'reading…' : 'read failed') + '</b><i>' + esc(state === 'reading' ? (src || '') : String(err || src || '').slice(0, 160)) + '</i></div>')
+    : NODATA(src, size);
   const NODATA = (src, size) => (size === 'xs' || size === 's')
     ? '<span class="vw-xs vw-nodata">no data</span>'
     : '<div class="vw-nodata"><b>no data</b><i>' + esc(src ? src + ' read \u00b7 nothing to show' : 'nothing read') + '</i></div>';
@@ -92,7 +97,8 @@
   // (form is drawn by R.form now - it falls back to the kv face when it has no draw.fields, so it is no longer an alias)
   const ALIAS = { sparkline: 'trace', line: 'trace', chart: 'trace', parts: 'donut', tree: 'files', stages: 'stepper', program: 'stepper', ask: 'string', rate: 'counter',
                   iso: 'table', controls: 'pills', button: 'string', header: 'string', galaxy: 'context_graph', battery: 'level', tablei: 'table', checks: 'checklist',
-                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines', cores: 'cellmap', 'core-matrix': 'cellmap', 'status-matrix': 'cellmap', cpumap: 'cellmap' };
+                  memgraph: 'minigraph', logi: 'log', notice: 'announcement', trend: 'hero', sparks: 'small-multiples', multiline: 'lines', 'multi-line': 'lines', cores: 'cellmap', 'core-matrix': 'cellmap', cpumap: 'cellmap' };
+  // (status-matrix is the Loop Lab's picture - DRAWN below - not the cell map: its alias here was dead, DRAWN won, DO-0.3)
   // what this file draws today (the rest of the catalogue resolves through ALIAS or says so)
   const DRAWN = { trace: 'series', radial: 'level', counter: 'level', bar: 'level', bars: 'values', thermo: 'values', heat: 'matrix', matrix: 'matrix', donut: 'parts',
                   stack: 'items', pills: 'values', log: 'events', lane: 'events', table: 'items', files: 'items', list: 'items', checklist: 'items', stepper: 'stages', globe: 'points',
@@ -116,7 +122,16 @@
                   /* the multi-line chart (2026-09-28) */
                   lines: 'series',
                   /* the status matrix: a square per core, thread or cpu, lenses to colour it by (2026-09-28) */
-                  cellmap: 'items' };
+                  cellmap: 'items',
+                  /* ONE FORMS LIST (DO-0.3): every form this file draws is named here - forms() returns all of them, and
+                     widget_record.FORMS (the python catalogue) is held to this table by tests/test_forms_contract.py.
+                     the reading list (web.research's sources and the links it found) */
+                  reading: 'items',
+                  /* the Loop Lab's pictures (the CI section draws them; each reads its ci payload whole) */
+                  'status-matrix': 'matrix', 'race-green': 'matrix', 'test-grid': 'matrix', 'ci-board': 'items', 'run-track': 'stages', 'run-compare': 'values', 'ci-pulse': 'values', 'ci-fleet': 'items', 'ci-run': 'values',
+                  'census-commits': 'matrix', element: 'panel', 'loop-perf': 'items', 'census-live': 'stages', 'census-timeline': 'events', 'trend-layers': 'series',
+                  /* the image studio's forms */
+                  images: 'items', sprites: 'items', sprite: 'string', character: 'string' };
   const canon = (form) => { const f = String(form || '').toLowerCase(); return DRAWN[f] ? f : (ALIAS[f] || f); };
   // the Loop Lab's pictures (see the CI section): each draws the ci payload whole, at every size
   const CI_FORMS = /^(status-matrix|race-green|test-grid|ci-board|run-track|run-compare|ci-pulse|ci-fleet|ci-run|census-commits|element|loop-perf|census-live|census-timeline|trend-layers)$/;
@@ -438,6 +453,9 @@
   function sample(x) {
     const k = String(x || '').toLowerCase();
     if (SAMPLE[k] && !DRAWN[k]) return SAMPLE[k]();
+    // an iso form named in full (gallery@iso) draws its base form's data - it fell to the STRING sample and drew
+    // "a gallery needs items" with its own sample (SM-4)
+    if (/@iso$/.test(k) && !FORM_SAMPLE[k]) return sample(k.slice(0, -4));
     const f = canon(k); if (FORM_SAMPLE[f]) return FORM_SAMPLE[f]();
     const sh = DRAWN[f] || k; return (SAMPLE[sh] || SAMPLE.string)();
   }
@@ -497,11 +515,6 @@
     const r = Math.max(16, (H - 8) / 2), c = 2 * Math.PI * r, s = H / 2 + 2, unit = l.unit || ((l.bounded && l.hi === 100 && l.lo === 0) ? '%' : '');
     return '<svg class="vw-svg" viewBox="0 0 ' + (s * 2) + ' ' + (s * 2) + '" style="height:' + H + 'px;width:auto"><circle cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="var(--bg2,#1a1c20)" stroke-width="6"/><circle cx="' + s + '" cy="' + s + '" r="' + r + '" fill="none" stroke="var(--acc,#5a9e8f)" stroke-width="6" stroke-dasharray="' + (f * c).toFixed(1) + ' ' + (c - f * c).toFixed(1) + '" transform="rotate(-90 ' + s + ' ' + s + ')" stroke-linecap="round"/><text x="' + s + '" y="' + s + '" text-anchor="middle" dominant-baseline="central" font-size="' + Math.max(10, r * 0.55) + '" fill="var(--text,#d8dce4)" font-family="var(--mono,ui-monospace,monospace)">' + esc(fmt(l.v)) + esc(unit) + '</text></svg>';
   };
-  R.counter = (d, H) => {
-    const l = level(d); if (!l) return EMPTY('a counter needs a value');
-    const dl = l.delta != null ? '<span class="vw-delta ' + (num(l.delta) >= 0 ? 'up' : 'down') + '">' + (num(l.delta) >= 0 ? '▲' : '▼') + ' ' + esc(fmt(Math.abs(num(l.delta)))) + '</span>' : '';
-    return '<div class="vw-hero"><b>' + esc(fmt(l.v)) + '</b><span class="vw-unit">' + esc(l.unit) + '</span>' + dl + '</div>';   // the hero fits the body it stands in (a 2×2 tile's is ~46 px) — no nominal floor from the size
-  };
   R.bar = (d, H) => {
     const l = level(d); if (!l) return EMPTY('a meter needs { value, min, max }');
     const f = Math.max(0, Math.min(1, (l.v - l.lo) / ((l.hi - l.lo) || 1)));
@@ -525,21 +538,6 @@
     const lim = Math.min(8, (o && o.draw && +o.draw.limit) || 8, Math.max(2, Math.floor(((H || 150) + 4) / 18)));
     return '<div class="vw-therm">' + kv.slice(0, lim).map((x) => '<div><label title="' + esc(x[0]) + '">' + esc(x[0]) + '</label><span><i style="width:' + (100 * Math.abs(x[1]) / hi).toFixed(1) + '%"></i></span><b>' + esc(fmt(x[1])) + '</b></div>').join('') + '</div>';
   };
-  R.heat = (d) => {
-    const kv = keyed(d); if (!kv.length) return EMPTY('no numbers to draw');
-    const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, cols = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(kv.length))));
-    return '<div class="vw-heat" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x) => '<div style="opacity:' + (0.2 + 0.8 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '">' + esc(x[0]) + '</div>').join('') + '</div>';
-  };
-  R.matrix = (d) => {
-    // {row: {col: value}} or [{name, a, b, c}] → a grid of cells coloured by value (a status matrix)
-    let rws = [], cols = [];
-    if (d && typeof d === 'object' && !Array.isArray(d)) { rws = Object.keys(d).filter((k) => d[k] && typeof d[k] === 'object').map((k) => [k, d[k]]); }
-    else rows(d).forEach((r) => rws.push([String(r.name ?? r.id ?? ''), r]));
-    if (!rws.length) return EMPTY('a matrix needs rows of values');
-    cols = Object.keys(rws[0][1]).filter((c) => typeof rws[0][1][c] !== 'object' && c !== 'name' && c !== 'id').slice(0, 10);
-    const val = (v) => typeof v === 'number' ? v : (v === true || /^(ok|up|green|pass)$/i.test(String(v)) ? 1 : (v === false || /^(down|fail|red|error)$/i.test(String(v)) ? 0 : 0.5));
-    return '<div class="vw-matrix" style="grid-template-columns:auto repeat(' + cols.length + ',1fr)"><i></i>' + cols.map((c) => '<i>' + esc(c) + '</i>').join('') + rws.slice(0, 12).map((r) => '<b>' + esc(r[0]) + '</b>' + cols.map((c) => { const v = val(r[1][c]); return '<span style="background:color-mix(in srgb,var(--acc,#5a9e8f) ' + Math.round(v * 80 + 10) + '%,var(--bg2,#1a1c20))" title="' + esc(r[0]) + ' · ' + esc(c) + ' · ' + esc(String(r[1][c])) + '"></span>'; }).join('')).join('') + '</div>';
-  };
   /* the donut is as tall as its body and no wider than it is tall: the ring sized to the body (never past 140 px), its
      total in the middle, the legend beside it as a short column of name + value + share - or under it when the tile
      is narrow - so a donut tile can be three columns wide instead of four (the owner: "donut/ring charts take up too
@@ -556,35 +554,7 @@
     const mid = '<text x="' + s + '" y="' + s + '" class="vw-dtot" text-anchor="middle" dominant-baseline="central">' + esc(fmt(tot)) + '</text>';
     return '<div class="vw-donut"><svg class="vw-svg" viewBox="0 0 ' + D + ' ' + D + '" style="height:' + D + 'px;width:' + D + 'px;flex:none">' + arcs + mid + '</svg><div class="vw-legend vw-legend-col">' + kv.map((x, i) => '<span data-b="p' + i + '"' + itemAttr({ name: x[0], value: x[1], share: Math.round(Math.abs(x[1]) / tot * 1000) / 10, of: tot }, 'slice') + '><i style="background:' + cols[i % cols.length] + '"></i><em>' + esc(x[0]) + '</em><b>' + esc(fmt(x[1])) + '</b><small>' + pc(x[1]) + '</small></span>').join('') + '</div></div>';
   };
-  R.stack = (d) => {
-    const kv = keyed(d).slice(0, 8); if (!kv.length) return EMPTY('parts need { name: number }');
-    const tot = kv.reduce((s, x) => s + Math.abs(x[1]), 0) || 1;
-    const cols = ['var(--acc,#5a9e8f)', 'var(--acc2,#8fb87a)', 'var(--acc3,#d4a96a)', '#a78bfa', '#e07a9a', '#5ab0d8', '#c9a35a', '#7ac9b0'];
-    return '<div class="vw-stack"><div class="vw-stackbar">' + kv.map((x, i) => '<i style="width:' + (100 * Math.abs(x[1]) / tot).toFixed(1) + '%;background:' + cols[i % cols.length] + '" title="' + esc(x[0]) + ' · ' + esc(fmt(x[1])) + '"></i>').join('') + '</div><div class="vw-legend">' + kv.map((x, i) => '<span><i style="background:' + cols[i % cols.length] + '"></i>' + esc(x[0]) + '<b>' + esc(fmt(x[1])) + '</b></span>').join('') + '</div></div>';
-  };
-  R.pills = (d) => {
-    const kv = keyed(d); const st = rows(d);
-    if (kv.length) return '<div class="vw-pills">' + kv.slice(0, 12).map((x) => '<span class="vw-pill"><small>' + esc(x[0]) + '</small><b>' + esc(fmt(x[1])) + '</b></span>').join('') + '</div>';
-    if (st.length) return '<div class="vw-pills">' + st.slice(0, 12).map((r) => { const s = String(r.status ?? r.state ?? r.value ?? ''); const ok = /^(ok|up|green|pass|running|healthy)$/i.test(s); const bad = /^(down|fail|red|error|stopped)$/i.test(s); return '<span class="vw-pill ' + (ok ? 'ok' : bad ? 'bad' : '') + '"><small>' + esc(String(r.name ?? r.id ?? r.label ?? '')) + '</small><b>' + esc(s) + '</b></span>'; }).join('') + '</div>';
-    return EMPTY('pills need { name: number } or rows with a status');
-  };
   const logLine = (r) => '<div><span class="t">' + esc(String(r.t ?? r.ts ?? r.time ?? r.when ?? '').slice(11, 19) || String(r.t ?? r.ts ?? '').slice(0, 8)) + '</span><span class="k">' + esc(String(r.kind ?? r.level ?? r.type ?? '')) + '</span><span>' + esc(String(r.text ?? r.msg ?? r.message ?? r.line ?? r.title ?? '')) + '</span></div>';
-  R.log = (d, H) => {
-    const rw = rows(d); if (!rw.length || !rw.some((r) => r.text != null || r.msg != null || r.message != null || r.line != null || r.title != null)) return EMPTY('a log needs rows with text');
-    const n = Math.max(3, Math.min(40, Math.floor(((H || 70) - 2) / 14)));   // the lines that fit the body (14 px each)
-    return '<div class="vw-log">' + rw.slice(-n).map(logLine).join('') + '</div>';
-  };
-  R.lane = (d) => {
-    const rw = rows(d); if (!rw.length || !rw.some((r) => r.text != null || r.msg != null || r.message != null || r.line != null)) return EMPTY('a log needs rows with text');
-    const by = {}; rw.forEach((r) => { const k = String(r.kind ?? r.level ?? r.type ?? 'other'); (by[k] = by[k] || []).push(r); });
-    return '<div class="vw-log">' + Object.keys(by).slice(0, 6).map((k) => '<div class="lane">' + esc(k) + ' · ' + by[k].length + '</div>' + by[k].slice(-4).map(logLine).join('')).join('') + '</div>';
-  };
-  R.table = (d, H, o) => {
-    const rw = rows(d); if (!rw.length) return EMPTY('no rows');
-    const want = (o && o.draw && Array.isArray(o.draw.columns)) ? o.draw.columns : null;
-    const cols = (want || Object.keys(rw[0]).filter((k) => typeof rw[0][k] !== 'object')).slice(0, 6);
-    return '<div class="vw-tablewrap" style="max-height:' + Math.max(H, 60) + 'px"><table><thead><tr>' + cols.map((c) => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' + rw.slice(0, (o && o.draw && o.draw.limit) || 12).map((r) => '<tr>' + cols.map((c) => '<td title="' + esc(String(r[c] ?? '')) + '">' + esc(String(r[c] ?? '')) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>';
-  };
   /* A READING LIST (owner, 2026-10-01: web.research "is too dense of a format ... the cells of the table are commonly
      truncated so it cant be read"). Pages are not rows of a grid: each is a card - its title (the link), where it is from,
      when, how much was read - and two or three lines of what it says, wrapped and never cut to a cell. A card opens in
@@ -617,26 +587,11 @@
         + (body.length > sn.length + 60 ? '<button class="mo"' + set('open', on ? -1 : i) + '>' + (on ? 'less' : 'read more') + '</button>' : '') + '</div></div>'; }).join('');
     return wrap('reading', '<div class="vb-rds">' + cards + '</div>' + (pages > 1 ? '<div class="vb-fn"><button' + set('page', (pg + pages - 1) % pages) + '>\u2039</button><button' + set('page', (pg + 1) % pages) + '>\u203a</button><span>' + (pg + 1) + ' / ' + pages + ' \u00b7 ' + n + ' pages</span></div>' : ''));
   };
-  R.files = (d, H, o) => { const rw = rows(d); if (!rw.length) return EMPTY('no rows'); if (!rw.some((r) => r.path != null)) return EMPTY('files need a path field'); return R.table(rw, H, { draw: { columns: ['path'].concat(Object.keys(rw[0]).filter((k) => k !== 'path' && typeof rw[0][k] !== 'object').slice(0, 4)) } }); };
   R.list = (d, H) => {
     const rw = rows(d); const str = (Array.isArray(d) ? d : []).filter((x) => typeof x === 'string'); const n = Math.max(2, Math.min(24, Math.floor(((H || 70) - 2) / 16)));
     if (str.length) return '<div class="vw-list">' + str.slice(0, n).map((s) => '<div><b>' + esc(s) + '</b></div>').join('') + '</div>';
     if (!rw.length) return EMPTY('no rows');
     return '<div class="vw-list">' + rw.slice(0, n).map((r) => '<div><b>' + esc(String(r.name ?? r.title ?? r.label ?? r.id ?? '')) + '</b><small>' + esc(String(r.meta ?? r.when ?? r.status ?? r.count ?? r.value ?? '')) + '</small></div>').join('') + '</div>';
-  };
-  R.checklist = (d) => {
-    const rw = rows(d); if (!rw.length) return EMPTY('a checklist needs items');
-    return '<div class="vw-check">' + rw.slice(0, 12).map((r) => { const on = !!(r.done || r.checked || r.state === 'done' || r.status === 'done'); return '<div class="' + (on ? 'on' : '') + '"><i>' + (on ? '☑' : '☐') + '</i><span>' + esc(String(r.text ?? r.title ?? r.name ?? '')) + '</span>' + (r.due || r.when ? '<small>' + esc(String(r.due ?? r.when)) + '</small>' : '') + '</div>'; }).join('') + '</div>';
-  };
-  R.stepper = (d) => {
-    const arr = Array.isArray(d) ? d : (d && (d.stages || d.steps)) || []; if (!arr.length) return EMPTY('stages need a list');
-    return '<div class="vw-steps">' + arr.slice(0, 12).map((s, i) => { const o = (s && typeof s === 'object') ? s : { name: String(s) }; const st = o.done || o.state === 'done' || o.status === 'done' ? 'done' : (o.current || o.state === 'running' || o.status === 'running' || o.state === 'current' ? 'now' : (o.state === 'failed' || o.status === 'failed' || o.error ? 'bad' : '')); return '<div class="' + st + '"><i>' + (i + 1) + '</i><span>' + esc(String(o.name ?? o.title ?? o.step ?? '')) + '</span>' + (o.when || o.ms != null ? '<small>' + esc(String(o.when ?? (o.ms + ' ms'))) + '</small>' : '') + '</div>'; }).join('') + '</div>';
-  };
-  R.calendar = (d) => {
-    const rw = rows(d); if (!rw.length) return EMPTY('a calendar needs events');
-    const day = (r) => String(r.when ?? r.start ?? r.t ?? r.date ?? '').slice(0, 10) || 'undated';
-    const by = {}; rw.forEach((r) => (by[day(r)] = by[day(r)] || []).push(r));
-    return '<div class="vw-cal">' + Object.keys(by).sort().slice(0, 6).map((k) => '<div class="day"><b>' + esc(k) + '</b>' + by[k].slice(0, 5).map((r) => '<span><small>' + esc(String(r.when ?? r.start ?? r.t ?? '').slice(11, 16)) + '</small>' + esc(String(r.title ?? r.name ?? r.text ?? '')) + '</span>').join('') + '</div>').join('') + '</div>';
   };
   R.string = (d) => { const s = typeof d === 'string' ? d : (d && typeof d === 'object' ? String(d.text ?? d.value ?? d.message ?? JSON.stringify(d)) : String(d)); return s ? '<div class="vw-str">' + esc(s.slice(0, 2000)) + '</div>' : EMPTY('nothing to show'); };
   R.kv = (d, H, o2) => {
@@ -671,11 +626,6 @@
     const n = Object.keys(ed).length, st = (o && o.ui && o.ui._fmStatus) || (n ? n + ' changed' : '');
     const foot = (dr.save && dr.save.cap) ? '<div class="vw-fm-foot"><span class="vw-fm-st" data-vf-status>' + esc(st) + '</span><button type="button" class="vw-fm-save" data-vf-save' + (n ? '' : ' disabled') + '>' + esc(dr.save.label || 'Save') + '</button></div>' : '';
     return '<div class="vw-fm">' + fields.map(row).join('') + foot + '</div>';
-  };
-  R.scatter = (d, H) => {
-    const pts = rows(d).map((p) => [num(p.x ?? p.t ?? p[0]), num(p.y ?? p.v ?? p.value ?? p[1]), num(p.size ?? p.r ?? 3)]); if (pts.length < 2) return EMPTY('a scatter needs points');
-    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]); const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), W = 300;
-    return '<svg class="vw-svg" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="height:' + H + 'px">' + pts.slice(0, 400).map((p) => '<circle cx="' + (((p[0] - x0) / ((x1 - x0) || 1)) * (W - 12) + 6).toFixed(1) + '" cy="' + ((H - 6) - ((p[1] - y0) / ((y1 - y0) || 1)) * (H - 12)).toFixed(1) + '" r="' + Math.max(2, Math.min(8, p[2] || 3)) + '" fill="var(--acc,#5a9e8f)" fill-opacity=".7"/>').join('') + '</svg>';
   };
   // the CONTEXT GRAPH (the chat's own graph, the Graph board): a lane per family — context · memory · loop · plan ·
   // canvas — its members scattered by relevance (left = most relevant), hollow where related but not injected, the
@@ -847,7 +797,7 @@
       const slotStyle = (slotH || sp > 1) ? ' style="' + (slotH ? 'height:' + slotH + 'px;' : '') + (sp > 1 ? 'grid-column:span ' + sp + ';' : '') + '"' : '';
       const r0 = c && typeof c.record === 'object' ? c.record : null; const slot = String((c && c.slot) || String.fromCharCode(97 + i));
       if (!r0) return '<div class="vw-slot" data-slot="' + esc(slot) + '"><small class="wempty">' + esc(String(c && c.record || '')) + '</small></div>';
-      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: wasRead ? false : undefined, textK: o && o.textK, width: (o && o.width && !chip) ? Math.max(120, Math.floor((o.width - (ncol - 1) * 8) * sp / ncol) - 16) : undefined };
+      const n = normalise(r0); const k = kd[slot]; const wasRead = !!(k && typeof k === 'object' && k.__read); const data = r0.data !== undefined ? r0.data : (wasRead ? k.data : k); const kopts = { record: n, draw: n.draw, bare: true, sample: (wasRead || (o && o.sample === false)) ? false : undefined, textK: o && o.textK, width: (o && o.width && !chip) ? Math.max(120, Math.floor((o.width - (ncol - 1) * 8) * sp / ncol) - 16) : undefined };
       // a child whose reading is still on its way says so - its slot never shows the form's sample values as though they
       // were the estate's (the review found "serving · ct126 · qwen3:30b" standing in for the narrator, the identity
       // server, OpenClaw and telegram while their reads were queued)
@@ -865,12 +815,12 @@
         const bh = Math.max(40, Math.round((canon(n.form) === 'kv' ? keysN * 19 : canon(n.form) === 'pills' ? 52 : lim * 31 + 56) * tk * bhScale));   /* its share of the body */
         return '<div class="vw-slot vw-slot-block' + stale + '" data-slot="' + esc(slot) + '"><span class="vw-slot-h">' + esc(n.title || n.form) + kerr + '</span><div class="vw-slot-b">' + draw(n.form, data, 'm', Object.assign({ height: bh, title: n.title }, kopts, { width: (o && o.width) ? Math.max(160, o.width - 20) : undefined })) + '</div></div>'; }
       if (chip) return '<div class="vw-slot vw-slot-row' + stale + '" data-slot="' + esc(slot) + '"><span class="k" title="' + esc(n.title || n.form) + '">' + esc(n.title || n.form) + '</span><span class="vw-slot-c">' + draw(n.form, data, 's', Object.assign({}, kopts, { title: '' })) + kerr + '</span></div>';
-      const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data));
+      const fig = /^(counter|hero|string|level|ring|meter|gauge|dial|tank|numbers)$/.test(canon(n.form)) ? '' : figure(n.form, mapped(n, n.form, data === undefined && !wasRead && !(o && o.sample === false) ? sample(n.form) : data));
       /* an XL composite's list draws at the height its items need (every row, up to 200) and its slot scrolls - the
          forms size their row count to the height they are given, so this is the one place the whole list is asked for */
       let drawH = kidH, scroll = '';
       if (xl && LISTY.test(canon(n.form))) {
-        let cnt = 0; try { cnt = itemCount(dataFor(mapped(n, n.form, data === undefined && !wasRead ? sample(n.form) : data), canon(n.form))); } catch (e) { cnt = 0; }
+        let cnt = 0; try { cnt = itemCount(dataFor(mapped(n, n.form, data === undefined && !wasRead && !(o && o.sample === false) ? sample(n.form) : data), canon(n.form))); } catch (e) { cnt = 0; }
         const need = Math.min(200, cnt) * Math.round(34 * ((o && o.textK) || 1)) + 60;
         if (need > kidH) { drawH = need; scroll = ' data-scroll="1"'; }
       }
@@ -912,7 +862,9 @@
   const stagesOf = (d) => { const arr = Array.isArray(d) ? d : (d && (d.stages || d.steps || d.items)) || []; return arr.map((s, i) => (s && typeof s === 'object') ? s : { name: String(s) }).map((o) => { const st = o.done || o.state === 'done' || o.status === 'done' || o.status === 'merged' ? 'done' : (o.current || o.now || o.state === 'running' || o.status === 'running' || o.state === 'current' || o.status === 'review' ? 'now' : (o.state === 'failed' || o.status === 'failed' || o.error ? 'bad' : '')); return Object.assign({ st }, o); }); };
   // the chart's height inside the size's body: what the form's own chrome (a hero, a legend, a caption) leaves
   const chH = (H, used) => Math.max(40, Math.round(H - used));
-  const evsOf = (d) => rows(d).filter((r) => r.t != null || r.ts != null || r.time != null || r.when != null || r.text != null || r.title != null || r.msg != null);
+  /* `message` and `line` count as an event's text too (DU-X1): the early log and lane drew rows whose text was in them,
+     and the shared line formatters (logLine, txt) read them - only this filter had dropped them */
+  const evsOf = (d) => rows(d).filter((r) => r.t != null || r.ts != null || r.time != null || r.when != null || r.text != null || r.title != null || r.msg != null || r.message != null || r.line != null);
 
   /* ── the standard set: a feed, files, a table, a gallery, a terminal, an agenda, people, links, a notice, a board ── */
   R.feed = (d, H, o) => {
@@ -951,15 +903,16 @@
   };
   const tableSort = (rw, cols, o) => { const sortBy = String(ui(o, 'sort', (o && o.draw && o.draw.sort) || '')), dir = +ui(o, 'dir', -1) || -1; if (sortBy && cols.includes(sortBy)) rw = rw.slice().sort((a, b) => { const x = a[sortBy], y = b[sortBy]; return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x ?? '').localeCompare(String(y ?? ''))) * dir; }); return { rw, sortBy, dir }; };
   const tableCell = (r, c, lit) => { const v = r[c]; const n = typeof v === 'number'; const hot = lit != null && n && v >= num(lit); const st = !n && /^(status|state|health)$/i.test(c), yn = typeof v === 'boolean'; return '<span class="c' + (n ? ' num' : '') + (hot ? ' dn' : '') + '" title="' + esc(c + ' \u00b7 ' + String(v ?? '')) + '">' + (st ? '<i class="st" style="background:' + stCol(v) + '"></i>' : '') + (yn ? (st ? '' : (v ? '\u2713' : '\u2013')) : esc(v == null ? '' : (n ? fmt(v) : (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(v) ? ago(v) : String(v))))) + '</span>'; };   /* a yes/no is a mark (a dot for a status, else a tick or a dash) - it read 'true' / 'false' */
-  const gridCols = (cols) => cols.map((c, i) => i ? 'minmax(40px,auto)' : '1fr').join(' ');
+  /* every row is its own grid, so its tracks must not depend on its own cells: 'auto' sized each row by what it held and the columns zig-zagged down a table (a model column of long and short names). Shared shares of the width instead - a column of numbers narrower. */
+  const gridCols = (cols, rs) => cols.map((c, i) => { const nm = !!(rs && rs.length) && rs.slice(0, 30).every((r) => r == null || r[c] == null || typeof r[c] === 'number'); return i ? (nm ? 'minmax(44px,.6fr)' : 'minmax(56px,1fr)') : 'minmax(0,1.4fr)'; }).join(' ');
   R.table = (d, H, o) => {
     let all = rows(d); if (!all.length) return EMPTY('no rows');
     const size = (o && o.size) || 'm'; const cols = tableCols(all, o, size === 'xl' ? 8 : 6); const lit = o && o.draw && o.draw.lit != null ? o.draw.lit : null;
     const q = String(ui(o, 'q', '')).trim().toLowerCase(); if (q) all = all.filter((r) => cols.some((c) => String(r[c] ?? '').toLowerCase().includes(q)));
     const lim = (o && o.draw && o.draw.limit) || fitRows(o, size, 17, 40 + (size === 'xl' ? 24 : 0)); const { rw, sortBy, dir } = tableSort(all, cols, o);
     const page = Math.max(0, +ui(o, 'page', 0) || 0), pages = Math.max(1, Math.ceil(rw.length / lim)), pg = Math.min(page, pages - 1), shown = rw.slice(pg * lim, pg * lim + lim);
-    const head = '<div class="vb-dgr h" style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => '<button class="' + (sortBy === c ? 'on' : '') + '"' + set('sort', c) + (sortBy === c ? ' data-vb-set2="dir:' + (-dir) + '"' : ' data-vb-set2="dir:-1"') + '>' + esc(c.replace(/_/g, ' ')) + '<span>' + (sortBy === c ? (dir < 0 ? '↓' : '↑') : '') + '</span></button>').join('') + '</div>';
-    const body = shown.map((r) => '<div class="vb-dgr"' + itemAttr(r, 'row') + ' style="grid-template-columns:' + gridCols(cols) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('');
+    const head = '<div class="vb-dgr h" style="grid-template-columns:' + gridCols(cols, all) + '">' + cols.map((c) => '<button class="' + (sortBy === c ? 'on' : '') + '"' + set('sort', c) + (sortBy === c ? ' data-vb-set2="dir:' + (-dir) + '"' : ' data-vb-set2="dir:-1"') + '>' + esc(c.replace(/_/g, ' ')) + '<span>' + (sortBy === c ? (dir < 0 ? '↓' : '↑') : '') + '</span></button>').join('') + '</div>';
+    const body = shown.map((r) => '<div class="vb-dgr"' + itemAttr(r, 'row') + ' style="grid-template-columns:' + gridCols(cols, all) + '">' + cols.map((c) => tableCell(r, c, lit)).join('') + '</div>').join('');
     const search = size === 'xl' ? '<div class="vb-tsearch"><span>⌕</span><input type="search" value="' + esc(q) + '" placeholder="find in ' + all.length + ' rows" data-vb-input="q"></div>' : '';
     const foot = size === 'l' || size === 'xl' || pages > 1 ? '<div class="vb-dgf"><span>' + (sortBy ? 'sorted by ' + esc(sortBy) + (dir < 0 ? ' · high first' : ' · low first') : rw.length + ' rows') + '</span><span style="margin-left:auto">' + (rw.length ? (pg * lim + 1) + '–' + Math.min(rw.length, pg * lim + lim) + ' of ' + rw.length : '0 of 0') + '</span><button' + set('page', Math.max(0, pg - 1)) + '>‹</button><button' + set('page', Math.min(pages - 1, pg + 1)) + '>›</button></div>' : '';
     return wrap('table', search + head + (body || '<span class="vb-lbl">' + (q ? 'nothing matches "' + esc(q) + '"' : 'no rows') + '</span>') + foot, 'vb-tf');
@@ -998,7 +951,7 @@
     if (stC && rw0.length >= 3) { const cnt = {}; rw0.forEach((r) => { const k = word(r); cnt[k] = (cnt[k] || 0) + 1; }); const ks = Object.keys(cnt).sort((a, b) => stRank(a) - stRank(b) || cnt[b] - cnt[a]);
       sum = '<div class="vb-r2s"><div class="bar">' + ks.map((k) => '<i style="flex:' + cnt[k] + ';background:' + stCol(k) + '" title="' + esc(k + ' \u00b7 ' + cnt[k]) + '"></i>').join('') + '</div><div class="lg">'
         + ks.slice(0, 6).map((k) => '<button' + set('f', fsel === k ? '' : k) + ' class="' + (fsel === k ? 'on' : '') + '" title="show only ' + esc(k) + '"><i style="background:' + stCol(k) + '"></i>' + esc(k || '(none)') + '<b>' + cnt[k] + '</b></button>').join('') + (fsel ? '<button' + set('f', '') + '>all</button>' : '') + '</div></div>'; }
-    let hasDet = !!(detC || extra.length), rowH = (hasDet ? 31 : 23) * tk, sumH = sum ? 40 * tk : 0;
+    let hasDet = !!(detC || extra.length), rowH = (hasDet ? 34 : 23) * tk, sumH = sum ? 40 * tk : 0;
     /* the summary earns its room: a list of one status says nothing with it, and in a slot too small for four rows under it
        the rows are what matter (a composite's list showed one row and '+ 7 more') */
     if (sum && ((new Set(rw0.map(word))).size < 2 || (o && o.height && (o.height - sumH) / rowH < 4))) { sum = ''; sumH = 0; }
@@ -1483,7 +1436,10 @@
         return '<div class="vb-heatkey"><span>0</span><span class="g" style="background:linear-gradient(90deg,' + mix(B.t2, 10) + ',' + mix(B.t2, 96) + ')"></span><span>' + esc(fmt(hi)) + '</span></div>'; })() : ''), 'vb-heatfit'); }
     if (!kv.length) return EMPTY('a heat map needs rows of numbers');
     const hi = Math.max(...kv.map((x) => Math.abs(x[1]))) || 1, cols = Math.min(12, Math.max(4, kv.length)); const pal = palOf(o, 'load');
-    return wrap('heat', '<div class="vb-heatstrip" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x, i) => '<i style="background:' + pal(i, x[1], hi) + ';opacity:' + (0.25 + 0.75 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>').join('') + '</div>');
+    /* names under the cells (the early heat wrote each name in its cell - DU-X1 keeps that): up to 16 cells a label sits
+       under each square; denser strips keep the name in the tooltip only, where a label would not be readable */
+    const named = kv.length <= 16;
+    return wrap('heat', '<div class="vb-heatstrip' + (named ? ' named' : '') + '" style="grid-template-columns:repeat(' + cols + ',1fr)">' + kv.slice(0, 48).map((x, i) => { const cell = '<i style="background:' + pal(i, x[1], hi) + ';opacity:' + (0.25 + 0.75 * Math.abs(x[1]) / hi).toFixed(2) + '" title="' + esc(x[0]) + ' · ' + fmt(x[1]) + '"></i>'; return named ? '<span>' + cell + '<em>' + esc(x[0]) + '</em></span>' : cell; }).join('') + '</div>');
   };
   R.matrix = (d, H, o) => {
     const m = cellsOf(d); if (!m.rows.length) return EMPTY('a matrix needs rows of values'); const cols = m.cols.length ? m.cols : m.rows[0].v.map((_, i) => String(i + 1));
@@ -1595,7 +1551,14 @@
   };
 
   /* ── stages and time: the stepper, the gantt, the timeline, the pipeline card, the checklist ── */
-  const stepr = (st) => '<div class="vb-stepr">' + st.slice(0, 8).map((s, i) => '<span class="' + s.st + '"><i>' + (s.st === 'done' ? '✓' : s.st === 'bad' ? '✕' : (i + 1)) + '</i><em>' + esc(nameOf(s) || String(s.step ?? '')) + '</em></span>').join('') + '</div>';
+  /* a step's time (owner 2026-10-11: "be careful not to lose features"): the early stepper drew each step's `when` or
+     `ms` and up to 12 steps - the track that replaced it drew neither. Both come back: a short when as given, else a
+     duration from ms / elapsed_ms / duration_s / elapsed_s / seconds. Past 8 steps the track goes dense: only the current,
+     the failed and the last done step keep their names in view; every step keeps its name and time as a tooltip. */
+  const stepTime = (s) => { if (s.when != null && String(s.when).length <= 16) return String(s.when); const sec = s.duration_s ?? s.elapsed_s ?? s.seconds ?? (s.elapsed_ms != null ? s.elapsed_ms / 1000 : (s.ms != null ? s.ms / 1000 : null)); if (sec == null || !isFinite(+sec)) return ''; const v = +sec; return v < 1 ? Math.round(v * 1000) + ' ms' : v < 60 ? (Math.round(v * 10) / 10) + ' s' : v < 3600 ? Math.round(v / 60) + ' m' : (Math.round(v / 360) / 10) + ' h'; };
+  const stepr = (st) => { const sh = st.slice(0, 12), dense = sh.length > 8; let lastDone = -1; sh.forEach((s, i) => { if (s.st === 'done') lastDone = i; });
+    return '<div class="vb-stepr' + (dense ? ' dense' : '') + '">' + sh.map((s, i) => { const nm = nameOf(s) || String(s.step ?? ''), tm = stepTime(s), keep = !dense || s.st === 'now' || s.st === 'bad' || i === lastDone;
+      return '<span class="' + s.st + (keep ? '' : ' quiet') + '" title="' + esc(nm + (tm ? ' · ' + tm : '')) + '"><i>' + (s.st === 'done' ? '✓' : s.st === 'bad' ? '✕' : (i + 1)) + '</i><em>' + esc(nm) + '</em>' + (tm ? '<small>' + esc(tm) + '</small>' : '') + '</span>'; }).join('') + '</div>'; };
   R.stepper = (d, H, o) => {
     const st = stagesOf(d); if (!st.length) return EMPTY('stages need a list'); const now = st.findIndex((s) => s.st === 'now');
     return wrap('stepper', stepr(st) + cap(st.map((s) => esc(nameOf(s))).join(' → ') + (now >= 0 ? ' · currently at ' + esc(nameOf(st[now])) : '')));
@@ -2089,7 +2052,7 @@
        error     a failed answer: what failed, said once, the detail folded (new)
        markdown  prose a cap wrote: headings, lists, code, emphasis        (new)
      Each is drawn by VeraWidget.draw like every other form, and has a sample face. */
-  const CAP_FORMS = ['kv', 'table', 'list', 'json', 'log', 'terminal', 'diff', 'code', 'progress', 'hero', 'trace', 'area', 'column', 'status', 'files', 'media', 'error', 'markdown'];
+  const CAP_FORMS = ['kv', 'table', 'list', 'json', 'log', 'terminal', 'diff', 'code', 'progress', 'hero', 'trace', 'area', 'column', 'status', 'files', 'media', 'error', 'markdown', 'reading'];
   const isObj = (x) => !!x && typeof x === 'object' && !Array.isArray(x);
   const isScalar = (v) => v == null || typeof v !== 'object';
   // json: a tree you open - objects and arrays fold (the first level open), scalars coloured by kind, big ones capped
@@ -2200,7 +2163,7 @@
        3 media      image_b64 · an image/video/audio url · {images:[...]}         → media
        4 diff       {diff} · {patch} · a string that is a unified diff           → diff
        5 code       {code} · {content, path}                                       → code
-       6 hint       the capability's own hint (CAP_HINTS: the dashboard's reads)  → its form and map
+       6 hint       the capability's declared form (Contract v2 presentation, DA-01d) → its form and map
        7 progress   {steps|stages:[{name, status}]} · rows of step + state        → progress
        8 events     rows with a time and a line of text                           → log
        9 series     rows with a time and numbers · {history|samples:[...]}        → trace (one number) · area (several)
@@ -2212,28 +2175,19 @@
       15 numbers    {name: number, ...}                                           → numbers (≤ 6) · ranked
       16 prose      report · markdown · summary · a long text                     → markdown
       17 record     a flat object of up to 24 plain fields                        → kv
+     17b keyed      {<id>: {record}, ...} - 2+ records of one kind keyed by id    → table (the key the first column:
+                    (or one such object under one key beside plain fields)          id, or key when the records have an id)
       18 json       anything else with structure                                  → json
       19 string     a short text                                                  → string
      The python catalogue mirrors it (widget_cap_output.py, widget.from_result) so an agent can ask for the same answer. */
-  const CAP_HINTS = {
-    'markets.chart': { form: 'candles', map: { bars: 'bars' } },   /* a symbol's candles (canvas enrichment, slice 5) */
-    'sysmon.history': { form: 'trace', map: { series: 'samples', v: 'cpu' } }, 'sysmon.status': { form: 'numbers', map: { pick: { cpu: 'resources.cpu', memory: 'resources.mem', guests: 'proxmox.running', containers: 'docker.running' } } },
-    'obs.events': { form: 'log', map: { events: '$', t: 'ts', kind: 'type', text: 'name' } }, 'ollama.request_log': { form: 'log', map: { events: 'entries', t: 'ts', kind: 'instance', text: 'model' } },
-    'ollama.route_stats': { form: 'ranked', map: { values: 'stats', count: 'model', sum: 'n' } }, 'obs.node_temps': { form: 'temps', map: { values: 'hosts', name: 'label', value: 'max_c' } },
-    'evolve.activity': { form: 'area', map: { series: 'buckets', split: ['pass', 'fail'], t: 'hour' } }, 'evolve.pipeline.list': { form: 'status-matrix' },
-    'evolve.unittest.history': { form: 'race-green' }, 'perf.stalls': { form: 'column', map: { values: 'events', value: 'stalled_ms', reverse: true } },
-    'syslog.errors': { form: 'log', map: { events: 'warnings', t: 'ts', kind: 'cap_group', text: 'message' } }, 'dash.health.summary': { form: 'pills', map: { values: '$', entries: 'status' } },
-    'obs.modules': { form: 'treemap', map: { parts: 'modules', name: 'name', value: 'caps_added' } }, 'estate.health': { form: 'status' }, 'perf.scan': { form: 'status' },
-    'obs.health': { form: 'status' }, 'backup.status': { form: 'table', map: { rows: 'guests' }, draw: { columns: ['name', 'status', 'state', 'backups'] } }, 'docker.ps': { form: 'containers', map: { rows: 'containers', name: 'Names', status: 'State', host: 'host_id' } },
-    'evolve.sandbox.list': { form: 'sandboxes', map: { rows: 'sandboxes', name: 'name', status: 'running' } }, 'dream.history': { form: 'table', map: { rows: 'history' }, draw: { columns: ['label', 'title', 'started_at', 'signal'] } },
-    'fabric.graphs.snapshot': { form: 'vgraph' }, 'fabric.entity_graph.snapshot': { form: 'vgraph' }, 'memory.graph_full': { form: 'vgraph' }, 'topology.snapshot': { form: 'vgraph' }, 'mesh.topology': { form: 'vgraph' },
-    'cal.events.list': { form: 'schedule' }, 'exec.bash.run': { form: 'terminal' }, 'code.read': { form: 'code' }, 'code.diff': { form: 'diff' }, 'evolve.pipeline.diff': { form: 'diff' }, 'evolve.sandbox.diff': { form: 'diff' },
-    // the Loop Lab's pictures: ci.* (code work), loop.ci.* (the agentic loop), and the Loop Lab's own capabilities
-    'ci.matrix': { form: 'status-matrix' }, 'ci.race': { form: 'race-green' }, 'ci.tests': { form: 'test-grid' }, 'ci.board': { form: 'ci-board' }, 'ci.track': { form: 'run-track' },
-    'ci.compare': { form: 'run-compare' }, 'ci.pulse': { form: 'ci-pulse' }, 'ci.fleet': { form: 'ci-fleet' }, 'ci.run': { form: 'ci-run' }, 'ci.census': { form: 'census-commits' }, 'loop.ci.perf': { form: 'loop-perf' }, 'census.live': { form: 'census-live' },
-    'loop.ci.matrix': { form: 'status-matrix' }, 'loop.ci.race': { form: 'race-green' }, 'loop.ci.board': { form: 'ci-board' },
-    'evolve.pipeline.get': { form: 'run-track' }, 'evolve.tasks.overview': { form: 'status-matrix' }, 'workshop.agent_loop.trace': { form: 'status-matrix' }, 'board.items': { form: 'ci-board' } };
-  const hintOf = (cap) => { const n = String(cap || ''); if (CAP_HINTS[n]) return CAP_HINTS[n]; if (/\.(diff|patch)$/.test(n)) return { form: 'diff' }; if (/\.(health|healthz)$/.test(n)) return { form: 'status' }; return null; };
+  /* the capabilities' widget hints are declarations on them now (DA-01d: Contract v2 presentation {kind, form, map, draw},
+     read by hintOf below through VeraWidget.presentations); this table is for what no capability declares - empty today */
+  const CAP_HINTS = {};
+  /* the capability's declared form first (DA-01d: the hints are declarations on their capabilities now - Contract v2
+     presentation {kind, form, map, draw}, carried by /mcp/tools into VeraWidget.presentations); CAP_HINTS is left for
+     what no capability declares */
+  const hintOf = (cap) => { const n = String(cap || ''); const D = (window.VeraWidget && typeof window.VeraWidget.presentationOf === 'function') ? window.VeraWidget.presentationOf(n) : null;
+    if (D && typeof D.form === 'string' && D.form) return Object.assign({ form: D.form, map: D.map || {} }, D.draw ? { draw: D.draw } : {}); if (CAP_HINTS[n]) return CAP_HINTS[n]; if (/\.(diff|patch)$/.test(n)) return { form: 'diff' }; if (/\.(health|healthz)$/.test(n)) return { form: 'status' }; return null; };
   const rowsOfAny = (c) => { if (Array.isArray(c)) return c; if (!isObj(c)) return null; const ok = (v) => Array.isArray(v) && v.length && isObj(v[0]);
     for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (ok(c[k])) return c[k]; for (const k of Object.keys(c)) if (ok(c[k])) return c[k]; return null; };
   const rowsKey = (c) => { if (!isObj(c)) return '$'; for (const k of ['data', 'result', 'items', 'rows', 'results', 'entries', 'events', 'points', 'series', 'values']) if (Array.isArray(c[k]) && c[k].length && isObj(c[k][0])) return k; for (const k of Object.keys(c)) if (Array.isArray(c[k]) && c[k].length && isObj(c[k][0])) return k; return '$'; };
@@ -2241,6 +2195,15 @@
   const firstKey = (r, ks) => ks.find((k) => r[k] != null && r[k] !== '');
   const numKeys = (r) => Object.keys(r).filter((k) => typeof r[k] === 'number' && !/^(id|pid|port|vmid|index|idx|i|n_?id)$/i.test(k) && !TIMEK.includes(k));
   const isDiffText = (s) => typeof s === 'string' && /^(diff --git |--- |\+\+\+ |@@ )/m.test(s) && /^[+-]/m.test(s);
+  /* an object keyed by id whose values are records of one kind → its rows, the key as the first column (id, or key when the
+     records carry an id): at least 2 keys, every value a plain object, each holding ≥ 60% of the fields any of them has.
+     An envelope - exactly one such object under one key, every other value plain - is read through that key. */
+  const keyedOf = (o) => { if (!isObj(o)) return null; const ks = Object.keys(o); if (ks.length < 2 || !ks.every((k) => isObj(o[k]))) return null;
+    const all = new Set(); ks.forEach((k) => Object.keys(o[k]).forEach((f) => all.add(f))); if (!all.size || !ks.every((k) => Object.keys(o[k]).length >= 0.6 * all.size)) return null;
+    const col = !all.has('id') ? 'id' : !all.has('key') ? 'key' : null; if (!col) return null;
+    return { col, rows: ks.map((k) => Object.assign({ [col]: k }, o[k])) }; };
+  const keyedRows = (c) => { const direct = keyedOf(c); if (direct) return Object.assign({ path: '$' }, direct); if (!isObj(c)) return null;
+    const deep = Object.keys(c).filter((k) => !isScalar(c[k])); if (deep.length !== 1) return null; const inner = keyedOf(c[deep[0]]); return inner ? Object.assign({ path: deep[0] }, inner) : null; };
   const isMediaUrl = (s) => typeof s === 'string' && /^(data:image\/|data:video\/|https?:.*\.(png|jpe?g|gif|webp|svg|mp4|webm|mov|mp3|wav|ogg)(\?|$))/i.test(s);
   function fromCapResult(capName, result, opts) {
     opts = opts || {}; let c = result;
@@ -2295,6 +2258,10 @@
       const pk = ['report', 'markdown', 'md', 'summary', 'text', 'answer', 'content'].find((k) => typeof c[k] === 'string' && c[k].trim()); if (pk && (c[pk].length >= 200 || /^#|\n[-*] |\n\n/.test(c[pk]))) { mk('markdown', c[pk], 'prose: ' + pk); if (ks.length > 1) mk('kv', c, 'the rest of the answer', { map: { keys: ks.filter((k) => k !== pk && isScalar(c[k])).slice(0, 12) }, title: title + ' · fields' }); return done(); }
       // 17 record
       if (ks.length >= 1 && ks.length <= 24 && ks.every((k) => isScalar(c[k]))) { mk('kv', c, 'a record: plain fields'); return done(); }
+      // 17b keyed: records of one kind keyed by their id (ollama.instances {gpu-250: {url, status, ...}, ...}), or one such
+      // object under one key beside plain fields ({ok, instances: {...}}) - read as rows, the key the first column. Last
+      // before json, so nothing an earlier rule reads changes.
+      if (!rw) { const kr = keyedRows(c); if (kr) { mk('table', kr.rows, 'records keyed by their ' + kr.col, { map: { rows: kr.path } }); return done(); } }
       // 18 json
       mk('json', c, 'structure: a tree to open'); if (rw && rw.length) mk('table', c, 'its rows', { map: { rows: rk }, title: title + ' · ' + rk }); return done(); }
     if (Array.isArray(c) && c.length) { mk('json', c, 'a list of mixed things'); return done(); }
@@ -2428,8 +2395,10 @@
      has registered). The graph lives in the element's light DOM (a slot), so the page's graph styles reach it, and it
      is kept across refreshes (a new answer is loaded into it only when its nodes or edges changed). Without the element
      (VeraWidget.draw alone) the slot shows the flat node graph as its fallback. */
-  const toVeraGraph = (d) => { const src = d && typeof d === 'object' ? d : {}; const N = Array.isArray(src) ? src : (src.nodes || src.vertices || []);
-    const E = src.edges || src.links || src.rels || src.relationships || [];
+  /* a cytoscape-shaped element ({data:{id, label, ...}} / {data:{source, target}} - netscan.graph's answer) is read as its data */
+  const cyUnwrap = (x) => (x && typeof x === 'object' && x.data && typeof x.data === 'object' && !Array.isArray(x.data) && (x.data.id != null || x.data.source != null) ? Object.assign({}, x.data) : x);
+  const toVeraGraph = (d) => { const src = d && typeof d === 'object' ? d : {}; const N = (Array.isArray(src) ? src : (src.nodes || src.vertices || [])).map(cyUnwrap);
+    const E = (src.edges || src.links || src.rels || src.relationships || []).map(cyUnwrap);
     // a node's words: a Neo4j-shaped node (labels[]) keeps its TYPE in label and its words in name/text; a topology node's
     // label is its words and kind its type
     const nodes = (Array.isArray(N) ? N : []).filter((n) => n && typeof n === 'object').map((n) => { const id = String(n.id ?? n.name ?? n.key ?? ''); const typed = Array.isArray(n.labels);
@@ -2565,7 +2534,6 @@
     const add = (b, who, pat, h0) => pat.split('').forEach((ch, i) => R0.push({ ts: T(h0 + (i >> 1), (i % 2) * 30), branch: b, controller: who, ok: ch === 'p' ? true : ch === 'f' ? false : null, status: ch === 'r' ? 'running' : '', passed: 5190 + i, failed: ch === 'f' ? 2 : 0, total: 5192 + i, failures: ch === 'f' ? [{ node_id: 'tests/test_ship.py::test_' + b.slice(-4) }] : [] }));
     add('feat/loop-lab-widgets', 'claude', 'ffpppffp', 8); add('fix/gate-budget', 'codex', 'fffp', 9); add('feat/census-yield', 'vera', 'ppfr', 10); add('feat/ops-live-view', 'claude', 'pppp', 7); add('fix/sandbox-menu', 'user', 'ff', 12);
     const lanes = ciLanes(R0); return { kind: 'ci', view: 'matrix', title: 'Gate runs', lanes, summary: ciSummary(lanes) }; };
-  Object.assign(DRAWN, { 'status-matrix': 'matrix', 'race-green': 'matrix', 'test-grid': 'matrix', 'ci-board': 'items', 'run-track': 'stages', 'run-compare': 'values', 'ci-pulse': 'values', 'ci-fleet': 'items', 'ci-run': 'values' });
   const CI_GLYPH = { 'status-matrix': '▦', 'race-green': '⚑', 'test-grid': '▤', 'ci-board': '▥', 'run-track': '⋯', 'run-compare': '⇄', 'ci-pulse': '∿', 'ci-fleet': '⊞', 'ci-run': '◉' };
   Object.assign(FORM_SAMPLE, {
     'status-matrix': CI_SAMPLE, 'race-green': () => Object.assign(CI_SAMPLE(), { view: 'race', title: 'Race to green' }),
@@ -2790,7 +2758,6 @@
       if (window.customElements && customElements.whenDefined) customElements.whenDefined(e.tag).then(go); else sc.addEventListener('load', go, { once: true }); }
     el.appendChild(host); el._elHost = host; el._elSig = sig;
   }
-  Object.assign(DRAWN, { 'census-commits': 'matrix', element: 'panel' });
   Object.assign(CI_GLYPH, { 'census-commits': '⨯' });
   Object.assign(FORM_SAMPLE, {
     'census-commits': () => { const runs = Array.from({ length: 14 }, (_, i) => { const done = [9, 10, 9, 11, 10, 12, 11, 10, 12, 12, 11, 10, 12, 11][i]; return { id: 'run' + (64 + i), goals: 12, done, capped: 12 - done, wall_s: 8000 + (i % 4) * 700, commit_count: [2, 0, 5, 3, 0, 9, 1, 0, 6, 2, 0, 4, 11, 1][i], merges: i % 3, commits: Array.from({ length: [2, 0, 5, 3, 0, 9, 1, 0, 6, 2, 0, 4, 11, 1][i] }, (_, k) => ({ sha: 'c' + i + k, subject: k % 2 ? 'Loop Lab: merge feat/x' + k : 'loop: a fix ' + k, merge: k % 2 === 1 })) }; });
@@ -2894,7 +2861,6 @@
     }).join('');
     return wrap('census-timeline', '<div class="ci-hd"><span class="ci-hdt"><b>' + esc(p.title || 'Census') + ' timeline · ' + esc(p.template || '') + '</b><small>newest first · a band is a census run, where it ended · the commits under it landed before it · ' + ev.length + ' rows' + (ev.length > shown.length ? ', newest ' + shown.length + ' drawn' : '') + '</small></span></div><div class="ct-rows' + (sz === 'xl' ? ' scroll' : '') + '">' + rowsH + '</div>', 'ci');
   };
-  Object.assign(DRAWN, { 'loop-perf': 'items', 'census-live': 'stages', 'census-timeline': 'events' });
   Object.assign(CI_GLYPH, { 'loop-perf': '⏱', 'census-live': '◔', 'census-timeline': '⎇' });
   Object.assign(FORM_SAMPLE, {
     'loop-perf': () => ({ kind: 'ci', view: 'loop-perf', rows: [['Make the timer better.', 'cancelled', 1805, 45, 69, [['exec.bash.run', 608647], ['memory.seek', 28866]]], ['Write a 200-word explainer', 'done', 1009, 13, 24, [['prose.author', 128061], ['code.edit', 53987]]], ['Generate 200 random integers', 'done', 471, 7, 10, [['code.author', 40029], ['exec.python.run', 10860]]], ['What is 17 multiplied by 23?', 'done', 128, 2, 8, [['memory.seek', 12956]]]].map((x, i) => ({ id: 's' + i, goal: x[0], status: x[1], o: x[1] === 'done' ? 'pass' : 'fail', started_at: '2026-09-27T2' + i + ':00:00Z', wall_s: x[2], steps: 2, planned: 2, calls: x[3], fails: i === 0 ? 3 : 0, repeats: i === 0 ? 5 : 0, llm_calls: x[4], tool_ms: x[5].reduce((a, t) => a + t[1], 0), by_tool: x[5].map((t) => ({ tool: t[0], ms: t[1] })), stages: [{ stage: 'planner', calls: 2 }, { stage: 'controller', calls: 4 }] })),
@@ -2975,7 +2941,6 @@
     const ax = '<div class="tl-ax"><span>' + esc(new Date(t0).toLocaleDateString()) + '</span><span>' + rows.length + ' points · newest on the right</span><span>' + esc(new Date(t1).toLocaleDateString()) + '</span></div>';
     return wrap('trend-layers', controls + legend + '<div class="tl-wrap" style="min-height:' + (sz === 'm' ? 80 : sz === 'l' ? 170 : 260) + 'px"><svg class="tl-plot" viewBox="0 0 ' + W + ' 100" preserveAspectRatio="none">' + (mode === 'lanes' ? on.slice(1).map((_, i) => '<line x1="0" x2="' + W + '" y1="' + ((i + 1) * LH).toFixed(2) + '" y2="' + ((i + 1) * LH).toFixed(2) + '" stroke="var(--b-bd)" stroke-width="1" vector-effect="non-scaling-stroke"/>').join('') : '') + paths + '</svg>' + pts.join('') + '</div>' + ax, 'ci');
   };
-  Object.assign(DRAWN, { 'trend-layers': 'series' });
   Object.assign(CI_GLYPH, { 'trend-layers': '≈' });
   Object.assign(FORM_SAMPLE, { 'trend-layers': () => ({ runs: Array.from({ length: 24 }, (_, i) => ({ run_id: 'run' + (54 + i), ended_at: Date.UTC(2026, 8, 3 + i) / 1000, template: i % 5 ? 'default' : 'exec-family', done: [9, 10, 9, 11, 10, 12, 11, 10, 12, 12, 11, 10][i % 12], quality_mean: 0.8 + (i % 7) / 50, wall_total_s: 8200 + ((i * 37) % 13) * 140 })) }) });
   const TL_CSS = '.vb-trend-layers{display:flex;flex-direction:column;gap:6px;height:100%;min-height:0}'
@@ -3035,7 +3000,7 @@
       return sampleFace(draw(f0, data, size, Object.assign({}, opts, { sample: false, record: Object.assign({}, opts.record || {}, sample('composite')) })), size, opts.sampleTag);
     }
     if (size === 'xs') return '<span class="vw-xs" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i>' + (figure(f, data) || '—') + '</span>';
-    if (size === 's' && !CI_FORMS.test(f) && (DRAWN[f] === 'items' || f === 'kv' || f === 'form' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f === 'form' ? 'kv' : f, d, opts); if (cs) return cs; }
+    if (size === 's' && !CI_FORMS.test(f) && f !== 'reading' && (DRAWN[f] === 'items' || f === 'kv' || f === 'form' || f === 'pills' || f === 'temps' || f === 'numbers')) { const cs = chipRow(f === 'form' ? 'kv' : f, d, opts); if (cs) return cs; }
     if (size === 's' && f !== 'calnav') return '<span class="vw-chip" title="' + esc(opts.title || f0) + '"><i class="vw-g">' + glyphOf(f, data) + '</i><b>' + (figure(f, data) || '—') + '</b>' + (opts.title ? '<small>' + esc(opts.title) + '</small>' : '') + '</span>';
     let body; try { body = R[fi](d, H, Object.assign({ size: size }, opts)); } catch (e) { body = EMPTY('could not draw ' + f0 + ': ' + (e && e.message || e)); }
     if (size === 'm' || opts.bare || TABLE_FORMS.has(f) || CI_FORMS.test(f) || f === 'composite' || DRAWN[f] === 'events' || /^(json|diff|code|progress|status|media|error|markdown|terminal|string|kv|form|numbers|month|schedule|calnav|vgraph|cellmap)$/.test(f)) return body;   // a result form is its own composition: it takes the whole body   // a composite, a table, a feed: the body is the composition
@@ -3059,7 +3024,13 @@
      structured graph is the Explode contract. They are marked here so the lists people and models pick from can
      leave them out; offered as a menu choice, one gets picked for an ordinary chart and draws its empty state. */
   const DERIVED = new Set(['structgraph']);
-  function forms() { return Object.keys(DRAWN).map((id) => ({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, derived: DERIVED.has(id), iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
+  /* THE WIDEST A CARD OF THE FORM IS ON THE DESK, in px (WSU-69; WSU-58 S8, DEEP-29 11A.4 Decision 5.3 - it was the canvas element's
+     DESK_FORM_MAXW, now the catalogue's maxW per form): lists, checklists, fields, notices and single figures wrap short; wider was an
+     empty band. Charts, tables, maps, graphs and calendars have none. The python catalogue (widget_record.DESK_MAXW) holds the same. */
+  const FORM_MAXW = { checklist: 420, list: 440, links: 440, notices: 460, people: 460, kv: 520, pills: 480, string: 460, announcement: 460,
+    counter: 380, hero: 400, ring: 360, radial: 360, dial: 360, gauge: 420, meter: 420, level: 380, glance: 460, numbers: 520, status: 480, stepper: 640, files: 520 };
+  const withMaxW = (f) => (FORM_MAXW[f.id] ? Object.assign(f, { maxW: FORM_MAXW[f.id] }) : f);
+  function forms() { return Object.keys(DRAWN).map((id) => withMaxW({ id, shape: DRAWN[id], sizes: SIZES.slice(), drawn: true, derived: DERIVED.has(id), iso: !!R[id + '@iso'] || ISO_ONLY.has(id) })).concat(Object.keys(ALIAS).filter((id) => !DRAWN[id]).map((id) => ({ id, shape: DRAWN[ALIAS[id]] || '', sizes: SIZES.slice(), drawn: true, as: ALIAS[id] }))); }
   const ISO_ONLY = new Set(['dial', 'tank', 'stacks', 'conveyor', 'city', 'shelf', 'stack', 'sweep', 'meter-panel', 'pipes', 'library', 'pages', 'approvals', 'wiki', 'notices', 'devices', 'notebook', 'hosts', 'containers', 'models', 'datasets', 'sandboxes', 'activity', 'frame', 'racks']);
 
   /* ══ THE IMAGE STUDIO'S FORMS (owner, 2026-09-27: "can we have a widget for displaying sprites and characters and images
@@ -3278,7 +3249,6 @@
     + 'html[data-blocks="off"] .vw-sprc,html[data-blocks="off"] .vw-chrm,html[data-blocks="off"] .vw-sprt{background:transparent!important}'
     + ':host-context(html[data-blocks="off"]) .vw-sprc,:host-context(html[data-blocks="off"]) .vw-chrm,:host-context(html[data-blocks="off"]) .vw-sprt{background:transparent!important}';
   // the registrations: the forms drawn, their shapes, their sample faces, their glyphs; each takes its body whole at L and XL
-  Object.assign(DRAWN, { images: 'items', sprites: 'items', sprite: 'string', character: 'string' });
   ['images', 'sprites', 'sprite', 'character'].forEach((f) => TABLE_FORMS.add(f));
   Object.assign(GLYPH, { images: '▣', sprites: '◳', sprite: '◳', character: '☺' });
   /* the sample faces: drawn here, so the gallery and the pickers show the forms with nothing read - a pixel figure's
@@ -3371,7 +3341,7 @@ span.vw-sampled{opacity:.85}
 .vw-ghub{position:absolute;transform:translate(-50%,-50%);width:26px;height:26px;border-radius:50%;background:var(--surf2,var(--bg2,#1a1c20));box-shadow:0 0 0 1.2px var(--acc,#5a9e8f),0 0 14px rgba(110,168,216,.35);display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:var(--mono,ui-monospace,monospace);font-size:7px;color:var(--dim2,#8a92a0);line-height:1}
 .vw-ghub b{font-size:6.5px;color:var(--dim,#6b7280);font-weight:400}
 .vw-gring{position:absolute;border-radius:50%;box-shadow:0 0 0 1px color-mix(in srgb,var(--border2,#4a4540) 70%,transparent);transform:translate(-50%,-50%);pointer-events:none}
-.vw-gal-iso .vw-gring{transform:translate(-50%,-50%) scaleY(.56)}
+
 .vw-gstem{position:absolute;width:1px;background:color-mix(in srgb,var(--dim2,#8a92a0) 45%,transparent);pointer-events:none}
 .vw-gstem::after{content:'';position:absolute;left:-2px;bottom:-1px;width:5px;height:3px;border-radius:50%;background:color-mix(in srgb,var(--dim2,#8a92a0) 55%,transparent)}
 .vw-xs{display:inline-flex;align-items:center;gap:3px;font-family:var(--mono,ui-monospace,monospace);font-size:.92em;color:var(--text,#d8dce4);vertical-align:-1px}
@@ -3381,12 +3351,12 @@ span.vw-sampled{opacity:.85}
 .vw-xs .vw-g:has(.sp),.vw-chip .vw-g:has(.sp){width:auto}
 .vw-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:12px;border:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg2,#1a1c20);font-size:10px;color:var(--text,#d8dce4);white-space:nowrap}
 .vw-chip b{font-family:var(--mono,ui-monospace,monospace);font-weight:600}.vw-chip small{color:var(--dim2,#8a92a0);font-size:9px}
-.vw-hero{display:flex;align-items:baseline;gap:4px;max-width:100%;min-width:0}.vw-hero b{font-size:clamp(16px, 62cqh, 26px);font-weight:600;letter-spacing:-.02em;line-height:1;color:var(--text,#d8dce4);font-family:var(--mono,ui-monospace,monospace);white-space:nowrap}.vw-hero .vw-unit{color:var(--dim2,#8a92a0);font-size:clamp(9px, 26cqh, 12px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 .vw-delta{font-size:9.5px;font-family:var(--mono,ui-monospace,monospace);margin-left:6px}.vw-delta.up{color:var(--acc2,#8fb87a)}.vw-delta.down{color:var(--err,#c96b6b)}
 .vw-meter{display:flex;align-items:center;gap:8px;width:100%}.vw-track{flex:1;height:8px;border-radius:4px;background:var(--bg2,#1a1c20);overflow:hidden;display:block}.vw-track i{display:block;height:100%;background:var(--acc,#5a9e8f);border-radius:4px}.vw-meter b{font-family:var(--mono,ui-monospace,monospace);font-weight:400;color:var(--text,#d8dce4)}
 .vw-therm{display:flex;flex-direction:column;gap:4px;width:100%;font-size:9.5px}.vw-therm div{display:grid;grid-template-columns:90px 1fr 48px;gap:6px;align-items:center}.vw-therm label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text,#d8dce4)}.vw-therm span{display:block;height:8px;border-radius:4px;background:var(--bg2,#1a1c20);overflow:hidden}.vw-therm span i{display:block;height:100%;background:var(--acc,#5a9e8f);border-radius:4px}.vw-therm b{font-family:var(--mono,ui-monospace,monospace);font-weight:400;text-align:right;color:var(--text,#d8dce4)}
-.vw-heat{display:grid;gap:2px;width:100%}.vw-heat div{aspect-ratio:1.6;border-radius:3px;background:var(--acc,#5a9e8f);display:flex;align-items:flex-end;padding:2px 4px;font-family:var(--mono,ui-monospace,monospace);font-size:8px;color:var(--text,#d8dce4);overflow:hidden}
-.vw-matrix{display:grid;gap:2px;width:100%;font-size:8.5px;font-family:var(--mono,ui-monospace,monospace);align-items:center}.vw-matrix i{color:var(--dim2,#8a92a0);text-align:center;font-style:normal;overflow:hidden;white-space:nowrap}.vw-matrix b{color:var(--text,#d8dce4);font-weight:400;padding-right:6px;white-space:nowrap}.vw-matrix span{display:block;height:14px;border-radius:2px}
+
+
 .vw-donut{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 12px;width:100%;height:100%}
 .vw-donut .vw-dtot{font-family:var(--mono,ui-monospace,monospace);font-size:13px;font-weight:600;fill:var(--text,#d8dce4)}
 .vw-legend.vw-legend-col{flex-direction:column;flex-wrap:nowrap;gap:3px;flex:0 1 auto;max-width:100%}
@@ -3395,14 +3365,14 @@ span.vw-sampled{opacity:.85}
 .vw-legend-col b{margin-left:0}
 .vw-legend-col small{font-family:var(--mono,ui-monospace,monospace);font-size:9px;color:var(--dim,#6b7280)}.vw-legend{display:flex;flex-direction:column;gap:2px;font-size:9.5px;min-width:0}
 .vw-svgt{font-size:9px;font-family:var(--mono,monospace)}.vw-legend span{display:flex;align-items:center;gap:5px;white-space:nowrap;overflow:hidden;color:var(--text,#d8dce4)}.vw-legend i{width:8px;height:8px;border-radius:50%;flex-shrink:0}.vw-legend b{margin-left:auto;font-family:var(--mono,ui-monospace,monospace);font-weight:400;color:var(--dim2,#8a92a0)}
-.vw-stack{display:flex;flex-direction:column;gap:6px;width:100%}.vw-stackbar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--bg2,#1a1c20)}.vw-stackbar i{display:block;height:100%}.vw-stack .vw-legend{flex-direction:row;flex-wrap:wrap;gap:4px 10px}
-.vw-pills{display:flex;flex-wrap:wrap;gap:5px;width:100%;height:100%;align-content:space-evenly}.vw-pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:12px;border:1px solid var(--border,rgba(255,255,255,.09));background:var(--bg2,#1a1c20);font-size:9.5px}.vw-pill small{color:var(--dim2,#8a92a0)}.vw-pill b{font-family:var(--mono,ui-monospace,monospace);font-weight:400;color:var(--text,#d8dce4)}.vw-pill.ok b{color:var(--acc2,#8fb87a)}.vw-pill.bad b{color:var(--err,#c96b6b)}
+
+
 .vw-log{display:flex;flex-direction:column;gap:2px;width:100%;font-family:var(--mono,ui-monospace,monospace);font-size:9px}.vw-log div{display:flex;gap:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text,#d8dce4)}.vw-log .t{color:var(--dim,#6b7280);flex-shrink:0}.vw-log .k{color:var(--acc,#5a9e8f);flex-shrink:0;min-width:48px}.vw-log .lane{color:var(--dim2,#8a92a0);text-transform:uppercase;letter-spacing:.08em;font-size:8px;margin-top:3px}
-.vw-tablewrap{width:100%;overflow:auto}.vw-tablewrap table{border-collapse:collapse;font-size:9.5px;width:100%}.vw-tablewrap th{text-align:left;font-family:var(--mono,ui-monospace,monospace);font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim,#6b7280);padding:2px 6px;border-bottom:1px solid var(--border2,rgba(255,255,255,.18))}.vw-tablewrap td{padding:2px 6px;border-bottom:1px solid var(--border,rgba(255,255,255,.09));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;color:var(--text,#d8dce4)}
+
 .vw-list{display:flex;flex-direction:column;gap:3px;width:100%;font-size:10px}.vw-list div{display:flex;justify-content:space-between;gap:8px;overflow:hidden;white-space:nowrap;color:var(--text,#d8dce4)}.vw-list b{font-weight:500;overflow:hidden;text-overflow:ellipsis}.vw-list small{color:var(--dim2,#8a92a0);font-family:var(--mono,ui-monospace,monospace);flex-shrink:0}
-.vw-check{display:flex;flex-direction:column;gap:3px;width:100%;font-size:10px}.vw-check div{display:flex;gap:6px;align-items:baseline;color:var(--text,#d8dce4)}.vw-check i{font-style:normal;color:var(--dim2,#8a92a0)}.vw-check .on i{color:var(--acc2,#8fb87a)}.vw-check .on span{color:var(--dim2,#8a92a0);text-decoration:line-through}.vw-check small{margin-left:auto;color:var(--dim,#6b7280);font-family:var(--mono,ui-monospace,monospace)}
-.vw-steps{display:flex;flex-direction:column;gap:3px;width:100%;font-size:10px}.vw-steps div{display:flex;gap:7px;align-items:center;color:var(--text,#d8dce4)}.vw-steps i{font-style:normal;width:16px;height:16px;border-radius:50%;border:1px solid var(--border2,rgba(255,255,255,.18));display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-family:var(--mono,ui-monospace,monospace);color:var(--dim2,#8a92a0);flex-shrink:0}.vw-steps .done i{background:var(--acc2,#8fb87a);border-color:var(--acc2,#8fb87a);color:#0e0f12}.vw-steps .now i{border-color:var(--acc,#5a9e8f);color:var(--acc,#5a9e8f);box-shadow:0 0 0 2px color-mix(in srgb,var(--acc,#5a9e8f) 25%,transparent)}.vw-steps .bad i{border-color:var(--err,#c96b6b);color:var(--err,#c96b6b)}.vw-steps small{margin-left:auto;color:var(--dim,#6b7280);font-family:var(--mono,ui-monospace,monospace)}
-.vw-cal{display:flex;gap:8px;width:100%;overflow:auto;font-size:9.5px}.vw-cal .day{min-width:110px;display:flex;flex-direction:column;gap:2px}.vw-cal b{font-family:var(--mono,ui-monospace,monospace);font-weight:400;color:var(--dim2,#8a92a0);font-size:8.5px;text-transform:uppercase;letter-spacing:.06em}.vw-cal span{display:flex;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text,#d8dce4)}.vw-cal small{color:var(--dim,#6b7280);font-family:var(--mono,ui-monospace,monospace)}
+
+
+
 .vw-str{white-space:pre-wrap;font-size:10.5px;line-height:1.5;color:var(--text,#d8dce4);width:100%}
 .vw-mm{width:100%;min-height:70px;height:100%;display:flex;align-items:center;justify-content:center}.vw-mm small{color:var(--dim2,#8a92a0);font-family:var(--mono,ui-monospace,monospace);font-size:9px}.vw-mm vera-mermaid{display:block;width:100%;height:100%}
 .vw-panel{width:100%;border:none;background:transparent;display:block}
@@ -3412,7 +3382,7 @@ span.vw-sampled{opacity:.85}
 .vw-sg>.vw-sg-w{position:absolute;left:7px;top:6px;color:var(--dim2,#8a92a0);font-size:9.5px;font-family:var(--mono,ui-monospace,monospace)}
 .vw-l{display:grid;grid-template-columns:1fr 160px;gap:10px;width:100%;align-items:start}.vw-xl{display:grid;grid-template-columns:1fr 180px;gap:10px;width:100%;align-items:start}.vw-xl .vw-xltable{grid-column:1/-1}
 .vw-main{min-width:0}.vw-detail{display:flex;flex-direction:column;gap:3px;font-size:9.5px;border-left:1px solid var(--border,rgba(255,255,255,.09));padding-left:10px}.vw-detail div{display:flex;justify-content:space-between;gap:8px;color:var(--text,#d8dce4)}.vw-detail span{color:var(--dim2,#8a92a0);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vw-detail b{font-family:var(--mono,ui-monospace,monospace);font-weight:400}
-.vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}.vw-comp-rows,.vw-comp-report{grid-template-columns:1fr}.vw-comp-report{overflow-y:auto;align-content:start}.vw-comp-report .vw-slot-block{flex-shrink:0}.vw-comp-report .vw-slot-block .vw-slot-b{overflow:visible}.vw-comp-rail{grid-template-columns:1fr}.vw-comp-2x2{grid-template-columns:1fr 1fr}
+.vw-comp{display:grid;gap:8px;width:100%;grid-template-columns:1fr 1fr}
 .vw-slot{min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;background:var(--surf2,var(--bg2,#1a1c20));border-radius:var(--r-sm,6px);padding:7px 9px 8px;display:flex;flex-direction:column;gap:4px;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}
 .vw-slot-h{display:flex;align-items:baseline;gap:6px;font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--t3,var(--dim,#6b7280));flex-shrink:0;white-space:nowrap;overflow:hidden}.vw-slot-h b{margin-left:auto;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:11px;color:var(--t1,var(--text,#d8dce4));font-weight:400;text-transform:none;letter-spacing:0}
 .vw-slot-b{flex:1;min-height:0;display:flex;align-items:safe center;overflow:auto}.vw-slot-b > *{width:100%}
@@ -3422,7 +3392,7 @@ span.vw-sampled{opacity:.85}
 .vw-kread{font-style:normal;font-family:var(--f-mono,var(--mono,ui-monospace,monospace));font-size:8px;letter-spacing:.04em;color:var(--t3,var(--dim,#6b7280));opacity:.8;margin-left:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;animation:vw-kread 1.6s ease-in-out infinite}@keyframes vw-kread{50%{opacity:.35}}
 .vw-root[data-stale="1"] .vw-body{opacity:.55}.vw-slot-row .k{width:84px;flex-shrink:0;font-size:var(--label-size,9px);text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.06em);font-weight:var(--label-weight,600);color:var(--t3,var(--dim,#6b7280));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vw-slot-row .vw-slot-c{flex:1;min-width:0;display:flex;align-items:center;overflow:hidden}.vw-slot-row .vw-slot-c > *{max-width:100%}
-.vw-comp-rows,.vw-comp-report,.vw-comp-rail{display:flex;flex-direction:column;gap:0;align-content:start;height:100%;justify-content:space-evenly}.vw-slot-row{min-height:22px;padding:1px 0;flex:0 0 auto}.vw-slot-row:last-child{border-bottom:none}
+.vw-slot-row{min-height:22px;padding:1px 0;flex:0 0 auto}.vw-slot-row:last-child{border-bottom:none}
 .vw-chips{display:inline-flex;flex-wrap:nowrap;gap:4px;min-width:0;max-width:100%;overflow:hidden}.vw-chips .vw-chip{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}.vw-chips .vw-chip small{overflow:hidden;text-overflow:ellipsis}.vw-chip .st{width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block}.vw-chip.more{color:var(--dim2,#8a92a0)}
 .vw-kv .more{color:var(--dim2,#8a92a0);font-size:8.5px}
 .vb-small-multiples{display:flex;flex-direction:column;height:100%;justify-content:space-evenly}
@@ -3430,19 +3400,19 @@ span.vw-sampled{opacity:.85}
 /* -- the style pack (data-style on the page root, seen through :host-context): labels take its case, tracking and weight;
    pixel's figures its display face, its bars striped and its lines hard; newspaper rules under a slot's head; terminal is
    outlines and hatching, not floods; every pack's radius comes through --r-sm -- */
-.vw-slot-h,.vw-hd,.vw-log .lane,.vw-tablewrap th{text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.08em);font-weight:var(--label-weight,600);font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
+.vw-slot-h,.vw-hd,.vw-log .lane{text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.08em);font-weight:var(--label-weight,600);font-family:var(--f-ui,var(--sans,system-ui,sans-serif))}
 :host-context([data-style="pixel"]) .vw-slot{box-shadow:0 0 0 2px var(--bd2,rgba(255,255,255,.14))}
-:host-context([data-style="pixel"]) .vw-hero b,:host-context([data-style="pixel"]) .vb-hero b,:host-context([data-style="pixel"]) .vb-bigs b{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0;font-size:clamp(11px, min(42cqh, 14cqi), 20px)}
+:host-context([data-style="pixel"]) .vb-hero b,:host-context([data-style="pixel"]) .vb-bigs b{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0;font-size:clamp(11px, min(42cqh, 14cqi), 20px)}
 :host-context([data-style="pixel"]) .vw-slot-h b{font-family:var(--f-mono,ui-monospace,monospace);font-size:12px}
-:host-context([data-style="pixel"]) .vw-track,:host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vw-pill,:host-context([data-style="pixel"]) .vw-legend i,:host-context([data-style="pixel"]) .vb-batt .cells i,:host-context([data-style="pixel"]) .vw-heat div{border-radius:0}
-:host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-stackbar i,:host-context([data-style="pixel"]) .vb-batt .cells i.on{background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.3) 0 1px,transparent 1px 4px)}
+:host-context([data-style="pixel"]) .vw-track,:host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vw-legend i,:host-context([data-style="pixel"]) .vb-batt .cells i{border-radius:0}
+:host-context([data-style="pixel"]) .vw-track i,:host-context([data-style="pixel"]) .vw-therm span i,:host-context([data-style="pixel"]) .vb-rw .tr i,:host-context([data-style="pixel"]) .vb-batt .cells i.on{background-image:repeating-linear-gradient(90deg,rgba(0,0,0,.3) 0 1px,transparent 1px 4px)}
 :host-context([data-style="pixel"]) polyline,:host-context([data-style="pixel"]) polygon{stroke-width:3;stroke-linejoin:miter;stroke-linecap:butt;shape-rendering:crispEdges}
 :host-context([data-style="pixel"]) circle,:host-context([data-style="pixel"]) rect{shape-rendering:crispEdges}
 .vb-what{text-align:center;font-size:var(--vw-fmin,10.5px);color:var(--b-t2);text-transform:var(--label-case,uppercase);letter-spacing:var(--label-track,.08em);font-weight:var(--label-weight,600);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vb-rot{height:1.55em;overflow:hidden;text-align:center;margin-top:5px;font-size:var(--vw-fmin,10.5px);color:var(--b-t2)}.vb-rot-in{animation:vbrot calc(var(--n) * 3.6s) steps(var(--n)) infinite}.vb-rot-in span{display:block;height:1.55em;line-height:1.55em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-rot-in b{color:var(--b-t1);font-family:var(--b-mono)}.vb-rot:hover .vb-rot-in{animation-play-state:paused}
 @keyframes vbrot{to{transform:translateY(calc(var(--n) * -1.55em))}}
 /* the packs dress the figures: the newspaper sets them in a serif with a rule under the caption, pixel in its pixel face on a stepped plate, terminal as a green readout with a cursor */
-:host-context([data-style="newspaper"]) .vb-seg7 span,:host-context([data-style="newspaper"]) .vb-hero b,:host-context([data-style="newspaper"]) .vb-bigs b,:host-context([data-style="newspaper"]) .vw-hero b{font-family:var(--f-disp,Georgia,'Times New Roman',serif);font-weight:700;letter-spacing:-.01em}
+:host-context([data-style="newspaper"]) .vb-seg7 span,:host-context([data-style="newspaper"]) .vb-hero b,:host-context([data-style="newspaper"]) .vb-bigs b{font-family:var(--f-disp,Georgia,'Times New Roman',serif);font-weight:700;letter-spacing:-.01em}
 :host-context([data-style="newspaper"]) .vb-what{font-variant:small-caps;text-transform:none;letter-spacing:.06em;border-top:1px solid var(--t3,#6b7280);padding-top:3px;margin:4px auto 0;max-width:80%}
 :host-context([data-style="newspaper"]) .vb-rot{font-style:italic}
 :host-context([data-style="pixel"]) .vb-seg7 span{font-family:var(--f-disp,var(--f-mono,ui-monospace,monospace));letter-spacing:0}
@@ -3454,8 +3424,8 @@ span.vw-sampled{opacity:.85}
 :host-context([data-style="newspaper"]) .vw-slot{background:transparent;box-shadow:0 0 0 1px var(--bd,rgba(255,255,255,.09))}
 :host-context([data-style="newspaper"]) .vw-slot-h{border-bottom:1px solid var(--t3,#6b7280);padding-bottom:3px}
 :host-context([data-style="terminal"]) .vw-slot{background:transparent;box-shadow:0 0 0 1px var(--bd,rgba(255,255,255,.09))}
-:host-context([data-style="terminal"]) .vw-track i,:host-context([data-style="terminal"]) .vw-therm span i,:host-context([data-style="terminal"]) .vb-rw .tr i,:host-context([data-style="terminal"]) .vw-stackbar i{background-image:repeating-linear-gradient(135deg,rgba(0,0,0,.38) 0 2px,transparent 2px 5px)}
-:host-context([data-style="terminal"]) .vw-pill{background:transparent;box-shadow:inset 0 0 0 1px var(--bd2,rgba(255,255,255,.14))}
+:host-context([data-style="terminal"]) .vw-track i,:host-context([data-style="terminal"]) .vw-therm span i,:host-context([data-style="terminal"]) .vb-rw .tr i{background-image:repeating-linear-gradient(135deg,rgba(0,0,0,.38) 0 2px,transparent 2px 5px)}
+
 /* ── the boards' forms (vb-): the token bridge, then the Widgets board's CSS under its own prefix ── */
 
 /* ── the iso and motion forms (the WidgetsMotion and WidgetsIso boards): every face a positioned div with a clip-path ── */
@@ -3542,7 +3512,7 @@ span.vw-sampled{opacity:.85}
 .vb-fc .k{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);display:flex;gap:6px;align-items:center}.vb-fc .k i{width:6px;height:6px;border-radius:50%}.vb-fc .h{font-size:12px;font-weight:600;color:var(--b-t1);line-height:1.35}.vb-fc .b{font-size:10px;color:var(--b-t2);line-height:1.45;overflow:hidden}.vb-fc .m{font-family:var(--b-mono);font-size:8.5px;color:var(--b-t3);display:flex;gap:8px}
 .vb-fn,.vb-carn{display:flex;align-items:center;gap:5px}.vb-fn button,.vb-carn button{width:22px;height:18px;border-radius:var(--b-r);background:var(--b-surf2);color:var(--b-t2);font-size:11px}.vb-fn i,.vb-carn i{width:6px;height:6px;border-radius:50%;background:var(--b-s3);cursor:pointer}.vb-fn i.on,.vb-carn i.on{background:var(--b-ac)}.vb-fn span{margin-left:auto;font-family:var(--b-mono);font-size:8.5px;color:var(--b-t3)}.vb-carn .vb-lbl{margin-left:8px}
 .vb-fr{display:grid;grid-template-columns:18px 1fr 44px 52px;gap:7px;align-items:center;height:22px;font-size:10px;border-bottom:1px solid var(--b-bd)}.vb-fr.h{color:var(--b-t3);font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;height:18px}.vb-fr .ic{width:14px;height:16px;border-radius:2px;font-family:var(--b-mono);font-size:6.5px;font-weight:700;color:#0e0f12;display:flex;align-items:flex-end;justify-content:center;padding-bottom:1px}.vb-fr .n{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-fr .n small{color:var(--b-t3);margin-left:5px;font-size:9px}.vb-fr .m{font-family:var(--b-mono);font-size:9px;color:var(--b-t3);text-align:right}
-.vb-dgr{display:grid;gap:6px;align-items:center;height:21px;font-size:9.5px;border-bottom:1px solid var(--b-bd)}.vb-dgr.h{height:20px}.vb-dgr.h button{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);text-align:left;display:flex;gap:3px;align-items:center;white-space:nowrap}.vb-dgr.h button.on{color:var(--b-t1)}.vb-dgr:nth-child(odd):not(.h){background:color-mix(in srgb,var(--b-surf2) 60%,transparent)}.vb-dgr .c{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:4px}.vb-dgr .c.num{font-family:var(--b-mono);color:var(--b-t2);text-align:right;padding-left:0}.vb-dgr .c.dn{color:var(--b-ac4)}.vb-r2w{display:flex;flex-direction:column;gap:1px}.vb-dgr[data-r2]{display:flex;align-items:center;gap:8px;height:auto;min-height:23px;padding:3px 5px;border-bottom:1px solid var(--b-bd);border-radius:4px;font-size:11px;cursor:pointer}.vb-dgr[data-r2]:hover{background:var(--b-surf2)}.vb-dgr[data-r2] > .st{flex:none;width:8px;height:8px;border-radius:50%}.vb-dgr[data-r2] > .st.none{background:var(--b-bd2)}.vb-dgr[data-r2] .nm{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}.vb-dgr[data-r2] .nm b{font-weight:500;color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .nm small{font-size:9.5px;color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .nm small em{font-style:normal;margin-left:8px;color:var(--b-t2)}.vb-dgr[data-r2] .nm small em:first-child{margin-left:0}.vb-dgr[data-r2] .pill{flex:none;font-size:9.5px;line-height:1.5;padding:0 7px;border-radius:999px;color:var(--c);background:color-mix(in srgb,var(--c) 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 35%,transparent);white-space:nowrap}.vb-dgr[data-r2] .vv{flex:none;position:relative;min-width:52px;max-width:42%;text-align:right;font-family:var(--b-mono);font-size:10.5px;color:var(--b-t1);padding:1px 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .vv .bar{position:absolute;right:0;bottom:0;height:2px;border-radius:2px;background:var(--b-ac);opacity:.75}.vb-r2s{display:flex;flex-direction:column;gap:5px;margin:0 0 6px}.vb-r2s .bar{display:flex;height:6px;border-radius:3px;overflow:hidden;gap:1px}.vb-r2s .bar i{display:block;min-width:3px}.vb-r2s .lg{display:flex;flex-wrap:wrap;gap:4px}.vb-r2s .lg button{display:inline-flex;align-items:center;gap:5px;font-size:10px;padding:1px 7px;border-radius:999px;color:var(--b-t2);background:var(--b-surf2);box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-r2s .lg button.on{color:var(--b-t1);box-shadow:inset 0 0 0 1px var(--b-ac)}.vb-r2s .lg i{width:7px;height:7px;border-radius:50%}.vb-r2s .lg b{font-family:var(--b-mono);font-weight:500;color:var(--b-t1)}.vb-r2m{cursor:pointer;margin-top:4px;padding-left:5px}.vb-r2m:hover{color:var(--b-ac)}
+.vb-dgr{display:grid;gap:6px;align-items:center;height:21px;font-size:9.5px;border-bottom:1px solid var(--b-bd)}.vb-dgr.h{height:20px}.vb-dgr.h button{font-size:8.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--b-t3);text-align:left;display:flex;gap:3px;align-items:center;white-space:nowrap}.vb-dgr.h button.on{color:var(--b-t1)}.vb-dgr:nth-child(odd):not(.h){background:color-mix(in srgb,var(--b-surf2) 60%,transparent)}.vb-dgr .c{color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:4px}.vb-dgr .c.num{font-family:var(--b-mono);color:var(--b-t2);text-align:right;padding-left:0}.vb-dgr .c.dn{color:var(--b-ac4)}.vb-r2w{display:flex;flex-direction:column;gap:1px}.vb-dgr[data-r2]{display:flex;flex:none;align-items:center;gap:8px;height:auto;min-height:23px;padding:3px 5px;border-bottom:1px solid var(--b-bd);border-radius:4px;font-size:11px;cursor:pointer}.vb-dgr[data-r2]:hover{background:var(--b-surf2)}.vb-dgr[data-r2] > .st{flex:none;width:8px;height:8px;border-radius:50%}.vb-dgr[data-r2] > .st.none{background:var(--b-bd2)}.vb-dgr[data-r2] .nm{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.3}.vb-dgr[data-r2] .nm b{font-weight:500;color:var(--b-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .nm small{font-size:9.5px;color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .nm small em{font-style:normal;margin-left:8px;color:var(--b-t2)}.vb-dgr[data-r2] .nm small em:first-child{margin-left:0}.vb-dgr[data-r2] .pill{flex:none;font-size:9.5px;line-height:1.5;padding:0 7px;border-radius:999px;color:var(--c);background:color-mix(in srgb,var(--c) 14%,transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--c) 35%,transparent);white-space:nowrap}.vb-dgr[data-r2] .vv{flex:none;position:relative;min-width:52px;max-width:42%;text-align:right;font-family:var(--b-mono);font-size:10.5px;color:var(--b-t1);padding:1px 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-dgr[data-r2] .vv .bar{position:absolute;right:0;bottom:0;height:2px;border-radius:2px;background:var(--b-ac);opacity:.75}.vb-r2s{display:flex;flex-direction:column;gap:5px;margin:0 0 6px}.vb-r2s .bar{display:flex;height:6px;border-radius:3px;overflow:hidden;gap:1px}.vb-r2s .bar i{display:block;min-width:3px}.vb-r2s .lg{display:flex;flex-wrap:wrap;gap:4px}.vb-r2s .lg button{display:inline-flex;align-items:center;gap:5px;font-size:10px;padding:1px 7px;border-radius:999px;color:var(--b-t2);background:var(--b-surf2);box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-r2s .lg button.on{color:var(--b-t1);box-shadow:inset 0 0 0 1px var(--b-ac)}.vb-r2s .lg i{width:7px;height:7px;border-radius:50%}.vb-r2s .lg b{font-family:var(--b-mono);font-weight:500;color:var(--b-t1)}.vb-r2m{cursor:pointer;margin-top:4px;padding-left:5px}.vb-r2m:hover{color:var(--b-ac)}
 .vb-dgf{display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--b-t3);padding-top:4px;margin-top:auto}
 .vb-dgr .c .st{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:5px;vertical-align:middle}
 .vb-tsearch{display:flex;align-items:center;gap:6px;height:24px;padding:0 8px;border-radius:var(--b-r);background:var(--b-s2);color:var(--b-t3);font-size:10px;box-shadow:inset 0 0 0 1px var(--b-bd)}.vb-tsearch input{flex:1;border:none;background:transparent;color:var(--b-t1);font:inherit;font-size:10px;min-width:0;outline:none}
@@ -3594,14 +3564,14 @@ span.vw-sampled{opacity:.85}
 .vb-tmap{flex:none;min-height:40px;display:flex;flex-wrap:wrap;gap:2px;align-content:stretch}.vb-tmap span{border-radius:3px;display:flex;align-items:flex-end;padding:4px 5px;font-family:var(--b-mono);font-size:8px;color:var(--b-on);overflow:hidden;white-space:nowrap}
 /* matrices and calendars */
 .vb-heatrow{display:grid;grid-template-columns:46px 1fr 32px;align-items:center;gap:8px}.vb-heatrow.nt{grid-template-columns:46px 1fr}.vb-heatfit{gap:3px;justify-content:center}.vb-heatrow.hd .vb-heat b{font-family:var(--b-mono);font-size:8px;font-weight:400;color:var(--b-t3);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-heatfit .vb-heat i{display:flex;align-items:center;justify-content:center;font-family:var(--b-mono);font-size:8.5px;font-style:normal;color:var(--b-t1)}.vb-heatfit .vb-lbl{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.vb-heatrow .v{font-family:var(--b-mono);font-size:9px;text-align:right}.vb-heat{display:grid;gap:2px;align-content:center}.vb-heat i{aspect-ratio:1;border-radius:2px;display:block}
-.vb-heatstrip{display:grid;gap:2px;flex:1;min-height:0;align-content:center}.vb-heatstrip i{aspect-ratio:1;border-radius:2px;max-width:44px;justify-self:center;width:100%}
+.vb-heatstrip{display:grid;gap:2px;flex:1;min-height:0;align-content:center}.vb-heatstrip i{aspect-ratio:1;border-radius:2px;max-width:44px;justify-self:center;width:100%}.vb-heatstrip.named span{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}.vb-heatstrip.named em{font-style:normal;font-size:8.5px;line-height:1.1;color:var(--b-t3);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vb-mxh,.vb-mxr{display:grid;gap:4px;align-items:center}.vb-mxh span{font-family:var(--b-mono);font-size:8px;color:var(--b-t3);text-align:center;white-space:nowrap;overflow:hidden}.vb-mxr .n{font-size:9.5px;color:var(--b-t2);white-space:nowrap;overflow:hidden}.vb-mxr i{height:17px;border-radius:3px;display:block}
 .vb-dots{display:grid;grid-template-columns:repeat(20,1fr);gap:3px;flex:1;min-height:0;align-content:center}.vb-dots i{aspect-ratio:1;border-radius:50%;display:block}
 .vb-cal{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;gap:2px;flex:none;min-height:70px}.vb-cal i{border-radius:2px;display:block}
 .vb-tabs{display:flex;gap:2px;background:var(--b-surf2);border-radius:var(--b-r);padding:2px;align-self:flex-start;box-shadow:var(--elev-lo,0 1px 2px rgba(0,0,0,.14))}.vb-tabs button{height:20px;padding:0 9px;font-size:9.5px;color:var(--b-t2);border-radius:calc(var(--b-r) - 2px)}.vb-tabs button.on{background:var(--pri-bg,var(--b-ac));color:var(--pri-fg,var(--b-on));font-weight:600}
 .vb-nhr{display:grid;grid-template-columns:52px 1fr 44px 62px;gap:8px;align-items:center;font-size:9.5px}.vb-nhr .n{color:var(--b-t2);white-space:nowrap;overflow:hidden}.vb-nhr .tr{height:8px;border-radius:4px;background:var(--b-s3);overflow:hidden}.vb-nhr .tr i{display:block;height:100%;border-radius:4px}.vb-nhr .v{font-family:var(--b-mono);text-align:right;color:var(--b-t1)}.vb-nhr .pips{display:flex;gap:3px;align-items:flex-end;height:12px}.vb-nhr .pips i{width:10px;border-radius:1px;display:block}
 /* stages and time */
-.vb-stepr{display:flex;align-items:center;gap:0;flex:1;min-height:0;padding-top:6px}.vb-stepr span{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;position:relative;min-width:0}.vb-stepr span::before{content:'';position:absolute;top:8px;left:-50%;width:100%;height:2px;background:var(--b-s3)}.vb-stepr span:first-child::before{display:none}.vb-stepr span.done::before{background:var(--b-ac2)}.vb-stepr i{width:17px;height:17px;border-radius:50%;background:var(--b-s3);z-index:1;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--b-t3);font-style:normal}.vb-stepr span.done i{background:var(--b-ac2);color:var(--b-on)}.vb-stepr span.now i{background:var(--b-ac);color:var(--b-on);box-shadow:0 0 0 4px color-mix(in srgb,var(--b-ac) 22%,transparent)}.vb-stepr span.bad i{background:var(--b-ac4);color:var(--b-on)}.vb-stepr em{font-style:normal;font-size:8.5px;color:var(--b-t3);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.vb-stepr span.done em,.vb-stepr span.now em{color:var(--b-t1)}
+.vb-stepr{display:flex;align-items:center;gap:0;flex:1;min-height:0;padding-top:6px}.vb-stepr span{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;position:relative;min-width:0}.vb-stepr span::before{content:'';position:absolute;top:8px;left:-50%;width:100%;height:2px;background:var(--b-s3)}.vb-stepr span:first-child::before{display:none}.vb-stepr span.done::before{background:var(--b-ac2)}.vb-stepr i{width:17px;height:17px;border-radius:50%;background:var(--b-s3);z-index:1;display:flex;align-items:center;justify-content:center;font-size:8px;color:var(--b-t3);font-style:normal}.vb-stepr span.done i{background:var(--b-ac2);color:var(--b-on)}.vb-stepr span.now i{background:var(--b-ac);color:var(--b-on);box-shadow:0 0 0 4px color-mix(in srgb,var(--b-ac) 22%,transparent)}.vb-stepr span.bad i{background:var(--b-ac4);color:var(--b-on)}.vb-stepr small{font-size:8.5px;line-height:1;color:var(--b-t3);font-family:var(--mono,ui-monospace,monospace);font-variant-numeric:tabular-nums;white-space:nowrap}.vb-stepr.dense i{width:13px;height:13px;font-size:7px}.vb-stepr.dense span::before{top:6px}.vb-stepr.dense span.quiet em,.vb-stepr.dense span.quiet small{visibility:hidden}.vb-stepr em{font-style:normal;font-size:8.5px;color:var(--b-t3);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}.vb-stepr span.done em,.vb-stepr span.now em{color:var(--b-t1)}
 .vb-gr{display:flex;align-items:center;gap:7px;font-size:9.5px;height:16px}.vb-gr .n{width:52px;flex-shrink:0;color:var(--b-t2);white-space:nowrap;overflow:hidden}.vb-gr .track{flex:1;position:relative;height:10px;background:var(--b-s3);border-radius:3px}.vb-gr .track i{position:absolute;top:0;height:10px;border-radius:3px}
 .vb-tl{flex:none;min-height:80px;position:relative;margin:0 30px}.vb-tl .ax{position:absolute;left:0;right:0;top:50%;height:2px;background:var(--b-s3)}.vb-tl .now{position:absolute;top:22%;bottom:22%;width:2px;background:var(--b-ac);box-shadow:0 0 0 3px color-mix(in srgb,var(--b-ac) 22%,transparent)}.vb-tl span{position:absolute;top:50%;transform:translate(-50%,-5px);display:flex;flex-direction:column;align-items:center;gap:4px;width:58px}.vb-tl span.up{transform:translate(-50%,calc(-100% + 5px));flex-direction:column-reverse}.vb-tl span i{width:10px;height:10px;border-radius:50%;background:var(--ec);box-shadow:0 0 0 2px var(--b-surf)}.vb-tl span em{font-style:normal;font-size:8.5px;color:var(--b-t1);white-space:nowrap}.vb-tl span small{font-family:var(--b-mono);font-size:8px;color:var(--b-t3)}
 .vb-pcard{display:grid;grid-template-columns:1fr 1fr;gap:6px;flex:1;min-height:0;align-content:center}.vb-pcard div{background:var(--b-surf2);border-radius:var(--b-r);padding:6px 8px;display:flex;flex-direction:column;gap:2px;min-width:0}.vb-pcard b{font-family:var(--b-mono);font-size:15px;font-weight:700;line-height:1}.vb-pcard span{font-size:8.5px;color:var(--b-t3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -3832,15 +3802,18 @@ span.vw-sampled{opacity:.85}
   /* VIEW AS (owner, 2026-09-27: "some widgets could transform to others to give a different view instead of haveing tonnes of
      realted spread out widgets"). A widget offers the forms of its data's family - only those that would draw this answer -
      and turns into the one chosen, in place; the choice is kept per widget, "as made" goes back. */
-  const NO_VIEW = /^(panel|composite|calnav|month|schedule|calendar|agenda|vgraph|terminal|media|diff|code|markdown|error|string|split-flap|frame|announcement|globe|candles|context_graph|structgraph)$/;
+  const NO_VIEW = /^(reading|panel|composite|calnav|month|schedule|calendar|agenda|vgraph|terminal|media|diff|code|markdown|error|string|split-flap|frame|announcement|globe|candles|context_graph|structgraph)$/;
   const VIEW_FAMILY = { series: ['trace', 'lines', 'area', 'step', 'scope', 'bars', 'table', 'json'], values: ['bars', 'column', 'ranked', 'lollipop', 'donut', 'treemap', 'pills', 'kv', 'table', 'json'],
     parts: ['donut', 'treemap', 'stacked-bar', 'waffle', 'bars', 'table', 'json'], items: ['table', 'rows', 'cards', 'list', 'stack', 'json'], events: ['log', 'lane', 'timeline', 'feed', 'table', 'json'],
-    level: ['radial', 'gauge', 'meter', 'dial', 'counter', 'hero', 'json'], stages: ['stepper', 'pipeline', 'progress', 'funnel', 'gantt', 'table', 'json'], points: ['scatter', 'table', 'json'],
+    level: ['radial', 'ring', 'gauge', 'meter', 'dial', 'counter', 'hero', 'trace', 'json'], stages: ['stepper', 'pipeline', 'progress', 'funnel', 'gantt', 'table', 'json'], points: ['scatter', 'table', 'json'],
     matrix: ['heat', 'matrix', 'dots', 'table', 'json'], graph: ['graph', 'minigraph', 'pipes', 'json'], rate: ['turbine', 'ticker', 'json'] };
+  // a figure's series views (trace) only when it has a trend to draw - two numbers or more (DO-0.3: the metric's trace)
+  const trendView = (rec, f, shape, data) => { if (shape !== 'level' || DRAWN[f] !== 'series') return true;
+    try { const dd = dataFor(mapped(rec, f, data), f); return Array.isArray(dd) && series(dd).filter((v) => isFinite(v)).length >= 2; } catch (_) { return false; } };
   function viewsFor(rec, form0, data) {
     const f0 = canon(form0), shape = DRAWN[f0]; if (!shape || NO_VIEW.test(f0) || data === undefined) return [];
     const out = [f0];
-    (VIEW_FAMILY[shape] || ['table', 'json']).forEach((f) => { if (out.includes(f) || typeof R[f] !== 'function') return; try { if (!isEmpty(dataFor(mapped(rec, f, data), f))) out.push(f); } catch (_) {} });
+    (VIEW_FAMILY[shape] || ['table', 'json']).forEach((f) => { if (out.includes(f) || typeof R[f] !== 'function' || !trendView(rec, f, shape, data)) return; try { if (!isEmpty(dataFor(mapped(rec, f, data), f))) out.push(f); } catch (_) {} });
     return out.slice(0, 9);
   }
   function partAt(root, target) {
@@ -4160,7 +4133,7 @@ span.vw-sampled{opacity:.85}
 
   class VeraWidgetEl extends HTMLElement {
     constructor() { super(); this._sh = this.attachShadow({ mode: 'open' }); this._rec = null; this._data = undefined; this._empty = false; this._drawn = ''; this._timer = null; this._ro = null; this._auto = 'm'; this._kids = {}; this._ui = {}; wireParts(this); }
-    static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare']; }
+    static get observedAttributes() { return ['record', 'size', 'base', 'template-id', 'bare', 'no-sample']; }
     get record() { return this._rec; }
     set record(v) {
       let j = ''; try { j = JSON.stringify(v); } catch (_) { j = ''; }
@@ -4174,7 +4147,13 @@ span.vw-sampled{opacity:.85}
       if (!this._calL) { this._calL = (e) => { const r = this._rec, dt = e.detail || {}; if (!r || e.target === this || !/^(month|schedule|calnav|agenda)$/.test(canon(r.form))) return; if (String((r.draw && r.draw.group) || 'cal') !== String(dt.group || 'cal')) return;
         if (dt.off != null) this._ui.off = +dt.off; if (dt.view) this._ui.view = dt.view; if (dt.sel !== undefined) this._ui.sel = dt.sel; if (hasArgTokens(r) && r.source) this.read(true); else this.render(); }; document.addEventListener('vera:calnav', this._calL); }
       const a = this.getAttribute('record'); if (a && !this._rec) { try { this.record = JSON.parse(a); } catch (_) { this._rec = normalise({}); } }
-      if (window.ResizeObserver && !this._rz) { let last = 0; this._rz = new ResizeObserver(() => { const h = this.clientHeight || 0; if (Math.abs(h - last) > 12) { last = h; this._measured = ''; if (this._rec) this.render(); } }); this._rz.observe(this); }
+      /* the observer's FIRST callback reports the size the element already drew and measured at (it starts from 0, so it
+         always "changed"): that callback redrew every widget a third time - a third of each widget's draw time on the desk,
+         measured in the Desk Lab (2026-10-11: 3 renders for every form). It is skipped when the widget has measured itself
+         at that height already; a widget drawn before layout (nothing measured) still redraws on it. */
+      if (window.ResizeObserver && !this._rz) { let last = 0, first = true; this._rz = new ResizeObserver(() => { const h = this.clientHeight || 0;
+        if (first) { first = false; if (this._measured && this._measuredH != null && Math.abs(h - this._measuredH) <= 12) { last = h; return; } }
+        if (Math.abs(h - last) > 12) { last = h; this._measured = ''; if (this._rec) this.render(); } }); this._rz.observe(this); }
       if (this.getAttribute('size') === 'auto' && window.ResizeObserver && !this._ro) { this._ro = new ResizeObserver(() => { const s = sizeForWidth(this.clientWidth || 300); if (s !== this._auto) { this._auto = s; this.render(); this.dispatchEvent(new CustomEvent('widget:resize', { bubbles: true, composed: true, detail: { size: s } })); } }); this._ro.observe(this); }
       this._boot();
     }
@@ -4327,25 +4306,30 @@ span.vw-sampled{opacity:.85}
       // form's SAMPLE face, marked, and says why in the caption; the widget always has a face (never "no data yet")
       const wasRead = !!this._read, dataM = mapped(rec, form, this._data), have = this._data !== undefined && !isEmpty(dataFor(dataM, form));   // what the form would draw of the answer
       const fillIn = canon(form) === 'form' && rec.draw && Array.isArray(rec.draw.fields) && rec.draw.fields.length > 0;   // a form to fill in is never a sample
-      const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element' && !fillIn;   // an element draws itself: it is never a sample      // the sample face: no source, or never read
+      const blank = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element' && !fillIn;   // an element draws itself: it is never a sample      // nothing read to draw: no source, or never read
+      /* NO SAMPLE (DO-0.3, owner: one rule everywhere): a host that sets no-sample - every desk item, a dashboard tile
+         except while it is being configured - never draws the form's SAMPLE values: it says it is reading, that the read
+         failed, or that there is nothing to show. The pickers, the galleries and the configure sheet keep the sample face. */
+      const noSample = this.hasAttribute('no-sample');
+      const sampled = blank && !noSample;
       const readEmpty = wasRead && !have && !this._err, stale = wasRead && !!this._err && have;
       // the face's STATE, on the host (data-state) and in widget:rendered: reading (a read is on its way - the sample face
       // is drawn faint, never as though it were the reading) · failed (a read that never answered) · sample (nothing to
       // read) · empty · stale · live. A bare host (a dashboard tile) says it in its own head, so its body carries no tag.
-      const reading = sampled && !this._err && !this._empty && !!rec.source && readable(rec.source) && this._data === undefined;
-      const state = reading ? 'reading' : (this._err && !have ? 'failed' : (sampled ? 'sample' : (readEmpty ? 'empty' : (stale ? 'stale' : 'live'))));
+      const reading = blank && !this._err && !this._empty && !!rec.source && readable(rec.source) && this._data === undefined;
+      const state = reading ? 'reading' : (this._err && !have ? 'failed' : (sampled ? 'sample' : ((readEmpty || blank) ? 'empty' : (stale ? 'stale' : 'live'))));
       if (this.getAttribute('data-state') !== state) this.setAttribute('data-state', state);
       opts.sampleTag = this.hasAttribute('bare') ? false : (reading ? 'reading…' : (state === 'failed' ? 'read failed' : undefined));
       let why = '';
-      if (this._err) why = esc(rec.source + ': ' + this._err) + (have ? ' · last reading' : ' · sample');
-      else if (this._empty && !have) why = esc(rec.source) + ' · read empty · sample';
+      if (this._err) why = esc(rec.source + ': ' + this._err) + (have ? ' · last reading' : (noSample ? '' : ' · sample'));
+      else if (this._empty && !have) why = esc(rec.source) + ' · read empty' + (noSample ? '' : ' · sample');
       else if (readEmpty) why = 'read · empty';
       else if (this._data === undefined && rec.source && !readable(rec.source)) why = '<button class="vw-read" data-read>Read ' + esc(rec.source) + '</button>';
       else if (this._data === undefined && rec.source) why = 'reading ' + esc(rec.source) + '…';
       // a read that answered with nothing says so in one voice; everything else draws as it did
-      const body = readEmpty && form !== 'panel' && form !== 'composite'
-        ? NODATA(rec.source, size)
-        : draw(form, have ? this._data : undefined, size, Object.assign({}, opts, wasRead ? { sample: false } : {}));
+      const body = (readEmpty || (blank && noSample)) && form !== 'panel' && form !== 'composite'
+        ? (blank && noSample ? unreadFace(state, rec.source, size, this._err) : NODATA(rec.source, size))
+        : draw(form, have ? this._data : undefined, size, Object.assign({}, opts, (wasRead || noSample) ? { sample: false } : {}));
       // bare: the HOST draws the head (a dashboard tile's own head carries the title and the record chip — the board's
       // tile is one head over the body), so the element draws its body and caption alone, as xs and s already do
       const small = size === 'xs' || size === 's' || this.hasAttribute('bare');
@@ -4380,7 +4364,7 @@ span.vw-sampled{opacity:.85}
       // the entry motion plays once, on the first real reading (a refresh redraws without it)
       if (state === 'live' && !this.hasAttribute('data-entered') && !this._entering) { this._entering = true; setTimeout(() => { this.setAttribute('data-entered', ''); this._entering = false; }, 900); }
       // a bare element (a dashboard tile's body) measures too: its host sizes it, and the forms fit what they are given
-      if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? (this._sh.querySelector('.vw-root') || this) : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0;   /* bare: the root is the box the content has */ if (hb > 0 || wb > 0) this._measured = size; if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
+      if (size !== 'xs' && size !== 's' && this._measured !== size) { const b = this._sh.querySelector('.vw-body') || (this.hasAttribute('bare') ? (this._sh.querySelector('.vw-root') || this) : null); const hb = b ? b.clientHeight : 0, wb = b ? b.clientWidth : 0;   /* bare: the root is the box the content has */ if (hb > 0 || wb > 0) { this._measured = size; this._measuredH = this.clientHeight || 0; } if ((hb > 48 && Math.abs(hb - (this._bodyH || 0)) > 12) || (wb > 80 && Math.abs(wb - (this._bodyW || 0)) > 12)) { if (hb > 48) this._bodyH = hb; if (wb > 80) this._bodyW = wb; this.render(); return; } }
       /* NOTHING TO SCROLL, NO SCROLLBAR (owner, 2026-10-03: "some of the widgets get an internal scrollbar on hover but
          there is nothing to scroll"): a face a few pixels taller than its box (a rounding, a margin - 355 in 352,
          measured on the dashboard) showed a scrollbar for nothing. Within 6 px the box keeps it, unscrolled. */
@@ -4403,7 +4387,7 @@ span.vw-sampled{opacity:.85}
     }
   }
   if (window.customElements && !customElements.get('vera-widget')) customElements.define('vera-widget', VeraWidgetEl);
-  window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, compositeXL, xlCompositeRows: XL_COMPOSITE_ROWS, version: 5 };
+  window.VeraWidget = { draw, forms, viewsFor, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss, ensureIso, figure, sizes: SIZES.slice(), heights: Object.assign({}, HEIGHT), sizeForWidth, shapeFields: SHAPE_FIELDS, compositeXL, xlCompositeRows: XL_COMPOSITE_ROWS, version: 5 };
   Object.assign(window.VeraWidget, { dive, openBlock, rowTip, rowRef, fontScale, fromCapResult, fromCapStream, capForms: () => CAP_FORMS.slice(), capHints: () => Object.assign({}, CAP_HINTS),
     drawer, relatedTo, resolveArgs, toVeraGraph, itemAt, ensureVeraGraph });   // round 3: the data drawer, the calendar's arguments, the Vera graph form   // the widget review, round 2: blocks, the deep dive, the text-size setting
 

@@ -20,6 +20,32 @@
     d.style.zoom=String(sc);
     d.style.width='calc(100vw / '+sc+')';
     d.style.height='calc(100vh / '+sc+')';}}catch(e){}})();</script>
+<script>/* WHERE A CALL CAME FROM (DO-0.5; vera-c7's usage counter, B0.11 R0): this page's own calls to Vera's API carry
+   X-Vera-Surface: <surface>; trigger=<person|auto>. Only same-origin API paths, only when the call has not said its surface
+   already (the desk and the market chart say "desk" themselves). trigger=person while the browser's user activation is live. */
+(function () { try {
+  var f0 = window.fetch; if (!f0 || f0._veraSurf) return;
+  var SURF = 'lhm';
+  var STATIC = /\.(js|css|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|map|html?)$/i;
+  var wrapped = function (input, init) {
+    try {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var u = new URL(url, location.href);
+      if (u.origin === location.origin && !STATIC.test(u.pathname) && u.pathname.indexOf('/ui/') !== 0) {
+        init = Object.assign({}, init || {});
+        var h = new Headers(init.headers || (typeof input !== 'string' && input && input.headers) || {});
+        if (!h.has('X-Vera-Surface')) {
+          var act = navigator.userActivation && navigator.userActivation.isActive;
+          h.set('X-Vera-Surface', SURF + '; trigger=' + (act ? 'person' : 'auto'));
+        }
+        init.headers = h;
+      }
+    } catch (e) { /* the call goes out as it was */ }
+    return f0.call(this, input, init);
+  };
+  wrapped._veraSurf = true; window.fetch = wrapped;
+} catch (e) { /* no fetch to wrap */ } })();
+</script>
 <meta charset="UTF-8">
 <title>Vera — Orchestrator Harness</title>
 <!-- PWA: what makes this shell installable as an app. Served by
@@ -406,7 +432,7 @@ select option{background:var(--bg2)}
 /* Popped-out (floating) widget: lifted out of the grid with position:fixed so it
    stays mounted (its iframe/content keeps running) while floating over the page.
    A same-size placeholder (.w-float-ph) holds its grid slot until it docks. */
-.widget.floating{position:fixed;z-index:9000;resize:both;overflow:hidden;min-width:280px;min-height:180px;box-shadow:0 18px 60px rgba(0,0,0,.65);border-color:var(--acc);background:var(--bg2)}
+.widget.floating{position:fixed;z-index:var(--z-window,130);resize:both;overflow:hidden;min-width:280px;min-height:180px;box-shadow:0 18px 60px rgba(0,0,0,.65);border-color:var(--acc);background:var(--bg2)}
 .widget.floating .w-head{cursor:move}
 .widget.floating .w-actions{opacity:1}
 .w-iconbtn.w-pop.on{color:var(--acc)}
@@ -8652,8 +8678,8 @@ function _veraSoloDoc(css, html){
 }
 function _veraSoloFloat(d){
   const key = String(d.wid);
-  if (_soloFloats[key]) {                       // already open → nudge to front
-    document.body.appendChild(_soloFloats[key]);
+  if (_soloFloats[key]) {                       // already open → to the front of the windows
+    document.body.appendChild(_soloFloats[key]); if (window.VeraWindows) window.VeraWindows.raise(_soloFloats[key]);
     return;
   }
   const el = document.createElement('div');
@@ -8661,7 +8687,7 @@ function _veraSoloFloat(d){
   const w = Math.min(Math.max(340, d.w || 520), window.innerWidth  - 40);
   const h = Math.min(Math.max(240, d.h || 380), window.innerHeight - 60);
   el.style.cssText =
-    `position:fixed;z-index:9000;right:24px;bottom:24px;width:${w}px;height:${h}px;`
+    `position:fixed;z-index:var(--z-window,130);right:24px;bottom:24px;width:${w}px;height:${h}px;`
     + 'display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--acc);'
     + 'border-radius:var(--radius-lg,8px);box-shadow:0 18px 60px rgba(0,0,0,.65);'
     + 'overflow:hidden;resize:both;min-width:300px;min-height:200px';
@@ -8715,6 +8741,8 @@ function _veraSoloFloat(d){
   });
   document.body.appendChild(el);
   _soloFloats[key] = el;
+  /* a window among the page's windows (window.VeraWindows, vera-dashboard.js): pressed, it comes to the front */
+  if (window.VeraWindows) { window.VeraWindows.raise(el); el.addEventListener('mousedown', () => window.VeraWindows.raise(el), true); }
   if (hasSnapshot) _soloFrame.srcdoc = _veraSoloDoc(d.css, d.html);   // instant paint, no navigation
 }
 function _veraSoloUpdate(d){

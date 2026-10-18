@@ -5,9 +5,11 @@
   descriptions.
 * llm.generate(backend="vllm") imported the vLLM module from a package path the
   loader never uses, swallowed the ImportError, and always answered from Ollama.
-* GET /ollama/instances stopped answering when capabilities.py's registration
-  of ollama.instances (mounted at /ollama/cluster) replaced the orchestrator's,
-  yet panels still call that path.
+* GET /ollama/instances stopped answering when a second registration of
+  ollama.instances (capabilities.py's, mounted at /ollama/cluster) replaced the
+  orchestrator's. Since D11 (a) capability_orchestration.py is its one owner:
+  mounted at /ollama/instances, with a /ollama/cluster alias, and it carries
+  num_thread (which only the removed copy used to).
 
 Requires the full app (the `orch` fixture skips cleanly without it).
 """
@@ -52,14 +54,24 @@ def test_openclaw_tools_carry_the_registry_description(client):
 
 
 def test_ollama_instances_get_path_serves_the_capability(client, orch):
-    # /ollama/cluster is mounted by the lifespan; the alias is a plain route.
-    a = client.get("/ollama/instances")
-    assert a.status_code == 200
-    direct = asyncio.run(orch.CAPABILITY_REGISTRY["ollama.instances"]["raw"]())
-    assert set(a.json()) == set(direct)
-    for node in a.json().values():
-        # fields from both former registrations
-        assert {"enabled", "num_ctx", "num_thread", "status"} <= set(node)
+    # Both paths answer from the one orchestration registration. /ollama/cluster
+    # is a plain alias route on APP. /ollama/instances is the cap's own
+    # http_path, mounted by the lifespan (which this TestClient does not run),
+    # so it is mounted here with the same handler factory the lifespan uses.
+    cap = orch.CAPABILITY_REGISTRY["ollama.instances"]
+    assert cap["http_method"] == "GET" and cap["http_path"] == "/ollama/instances"
+    from fastapi import FastAPI
+    TestClient = pytest.importorskip("fastapi.testclient").TestClient
+    mounted = FastAPI()
+    mounted.add_api_route(cap["http_path"], orch._make_get_handler(cap, "ollama.instances"), methods=["GET"])
+    direct = asyncio.run(cap["raw"]())
+    for c, path in ((TestClient(mounted), "/ollama/instances"), (client, "/ollama/cluster")):
+        a = c.get(path)
+        assert a.status_code == 200, path
+        assert set(a.json()) == set(direct)
+        for node in a.json().values():
+            # the fields of both former registrations
+            assert {"enabled", "num_ctx", "num_thread", "status"} <= set(node)
 
 
 def test_llm_generate_reaches_the_loaded_vllm_module(orch, monkeypatch):

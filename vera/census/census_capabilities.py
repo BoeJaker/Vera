@@ -433,7 +433,7 @@ def _goal_ids_sync() -> List[str]:
         "goals_total/completed/remaining from goals.json (real queue order), "
         "plus the running loop's goal, elapsed seconds, live counters and its "
         "steps so far with cycle counts. Safe to poll. Output: {active, "
-        "progress, recent[], counters, steps[]}."),
+        "progress, recent[], counters, steps[]}."), contract={"presentation": {'kind': 'status', 'form': 'census-live'}}
 )
 async def cap_census_live(trace_id=None) -> Dict[str, Any]:
     files = _run_files()

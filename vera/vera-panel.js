@@ -514,3 +514,27 @@
     initNavBridge: initNavBridge,
   };
 })();
+
+/* ── "on the desk" (DA-06c): a panel element with data-app="<app id>" (and data-app-args='{"k":"v"}') opens that app on
+   the desk of the chat page hosting this panel. Hidden until the host answers that it can (a panel open on its own,
+   or in a page with no desk, shows no dead button). ── */
+(function () {
+  'use strict';
+  if (window.__veraPanelApps) return; window.__veraPanelApps = true;
+  var host = window.parent && window.parent !== window ? window.parent : null;
+  var css = document.createElement('style');
+  css.textContent = 'html:not(.vp-desk) [data-app]{display:none!important}';
+  (document.head || document.documentElement).appendChild(css);
+  if (!host) return;
+  window.addEventListener('message', function (ev) {
+    if (ev.source !== host || !ev.data || ev.data.type !== 'vera:app:ready') return;
+    document.documentElement.classList.add('vp-desk');
+  });
+  try { host.postMessage({ type: 'vera:app:hello' }, location.origin); } catch (e) { /* no host to ask */ }
+  document.addEventListener('click', function (ev) {
+    var b = ev.target && ev.target.closest ? ev.target.closest('[data-app]') : null; if (!b) return;
+    ev.preventDefault(); ev.stopPropagation();
+    var args = {}; try { args = b.getAttribute('data-app-args') ? JSON.parse(b.getAttribute('data-app-args')) : {}; } catch (e) { args = {}; }
+    try { host.postMessage({ type: 'vera:app:open', app: b.getAttribute('data-app'), args: args }, location.origin); } catch (e) { /* host gone */ }
+  }, true);
+})();

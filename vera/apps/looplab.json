@@ -1,0 +1,67 @@
+[
+  {
+    "id": "looplab.sandbox",
+    "panel": "looplab",
+    "title": "Sandbox",
+    "icon": "code",
+    "summary": "The sandboxes and their logs, joined by branch, and what one branch has changed",
+    "view": {
+      "kind": "composite",
+      "layout": "dashboard",
+      "parts": [
+        {
+          "from": "sandboxes",
+          "kind": "table",
+          "title": "Sandboxes",
+          "columns": ["branch", "name", "port", "running"]
+        },
+        {
+          "from": "logs",
+          "kind": "log",
+          "title": "Logs",
+          "columns": ["ts", "level", "br", "text"]
+        },
+        {
+          "from": "diff",
+          "kind": "diff",
+          "title": "Changes"
+        }
+      ],
+      "join": {
+        "sandboxes.branch": "logs.br"
+      }
+    },
+    "read": [
+      {
+        "as": "sandboxes",
+        "cap": "evolve.sandbox.list",
+        "args": {},
+        "refresh": {
+          "every_s": 30
+        }
+      },
+      {
+        "as": "logs",
+        "cap": "evolve.sandbox.logs",
+        "args": {
+          "limit": 150
+        },
+        "refresh": {
+          "every_s": 30
+        }
+      },
+      {
+        "as": "diff",
+        "cap": "evolve.sandbox.diff",
+        "args": {
+          "branch": "{arg.branch}",
+          "max_bytes": 60000
+        }
+      }
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
+  }
+]

@@ -478,7 +478,7 @@ schedule(_sample_once, SAMPLE_SEC, "sysmon_sampler")
                 "resources:{cpu,mem,proc_mb,...}, top_processes:[{pid,name,"
                 "user,mem_mb,cpu_pct}], proxmox:{...,top_guests:[{vmid,name,"
                 "type,node,status,cpu_pct,mem_mb,mem_pct}]}, docker:{...}, "
-                "ollama:{...}, temps:{hosts:[...]}}.",
+                "ollama:{...}, temps:{hosts:[...]}}.", contract={"presentation": {'kind': 'kv', 'form': 'numbers', 'map': {'pick': {'cpu': 'resources.cpu', 'memory': 'resources.mem', 'guests': 'proxmox.running', 'containers': 'docker.running'}}}}
 )
 async def cap_sysmon_status(fresh: bool = False, trace_id=None) -> Dict:
     age = (time.time() - _LAST_T) if _LAST_T else 1e9
@@ -500,7 +500,7 @@ async def cap_sysmon_status(fresh: bool = False, trace_id=None) -> Dict:
                 "{t, cpu, mem, proc_mb, proc_cpu, pmx_running, pmx_guests, "
                 "pmx_mem_pct, dkr_running, dkr_containers, oll_online, oll_inuse, "
                 "temp_max, pmx_temp_max, queue, workers, caps}. Input: limit (int, default 240). "
-                "Output: {samples:[...], count, interval_s, psutil}.",
+                "Output: {samples:[...], count, interval_s, psutil}.", contract={"presentation": {'kind': 'series', 'form': 'trace', 'map': {'series': 'samples', 'v': 'cpu'}}}
 )
 async def cap_sysmon_history(limit: int = 240, trace_id=None) -> Dict:
     items = list(_HISTORY)

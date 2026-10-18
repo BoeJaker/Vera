@@ -54,6 +54,7 @@ _RUNTIME_ADAPTERS = RUNTIME_ADAPTERS
 
 @capability(
     "agentbridge.runtime_matrix", http_method="GET",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "candidates"}, "draw": {"columns": ["label", "runtime_id", "integration", "execution_lane", "executes", "upstream_url"]}, "empty": "No runtime candidates"}},
     http_path="/agentbridge/runtime_matrix", http_tags=["agentbridge"],
     memory="off", silent=True,
     description="Return the deterministic agent-runtime compatibility comparison. "
@@ -88,6 +89,7 @@ async def agentbridge_runtime_matrix_evaluate(
 
 @capability(
     "agentbridge.interoperability", http_method="GET",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "shared_contracts"}, "draw": {"columns": ["id", "capability", "registered"]}, "title": "Shared contracts"}, {"kind": "table", "form": "table", "map": {"rows": "runtime_adapters"}, "draw": {"columns": ["label", "runtime_id", "image", "execution_supported", "inspection_executes"]}, "title": "Runtime adapters"}, {"kind": "kv", "map": {"fields": "a2a"}, "title": "A2A adapter"}, {"kind": "kv", "map": {"fields": "runtime_matrix"}, "title": "Runtime matrix"}]}},
     http_path="/agentbridge/interoperability", http_tags=["agentbridge", "interop"],
     memory="off", silent=True,
     description="Return an inspection-only summary of the A2A adapter, external "
@@ -271,6 +273,7 @@ async def _pypi_latest(package: str) -> Optional[str]:
 
 @capability(
     "agentbridge.catalog",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "bridges"}, "draw": {"columns": ["label", "paradigm", "enabled", "image_present", "image", "run_cap", "run_cap_registered", "docs_url"]}, "empty": "No agent bridges registered"}},
     http_method="GET", http_path="/agentbridge/catalog", http_tags=["agentbridge"],
     memory="off", silent=True,
     description="List every registered external agent-loop bridge (smolagents, "
@@ -299,6 +302,7 @@ async def agentbridge_catalog(trace_id=None) -> Dict[str, Any]:
 
 @capability(
     "agentbridge.check_updates",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "results"}, "draw": {"columns": ["bridge", "package", "pinned", "latest", "drift"]}, "empty": "No pinned packages to check"}},
     http_method="POST", http_path="/agentbridge/check_updates", http_tags=["agentbridge"],
     memory="off",
     description="Compare each registered bridge's PINNED pip package versions "

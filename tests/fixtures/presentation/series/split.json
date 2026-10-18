@@ -1,0 +1,37 @@
+{
+ "cap": "demo.activity",
+ "args": {},
+ "presentation": {
+  "kind": "series",
+  "map": {
+   "points": "buckets",
+   "t": "hour",
+   "split": [
+    "pass",
+    "fail"
+   ]
+  }
+ },
+ "result": {
+  "buckets": [
+   {
+    "hour": 1,
+    "pass": 3,
+    "fail": 1
+   },
+   {
+    "hour": 2,
+    "pass": 4,
+    "fail": 0
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "series",
+  "title": "demo.activity",
+  "forms": [
+   "area"
+  ]
+ }
+}

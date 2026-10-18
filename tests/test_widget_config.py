@@ -111,7 +111,8 @@ def test_every_form_has_a_sample_face_and_the_element_draws_it():
     assert "return sampleFace(draw(f0, sample(f), size" in EL
     assert "data-sample=\"1\"" in EL
     # the element itself: the sample face when nothing was read (defect 19), the read button in the caption
-    assert "const sampled = !wasRead && !have && form !== 'panel' && form !== 'composite';" in EL      # the sample only for a record never read
+    assert "const blank = !wasRead && !have && form !== 'panel' && form !== 'composite' && form !== 'element' && !fillIn;" in EL   # the sample only for a record never read
+    assert "const sampled = blank && !noSample;" in EL   # ... and never on a host that says no-sample (the desk; a dashboard at rest - DO-0.3)
     assert "detail: { form, size, sample: sampled, empty: readEmpty, stale }" in EL
     # every catalogue form resolves to a renderer (defect 18)
     for f in ("threshold", "'small-multiples'", "box", "radar", "carousel", "terminal", "controls", "button", "header", "rail", "dial", "galaxy"):

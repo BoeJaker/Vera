@@ -1,0 +1,23 @@
+/* The item z-order (DEEP-29 section 11A.4, Decision 6): one table for every item host - the desk/canvas, the dashboard,
+   the chat. Custom properties inherit into shadow roots, so an element reads them as var(--z-pop, 230) with the same
+   number as its fallback. vera/ui/vera_item.js carries the same table as VeraItem.Z; tests/test_vera_item.cjs holds the
+   two to one answer, and no item host may write a z-index that is not one of these. */
+:root {
+  --z-back: 1;            /* the graph behind the desk */
+  --z-layer-behind: 2;    /* a panel layer behind the items */
+  --z-tile: 10;           /* tiles: 10-110, higher the closer to the chat */
+  --z-tile-top: 110;
+  --z-pill: 115;          /* pills on the border, never over an open item's head band */
+  --z-tile-focus: 120;    /* the focused tile */
+  --z-window: 130;        /* windows: 130-149, the last focused highest */
+  --z-window-top: 149;
+  --z-full: 150;          /* an item filling the free region */
+  --z-layer-front: 155;   /* a panel layer in front of the items */
+  --z-flash: 180;         /* flashed / pointed out */
+  --z-drag: 200;          /* being dragged */
+  --z-pop: 230;           /* popovers, item menus */
+  --z-menu: 240;          /* surface menus */
+  --z-chat: 250;          /* the chat over the desk */
+  --z-sheet: 300;         /* sheets, dialogs */
+  --z-toast: 400;         /* a host's toast: over its sheets and every item */
+}

@@ -4253,6 +4253,7 @@ async def cap_discover_detect(
 
 @capability(
     "fabric.surfaces.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "surfaces"}, "draw": {"columns": ["label", "kind", "url", "parent_dataset", "confidence", "promoted", "why"]}, "empty": "No surfaces detected"}},
     http_method="GET", http_path="/fabric/surfaces", http_tags=["fabric", "discover"],
     memory="off", silent=True,
     description="List detected interaction surfaces. Input: parent_dataset (str), "
@@ -4421,6 +4422,7 @@ def _short_ex(v) -> str:
 
 @capability(
     "fabric.api.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "apis"}, "draw": {"columns": ["label", "url", "kind", "parent_dataset", "confidence", "promoted", "endpoint_count"]}, "empty": "No API surfaces discovered"}},
     http_method="GET", http_path="/fabric/api/list",
     http_tags=["fabric", "discover", "api"], memory="off", silent=True,
     description="List discovered API surfaces across all datasets for the API "
@@ -4786,6 +4788,7 @@ async def cap_surfaces_preview(surface_id: str = "", url: str = "",
 
 @capability(
     "fabric.subtables.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "subtables"}, "draw": {"columns": ["title", "kind", "parent_dataset", "row_count", "columns", "from_url", "created_at"]}, "empty": "No sub-tables extracted"}},
     http_method="GET", http_path="/fabric/subtables", http_tags=["fabric", "discover"],
     memory="off", silent=True,
     description="List extracted sub-tables (embedded structured concepts pulled into "
@@ -5149,6 +5152,7 @@ log.info("fabric_discovery: discovery & sub-source detection loaded "
 
 @capability(
     "fabric.discover.history",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "crawls"}, "draw": {"columns": ["seed_url", "dataset_id", "status", "pages_fetched", "queued", "surfaces_found", "subtables_found", "updated_at"]}, "empty": "No discovery crawls"}},
     http_method="GET", http_path="/fabric/discover/history",
     http_tags=["fabric", "discover"], memory="off", silent=True,
     description="List discovery crawls (resumable frontiers) with progress counts. "
@@ -7687,6 +7691,7 @@ async def cap_synthesize_topic(
 
 @capability(
     "fabric.domains.authority",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "domains"}, "draw": {"columns": ["domain", "source_type", "score", "base_authority", "avg_relevance", "avg_novelty", "pages"]}, "empty": "No domain authority learned yet"}},
     http_method="GET", http_path="/fabric/domains/authority",
     http_tags=["fabric", "discovery"], memory="off",
     description="Learned domain-relevance-vs-topic table (Google-indexing style): "

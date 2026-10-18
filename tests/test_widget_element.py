@@ -30,8 +30,8 @@ def test_a_read_that_answered_with_nothing_says_no_data():
     read has its own face now. A real zero is untouched: zero is a reading, not an absence."""
     src = _read("vera", "widgets", "widget_element.js")
     assert "const NODATA = (src, size) =>" in src
-    assert "readEmpty && form !== 'panel' && form !== 'composite'" in src
-    assert "? NODATA(rec.source, size)" in src
+    assert "(readEmpty || (blank && noSample)) && form !== 'panel' && form !== 'composite'" in src   # and nothing read on a no-sample host (DO-0.3)
+    assert ": NODATA(rec.source, size))" in src and "unreadFace(state, rec.source, size, this._err)" in src
     # the state it is for is the one the element already separated out
     assert "const readEmpty = wasRead && !have && !this._err" in src
     # and it has a look of its own
@@ -42,7 +42,7 @@ def test_the_element_is_served_and_exposes_one_renderer():
     assert '@APP.get("/ui/widgets/widget_element.js", include_in_schema=False)' in UI
     assert 'Path(__file__).parent.parent / "widgets" / "widget_element.js"' in UI
     assert "customElements.define('vera-widget', VeraWidgetEl)" in EL
-    assert "window.VeraWidget = { draw, forms, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss," in EL
+    assert "window.VeraWidget = { draw, forms, viewsFor, normalise, formByShape, dataFor, applyMap, pick, mapped, formFor, readable, key, hydrate, sample, call, css: () => CSS, ensureCss," in EL
     # the compositions the Sizes board names
     for s in ("'xs'", "'s'", "'m'", "'l'", "'xl'"):
         assert s in EL

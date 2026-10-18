@@ -2917,6 +2917,7 @@ async def retrieval_timing(path: str = "", trace_id=None):
 
 @capability(
     "memory.backends", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "backends"}, "draw": {"columns": ["name", "connected", "total", "active", "edges"]}}},
     http_method="GET", http_path="/memory/backends", http_tags=["memory"],
     description="List active memory backends and their connection status.",
 )

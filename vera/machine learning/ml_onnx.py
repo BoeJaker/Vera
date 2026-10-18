@@ -815,6 +815,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "ml.onnx.list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "artifacts"}, "draw": {"columns": ["slug", "module_id", "dtype", "node_count", "size_kb", "created", "cap_name"]}, "empty": "No ONNX artifacts"}},
         http_method="GET", http_path="/ml/onnx/list", http_tags=["ml", "onnx"],
         memory="off", silent=True,
         description="List exported ONNX artifacts. Output: {artifacts:[...], dir}.",

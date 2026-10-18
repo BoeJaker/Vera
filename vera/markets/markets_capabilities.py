@@ -1198,6 +1198,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "markets.watchlist.list", http_method="GET", http_path="/markets/watchlist",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "watchlist"}, "draw": {"columns": ["symbol", "exchange", "last_status", "last_update", "auto_update", "update_interval_min", "live_track"]}, "empty": "The watchlist is empty"}},
         http_tags=["markets"], memory="off", silent=True,
         description="List watched assets with config, stored bar counts and last update. "
                     "Output: {watchlist:[{id,exchange,symbol,timeframes,auto_update,"
@@ -1343,6 +1344,14 @@ if _CAP_AVAILABLE:
         if p.exists():
             return HTMLResponse(p.read_text(encoding="utf-8"))
         return HTMLResponse("<p style='color:red'>markets_panel.html not found</p>")
+
+    # the one markets chart (WSU-75): the panel's chart pieces and <vera-mkt-chart>, shared by the panel and the desk
+    @APP.get("/markets/chart.js", include_in_schema=False)
+    async def _markets_chart_js():
+        from fastapi.responses import Response
+        p = _HERE / "markets_chart.js"
+        return Response(p.read_text(encoding="utf-8") if p.exists() else "/* markets_chart.js not found */",
+                        media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
     # ONE Markets panel: the Quant Studio is the whole tab (single left-rail
     # navigation — no sub-tab bar). The classic panel is no longer navigable

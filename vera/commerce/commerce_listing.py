@@ -518,6 +518,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.listing.list", http_method="GET",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "listings"}, "draw": {"columns": ["title", "platform", "status", "price", "currency", "condition", "updated_at"]}, "empty": "No listings"}},
         http_path="/business/listing/list", http_tags=["commerce"],
         memory="off", silent=True,
         schema=enum_schema(status=LISTING_STATUS, platform=LISTING_PLATFORMS),

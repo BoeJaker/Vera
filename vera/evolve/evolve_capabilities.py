@@ -387,7 +387,9 @@ async def evolve_estate_writers(limit: int = 400, trace_id=None):
             description="Verbose activity/change log — every promote, rollback, "
                         "code-queue, branch op, pipeline decision, sandbox op and "
                         "config change, newest first. Query: limit (int=100), "
-                        "action (str filter).")
+                        "action (str filter).",
+            contract={"presentation": {"kind": "log", "map": {
+                "events": "audit", "t": "ts", "text": "summary", "kind": "action"}}})
 async def evolve_audit_list(limit: int = 100, action: str = "", trace_id=None):
     r = _redis()
     out: List[Dict[str, Any]] = []
@@ -427,6 +429,7 @@ async def _get_config() -> Dict[str, Any]:
 
 
 @capability("evolve.config.get", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "map": {"fields": "config"}}},
             http_method="GET", http_path="/evolve/config", http_tags=["evolve"],
             description="Loop Lab global config: critic/editor providers, target "
                         "score, rounds, allow_code_edits, default profile.")
@@ -1236,6 +1239,7 @@ async def _save_task(task: Dict[str, Any]):
 
 
 @capability("evolve.tasks", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "tasks"}, "draw": {"columns": ["label", "type", "profile", "enabled", "timeout_s", "id"]}}},
             http_method="GET", http_path="/evolve/tasks", http_tags=["evolve"],
             description="List benchmark tasks (loop-type goals + cap-type smoke "
                         "tests). Query: tag (str filter).")
@@ -1368,6 +1372,7 @@ async def _get_census_templates() -> List[Dict[str, Any]]:
 
 
 @capability("evolve.census.templates", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "templates"}, "draw": {"columns": ["name", "tag", "goals_n", "wall_cap_s", "model", "description"]}}},
             http_method="GET", http_path="/evolve/census/templates",
             http_tags=["evolve", "census"],
             description="List census templates — named goal sets. Each one's "
@@ -2787,6 +2792,7 @@ async def _evolve_authors_uncached(hours: int, branch: str):
 
 
 @capability("evolve.runs", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "runs"}, "draw": {"columns": ["label", "template", "status", "ok", "pass_rate", "combined", "elapsed_s", "source", "ts"]}, "empty": "No benchmark runs"}},
             http_method="GET", http_path="/evolve/runs", http_tags=["evolve"],
             description="Recent benchmark runs (compact, newest first), each "
                         "correlated against this repo's git log for its own "
@@ -3555,6 +3561,7 @@ async def evolve_suite_status(trace_id=None):
 
 
 @capability("evolve.suites", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "suites"}, "draw": {"columns": ["suite_id", "template", "tasks_n", "done", "pass_rate", "avg_combined", "source", "ts"]}, "empty": "No suite scoreboards"}},
             http_method="GET", http_path="/evolve/suites", http_tags=["evolve"],
             description="Recent suite scoreboards (newest first). Query: limit, "
                         "tag (str — only runs of THAT tag, which is how a census "
@@ -3587,6 +3594,7 @@ async def evolve_suites(limit: int = 12, tag: str = "", trace_id=None):
 
 
 @capability("evolve.report", memory="off", silent=True,
+            contract={"presentation": {"kind": "document", "map": {"body": "text"}}},
             http_method="GET", http_path="/evolve/report", http_tags=["evolve"],
             description="Markdown QA report: latest suite scoreboard + trend over "
                         "recent suites + regressions vs the previous suite. Used "
@@ -3662,7 +3670,7 @@ async def evolve_board(limit: int = 20, trace_id=None):
             http_method="GET", http_path="/evolve/activity", http_tags=["evolve"],
             description="Commit-chart data: hourly buckets of Loop Lab activity — "
                         "runs (pass/fail) + edit-queue actions — over the last "
-                        "`hours`. Output: {buckets:[{hour,pass,fail,edits}]}.")
+                        "`hours`. Output: {buckets:[{hour,pass,fail,edits}]}.", contract={"presentation": {'kind': 'series', 'form': 'area', 'map': {'series': 'buckets', 'split': ['pass', 'fail'], 't': 'hour'}}})
 async def evolve_activity(hours: int = 72, trace_id=None):
     import datetime as _dt
     from datetime import timezone
@@ -3991,6 +3999,7 @@ async def _editq_worker():
 
 
 @capability("evolve.editq.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "queue"}, "draw": {"columns": ["label", "kind", "status", "model", "provider", "error", "created_at", "ended_at"]}, "empty": "The edit queue is empty"}},
             http_method="GET", http_path="/evolve/editq", http_tags=["evolve"],
             description="The background edit queue — actions synthesised on the "
                         "pinned CPU model (gpt-oss:20b), newest first. Query: limit, "
@@ -4529,6 +4538,7 @@ async def evolve_improve_status(session_id: str = "", trace_id=None):
 
 
 @capability("evolve.improve.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sessions"}, "draw": {"columns": ["profile", "status", "phase", "rounds_done", "max_rounds", "best_score", "error", "started_at", "id"]}, "empty": "No improvement sessions"}},
             http_method="GET", http_path="/evolve/improve/list", http_tags=["evolve"],
             description="Recent improvement sessions (compact, newest first).")
 async def evolve_improve_list(limit: int = 20, trace_id=None):
@@ -5197,6 +5207,7 @@ async def _commit_attribution_map(limit: int = 500) -> Dict[str, Dict[str, Any]]
 
 
 @capability("evolve.git.graph", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "commits"}, "draw": {"columns": ["subject", "author", "date", "refs", "hash"]}}},
             http_method="GET", http_path="/evolve/git/graph", http_tags=["evolve"],
             description="Real commit graph for a repo — every commit (across ALL "
                         "branches) with its parents and ref decorations, newest-"
@@ -6285,7 +6296,7 @@ async def evolve_pipeline_begin(title: str = "", branch: str = "", spawn: bool =
 @capability("evolve.pipeline.list", memory="off", silent=True,
             http_method="GET", http_path="/evolve/pipeline/list", http_tags=["evolve"],
             description="Recent CI/CD pipeline runs (compact, newest first). "
-                        "Query: limit.")
+                        "Query: limit.", contract={"presentation": {'kind': 'status', 'form': 'status-matrix'}})
 async def evolve_pipeline_list(limit: int = 30, trace_id=None):
     r = _redis()
     out = []
@@ -6307,7 +6318,7 @@ async def evolve_pipeline_list(limit: int = 30, trace_id=None):
 @capability("evolve.pipeline.get", memory="off", silent=True,
             http_method="GET", http_path="/evolve/pipeline/get", http_tags=["evolve"],
             description="Full record of one pipeline run (stages, scores, gate, "
-                        "decision). Input: id (str!).")
+                        "decision). Input: id (str!).", contract={"presentation": {'kind': 'progress', 'form': 'run-track'}})
 async def evolve_pipeline_get(id: str = "", trace_id=None):
     r = _redis()
     if not r or not id:
@@ -6937,7 +6948,8 @@ async def _autonomous_state() -> Dict[str, Any]:
             description="Closed-loop autonomous-mode state. While ENGAGED, every promote/merge to "
                         "the real mainline (main/master) is UNCONDITIONALLY refused (no sentinel, "
                         "no force) — the hard prod lockout for autonomous operation. Output: "
-                        "{ok, engaged, mode, reason, since, by}.")
+                        "{ok, engaged, mode, reason, since, by}.",
+            contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}})
 async def autonomous_status(trace_id=None):
     from Vera.vera.evolve.autonomous_lock_core import is_engaged
     st = await _autonomous_state()
@@ -7302,6 +7314,7 @@ async def evolve_errors_suggest(id: str = "", provider: str = "", trace_id=None)
 
 
 @capability("evolve.errors.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "log", "map": {"events": "items", "t": "last_seen", "text": "title", "kind": "source", "level": "state"}, "empty": "No errors in the queue"}},
             http_method="GET", http_path="/evolve/errors", http_tags=["evolve"],
             description="The errors work-queue, newest first — for the errors→edits→"
                         "commits board. Query: state (str filter — new|suggested|"
@@ -7701,6 +7714,7 @@ async def cap_worktree_release(path: str = "", trace_id=None) -> Dict[str, Any]:
 
 
 @capability("evolve.worktree.claims", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "claims"}, "draw": {"columns": ["path", "owner", "state", "note", "claimed_at", "exists"]}, "empty": "No worktree claims"}},
             http_method="GET", http_path="/evolve/worktree/claims", http_tags=["evolve"],
             description="List worktree claims — who has declared they are working "
                         "where, and which claims have gone stale. Output: "
@@ -8299,6 +8313,7 @@ async def _refresh_standing_bleeding_edge_container(edge: str = "") -> Dict[str,
 
 
 @capability("evolve.bleeding_edge.list", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "edges"}, "draw": {"columns": ["name", "branch", "base", "main_state", "head", "mirror", "preferred_port", "exists"]}}},
             http_method="GET", http_path="/evolve/bleeding_edge/list", http_tags=["evolve"],
             description="The registered bleeding edges (integration branches) with their live "
                         "state: whether the branch exists, its tip, its standing against main "
@@ -9031,7 +9046,7 @@ async def _get_unittest_history(limit: int = 200) -> List[Dict[str, Any]]:
                         "failing tests' node ids + descriptions) and its controller. "
                         "Query: limit (int=200, up to the kept 5000), branch "
                         "(str filter), markers (str filter, e.g. 'critical'), lanes "
-                        "(int=40 cells; 0 = one per run returned).")
+                        "(int=40 cells; 0 = one per run returned).", contract={"presentation": {'kind': 'status', 'form': 'race-green'}})
 async def evolve_unittest_history(limit: int = 200, branch: str = "",
                                   markers: str = "", lanes: int = 40,
                                   trace_id=None):
@@ -9335,17 +9350,27 @@ async def _sandbox_routing_drift() -> Dict[str, Any]:
                         "VERA_SANDBOX_IDLE_PAUSE_S) is reported as such WITHOUT being "
                         "woken by this check — only real use wakes it (the drift check "
                         "is skipped while paused, for the same reason). Output: "
-                        "{sandbox, probe, up, paused, routing_drift}.")
+                        "{sandbox, probe, up, paused, routing_drift, verdict: up|paused|down|none, "
+                        "checks:[{name, status}]}.",
+            contract={"presentation": {"kind": "status", "map": {"verdict": "verdict", "checks": "checks"},
+                                       "title": "Dev sandbox"}})
 async def evolve_sandbox_status(trace_id=None):
     port = await _dev_port()
     sb = await _get_sandbox()
     probe = await _sandbox_probe(auto_unpause=False) if sb else {"reachable": False}
     up = bool(sb) and probe.get("reachable", False)
     drift = await _sandbox_routing_drift() if up else {"ok": True, "checked": False}
+    paused = bool(probe.get("paused"))
+    # what the status card draws (DO-0.3): one verdict, and the three things it is made of
+    verdict = "up" if up else ("paused" if paused else ("down" if sb else "none"))
+    checks = [{"name": "sandbox registered", "status": "ok" if sb else "none"},
+              {"name": "dev port %s reachable" % port, "status": "ok" if up else ("paused" if paused else "down")},
+              {"name": "routing matches prod", "status": ("ok" if drift.get("ok") else "warn") if drift.get("checked") else "not checked"}]
     return {"sandbox": sb, "probe": probe,
             "up": up,
-            "paused": bool(probe.get("paused")),
+            "paused": paused,
             "routing_drift": drift,
+            "verdict": verdict, "checks": checks,
             "idle_pause_s": _SANDBOX_IDLE_PAUSE_S,
             "dev_port": port, "prod_port": PROD_PORT, "dev_redis_db": DEV_REDIS_DB}
 
@@ -9648,6 +9673,7 @@ async def _session_containers() -> List[Dict[str, Any]]:
 
 
 @capability("docker.disk.status", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
             http_method="GET", http_path="/docker/disk/status",
             http_tags=["docker", "obs"],
             description="Headroom on the filesystem holding docker's data-root, "
@@ -10409,7 +10435,7 @@ async def _sandbox_observation(descriptor: Dict[str, Any]) -> Dict[str, Any]:
                         "spawned per-branch container — each with branch, container "
                         "name, host port, Redis DB, whether it is running, and its URL. "
                         "The unified view for the Loop Lab sandbox selector. Output: "
-                        "{sandboxes:[{role,branch,name,port,redis_db,running,url}], count}.")
+                        "{sandboxes:[{role,branch,name,port,redis_db,running,url}], count}.", contract={"presentation": {'kind': 'table', 'form': 'sandboxes', 'map': {'rows': 'sandboxes', 'name': 'name', 'status': 'running'}}})
 async def evolve_sandbox_list(detail: bool = False, trace_id=None):
     ps = await _sh(["docker", "ps", "--format", "{{.Names}}"])
     running = {n.strip() for n in (ps.get("out", "") or "").splitlines() if n.strip()}
@@ -11460,7 +11486,7 @@ async def _worktree_diff(wt: str, base: str = "main", file: str = "",
                         "default 'main'), file (str — scope to one path), context "
                         "(int=3), max_bytes (int=200000), name (str), branch (str). "
                         "Output: {ok, branch, base, files: [{path, status, adds, "
-                        "dels}], untracked, diff, truncated}.")
+                        "dels}], untracked, diff, truncated}.", contract={"presentation": {'kind': 'diff', 'form': 'diff'}})
 async def evolve_sandbox_diff(base: str = "main", file: str = "",
                               context: int = 3, max_bytes: int = 200000,
                               name: str = "", branch: str = "", trace_id=None):
@@ -11494,7 +11520,7 @@ async def evolve_sandbox_diff(base: str = "main", file: str = "",
                         "not just Vera's dev sandbox. Inputs: id (str!), file (str "
                         "— scope to one path), context (int=3), max_bytes "
                         "(int=200000). Output: {ok, repo, branch, base, files, "
-                        "untracked, diff, truncated}.")
+                        "untracked, diff, truncated}.", contract={"presentation": {'kind': 'diff', 'form': 'diff'}})
 async def evolve_pipeline_diff(id: str = "", file: str = "", context: int = 3,
                                max_bytes: int = 200000, trace_id=None):
     got = await evolve_pipeline_get(id=id)
@@ -11794,6 +11820,7 @@ async def _read_stream(key: str, limit: int) -> List[Dict]:
 
 
 @capability("evolve.sandbox.logs", memory="off", silent=True,
+            contract={"presentation": {"kind": "log", "map": {"events": "logs", "t": "ts", "text": "text", "level": "level"}, "empty": "No captured sandbox logs"}},
             http_method="GET", http_path="/evolve/sandbox/logs", http_tags=["evolve"],
             description="Recent captured logs for loop-lab sandbox container(s), newest "
                         "first, each stamped with branch + running-code sha. Inputs: "
@@ -11816,6 +11843,7 @@ async def evolve_sandbox_logs(container: str = "", limit: int = 200, level: str 
 
 
 @capability("evolve.sandbox.metrics", memory="off", silent=True,
+            contract={"presentation": {"kind": "series", "map": {"points": "metrics", "keyed": True, "t": "ts", "v": "cpu_pct"}, "title": "Sandbox CPU %", "empty": "No sandbox samples yet"}},
             http_method="GET", http_path="/evolve/sandbox/metrics", http_tags=["evolve"],
             description="Recent CPU%/mem% samples for loop-lab sandbox container(s), "
                         "oldest→newest (for sparklines). Inputs: container (str — blank "

@@ -1568,6 +1568,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.sentiment.map", http_method="GET", http_path="/markets/sentiment/map",
+        contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "benchmarks"}, "title": "Benchmarks", "form": "table", "draw": {"columns": ["name", "label", "score", "confidence", "summary", "created_at"]}}, {"kind": "table", "map": {"rows": "tracked"}, "title": "Tracked assets", "form": "table", "draw": {"columns": ["name", "label", "score", "key"]}}]}},
         http_tags=["markets"], memory="off", silent=True,
         description="Latest sentiment for every tracked asset plus the key market "
                     "benchmarks (S&P 500, Nasdaq, VIX, Gold, Oil, DXY, BTC, ETH) — feeds "

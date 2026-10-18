@@ -1,0 +1,84 @@
+{
+ "cap": "demo.node_perf",
+ "args": {},
+ "presentation": {
+  "kind": "table",
+  "form": "table",
+  "map": {
+   "rows": "nodes"
+  },
+  "draw": {
+   "columns": [
+    "label",
+    "ping_ms",
+    "vram_gb",
+    "vram_pct",
+    "lat_s"
+   ],
+   "units": {
+    "ping_ms": "ms",
+    "vram_gb": "GB",
+    "vram_pct": "%",
+    "lat_s": "s"
+   }
+  }
+ },
+ "result": {
+  "nodes": [
+   {
+    "label": "GPU Node",
+    "ping_ms": 11.75,
+    "vram_gb": 7.95,
+    "vram_pct": 66,
+    "lat_s": 0.03449
+   },
+   {
+    "label": "CPU Node A",
+    "ping_ms": 1234.5,
+    "vram_gb": 0.0,
+    "vram_pct": null,
+    "lat_s": -2.5
+   },
+   {
+    "label": "CPU Node B",
+    "ping_ms": "n/a",
+    "vram_gb": true,
+    "vram_pct": 99.95,
+    "lat_s": 12.345
+   }
+  ]
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.node_perf",
+  "forms": [
+   "table"
+  ],
+  "data": {
+   "nodes": [
+    {
+     "label": "GPU Node",
+     "ping_ms": "11.8 ms",
+     "vram_gb": "7.95 GB",
+     "vram_pct": "66%",
+     "lat_s": "0.034 s"
+    },
+    {
+     "label": "CPU Node A",
+     "ping_ms": "1235 ms",
+     "vram_gb": "0 GB",
+     "vram_pct": null,
+     "lat_s": "-2.5 s"
+    },
+    {
+     "label": "CPU Node B",
+     "ping_ms": "n/a",
+     "vram_gb": true,
+     "vram_pct": "100%",
+     "lat_s": "12.3 s"
+    }
+   ]
+  }
+ }
+}

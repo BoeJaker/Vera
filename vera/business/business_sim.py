@@ -473,6 +473,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.sim.status", http_method="GET", http_path="/business/sim/status",
+        contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "run"}, "title": "Run"}, {"kind": "kv", "map": {"fields": "totals"}, "title": "Totals"}]}},
         http_tags=["business"], memory="off", silent=True,
         description="Current simulation status: the active run, its step count and "
                     "sim totals, plus any recorded evaluations. "

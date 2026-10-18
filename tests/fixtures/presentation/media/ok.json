@@ -1,0 +1,23 @@
+{
+ "cap": "demo.render",
+ "args": {},
+ "presentation": {
+  "kind": "media",
+  "map": {
+   "url": "image",
+   "caption": "title"
+  }
+ },
+ "result": {
+  "image": "https://x.example/a.png",
+  "title": "render 04"
+ },
+ "expect": {
+  "element": "image",
+  "kind": "media",
+  "title": "demo.render",
+  "forms": [
+   "media"
+  ]
+ }
+}

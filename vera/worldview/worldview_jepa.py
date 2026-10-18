@@ -4921,6 +4921,7 @@ async def cap_worldview_retrieval_bind(
 
 @capability(
     "worldview.retrieval.status",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/worldview/retrieval/status",
     http_tags=["worldview", "retrieval"], memory="off", silent=True,
     description="Report whether the active JEPA checkpoint and index still match "
@@ -5372,6 +5373,7 @@ async def cap_worldview_snapshot(
 
 @capability(
     "worldview.concepts",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "concepts"}, "draw": {"columns": ["idx", "label", "population"]}, "empty": "No concepts yet"}},
     http_method="GET", http_path="/worldview/concepts",
     http_tags=["worldview"], memory="off",
     description="List concepts with populations and labels.",
@@ -5703,6 +5705,7 @@ async def cap_worldview_label_concepts(
 
 @capability(
     "worldview.landscape",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "concepts"}, "draw": {"columns": ["idx", "label", "population"]}, "empty": "No concepts yet"}},
     http_method="GET", http_path="/worldview/landscape",
     http_tags=["worldview", "agent"], memory="off",
     description="High-level summary of the WorldView concept landscape for "
@@ -5901,6 +5904,7 @@ async def cap_worldview_summarise(
 
 @capability(
     "worldview.loss_history",
+    contract={"presentation": {"kind": "series", "map": {"points": "$", "keyed": True, "t": "epoch", "v": "loss"}, "title": "Loss per epoch"}},
     http_method="GET", http_path="/worldview/loss_history",
     http_tags=["worldview"], memory="off",
     description="Return the persisted per-epoch loss history for all three training stages.",
@@ -5916,6 +5920,7 @@ async def cap_worldview_loss_history(trace_id=None) -> Dict:
 
 @capability(
     "worldview.stats",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "model"}, "title": "Model"}, {"kind": "kv", "map": {"fields": "index"}, "title": "Index"}]}},
     http_method="GET", http_path="/worldview/stats",
     http_tags=["worldview"], memory="off",
     description="Full WorldView stats. Output: {model, index}.",
@@ -5933,6 +5938,7 @@ async def cap_worldview_stats(trace_id=None) -> Dict:
 
 @capability(
     "worldview.health",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "Verdict"}, {"kind": "kv", "map": {"fields": "metrics"}, "title": "Metrics"}]}},
     http_method="GET", http_path="/worldview/health",
     http_tags=["worldview"], memory="off", silent=True,
     description="Health verdict for the JEPA worldview: status ok|degraded|stale|untrained, "
@@ -6091,6 +6097,7 @@ def _split_config_updates(params: Dict[str, Any]) -> Tuple[Dict[str, Any], List[
 
 @capability(
     "worldview.config",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/worldview/config",
     http_tags=["worldview"], memory="off",
     description="Return current WorldView hyperparameters (runtime-adjustable). "
@@ -6756,6 +6763,7 @@ async def cap_worldview_catchup(datasets: List[str] = None, max_records: int = 2
 
 @capability(
     "worldview.stream.status",
+    contract={"presentation": {"kind": "kv", "map": {"fields": "$"}}},
     http_method="GET", http_path="/worldview/stream/status",
     http_tags=["worldview", "stream"], memory="off",
     description="Status of the WorldView streaming worker.",
@@ -6862,6 +6870,7 @@ async def _get_subview_datasets(name: str) -> List[str]:
 
 @capability(
     "worldview.subview.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "subviews"}, "draw": {"columns": ["name", "updated_at"]}, "empty": "No sub-worldviews saved"}},
     http_method="GET", http_path="/worldview/subviews",
     http_tags=["worldview", "subview"], memory="off",
     description="List all saved sub-worldviews.",

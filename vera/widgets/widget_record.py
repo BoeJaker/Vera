@@ -80,6 +80,7 @@ FORMS: List[Dict[str, Any]] = [
     _F("gauge", "level", glyph="arc", options=("min", "max", "bands"), name="Arc gauges", boards=("widgets",)),
     _F("radial", "level", ("flat", "iso"), glyph="ring", options=("min", "max", "unit"), name="Radial", boards=("motion", "spec")),
     _F("ring", "level", glyph="ring", options=("min", "max"), name="Progress ring", boards=("widgets",)),
+    _F("bar", "level", glyph="bar", options=("min", "max", "unit"), name="Level bar", boards=("spec",)),
     _F("threshold", "values", glyph="scale", options=("bands",), name="Threshold scale", boards=("widgets",)),
     _F("bullet", "values", glyph="bullet", options=("target", "bands"), name="Bullet bars", boards=("widgets",)),
     _F("rate", "rate", glyph="rate", options=("unit", "window"), name="Rate", boards=("spec",)),
@@ -198,6 +199,9 @@ FORMS: List[Dict[str, Any]] = [
     _F("models", "items", ("iso",), glyph="models", name="Model catalogue", boards=("iso",)),
     _F("datasets", "items", ("iso",), glyph="datasets", name="Fabric datasets", boards=("iso",)),
     _F("sandboxes", "items", ("iso",), glyph="sandboxes", name="Sandboxes", boards=("iso",)),
+    _F("racks", "items", ("iso",), glyph="racks", name="Server racks", boards=("iso",)),
+    # the status matrix of cores, threads and cpus, with lenses to colour it by (load, temperature, NUMA, pinning)
+    _F("cellmap", "items", glyph="cellmap", options=("lens", "group"), name="Core matrix", boards=("widgets", "spec")),
     # ── strings and single things ──
     _F("string", "string", glyph="text", name="String", boards=("reply",)),
     _F("announcement", "string", glyph="notice", options=("priority", "actions"), name="Announcement", boards=("widgets",)),
@@ -264,6 +268,27 @@ FORMS: List[Dict[str, Any]] = [
     _F("trend-layers", "series", glyph="trend-layers", options=("series", "facets", "t", "range", "mode"), name="Trend layers", boards=("widgets", "reply")),
     _F("element", "panel", glyph="element", sizes=("s", "m", "l", "xl"), options=("tag", "attrs"), name="Page element", boards=("widgets",)),
 ]
+# THE WIDEST A CARD OF THE FORM IS ON THE DESK, in px (WSU-69; WSU-58 S8, DEEP-29 11A.4 Decision 5.3 - it was the canvas
+# element's DESK_FORM_MAXW): the short-content forms - lists, checklists, fields, notices, single figures - wrap short, and
+# wider was an empty band. Charts, tables, maps, graphs and calendars have none (not capped). The browser's catalogue
+# (widget_element.js FORM_MAXW, read by VeraWidget.forms) holds the same numbers (tests/test_widget_form_maxw.py).
+DESK_MAXW = {"checklist": 420, "list": 440, "links": 440, "notices": 460, "people": 460, "kv": 520, "pills": 480, "string": 460,
+             "announcement": 460, "counter": 380, "hero": 400, "ring": 360, "radial": 360, "dial": 360, "gauge": 420, "meter": 420,
+             "level": 380, "glance": 460, "numbers": 520, "status": 480, "stepper": 640, "files": 520}
+for _f in FORMS:
+    if _f["id"] in DESK_MAXW:
+        _f["maxW"] = DESK_MAXW[_f["id"]]
+# ONE FORMS LIST (DO-0.3): a form the catalogue names that the browser draws as ANOTHER form's face (widget_element.js
+# ALIAS - the same table, held equal by tests/test_forms_contract.py). Every other form in FORMS is one the element draws
+# in its own right (its DRAWN table), with the same shape; a FORMS entry that is an alias carries "as".
+DRAW_AS = {"sparkline": "trace", "line": "trace", "chart": "trace", "parts": "donut", "tree": "files", "stages": "stepper",
+           "program": "stepper", "ask": "string", "rate": "counter", "iso": "table", "controls": "pills", "button": "string",
+           "header": "string", "galaxy": "context_graph", "battery": "level", "tablei": "table", "checks": "checklist",
+           "memgraph": "minigraph", "logi": "log", "notice": "announcement", "trend": "hero", "sparks": "small-multiples",
+           "multiline": "lines", "multi-line": "lines", "cores": "cellmap", "core-matrix": "cellmap", "cpumap": "cellmap"}
+for _f in FORMS:
+    if _f["id"] in DRAW_AS:
+        _f["as"] = DRAW_AS[_f["id"]]
 _FORM_BY_ID = {f["id"]: f for f in FORMS}
 # the context graph's line above is held verbatim by the chat's explode test; its name and board ride in here
 _FORM_BY_ID["context_graph"].update({"name": "Context graph", "boards": ["spec"]})
@@ -276,7 +301,7 @@ FORM_ALIASES = {"hero + trend": "hero", "arc gauges": "gauge", "progress ring": 
                 "card stack": "cards", "temp list": "thermo", "status strip": "pills", "meter panel": "meter-panel",
                 "candlestick": "candles", "tasks": "board", "threshold scale": "threshold", "small multiples": "small-multiples",
                 "iso columns": "bars", "iso tiles": "heat", "iso blocks": "treemap", "iso cubes": "waffle",
-                "iso terraces": "small-multiples", "iso floors + pipes": "topology", "galaxy": "graph", "bar": "bars",
+                "iso terraces": "small-multiples", "iso floors + pipes": "topology", "galaxy": "graph",
                 # the WidgetConfig board's own ids for a few of these
                 "battery": "level", "tablei": "table", "checks": "checklist", "memgraph": "minigraph",
                 "logi": "log", "notice": "announcement", "ohlcv": "candles", "sparks": "small-multiples", "trend": "hero"}
@@ -287,6 +312,11 @@ for _f in FORMS:
 
 def form_ids() -> List[str]:
     return [f["id"] for f in FORMS]
+
+
+def drawn_ids() -> List[str]:
+    """The forms the element draws in its own right (widget_element.js DRAWN) - FORMS without the aliases."""
+    return [f["id"] for f in FORMS if not f.get("as")]
 
 
 def forms_on(board: str) -> List[Dict[str, Any]]:

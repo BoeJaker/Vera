@@ -1,0 +1,80 @@
+{
+ "cap": "nlp.ner",
+ "args": {
+  "text": "Ada Lovelace met Charles Babbage in London"
+ },
+ "presentation": {
+  "kind": "entities",
+  "map": {
+   "entities": "entities"
+  },
+  "title": "Names · {task}",
+  "empty": "no names found",
+  "status": "declared"
+ },
+ "result": {
+  "ok": true,
+  "task": "ner",
+  "model": "djagatiya/ner-roberta-base-ontonotesv5-englishv4",
+  "entities": [
+   {
+    "entity": "PERSON",
+    "word": " Ada Lovelace",
+    "score": 0.998,
+    "start": 0,
+    "end": 12
+   },
+   {
+    "entity": "PERSON",
+    "word": " Charles Babbage",
+    "score": 0.998,
+    "start": 17,
+    "end": 32
+   },
+   {
+    "entity": "GPE",
+    "word": " London",
+    "score": 0.997,
+    "start": 36,
+    "end": 42
+   },
+   {
+    "entity": "PERSON",
+    "word": " Ada Lovelace",
+    "score": 0.99,
+    "start": 60,
+    "end": 72
+   }
+  ],
+  "count": 4,
+  "node": "cpu-247"
+ },
+ "expect": {
+  "element": "entities",
+  "kind": "entities",
+  "title": "Names",
+  "forms": [
+   "pills"
+  ],
+  "data": [
+   {
+    "name": "Ada Lovelace",
+    "type": "PERSON",
+    "count": 2,
+    "group": "PERSON"
+   },
+   {
+    "name": "Charles Babbage",
+    "type": "PERSON",
+    "count": 1,
+    "group": "PERSON"
+   },
+   {
+    "name": "London",
+    "type": "GPE",
+    "count": 1,
+    "group": "GPE"
+   }
+  ]
+ }
+}

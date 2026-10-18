@@ -1,0 +1,140 @@
+[
+  {
+    "id": "calendar.agenda",
+    "panel": "calendar-panel",
+    "title": "Agenda",
+    "icon": "calendar",
+    "summary": "What is on - the coming events, by day",
+    "view": {
+      "kind": "calendar",
+      "views": [
+        "agenda",
+        "month",
+        "schedule"
+      ]
+    },
+    "read": {
+      "cap": "cal.events.list",
+      "args": {},
+      "refresh": {
+        "every_s": 300
+      }
+    },
+    "detail": {
+      "reader": true
+    },
+    "size": {
+      "default": "m",
+      "min": "s"
+    },
+    "actions": [
+      {
+        "id": "add",
+        "label": "Add event",
+        "cap": "cal.event.upsert",
+        "where": "header",
+        "form": "schema",
+        "fields": [
+          {
+            "key": "title",
+            "label": "Title",
+            "required": true
+          },
+          {
+            "key": "start",
+            "label": "Start",
+            "type": "datetime-local",
+            "required": true
+          },
+          {
+            "key": "location",
+            "label": "Where"
+          }
+        ]
+      },
+      {
+        "id": "delete",
+        "label": "Delete",
+        "cap": "cal.event.delete",
+        "where": "row",
+        "confirm": true,
+        "effect": "remove",
+        "undo": "cal.event.upsert",
+        "undo_args": {"title": "{row.title}", "start": "{row.start}", "end": "{row.end}", "location": "{row.location}"},
+        "args": {
+          "id": "{row.id}"
+        }
+      }
+    ]
+  },
+  {
+    "id": "calendar.briefing",
+    "panel": "calendar-panel",
+    "title": "Briefing",
+    "icon": "calendar",
+    "summary": "Today's diary and the inbox in one window",
+    "view": {
+      "kind": "composite",
+      "layout": "dashboard",
+      "parts": [
+        {
+          "from": "today",
+          "kind": "calendar",
+          "title": "Today"
+        },
+        {
+          "from": "inbox",
+          "kind": "table",
+          "title": "Inbox"
+        },
+        {
+          "from": "telegram",
+          "kind": "table",
+          "title": "Telegram",
+          "columns": [
+            "ts",
+            "from",
+            "text"
+          ]
+        }
+      ]
+    },
+    "read": [
+      {
+        "as": "today",
+        "cap": "cal.events.list",
+        "args": {
+          "start": "today"
+        },
+        "refresh": {
+          "every_s": 300
+        }
+      },
+      {
+        "as": "inbox",
+        "cap": "mail.inbox.list",
+        "args": {
+          "limit": 15
+        },
+        "refresh": {
+          "every_s": 300
+        }
+      },
+      {
+        "as": "telegram",
+        "cap": "tg.history",
+        "args": {
+          "chat_id": "{arg.chat_id?}",
+          "limit": 20
+        }
+      }
+    ],
+    "related": [
+      "calendar.agenda"
+    ],
+    "size": {
+      "default": "l",
+      "min": "m"
+    }
+  }
+]

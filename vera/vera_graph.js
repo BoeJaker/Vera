@@ -450,6 +450,15 @@
       subscribe: function(prefix, cb){
         var entry = {prefix: prefix, cb: cb};
         listeners.push(entry);
+        /* the page's one live channel when it has one (window.VeraLive, DA-03c): this prefix only, filtered on the server */
+        if (window.VeraLive && typeof window.VeraLive.subscribe === 'function') {
+          var live = window.VeraLive.subscribe({ types: [prefix] }, function(ev){ try { cb(ev); } catch(_){} });
+          return function unsubscribe(){
+            var i = listeners.indexOf(entry);
+            if (i >= 0) listeners.splice(i, 1);
+            try { live.close(); } catch(_){}
+          };
+        }
         ensureWs();
         return function unsubscribe(){
           var i = listeners.indexOf(entry);
@@ -1026,7 +1035,11 @@
     }
     resize();
     if (typeof ResizeObserver !== 'undefined') {
-      new ResizeObserver(function(){ resize(); state._dirty = true; if (!state.stopped) { state.frozen = false; state.tickCount = 0; } else { startTick(); } }).observe(canvas);
+      new ResizeObserver(function(){ resize(); state._dirty = true;
+        /* calm: a new box is a new frame for the same settled layout - fitted, not re-simulated */
+        /* drawn now: a resized canvas is blank until it is. Calm is still after any resize, whatever it was doing */
+        if (opts.calm && !state.stopped && state.nodes.length) { state.frozen = true; state.settleCycles = 0; try { fitView(); draw(); state._dirty = false; } catch(e){} return; }
+        if (!state.stopped) { state.frozen = false; state.tickCount = 0; } else { startTick(); } }).observe(canvas);
     }
 
     // The id→node map and degree map only change when the graph topology
@@ -4664,6 +4677,20 @@
       // cluster separation push the layout outward, so without a fit the
       // user lands zoomed into the middle of a larger arrangement.
       state._autoFitOnce = true;
+      /* CALM (opts.calm, a mode for graphs that sit among other things - a desk card, a canvas item): the whole layout is
+         settled here, before the first paint, and the graph is frozen from then on - it never crawls, re-energises or
+         jumps on screen. The default view's visible annealing (cycles re-heating every ~280 frames) made several small
+         graphs on the desk move for 20 s and more after every load and every resize (owner, 2026-10-10: "GRAPHS ARE
+         FLICKERING ... THEY JUST FLICKER WHILE STILL"). A user's own drag or Re-layout still runs the simulation. */
+      if (opts.calm) {
+        var _cT0 = Date.now(), _cN = _nN > 800 ? 160 : 280;
+        for (var _ci = 0; _ci < _cN; _ci++) { state.tickCount = _ci; try { _forcePass(); } catch(e){ break; } if (Date.now() - _cT0 > 450) break; }
+        state.tickCount = 0; state.settleCycles = 0; state._autoFitOnce = false;
+        updateMeta(); updateLegend(); _rebuildChips(); _rebuildTags(); _updateDebug(); _renderLayerUI(); wake();
+        state.frozen = true; state._dirty = true;
+        requestAnimationFrame(function(){ try { resize(); } catch(e){} try { fitView(); } catch(e){} state._dirty = true; });
+        return;
+      }
       updateMeta(); updateLegend(); _rebuildChips(); _rebuildTags(); _updateDebug(); _renderLayerUI(); wake();
     }
 

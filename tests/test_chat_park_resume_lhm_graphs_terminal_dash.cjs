@@ -45,8 +45,8 @@ t('a tab pick keeps the memory graph drawn (toggles on, never overwrites the cla
 // element instead of above and below" - in Hover/Zen the bars are overlays (so an item never resizes under the pointer);
 // the item now keeps their bands, so they fade in over nothing
 { const CV = R('vera/canvas/canvas_element.js');
-  t('hover/zen: an item keeps bands for its header and rail, so they never cover its content', CV.includes(':host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-hd:not(.own-fold)){padding-top:var(--vc-hd-band,29px)}')
-    && CV.includes(':host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-ft),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-ft){padding-bottom:var(--vc-ft-band,28px)}')); }
+  t('hover/zen: an item keeps bands for its header and rail, so they never cover its content', CV.includes(':host([data-tier="hover"]) .it:not(.compact):not(.overfold):has(> .it-hd),:host([data-tier="zen"]) .it:not(.compact):not(.overfold):has(> .it-hd){padding-top:var(--vc-hd-band,29px)}')
+    && !CV.includes('class="it-ft"')); }
 // owner, 2026-10-04: "the memory graph in the lhm of chat needs me to press reload to load in" - it was read on a session
 // load and a tab pick only; a finished reply now re-reads it (twice, as its memories land) in the chat and the menu frame
 t('a finished reply re-reads the memory graph, here and in the menu instance', H.includes('try{ _memAfterTurn(); }catch(_){}   // a reply finished')
@@ -54,13 +54,11 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
   && H.includes("else if(m.act==='memory'){ try{ _memAfterTurn(); }catch(_){} }"));
 // owner, 2026-10-04: one bar per canvas item, on hover; the canvas follows Full / Hover / Zen
 { const CV = R('vera/canvas/canvas_element.js');
-  t('hover/zen: an item\'s own head (code, page, diagram, explode, terminal, notebook, panel) is its hover bar', CV.includes(':host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead > .it-bd > .vc-codewrap > .code-card > .code-bar,')
-    && CV.includes(':host(:is([data-tier="hover"],[data-tier="zen"])) .it.ownhead:is(:hover,.hov,:focus-within) > .it-bd > .vc-codewrap > .code-card > .code-bar,'));
+  t('hover/zen: every kind\'s one head (the container\'s, DEEP-29 11A.4) is its hover bar - no kind keeps a head of its own', !CV.includes('.ownhead') && CV.includes(", bar: false })") && CV.includes(':host(:not([data-tier="full"])) .it:not(.desk-chip) > .hda{opacity:0}'));
   t('...a records item\'s own heading goes (the header carries its title and count)', CV.includes(':host(:is([data-tier="hover"],[data-tier="zen"])) .it:not(.compact) .vc-rbx > .vc-rbx-top{display:none}')
-    && CV.includes('${Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : \'\'}'));
-  t('full draws every control; the toolbar follows hover (the canvas) and zen (the toolbar itself)', CV.includes(':host([data-tier="full"]) .it > :is(.fd,.mx,.xp).solo{opacity:.8}')
-    && CV.includes(':host([data-tier="hover"]:hover) .addbar,:host([data-tier="zen"]) .addbar:is(:hover,:focus-within){opacity:1}'));
-  t('a head leaves room for the item\'s controls at its right end', CV.includes(':is(.vc-codehead,.vc-th):first-child{padding-right:58px}')); }
+    && CV.includes('(Array.isArray(c.items) ? `<span class="fdn" title="what it holds">${c.items.length}</span>` : \'\')'));
+  t('full draws every control; the toolbar follows hover (the canvas) and zen (the toolbar itself)', CV.includes(':host([data-tier="hover"]:hover) .addbar,:host([data-tier="zen"]) .addbar:is(:hover,:focus-within){opacity:1}'));
+  t('a head leaves room for the item\'s controls at its right end', CV.includes('.it:not(.desk-chip) > .it-hd{padding-right:calc(var(--hda-n, 0) * 27px + 14px)}')); }
 // owner, 2026-10-04: folded items flicker when hovered and sometimes do not preview; elements greedy with width; chips
 // hard to tell apart; Apply at the foot of a long editor
 { const CV = R('vera/canvas/canvas_element.js'), VO = R('vera/vera_output_element.js');
@@ -73,8 +71,8 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
   t('the editor\'s Apply / Cancel sit above the code (kit and canvas editors)', VO.includes('pre.after(bar); bar.after(ed.box);') && CV.includes('<div class="edit" data-w="canvas.update"><div class="edit-a">')); }
 // owner, 2026-10-04: "if collapsed some canvas elements are only appearing on hover" / resized elements "dont fill the space"
 { const CV = R('vera/canvas/canvas_element.js');
-  t('a column-folded item is a chip: own-head kinds draw the header line for it; hover/zen never hide a folded head',
-    CV.includes('`<div class="it-hd${ownHead && !compact ? \' own-fold\' : \'\'}">') && CV.includes('.stage .it.overfold > .it-hd.own-fold{display:flex}')
+  t('a column-folded item is a chip: its one head is the header line; hover/zen never hide a folded head',
+    CV.includes('`<div class="it-hd" style="--hda-n:') && !CV.includes('own-fold')
     && CV.includes(':host([data-tier="hover"]) .it:not(.compact):not(.overfold) > .it-hd,') && CV.includes("hFold: hd && hd.offsetHeight ? hd.offsetHeight + 2 : 28,"));
   t('...and previews on hover like any fold', CV.includes("!(it.classList.contains('compact') || it.classList.contains('overfold'))) return;") && CV.includes("if (it._peekWas !== 'overfold') it.classList.add('compact');"));
   t('a resized item\'s drawing takes the room: widget slot, records list, table, deck/sheet/page card',
@@ -84,7 +82,7 @@ t('a finished reply re-reads the memory graph, here and in the menu instance', H
   t('...and a drag starts from the height the item had, read before it is marked sized', CV.includes("const h0 = it.offsetHeight, w0 = it.offsetWidth; it.classList.add('sized', 'resizing');")); }
 // owner, 2026-10-04: graphs "dont resize on the y axis" / "cannot resize an element ... to span more columns"
 { const CV = R('vera/canvas/canvas_element.js'), VG = R('vera/vera_graph.js');
-  t('a records graph takes its slot\'s height and fits its nodes to it', CV.includes("if (g && typeof g._setHeight === 'function' && Math.abs((g._h || 0) - (ht - 16)) > 3) g._setHeight(Math.max(160, ht - 16));")
+  t('a records graph takes its slot\'s height and fits its nodes to it', CV.includes("if (g && typeof g._setHeight === 'function' && hh && Math.abs((g._h || 0) - (hh - 16)) > 3) g._setHeight(Math.max(this.deskAlign() ? 60 : 160, hh - 16));")   /* a desk card may be smaller */
     && CV.includes("const gg = g && g._graph; if (gg && typeof gg.fit === 'function') gg.fit();") && VG.includes('fit:            function(){ try { fitView(); } catch(e){} },'));
   t('a drop writes the dragged width onto the card the placer reads', CV.includes('r.el.dataset.pw = String(Math.round(r.w));')); }
 // owner, 2026-10-04: the canvas explode "opens very far away from the other elements and you can barely see it"

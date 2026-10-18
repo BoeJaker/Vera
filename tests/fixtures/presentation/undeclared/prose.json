@@ -1,0 +1,15 @@
+{
+ "cap": "demo.prose",
+ "args": {},
+ "result": {
+  "report": "# Heading\n\nA long enough report body with a paragraph.\n\nAnother."
+ },
+ "expect": {
+  "element": "markdown",
+  "kind": "document",
+  "title": "demo.prose",
+  "forms": [
+   "markdown"
+  ]
+ }
+}
