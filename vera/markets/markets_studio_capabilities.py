@@ -2477,6 +2477,9 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                     "symbol_key (str — blank = whole market), query (str — "
                     "override), limit (int=8), map_to_chart (bool=False). "
                     "Output: {headlines:[{title,snippet,url}], query, cached_at}.",
+        # the desk's records browser (list / cards / table, the page in a drawer) - not a JSON tree
+        contract={"presentation": {'kind': 'records', 'map': {'rows': 'headlines', 'title': 'title', 'url': 'url', 'snippet': 'snippet'},
+                                   'title': 'Headlines', 'empty': 'no headlines found'}},
     )
     async def cap_news_feed(symbol_key: str = "", query: str = "", limit: int = 8,
                             map_to_chart: bool = False, trace_id=None) -> dict:
@@ -2588,6 +2591,9 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                     "Input: symbol_key (str — also include this asset's news), "
                     "per_source (int=5), extra_query (str — one-off search). "
                     "Output: {items:[{title,snippet,url,source}], sources_used}.",
+        # the desk's records browser; each story's source (a subscription's label, or the asset) shown where a site is
+        contract={"presentation": {'kind': 'records', 'map': {'rows': 'items', 'title': 'title', 'url': 'url', 'snippet': 'snippet', 'domain': 'source'},
+                                   'title': 'News', 'empty': 'no headlines found'}},
     )
     async def cap_news_digest(symbol_key: str = "", per_source: int = 5,
                               extra_query: str = "", trace_id=None) -> dict:
