@@ -548,7 +548,8 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                        "pipeline test %s" % t.get("id", ""))
         if a == "adopt":
             return _bg(run_id, rec, _call("evolve.pipeline.adopt", branch=t.get("branch", ""), to="bleeding-edge",
-                                          title=rec.get("title", ""), summary="scheduled by Loop Lab"),
+                                          title=rec.get("title", ""), summary="scheduled by Loop Lab",
+                                          wait=True),     # the run lasts as long as the gate
                        "pipeline adopt %s" % t.get("branch", ""))
         if a == "promote":
             return _bg(run_id, rec, _call("evolve.pipeline.promote", id=t.get("id", ""), to="bleeding-edge"),

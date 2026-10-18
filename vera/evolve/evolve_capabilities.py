@@ -6011,11 +6011,15 @@ async def _resume_interrupted_gates() -> None:
                         "REFUSED unless authorize_main is the explicit sentinel — all code lands "
                         "on bleeding-edge; main advances only via evolve.bleeding_edge."
                         "promote_to_main on the user's explicit, unambiguous go-ahead. "
-                        "Output: {ok, id, ahead_by, changed_files, gate_passed}.")
+                        "wait (bool=false): the critical tier runs in the BACKGROUND and adopt answers at "
+                        "once with the pipeline id and gate='running' - follow it with "
+                        "evolve.pipeline.get until gate_passed is set; wait=true blocks until the gate "
+                        "is done (the old behaviour; callers that act on gate_passed pass it). "
+                        "Output: {ok, id, ahead_by, changed_files, gate_passed, gate}.")
 async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", title: str = "",
                                 summary: str = "", repo: str = DEFAULT_REPO_ID,
                                 session_id: str = "", authorize_main: str = "",
-                                edge: str = "", trace_id=None):
+                                edge: str = "", wait: bool = False, trace_id=None):
     branch = (branch or "").strip()
     if not branch:
         return {"error": "branch required"}
@@ -6156,24 +6160,48 @@ async def evolve_pipeline_adopt(branch: str = "", to: str = "bleeding-edge", tit
     # counted against the gate) when the branch has no live worktree yet or the
     # ephemeral-container run itself fails to execute (infra hiccup, not a code
     # regression) — surfaced either way so it's never silently skipped unnoticed.
-    critical_ok: Optional[bool] = None
-    if py and repo == DEFAULT_REPO_ID:
-        critical_ok = await _critical_gate(rec, branch)
+    async def _finish_gate() -> None:
+        critical_ok: Optional[bool] = None
+        if py and repo == DEFAULT_REPO_ID:
+            critical_ok = await _critical_gate(rec, branch)
+        rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
+        await _save_pipeline(rec)
+        await _audit("pipeline.adopt",
+                     f"adopted {branch} ({len(commits)} commit(s)) → {to} "
+                     f"[gate_passed={rec['gate_passed']}]",
+                     id=rec["id"], kind="code", branch=branch, repo=repo)
+        await emit_event({"type": "evolve.pipeline.adopted", "id": rec["id"], "branch": branch,
+                          "into": to, "commits": len(commits), "gate_passed": rec["gate_passed"]})
 
-    rec["gate_passed"] = compile_ok if critical_ok is None else (compile_ok and critical_ok)
-
-    await _save_pipeline(rec)
-    await _audit("pipeline.adopt",
-                 f"adopted {branch} ({len(commits)} commit(s)) → {to} "
-                 f"[gate_passed={rec['gate_passed']}]",
-                 id=rec["id"], kind="code", branch=branch, repo=repo)
-    await emit_event({"type": "evolve.pipeline.adopted", "id": rec["id"], "branch": branch,
-                      "into": to, "commits": len(commits), "gate_passed": rec["gate_passed"]})
-    return {"ok": True, "id": rec["id"], "branch": branch, "into": to,
+    done = {"ok": True, "id": rec["id"], "branch": branch, "into": to,
             "ahead_by": len(commits), "changed_files": len(changed),
-            "gate_passed": rec["gate_passed"],
             "next": "evolve.pipeline.review_request to raise for review, then "
                     "evolve.pipeline.promote (force=true for docs/infra) to merge."}
+    runs_tier = bool(py and repo == DEFAULT_REPO_ID)
+    if runs_tier and not wait:
+        # B1.0 / E1 (18 Oct 2026): adopt used to hold the caller for the whole tier - 5 to 180+ min behind the gate
+        # queue - so MCP clients timed out with no id while the pipeline went on, and pipelines were stranded. The
+        # pipeline is saved first with a critical-queue step, which is what _resume_interrupted_gates looks for, so a
+        # restart mid-gate re-runs it; then the tier runs in the background and adopt answers now.
+        _pstep(rec, "critical-queue", True, "critical tier queued (runs in the background; adopt answered at once)")
+        rec["current"] = "queued for the critical tier"
+        await _save_pipeline(rec)
+
+        async def _bg_gate() -> None:
+            try:
+                await _finish_gate()
+            except Exception as e:                       # the gate must end in a state, never hang
+                _pstep(rec, "critical-tests", False, f"the background gate crashed: {str(e)[:240]}")
+                rec["gate_passed"] = False
+                await _save_pipeline(rec)
+            finally:
+                _PIPELINE_TASKS.pop("_adopt_gate_" + rec["id"], None)
+
+        _PIPELINE_TASKS["_adopt_gate_" + rec["id"]] = asyncio.create_task(_bg_gate())
+        return {**done, "gate_passed": None, "gate": "running",
+                "follow": f"evolve.pipeline.get id={rec['id']} until gate_passed is set"}
+    await _finish_gate()
+    return {**done, "gate_passed": rec["gate_passed"], "gate": "done"}
 
 
 @capability("evolve.pipeline.begin", memory="on",
