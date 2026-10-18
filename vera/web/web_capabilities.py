@@ -1590,6 +1590,15 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
 
     known = await known_task
     kitems = _seek.known_items(known.get("pages") or [], items, chars=chars, query=subject) if not known.get("_error") else []
+    if kitems or (not known.get("_error") and _seek.known_items(known.get("pages") or [], [], chars=80, query=subject,
+                                                                  limit=1)):
+        try:    # the index answered (web-ingress WI-14c: the index answer rate)
+            _ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+            if _ing is not None:
+                _ing.record_query(subject, engine="index", caller="info.seek", purpose="index_hit",
+                                  result_urls=[k.get("url") for k in kitems if k.get("url")])
+        except Exception as _e:  # noqa: BLE001
+            log.debug("info.seek index hit: %s", _e)
     if kitems and need != "latest":
         items = [it for it in items if it.get("text")] + kitems + [it for it in items if not it.get("text")]
         checked.append(f"already known: {len(kitems)} page(s) Vera has read before (the fabric's page index)")

@@ -119,7 +119,9 @@ CAP_ALLOW_PREFIXES = ("decide.", "obs.", "evolve.suite.", "chat.corpus.", "world
                       "plan.precedent.index", "output.claims.harvest",
                       # web-ingress WI-14b (owner 18 Oct 2026: "add a gap fill time slot"): the nightly crawl of the
                       # questions info.seek had nothing on - one web.search + a depth-1 crawl per gap, no GPU or LLM
-                      "fabric.map.gaps.fill")
+                      "fabric.map.gaps.fill",
+                      # web-ingress WI-14c: the targeted index's daily metrics - reads the web map, writes one row
+                      "fabric.map.metrics")
 
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 
