@@ -8618,10 +8618,11 @@
     }
     _panelAdd(id, label) {
       id = String(id || '').trim(); if (!id) return; const key = 'panel:' + id; const focusMid = this.dataset.focusMid || '';
-      /* A PANEL ADDED TO THE DESK IS A CARD YOU CAN USE (owner 2026-10-17: "ui panels loaded to the canvas are not interactive - nothing on them is
-         clickable or usable at all"): with panel-layer "desk" it was put BEHIND every other card - measured, only 16 of 63 points of it could be
-         reached and a click in its middle landed on a card over it. It is placed among the cards now; behind / in front stay its own controls. */
-      const args = { kind: 'panel', key, content: { panel: id, title: label || id }, at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
+      /* WITH panel-layer "desk" A PANEL GOES BEHIND THE CARDS - THAT IS THE DESIGN (owner 2026-10-18: "of course you cant click through an
+         element that is covering a portion of the ui that was never the problem and is not a problem but the intended design if the ui panel
+         is 'behind'"). e6d3e950 placed it among the cards instead, from a misreading of WSU-100; the owner rejected that and it is undone.
+         WSU-100 is the panel's OWN area not taking input, alone on the desk, in any layer. */
+      const args = { kind: 'panel', key, content: Object.assign({ panel: id, title: label || id }, this.deskAlign() && this.getAttribute('panel-layer') === 'desk' ? { layer: 'behind' } : {}), at: 'now', size: 'l' }; args.anchor = { origin: 'you', beside: focusMid };   // picked by hand: beside the turn in view, related to no turn
       this._open.add(key);
       // the item first, then the host is asked for the panel's page (its registered page, alias or route) — the
       // update it answers with needs the item to exist
