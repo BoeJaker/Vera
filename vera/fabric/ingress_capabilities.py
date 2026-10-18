@@ -800,3 +800,65 @@ async def cap_crawl_fetch_many(urls: Any = None, parallel: int = 4, per_batch: i
         rows = [{k: v for k, v in row.items() if k not in ("html", "text")} for row in rows]
     return dict(ok=True, results=rows, lost=cc.lost([u for b in batches for u in b], done),
                 ms=int((time.monotonic() - t0) * 1000), batches=len(batches), **cc.summary(done))
+
+
+# ── the targeted index's daily metrics (WI-14c, PLAN §13.3) ───────────────────
+
+METRIC_SQL = {
+    "purposes": ("SELECT purpose, count(*) FROM web_queries WHERE ts > NOW() - make_interval(days => $1) "
+                 "AND purpose IN ('index_hit', 'gap') GROUP BY purpose"),
+    "sample": ("SELECT DISTINCT ON (query) query, result_keys FROM web_queries WHERE purpose = 'search' AND results > 0 "
+               "AND ts > NOW() - make_interval(days => $1) ORDER BY query, ts DESC LIMIT $2"),
+    "fresh": ("SELECT m.topic_key, max(u.last_seen) AS newest FROM web_topic_members m JOIN web_urls u USING (url_key) "
+              "GROUP BY m.topic_key"),
+    "crawl": ("SELECT count(*) AS fetched, count(*) FILTER (WHERE u.novelty_kind = 'new') AS new, "
+              "count(DISTINCT date_trunc('hour', f.ts)) AS hours FROM web_fetches f LEFT JOIN web_urls u USING (url_key) "
+              "WHERE f.ts > NOW() - make_interval(days => $1) AND f.caller LIKE 'fabric.discover%'"),
+    "fetches": "SELECT count(*) FROM web_fetches WHERE ts > NOW() - make_interval(days => $1)",
+    "store": ("INSERT INTO web_metrics_daily (day, metrics) VALUES (CURRENT_DATE, $1::jsonb) "
+              "ON CONFLICT (day) DO UPDATE SET metrics = EXCLUDED.metrics, ts = NOW()"),
+}
+
+
+@capability("fabric.map.metrics", http_method="POST", http_path="/fabric/map/metrics", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="How well Vera's own index answers, measured over the last `days`: the index answer rate "
+                        "(questions info.seek answered from pages Vera had already read, against those it had nothing "
+                        "on), the live overlap (for a sample of recent searches, how much of the engine's top 10 the "
+                        "index's top 10 also holds), the freshness lag per topic, the novel pages per crawl hour and "
+                        "the pages fetched per question. store=true keeps today's row (the nightly run); history=N "
+                        "returns the last N stored days. Input: days (int, default 1), sample (int, default 20), "
+                        "store (bool), history (int). Output: {metrics, history?}.")
+async def cap_map_metrics(days: int = 1, sample: int = 20, store: bool = False, history: int = 0, trace_id=None):
+    import json as _json
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected"}
+    d = max(1, min(int(days or 1), 30))
+    try:
+        async with pool.acquire() as conn:
+            purposes = {r[0]: int(r[1]) for r in await conn.fetch(METRIC_SQL["purposes"], d)}
+            samples = [dict(r) for r in await conn.fetch(METRIC_SQL["sample"], d, max(0, min(int(sample or 20), 100)))]
+            fresh = [dict(r) for r in await conn.fetch(METRIC_SQL["fresh"])]
+            crawl = dict(await conn.fetchrow(METRIC_SQL["crawl"], d) or {})
+            fetches = int(await conn.fetchval(METRIC_SQL["fetches"], d) or 0)
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:200]}
+    overlaps = []
+    for srow in samples:
+        r = await cap_map_search(query=srow["query"], limit=sc.OVERLAP_K)
+        overlaps.append(sc.overlap_at([x.get("key") for x in r.get("results") or []], list(srow["result_keys"] or [])))
+    m = sc.daily_metrics(purposes, overlaps, fresh, crawl, fetches)
+    m["days"] = d
+    out: Dict[str, Any] = {"metrics": m}
+    try:
+        async with pool.acquire() as conn:
+            if store:
+                await conn.execute(METRIC_SQL["store"], _json.dumps(m))
+            if history:
+                out["history"] = [{"day": str(r[0]), "metrics": _json.loads(r[1]) if isinstance(r[1], str) else r[1]}
+                                  for r in await conn.fetch("SELECT day, metrics FROM web_metrics_daily ORDER BY day DESC "
+                                                            "LIMIT $1", max(1, min(int(history), 90)))]
+    except Exception as e:  # noqa: BLE001
+        out["store_error"] = str(e)[:160]
+    return out

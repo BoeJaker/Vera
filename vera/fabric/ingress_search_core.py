@@ -97,3 +97,48 @@ def fill_plan(gaps: Iterable[Mapping[str, Any]], *, max_gaps: int = 10) -> List[
         if len(out) >= max(1, int(max_gaps or 10)):
             break
     return out
+
+
+# ── how we know it works (PLAN §13.3, WI-14c) ─────────────────────────────────
+
+OVERLAP_K = 10
+
+
+def overlap_at(index_keys: Iterable[str], live_keys: Iterable[str], k: int = OVERLAP_K) -> Optional[float]:
+    """Share of the live engine's top k that the index's top k also holds; None when the live list is empty."""
+    live = [x for x in live_keys or () if x][:k]
+    if not live:
+        return None
+    idx = set([x for x in index_keys or () if x][:k])
+    return round(sum(1 for x in live if x in idx) / len(live), 3)
+
+
+def daily_metrics(purpose_counts: Mapping[str, int], overlaps: Iterable[Optional[float]],
+                  fresh: Iterable[Mapping[str, Any]], crawl: Mapping[str, Any], fetches: int, *,
+                  now: Optional[datetime] = None) -> Dict[str, Any]:
+    """The five §13.3 measures from the day's rows. index answer rate = questions the index answered / all asked
+    (index_hit + gap); live overlap = mean of the sampled overlaps; freshness lag = days since the newest page per
+    topic (median and worst); novel yield = new pages per crawl hour; cost = pages fetched per question asked."""
+    now = now or datetime.now(timezone.utc)
+    hit, gap = int(purpose_counts.get("index_hit") or 0), int(purpose_counts.get("gap") or 0)
+    asked = hit + gap
+    ov = [float(x) for x in overlaps or () if x is not None]
+    lags = []
+    for r in fresh or ():
+        t = _ts(r.get("newest"))
+        if t is not None:
+            lags.append((str(r.get("topic_key") or ""), round((now - t).total_seconds() / 86400, 2)))
+    lags.sort(key=lambda x: x[1])
+    hours = int(crawl.get("hours") or 0)
+    new = int(crawl.get("new") or 0)
+    return {
+        "questions": asked, "index_hits": hit, "gaps": gap,
+        "index_answer_rate": round(hit / asked, 3) if asked else None,
+        "live_overlap": round(sum(ov) / len(ov), 3) if ov else None, "overlap_samples": len(ov),
+        "freshness_lag_days": {"median": lags[len(lags) // 2][1] if lags else None,
+                               "worst": lags[-1] if lags else None, "topics": len(lags)},
+        "novel_yield_per_crawl_hour": round(new / hours, 1) if hours else None,
+        "crawl": {"fetched": int(crawl.get("fetched") or 0), "new": new, "hours": hours},
+        "fetches": int(fetches or 0),
+        "pages_per_question": round(int(fetches or 0) / asked, 1) if asked else None,
+    }

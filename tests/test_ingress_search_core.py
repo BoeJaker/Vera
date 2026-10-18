@@ -69,3 +69,29 @@ def test_the_gap_fill_may_run_from_the_schedule():
     from vera.evolve import schedule_core as SC
     assert any("fabric.map.gaps.fill".startswith(p) for p in SC.CAP_ALLOW_PREFIXES)
     assert not any("fabric.map.search".startswith(p) for p in SC.CAP_ALLOW_PREFIXES)
+
+
+def test_overlap_and_the_daily_metrics():
+    assert sc.overlap_at(["a", "b", "c"], ["b", "x", "a", "y"]) == 0.5 and sc.overlap_at(["a"], []) is None
+    assert sc.overlap_at(list("abcdefghijkl"), list("lkjihgfedcba")) == round(8 / 10, 3)   # top 10 of each
+    m = sc.daily_metrics({"index_hit": 3, "gap": 1}, [0.5, None, 0.3],
+                         [{"topic_key": "t1", "newest": NOW - timedelta(days=2)},
+                          {"topic_key": "t2", "newest": NOW - timedelta(days=10)},
+                          {"topic_key": "t3", "newest": None}],
+                         {"fetched": 40, "new": 12, "hours": 3}, 80, now=NOW)
+    assert m["questions"] == 4 and m["index_answer_rate"] == 0.75 and m["live_overlap"] == 0.4
+    assert m["overlap_samples"] == 2 and m["freshness_lag_days"]["topics"] == 2
+    assert m["freshness_lag_days"]["worst"] == ("t2", 10.0) and m["freshness_lag_days"]["median"] == 10.0
+    assert m["novel_yield_per_crawl_hour"] == 4.0 and m["pages_per_question"] == 20.0
+    e = sc.daily_metrics({}, [], [], {}, 0, now=NOW)
+    assert e["index_answer_rate"] is None and e["live_overlap"] is None and e["pages_per_question"] is None
+
+
+def test_info_seek_counts_index_hits_and_the_metrics_cap_is_schedulable():
+    src = (ROOT / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    assert 'purpose="index_hit"' in src and src.index('purpose="index_hit"') < src.index('record_gap(subject')
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert '@capability("fabric.map.metrics"' in caps and "web_metrics_daily" in caps
+    from vera.evolve import schedule_core as SC
+    assert SC.cap_allowed("fabric.map.metrics") and SC.cap_allowed("fabric.map.gaps.fill")
+    assert not SC.cap_allowed("fabric.map.search")
