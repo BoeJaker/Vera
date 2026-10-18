@@ -185,6 +185,16 @@ def t3_media_job(ds_id: str, rid: str, url: str, op: str, reader: str, *, title:
             "payload": {"dataset_id": ds_id, "rid": rid, "url": url, "op": op, "reader": reader}, "total": 1}
 
 
+def captions_text(snippets) -> str:
+    """A transcript's timed lines as one text: [music]-style cues dropped, whitespace folded."""
+    out = []
+    for s in snippets or ():
+        t = " ".join(str(getattr(s, "text", None) or (s.get("text") if isinstance(s, dict) else "") or "").split())
+        if t and not (t.startswith("[") and t.endswith("]")):
+            out.append(t)
+    return " ".join(out)
+
+
 def media_text(op: str, result: Dict[str, Any]) -> str:
     """The text a media model gave back ('' when it gave none or failed)."""
     if not isinstance(result, dict) or result.get("error"):
@@ -192,6 +202,9 @@ def media_text(op: str, result: Dict[str, Any]) -> str:
     t = result.get("text") or result.get("transcript") or result.get("description") or ""
     t = " ".join(str(t).split())
     return (("Image: " if op == "describe" else "Transcript: ") + t) if t else ""
+
+
+AUDIO_FORMAT = "bestaudio[filesize<25M]/bestaudio[filesize_approx<25M]/worstaudio"
 
 
 def t3_job(ds_id: str, items: Sequence[Dict[str, Any]], *, crawl_id: str = "", llm_ent: bool = False,
