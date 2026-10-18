@@ -89,8 +89,8 @@ def threads_for(fn: str, default: int) -> int:
 #: count for the job's whole run again (reserved_now).
 RESERVE_LAG_S = 15
 #: A worker that reports cpu_scope "pinned" measures its own cores (P0-1, 18 Oct 2026), so its 60 s average shows
-#: a job once it has run that long: a reservation older than this stops counting toward CPU. Memory is an instant
-#: reading, so a reservation stops counting toward memory after RESERVE_LAG_S.
+#: a job once it has run that long: a reservation older than this stops counting toward CPU. Memory keeps the
+#: whole-run reservation: a chunk's memory grows long after its first reading.
 PINNED_CPU_SEEN_S = 75
 
 
@@ -116,17 +116,17 @@ def reserved_now(res: Optional[Dict[str, Any]], metrics_at: float, scope: str = 
     res = res or {}
     if scope != "pinned" or not metrics_at or not isinstance(res.get("sent"), list):
         return float(res.get("cpu", 0.0)), float(res.get("mem_gb", 0.0))
-    cpu = mem = 0.0
+    cpu = 0.0
     for e in res["sent"]:
         try:
-            t, c, m = float(e[0]), float(e[1]), float(e[2])
+            t, c = float(e[0]), float(e[1])
         except (TypeError, ValueError, IndexError):
             continue
         if t > metrics_at - PINNED_CPU_SEEN_S:
             cpu += c
-        if t > metrics_at - RESERVE_LAG_S:
-            mem += m
-    return cpu, mem
+    # memory keeps its whole-run reservation (vera-d2's review, 18 Oct 2026): a pytest chunk's memory keeps growing
+    # long after its first reading, and Ollama-B is already short of memory
+    return cpu, float(res.get("mem_gb", 0.0))
 
 
 #: Node metrics older than this are not trusted for admission.
