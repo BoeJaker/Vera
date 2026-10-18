@@ -112,4 +112,8 @@ def test_frozen_benchmark_is_registered_and_never_claims_production_readiness():
     assert result["authority_changed"] is False
     assert result["providers_invoked"] is False
     assert result["operator_projection"]["passed"] is True
+    assert result["operator_projection"]["evidence_scope"] == "frozen_fixture_conformance"
+    assert result["operator_projection"]["production_ready"] is False
+    assert result["operator_projection"]["authority_changed"] is False
+    assert result["operator_projection"]["providers_invoked"] is False
     assert "never calls" in entry["meta"]["description"]
