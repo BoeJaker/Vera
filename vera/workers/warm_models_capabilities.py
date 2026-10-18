@@ -468,7 +468,8 @@ def _view(c: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @capability("ollama.warm.status", memory="off", silent=True,
-            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["node", "class", "slots", "resident", "planned", "embed", "busy", "acting"]}}},
+            # the Workers panel's own element on the desk (Wave 1: panel-derived): the widget `element` form mounts it, and it reads itself
+            contract={"presentation": {"kind": "table", "form": "element", "map": {"rows": "nodes"}, "draw": {"tag": "vera-node-models", "attrs": {"section": "warm"}}, "title": "Warm models"}},
             http_method="GET", http_path="/ollama/warm/status", http_tags=["ollama", "nodes"],
             description="Warm model slots per Ollama node: slots (GPU 1, CPU 2 - embedders ride "
                         "beside them), the planned models and where they came from (node config, "
