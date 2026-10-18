@@ -11654,6 +11654,7 @@ async def _read_stream(key: str, limit: int) -> List[Dict]:
 
 
 @capability("evolve.sandbox.logs", memory="off", silent=True,
+            contract={"presentation": {"kind": "log", "map": {"events": "logs", "t": "ts", "text": "text", "level": "level"}, "empty": "No captured sandbox logs"}},
             http_method="GET", http_path="/evolve/sandbox/logs", http_tags=["evolve"],
             description="Recent captured logs for loop-lab sandbox container(s), newest "
                         "first, each stamped with branch + running-code sha. Inputs: "

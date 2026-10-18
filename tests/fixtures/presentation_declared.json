@@ -20,6 +20,116 @@
    "rows": "guests"
   }
  },
+ "bench.compare": {
+  "draw": {
+   "columns": [
+    "model",
+    "node_label",
+    "accuracy",
+    "gen_tps",
+    "load_ms",
+    "size_gb",
+    "quant"
+   ]
+  },
+  "empty": "No benchmark results for this role yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "bench.matrix.results": {
+  "draw": {
+   "columns": [
+    "created_at",
+    "node_label",
+    "state",
+    "cells_total",
+    "errors",
+    "id"
+   ]
+  },
+  "empty": "No context sweeps yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "bench.node_perf": {
+  "draw": {
+   "columns": [
+    "label",
+    "status",
+    "reachable",
+    "ping_ms",
+    "loaded_vram_gb",
+    "vram_used_pct",
+    "version"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "bench.passive": {
+  "draw": {
+   "columns": [
+    "model",
+    "node_label",
+    "obs_tps",
+    "avg_latency_s",
+    "calls",
+    "last_ts"
+   ],
+   "sort": "calls"
+  },
+  "empty": "No production traffic seen yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "rows"
+  }
+ },
+ "bench.results": {
+  "draw": {
+   "columns": [
+    "model",
+    "node_label",
+    "role",
+    "accuracy",
+    "items_passed",
+    "items_total",
+    "quant",
+    "created_at"
+   ]
+  },
+  "empty": "No benchmark results yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "results"
+  }
+ },
+ "bench.suites": {
+  "draw": {
+   "columns": [
+    "role",
+    "label",
+    "kind",
+    "items",
+    "blurb"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "suites"
+  }
+ },
  "board.items": {
   "form": "ci-board",
   "kind": "status"
@@ -27,6 +137,76 @@
  "cal.events.list": {
   "form": "schedule",
   "kind": "calendar"
+ },
+ "catalog.browse.index": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "families"
+    },
+    "title": "Families"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "ollama_library"
+    },
+    "title": "Ollama library"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "sizes"
+    },
+    "title": "Sizes"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "publishers"
+    },
+    "title": "Publishers"
+   }
+  ]
+ },
+ "catalog.installed": {
+  "draw": {
+   "columns": [
+    "label",
+    "status",
+    "has_gpu",
+    "count",
+    "size_gb",
+    "ram_gb",
+    "vram_gb"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "catalog.nodes": {
+  "draw": {
+   "columns": [
+    "label",
+    "status",
+    "has_gpu",
+    "gpu_name",
+    "vram_gb",
+    "ram_gb",
+    "cpu_cores",
+    "class"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
  },
  "census.live": {
   "form": "census-live",
@@ -79,6 +259,24 @@
  "code.read": {
   "form": "code",
   "kind": "code"
+ },
+ "collector.catalog": {
+  "kind": "records",
+  "map": {
+   "domain": "category",
+   "id": "id",
+   "rows": "sources",
+   "snippet": "description",
+   "title": "label",
+   "url": "url"
+  }
+ },
+ "collector.stealth_list_domains": {
+  "empty": "No domain has a saved scraper config",
+  "kind": "table",
+  "map": {
+   "rows": "domains"
+  }
  },
  "dash.health.summary": {
   "form": "pills",
@@ -161,6 +359,16 @@
    "name": "name",
    "rows": "sandboxes",
    "status": "running"
+  }
+ },
+ "evolve.sandbox.logs": {
+  "empty": "No captured sandbox logs",
+  "kind": "log",
+  "map": {
+   "events": "logs",
+   "level": "level",
+   "t": "ts",
+   "text": "text"
   }
  },
  "evolve.tasks.overview": {
@@ -310,8 +518,24 @@
   }
  },
  "ollama.instances": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "status",
+    "has_gpu",
+    "latency_ms",
+    "in_use",
+    "errors",
+    "num_ctx",
+    "backend"
+   ]
+  },
   "form": "table",
-  "kind": "table"
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
  },
  "ollama.request_log": {
   "form": "log",
@@ -345,10 +569,240 @@
    "values": "events"
   }
  },
+ "pxstore.backend.status": {
+  "draw": {
+   "columns": [
+    "vmid",
+    "name",
+    "status",
+    "ollama",
+    "vllm",
+    "vllm_provisioned",
+    "error"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "guests"
+  }
+ },
+ "pxstore.backup.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "log",
+    "map": {
+     "events": "runs",
+     "kind": "result",
+     "text": "line"
+    },
+    "title": "Latest runs"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "jobs"
+    },
+    "title": "Jobs"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "name": "name",
+     "rows": "storages",
+     "value": "used"
+    },
+    "title": "Storages"
+   }
+  ]
+ },
+ "pxstore.cpu.map": {
+  "draw": {
+   "columns": [
+    "vmid",
+    "name",
+    "type",
+    "status",
+    "pinned",
+    "live",
+    "cores"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "guests"
+  }
+ },
+ "pxstore.cpu.topology": {
+  "kind": "table",
+  "map": {
+   "rows": "cpus"
+  }
+ },
+ "pxstore.disks": {
+  "draw": {
+   "columns": [
+    "name",
+    "size",
+    "model",
+    "transport",
+    "role",
+    "state",
+    "pool"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "disks"
+  }
+ },
+ "pxstore.fs.status": {
+  "kind": "table",
+  "map": {
+   "rows": "entries"
+  }
+ },
+ "pxstore.inventory": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "name": "name",
+     "rows": "pools",
+     "value": "cap_pct"
+    },
+    "title": "Pools"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "guests"
+    },
+    "title": "Guests"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "storages"
+    },
+    "title": "Storages"
+   }
+  ]
+ },
+ "pxstore.nwm.flows": {
+  "kind": "table",
+  "map": {
+   "rows": "flows"
+  }
+ },
+ "pxstore.settings.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "settings"
+  }
+ },
+ "pxstore.store.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "consumers"
+    },
+    "title": "Consumers"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "writer"
+    },
+    "title": "Writer"
+   }
+  ]
+ },
+ "pxstore.vscode.targets": {
+  "draw": {
+   "columns": [
+    "name",
+    "vmid",
+    "type",
+    "via",
+    "uri",
+    "smb"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "targets"
+  }
+ },
  "pydanticai.status": {
   "kind": "kv",
   "map": {
    "fields": "$"
+  }
+ },
+ "sandbox.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "sandbox.packages.catalog": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "group",
+    "installed",
+    "summary"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "catalog"
+  }
+ },
+ "sandbox.packages.pending": {
+  "draw": {
+   "columns": [
+    "id",
+    "session_id",
+    "context",
+    "created",
+    "expires_in"
+   ]
+  },
+  "empty": "No package installs are waiting",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "pending"
+  }
+ },
+ "sandbox.session.list": {
+  "draw": {
+   "columns": [
+    "session_id",
+    "state",
+    "kind",
+    "label",
+    "image",
+    "source",
+    "session_count"
+   ]
+  },
+  "empty": "No session sandboxes",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sandboxes"
   }
  },
  "smolagents.status": {
