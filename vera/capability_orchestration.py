@@ -12436,6 +12436,8 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "intel/intel_capabilities.py"),
         # the web map's receipts (web-ingress WI-3): hooks web_client, writes through the fabric's Postgres pool
         os.path.join(_here, "fabric/ingress_capabilities.py"),
+        # SearXNG self-healing (web-ingress §16): probe, restart on the dead-network signature, escalate
+        os.path.join(_here, "web/searxng_heal_capabilities.py"),
         os.path.join(_here, "research/researcher_api.py"),
         # nlp_dispatch BEFORE nlp_capabilities: the caps import the placement
         # switch from it, and its own caps (nlp.config.*, nlp.nodes) are how an
