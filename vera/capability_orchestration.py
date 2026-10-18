@@ -7874,6 +7874,45 @@ async def _dag_observe(observer, method: str, *args) -> None:
         log.debug("dag run observer failed", exc_info=True)
 
 
+_OUT_MISSING = object()
+
+
+def _dig(value, path):
+    """`result.field.sub` / `items.0.name` from a cap result; _OUT_MISSING when the path is not there."""
+    cur = value
+    for part in str(path).split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        elif isinstance(cur, list) and part.lstrip("-").isdigit() and -len(cur) <= int(part) < len(cur):
+            cur = cur[int(part)]
+        else:
+            return _OUT_MISSING
+    return cur
+
+
+def apply_output_map(node, result, state: dict) -> list:
+    """A node's output_map ({state_key: result_field}, node position 4): state[state_key] = result.<field>.
+
+    The planner, the sys-dag-creation skill and the Flow Builder all write output_map, and no DAG route ran it, so an
+    output_map-only node lost its result (S12 / D13-1). A field the result does not have is left unset (and
+    returned), never written as None. Returns the missing fields."""
+    omap = node[4] if isinstance(node, (list, tuple)) and len(node) > 4 else None
+    if not isinstance(omap, dict) or not omap:
+        return []
+    missing = []
+    for state_key, field in omap.items():
+        if not state_key or field is None or field == "":
+            continue
+        value = _dig(result, field)
+        if value is _OUT_MISSING:
+            missing.append(str(field))
+            continue
+        state[state_key] = value
+    if missing:
+        log.debug("dag output_map: %s has no %s", node[0] if node else "?", ", ".join(missing))
+    return missing
+
+
 async def run_graph(graph: list, state: dict, trace_id: str = "", run_observer=None,
                     _path: tuple = ()) -> dict:
     """Execute a DAG graph. trace_id flows through all cap calls for traceability."""
@@ -7911,6 +7950,7 @@ async def run_graph(graph: list, state: dict, trace_id: str = "", run_observer=N
             params={k:v for k,v in state.items() if k in accepted}
             result=await cap["func"](**params, trace_id=_dag_trace)
             if out_key: state[out_key]=result
+            apply_output_map(node, result, state)
             # Detect silent errors and enrich state with syslog context
             if isinstance(result, dict) and "error" in result:
                 ctx = await _get_syslog_context(cap_name, str(result["error"]))
@@ -7974,6 +8014,7 @@ async def supervised_run_graph(graph: list, state: dict, supervision_every: int 
                         accepted=set(cap["schema"].get("properties",{}).keys())
                         result=await cap["func"](**{k:v for k,v in state.items() if k in accepted})
                         if out_key: state[out_key]=result
+                        apply_output_map(node, result, state)
                         log_entries.append({"step":i,"cap":cap_name,"attempt":attempt})
                         await _dag_observe(run_observer, "node_finished", path,
                                            cap_name, result, "")
@@ -13752,6 +13793,7 @@ async def _hitl_run_graph_stream(
                     accepted = set(cap_obj["schema"].get("properties",{}).keys())
                     result = await cap_obj["func"](**{k:v for k,v in state.items() if k in accepted})
                     if out_key: state[out_key] = result
+                    apply_output_map(node, result, state)
                     yield "dag.step_done", {"step":i,"cap":cap_name,"out_key":out_key,
                                              "result_preview":str(result)[:200] if result else None}
         except Exception as e:
