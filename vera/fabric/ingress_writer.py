@@ -33,9 +33,13 @@ DDL_LOCK_TIMEOUT = "3s"
 class ReceiptWriter:
     def __init__(self, pool_getter: PoolGetter, *, queue_max: int = QUEUE_MAX, batch_max: int = BATCH_MAX,
                  flush_every_s: float = FLUSH_EVERY_S, rows_in_thread: bool = True,
-                 novelty_getter: Optional[Callable[[], bool]] = None) -> None:
+                 novelty_getter: Optional[Callable[[], bool]] = None,
+                 blob_getter: Optional[Callable[[], bool]] = None,
+                 blob_putter: Optional[Callable[[str, bytes], bool]] = None) -> None:
         self._pool_getter = pool_getter
         self._novelty_getter = novelty_getter or (lambda: False)
+        self._blob_getter = blob_getter or (lambda: False)
+        self._blob_putter = blob_putter
         self._q: Optional[asyncio.Queue] = None
         self._queue_max, self._batch_max, self._every = int(queue_max), int(batch_max), float(flush_every_s)
         self._task: Optional[asyncio.Task] = None
@@ -43,7 +47,8 @@ class ReceiptWriter:
         self._rows_in_thread = rows_in_thread
         self.stats: Dict[str, Any] = {"enqueued": 0, "dropped_full": 0, "dropped_no_store": 0, "flushed": 0,
                                       "batches": 0, "errors": 0, "last_flush_ms": 0, "last_error": "",
-                                      "queries": 0, "links": 0, "content": 0, "novel": 0, "near": 0, "known": 0}
+                                      "queries": 0, "links": 0, "content": 0, "novel": 0, "near": 0, "known": 0,
+                                      "blobs": 0, "blob_errors": 0}
 
     # ── the request path ─────────────────────────────────────────────────────
     def enqueue(self, item: Dict[str, Any]) -> bool:
@@ -165,6 +170,8 @@ class ReceiptWriter:
             self.stats["last_error"] = str(e)[:200]
             log.warning("ingress flush of %d: %s", len(batch), e)
             return {"error": 1}
+        if content and self._blob_putter is not None and self._blob_getter():
+            await self._store_blobs(pool, fetches, rows)
         self.stats["flushed"] += len(fetched)
         self.stats["queries"] += len(qrows)
         self.stats["links"] += len(links)
@@ -172,6 +179,35 @@ class ReceiptWriter:
         self.stats["batches"] += 1
         self.stats["last_flush_ms"] = int((time.monotonic() - t0) * 1000)
         return {"fetches": len(fetched), "links": len(links), "content": len(content), "queries": len(qrows)}
+
+    async def _store_blobs(self, pool: Any, items: List[Dict[str, Any]], rows: List[Dict[str, Any]]) -> None:
+        """WI-12c: each body whose content the blob store does not hold yet, once, compressed, by content hash; then
+        marked (web_content.blob_at) so a conditional GET may rely on it. After the receipts; never fails the flush."""
+        try:
+            from Vera.vera.fabric import ingress_crawl_core as cc
+        except ImportError:  # pragma: no cover
+            from vera.fabric import ingress_crawl_core as cc
+        bodies = {}
+        for it, r in zip(items, rows):
+            if r.get("content") and r.get("content_hash"):
+                bodies.setdefault(r["content_hash"], it.get("html") or it.get("text") or "")
+        if not bodies:
+            return
+        try:
+            async with pool.acquire() as conn:
+                missing = [x[0] for x in await conn.fetch(rc.BLOB_MISSING, list(bodies))]
+            stored = []
+            for h in missing:
+                body = bodies.get(h) or ""
+                if body and await asyncio.to_thread(self._blob_putter, cc.blob_key(h), cc.pack(body)):
+                    stored.append(h)
+            if stored:
+                async with pool.acquire() as conn:
+                    await conn.execute(rc.BLOB_MARK, stored)
+            self.stats["blobs"] += len(stored)
+        except Exception as e:  # noqa: BLE001
+            self.stats["blob_errors"] += 1
+            log.debug("ingress blobs: %s", e)
 
     async def _score(self, conn: Any, rows: List[Dict[str, Any]]) -> "tuple[List[tuple], List[tuple]]":
         """Novelty for every row with content (WI-5 steps 1-2): one read of the hashes the map holds and one of

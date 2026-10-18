@@ -223,6 +223,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "vector is read back from Chroma and compared with its nearest records (no where filter); 1 - the highest cosine "
        "is recorded on the web map (web_urls.semantic_novelty, the closest record as semantic_twin). Acts on nothing.",
        owner="web-ingress"),
+    _f("ingress.blobs", ("off", "on"), "fabric", "WI-12c",
+       "Page bodies in the blob store: 'off' (default) = the web map keeps hashes and metadata only; 'on' = each "
+       "distinct body the recorder sees in full is stored once in the fabric's object store (Garage, zstd, keyed by "
+       "content hash), and the crawl class revisits with If-None-Match / If-Modified-Since - an unchanged page "
+       "answers 304 and its body comes from the store.", owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),

@@ -102,3 +102,33 @@ def test_receipts_carry_the_fetch_time_so_the_host_rate_can_be_checked():
     assert cc.fetch_row("https://a.example/", status=200, content_type="text/html", body="x", fetched_at=7.0)["fetched_at"] == 7.0
     src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
     assert 'ts=float(fp["fetched_at"]) if fp.get("fetched_at") else None' in src and "fetched_at=at" in src
+
+
+
+def test_bodies_are_content_addressed_and_a_revisit_is_conditional():
+    import pytest
+    pytest.importorskip("zstandard")
+    assert cc.blob_key("ab12cd") == "web/ab/ab12cd.zst" and cc.blob_key("") == ""
+    body = "<html><body>" + "Lab space in Cambridge. " * 200 + "</body></html>"
+    packed = cc.pack(body)
+    assert len(packed) < len(body) and cc.unpack(packed) == body
+    assert cc.conditional_headers({"etag": "\"x1\"", "last_modified": "Sat, 18 Oct 2026 10:00:00 GMT", "blob": True}) == \
+        {"If-None-Match": "\"x1\"", "If-Modified-Since": "Sat, 18 Oct 2026 10:00:00 GMT"}
+    assert cc.conditional_headers({"etag": "x", "blob": False}) == {}             # no stored body: never ask for a 304
+    assert cc.conditional_headers({}) == {}
+
+
+def test_the_writer_stores_bodies_after_the_receipts_and_the_host_answers_304s_from_them():
+    import ast
+    w = (ROOT / "vera" / "fabric" / "ingress_writer.py").read_text(encoding="utf-8")
+    fl = ast.get_source_segment(w, next(n for n in ast.walk(ast.parse(w)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "flush"))
+    assert fl.index("await conn.executemany(rc.INSERT_FETCH") < fl.index("_store_blobs")       # receipts first
+    sb = ast.get_source_segment(w, next(n for n in ast.walk(ast.parse(w)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_store_blobs"))
+    assert "BLOB_MISSING" in sb and "BLOB_MARK" in sb and "to_thread" in sb
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    fm = ast.get_source_segment(caps, next(n for n in ast.walk(ast.parse(caps)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_crawl_fetch_many"))
+    assert "_known_for(us)" in fm and "== 304" in fm and "blob_body" in fm and "validators" in fm
+    fb = ast.get_source_segment(caps, next(n for n in ast.walk(ast.parse(caps)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_fetch_batch"))
+    assert "headers=(validators or {}).get(u)" in fb and "OBJECT_STORE" not in fb               # the node stores nothing
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["ingress.blobs"].default == "off"
