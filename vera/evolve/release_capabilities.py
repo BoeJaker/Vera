@@ -47,6 +47,10 @@ from Vera.vera.capability_orchestration import (
 )
 
 try:
+    from Vera.vera.evolve import release_lane_core as lane
+except ImportError:                                        # pragma: no cover
+    from vera.evolve import release_lane_core as lane      # type: ignore
+try:
     from Vera.vera.evolve import release_core as core
 except ImportError:                                        # pragma: no cover
     from vera.evolve import release_core as core           # type: ignore
@@ -56,6 +60,7 @@ log = logging.getLogger("vera.evolve.release")
 KEY_PENDING = "vera:evolve:release:pending"
 KEY_HISTORY = "vera:evolve:release:history"
 KEY_NODE_SYNC = "vera:evolve:release:node_sync"
+KEY_LANE = "vera:evolve:release:lane"          # hash  request id -> json (B1.0 release lane)
 _BY = "evolve.release"
 _TICK_S = 30
 _PROCESS_STARTED = datetime.now(timezone.utc).replace(microsecond=0)   # this process's boot
@@ -373,6 +378,63 @@ async def _release_held_census(rec: Dict[str, Any]) -> None:
                       "status": rec.get("status"), "census_resumed": rec["census_resumed"]})
 
 
+async def _lane_load() -> list:
+    r = _redis()
+    if r is None:
+        return []
+    try:
+        raw = await r.hgetall(KEY_LANE) or {}
+    except Exception:
+        return []
+    out = []
+    for v in raw.values():
+        try:
+            out.append(json.loads(v if isinstance(v, str) else v.decode()))
+        except Exception:
+            continue
+    return out
+
+
+async def _lane_put(reqs) -> None:
+    r = _redis()
+    if r is None:
+        return
+    for q in reqs:
+        await r.hset(KEY_LANE, q["id"], json.dumps(q))
+
+
+async def _last_release_done() -> Optional[datetime]:
+    r = _redis()
+    if r is None:
+        return None
+    try:
+        last = json.loads((await r.lrange(KEY_HISTORY, 0, 0) or [b"{}"])[0])
+    except Exception:
+        return None
+    return core.parse_iso(last.get("finished_at") or last.get("requested_at") or "")
+
+
+async def _lane_step(pending: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """B1.0: when the batch is due and nothing is in flight, open ONE release carrying every queued request."""
+    reqs = await _lane_load()
+    now = _now()
+    r = _redis()
+    gone = [q["id"] for q in reqs if lane.expired(q, now)]
+    if gone and r is not None:
+        await r.hdel(KEY_LANE, *gone)
+    go, why = lane.should_fire(reqs, now, await _last_release_done(), bool(pending))
+    if not go:
+        return {"lane": "wait", "why": why}
+    q = lane.queued(reqs)
+    res = await _open_release(mode=lane.batch_mode(q), edge="", by="release-lane", reason=lane.batch_reason(q),
+                              restart=True, sync_nodes=True)
+    rid = res.get("release_id") or ""
+    if rid:
+        await _lane_put(lane.mark_carried(q, rid, now))
+        await emit_event({"type": "evolve.release.lane.fired", "release_id": rid, "requests": [x["id"] for x in q]})
+    return {"lane": "fired", "release_id": rid, "requests": len(q), "result": res}
+
+
 async def run_tick() -> Dict[str, Any]:
     try:
         await _maybe_node_sync()
@@ -380,7 +442,12 @@ async def run_tick() -> Dict[str, Any]:
         log.warning("release node sync: %s", e)
     p = await _pending()
     if not p:
-        return {"action": "none"}
+        try:
+            ls = await _lane_step(None)
+        except Exception as e:
+            log.warning("release lane: %s", e)
+            ls = {"lane": "error", "why": str(e)[:200]}
+        return {"action": "lane" if ls.get("lane") == "fired" else "none", "lane": ls}
     census = await census_summary()
     act = core.decide(p, census, now=_now(), process_started_at=_PROCESS_STARTED)
     a = act.get("action")
@@ -440,6 +507,35 @@ async def _tick() -> None:
 schedule(_tick, _TICK_S, name="evolve.release.tick", skip_in_sandbox=True, singleton=True)
 
 
+async def _open_release(*, mode: str, edge: str, by: str, reason: str, restart: bool, sync_nodes: bool) -> Dict[str, Any]:
+    """Open a release (the caller holds _LOCK and has checked nothing is pending): go now if the census and gates
+    allow, else leave it pending for the tick. Shared by evolve.release.prod and the release lane."""
+    p = core.new_pending(edge=edge or "", mode=mode, by=str(by), reason=reason, restart=restart,
+                         now=_now(), release_id=uuid.uuid4().hex[:8])
+    p["sync_nodes"] = bool(sync_nodes)
+    summary = await census_summary()
+    ok, why = core.may_release(mode, summary, restart=bool(restart))
+    await emit_event({"type": "evolve.release.requested", "release_id": p["id"], "edge": edge,
+                      "mode": mode, "census": summary.get("state"), "go_now": ok})
+    if ok:
+        await _save(p)
+        p = await _do_release(p)
+        return {"ok": p.get("status") in ("restarting", "done"), "release_id": p["id"],
+                "status": p.get("status"), "merge": p.get("merge"), "why": why,
+                "census": summary, "error": p.get("last_why") if p.get("status") == "failed" else ""}
+    p["last_why"] = why
+    await _save(p)
+    await _drain(core.waiting_on_gates(why))
+    if mode == "goal" and core.goal_yield_needed(summary):
+        if await _write_yield(f"release {p['id']}: let the goal in flight finish, then park"):
+            p["yield_written"] = True
+            await _save(p)
+    return {"ok": True, "held": True, "release_id": p["id"], "status": "waiting", "mode": mode,
+            "why": why, "census": summary,
+            "note": "the release goes out when the census clears; evolve.release.status to watch, "
+                    "evolve.release.cancel to drop it, evolve.release.prod force=true to go now"}
+
+
 @capability("evolve.release.prod", memory="off",
             http_method="POST", http_path="/evolve/release/prod", http_tags=["evolve", "release"],
             description="Release bleeding-edge to prod: fast-forward main to the edge, then restart. "
@@ -474,30 +570,8 @@ async def cap_release_prod(confirm: bool = False, edge: str = "", census: str = 
             by = (ck.get("") if hasattr(ck, "get") else str(ck or "")) or "release"
         except Exception:
             by = "release"
-        p = core.new_pending(edge=edge or "", mode=mode, by=str(by), reason=reason, restart=restart,
-                             now=_now(), release_id=uuid.uuid4().hex[:8])
-        p["sync_nodes"] = bool(sync_nodes)
-        summary = await census_summary()
-        ok, why = core.may_release(mode, summary, restart=bool(restart))
-        await emit_event({"type": "evolve.release.requested", "release_id": p["id"], "edge": edge,
-                          "mode": mode, "census": summary.get("state"), "go_now": ok})
-        if ok:
-            await _save(p)
-            p = await _do_release(p)
-            return {"ok": p.get("status") in ("restarting", "done"), "release_id": p["id"],
-                    "status": p.get("status"), "merge": p.get("merge"), "why": why,
-                    "census": summary, "error": p.get("last_why") if p.get("status") == "failed" else ""}
-        p["last_why"] = why
-        await _save(p)
-        await _drain(core.waiting_on_gates(why))
-        if mode == "goal" and core.goal_yield_needed(summary):
-            if await _write_yield(f"release {p['id']}: let the goal in flight finish, then park"):
-                p["yield_written"] = True
-                await _save(p)
-        return {"ok": True, "held": True, "release_id": p["id"], "status": "waiting", "mode": mode,
-                "why": why, "census": summary,
-                "note": "the release goes out when the census clears; evolve.release.status to watch, "
-                        "evolve.release.cancel to drop it, evolve.release.prod force=true to go now"}
+        return await _open_release(mode=mode, edge=edge, by=str(by), reason=reason, restart=restart,
+                                   sync_nodes=sync_nodes)
 
 
 @capability("evolve.release.status", memory="off", silent=True,
@@ -567,3 +641,74 @@ async def cap_release_node_sync(run: bool = False, trace_id=None) -> Dict[str, A
 async def cap_release_tick(trace_id=None) -> Dict[str, Any]:
     async with _LOCK:
         return await run_tick()
+
+
+
+# ── the release lane (backbone B1.0, owner's yes 18 Oct 2026) ────────────────────────────────────────────────────
+@capability("evolve.release.submit", memory="off",
+            http_method="POST", http_path="/evolve/release/submit", http_tags=["evolve", "release"],
+            description="Ask for a prod release through the RELEASE LANE instead of releasing yourself: every release "
+                        "restarts prod for every session, so requests are batched into one release of bleeding-edge - "
+                        "the lane waits up to 10 min for others to join, keeps 15 min between lane releases unless a "
+                        "request is urgent, and the release still waits for census goals, gates and protected runs. "
+                        "Input: confirm (bool!), reason (str!), by (str - your session), census ('goal' default | "
+                        "'finish'), urgent (bool). Output: {ok, request, fires_at, queue}.")
+async def cap_release_submit(confirm: bool = False, reason: str = "", by: str = "", census: str = "goal",
+                             urgent: bool = False, trace_id=None) -> Dict[str, Any]:
+    if not confirm:
+        return {"ok": False, "refused": "confirmation-required",
+                "note": "a release moves what prod serves and restarts it; pass confirm=true"}
+    if not str(reason or "").strip():
+        return {"ok": False, "error": "reason required - say what the release carries"}
+    r = _redis()
+    if r is None:
+        return {"ok": False, "error": "no redis - the lane cannot hold a request"}
+    sha = ""
+    try:
+        import subprocess as _sp
+        sha = _sp.run(["git", "rev-parse", "--short=12", "bleeding-edge"], capture_output=True, text=True,
+                      cwd=str(__import__("pathlib").Path(__file__).resolve().parents[2]), timeout=10).stdout.strip()
+    except Exception:
+        pass
+    req = lane.new_request(rid=uuid.uuid4().hex[:8], by=by or "session", reason=reason, now=_now(), census=census,
+                           urgent=bool(urgent), edge_sha=sha)
+    await _lane_put([req])
+    reqs = await _lane_load()
+    t = lane.next_fire_at(reqs, await _last_release_done())
+    await emit_event({"type": "evolve.release.lane.submitted", "request": req})
+    return {"ok": True, "request": req, "fires_at": t.isoformat(timespec="seconds") if t else "",
+            "queue": lane.queued(reqs),
+            "note": "the lane releases the batch when due; evolve.release.lane to watch, "
+                    "evolve.release.withdraw to take this back"}
+
+
+@capability("evolve.release.lane", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/release/lane", http_tags=["evolve", "release"],
+            description="The release lane: queued requests (oldest first), when the batch fires and why it waits, "
+                        "and the requests of the last day with the release that carried each. Output: {queued, "
+                        "fires_at, why, recent, pending}.")
+async def cap_release_lane(trace_id=None) -> Dict[str, Any]:
+    reqs = await _lane_load()
+    p = await _pending()
+    last = await _last_release_done()
+    t = lane.next_fire_at(reqs, last)
+    go, why = lane.should_fire(reqs, _now(), last, bool(p))
+    recent = sorted([q for q in reqs if q.get("status") != "queued"], key=lambda q: str(q.get("done_at") or ""), reverse=True)
+    return {"queued": lane.queued(reqs), "fires_at": t.isoformat(timespec="seconds") if t else "",
+            "due": go, "why": why, "recent": recent[:30],
+            "pending": {"id": p.get("id"), "status": p.get("status"), "why": p.get("last_why")} if p else None}
+
+
+@capability("evolve.release.withdraw", memory="off",
+            http_method="POST", http_path="/evolve/release/withdraw", http_tags=["evolve", "release"],
+            description="Take a queued release request back out of the lane. Input: id (str!). Output: {ok, request}.")
+async def cap_release_withdraw(id: str = "", trace_id=None) -> Dict[str, Any]:
+    reqs = {q["id"]: q for q in await _lane_load()}
+    q = reqs.get(str(id or ""))
+    if not q:
+        return {"ok": False, "error": "no such request"}
+    if q.get("status") != "queued":
+        return {"ok": False, "error": f"request already {q.get('status')}", "request": q}
+    q = dict(q, status="withdrawn", done_at=_now().isoformat(timespec="seconds"))
+    await _lane_put([q])
+    return {"ok": True, "request": q}
