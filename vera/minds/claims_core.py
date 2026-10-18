@@ -32,6 +32,16 @@ _SENT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(\[])")
 _CHECKABLE = re.compile(r"\d|\b(?:January|February|March|April|May|June|July|August|September|October|November|"
                         r"December)\b|\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b|\bv?\d+\.\d+")
 _WORD = re.compile(r"[a-z0-9]+(?:\.[0-9]+)*")
+# Not claims about the world (18 Oct: 22 of the first 57 harvested were these): a heading or title (no closing
+# punctuation), the run talking about its own output, advice in the imperative, a plan's milestone / week / step.
+_TERMINAL = re.compile(r"[.!?:;]\s*[\"')\]]*\s*$")
+_SELF = re.compile(r"\b(?:this|the) (?:run|report|document|explainer|summary|deliverable|answer)\b|\bartifacts?\b|"
+                   r"^here(?: is|'s)\b|\bhas been (?:defined|created|written|prepared|drafted)\b|\bthe following\b|"
+                   r"\bbelow\b", re.I)
+_LABEL = re.compile(r"^[^:]{1,60}?\s*:\s+")
+_ADVICE = re.compile(r"^(?:use|prefer|ensure|design|implement|avoid|consider|add|make|keep|run|install|create|build|"
+                     r"define|check|try|apply|enable|set|write|test|deploy|configure)\b", re.I)
+_PLAN_STEP = re.compile(r"^(?:milestone|week|phase|step|stage|day|sprint)\s*\d", re.I)
 _STOP = set("the and for with that this from have has had are was were will would could should into onto about "
             "over under than then also more most such which while their there these those been being its it's "
             "is in on of to a an by as at or be not no yes can may".split())
@@ -42,6 +52,16 @@ def words(t: str) -> set:
     return {w for w in _WORD.findall((t or "").lower()) if (len(w) > 2 or w.isdigit()) and w not in _STOP}
 
 
+def is_claim(s: str) -> bool:
+    """A sentence that states something about the world - not a heading, not the run describing its own output,
+    not advice or a plan step (those are neither supported nor unsupported by a page)."""
+    s = (s or "").strip()
+    if not _TERMINAL.search(s) or _SELF.search(s) or _PLAN_STEP.match(s) or _ADVICE.match(s):
+        return False
+    rest = _LABEL.sub("", s, count=1)
+    return not _ADVICE.match(rest)
+
+
 def claims(deliverable: str, limit: int = MAX_CLAIMS) -> List[str]:
     """The deliverable's checkable sentences (a figure, a date, a version or a name), in order, deduplicated."""
     text = re.sub(r"[#*_`>|]+", " ", str(deliverable or ""))
@@ -50,7 +70,7 @@ def claims(deliverable: str, limit: int = MAX_CLAIMS) -> List[str]:
     for line in text.splitlines():
         for s in _SENT.split(line.strip()):
             s = " ".join(s.split()).strip(" -")
-            if len(s) < 25 or not _CHECKABLE.search(s) or len(words(s)) < 4:
+            if len(s) < 25 or not _CHECKABLE.search(s) or len(words(s)) < 4 or not is_claim(s):
                 continue
             key = s.lower()
             if key in seen:

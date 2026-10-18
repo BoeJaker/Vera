@@ -70,3 +70,36 @@ def test_the_recorded_decision_is_a_valid_ledger_row():
                            detail={"overlap": p["overlap"]})
     assert LC.check_decision(row) == []
     assert CL.claim_ref("s1", "a") != CL.claim_ref("s2", "a")
+
+
+# -- the picker, from the first night's 57 harvested claims (18 Oct): 22 were not claims about the world ----------
+@pytest.mark.parametrize("s", [
+    "Current Browser Support Status (as of late 2026)",                              # a heading
+    "Report: The 2024 Redis Licensing Change and the Launch of Valkey",
+    "SSPLv1 (Server Side Public License v1)",
+    "Here is a 200-word explainer on race conditions, tailored for a junior developer:",   # the run on itself
+    "Consequently, no standalone summary document exists to cite specific version numbers (e.g., \"Chrome 120+\") "
+    "or detailed feature matrix tables directly from this run's artifacts.",
+    "A 4-week roadmap for a Personal Finance Tracker has been defined with the following milestones:",
+    "Thread-Safe Libraries : Prefer pre-tested, thread-safe APIs over custom implementations.",   # advice
+    "Use Locks/Mutexes : Ensure only one thread accesses shared resources at a time.",
+    "Milestone 3 (Week 3): Transaction History & Filtering.",                         # a plan step
+])
+def test_headings_self_reference_advice_and_plan_steps_are_not_claims(s):
+    assert not CL.is_claim(s)
+    assert CL.claims(s) == []
+
+
+@pytest.mark.parametrize("s", [
+    "Apple Safari: Early access / Beta stage.",
+    "In June 2024, the company introduced a new dual-license model:",
+    "Redis Inc., the company behind the open-source project, announced on March 21, 2024 , that it was changing "
+    "the license for its Redis OSS version.",
+    "The latest stable Python 3 release version is Python 3.15.0 , released on October 9, 2026.",
+    "Qdrant : Apache License 2.0 - Permissive, allowing commercial use and modification without copyleft restrictions.",
+    "Google Chrome / Microsoft Edge : Both browsers have full WebGPU support enabled by default across all current "
+    "versions (Chromium 120+).",
+])
+def test_statements_about_the_world_stay_claims(s):
+    assert CL.is_claim(s)
+    assert CL.claims(s) == [s]
