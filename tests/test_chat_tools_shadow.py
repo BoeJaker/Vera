@@ -1,5 +1,6 @@
 """The chat tool shortlist in shadow (four-minds FM-3.2/3.3): the page's offered list parsed from the message, the
 used capabilities from the reply, recall@k for both lists; behind tools.shortlist.chat, legacy by default."""
+import re
 import os
 import sys
 
@@ -47,7 +48,8 @@ def test_recall_for_both_lists():
 def test_the_chat_stream_records_the_shadow_after_the_reply():
     src = open(os.path.join(ROOT, "vera", "agents", "agents.py"), encoding="utf-8").read()
     # recorded in shadow and, since 17 Oct, in 'on' too (the safe shortlist offered to the model)
-    assert 'await _switch_mode("tools.shortlist.chat", body.get("minds"), default="legacy") in ("shadow", "on")' in src
+    assert re.search(r'await _switch_mode\("tools\.shortlist\.chat", body\.get\("minds"\), default="legacy",\s*'
+                     r'cache=_sw\) in \("shadow", "on"\)', src)          # one switchboard read per turn (D10-1)
     assert "_sl_task = asyncio.create_task(_sl_fn(text=_bare_q, k=28))" in src
     assert "await _sl_task" not in src
     i = src.index("_record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)")

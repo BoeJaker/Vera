@@ -40,6 +40,7 @@ empty set, i.e. full tooling.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os as _os_seek
 try:
     from Vera.vera.dag.query_embed_core import bounded_embed_result as _bounded_embed_result
@@ -664,6 +665,37 @@ except Exception:                        # worktree / app-free import
 async def cap_memory_seek(query: str, scope: str = "", since: str = "",
                           k: int = 8, max_chars: int = 4000,
                           include_memory: bool = True, trace_id=None) -> Dict:
+    async with _seek_minds_scope():
+        return await _memory_seek_body(query=query, scope=scope, since=since, k=k, max_chars=max_chars,
+                                       include_memory=include_memory, trace_id=trace_id)
+
+
+@contextlib.asynccontextmanager
+async def _seek_minds_scope():
+    """One switchboard read per seek (D10-1, backbone 18 Oct): a seek asked minds.effective (a Redis read) once per
+    switch it consulted. Resolve once, publish on RUN_MINDS for this seek only, and put it back after, so nothing
+    leaks into the caller's context. A seek inside a run that already has its switches (a loop, a census arm, an
+    eval) keeps them."""
+    if _SB.RUN_MINDS.get() is not None:
+        yield
+        return
+    eff = None
+    try:
+        cap = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        eff = await cap() if cap else None
+    except Exception as e:
+        log.debug("seek switches: %s", e)
+    token = _SB.RUN_MINDS.set(eff) if isinstance(eff, dict) and isinstance(eff.get("modes"), dict) else None
+    try:
+        yield
+    finally:
+        if token is not None:
+            _SB.RUN_MINDS.reset(token)
+
+
+async def _memory_seek_body(query: str, scope: str = "", since: str = "",
+                            k: int = 8, max_chars: int = 4000,
+                            include_memory: bool = True, trace_id=None) -> Dict:
     query = str(query or "").strip()
     if not query:
         return {"error": "query required"}

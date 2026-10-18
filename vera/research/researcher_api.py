@@ -3803,6 +3803,25 @@ async def gather_discovery(query: str, top_k: int = 30) -> list[Citation]:
         return []
 
 
+async def _worldview_gate_mode() -> str:
+    """The switch fix.worldview_source_gate for this request: the run's own switches (RUN_MINDS: a loop, a census
+    arm, a seek) first, then the global layer (minds.effective), else its default 'on'. Never raises."""
+    try:
+        try:
+            from Vera.vera.minds import switchboard_core as _SB
+        except ImportError:  # pragma: no cover
+            from vera.minds import switchboard_core as _SB  # type: ignore
+        run = _SB.RUN_MINDS.get()
+        if isinstance(run, dict):
+            return _SB.mode_of("fix.worldview_source_gate", run)
+        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        if eff:
+            return str((((await eff()) or {}).get("modes") or {}).get("fix.worldview_source_gate") or "on")
+    except Exception as e:
+        log.debug("worldview gate switch: %s", e)
+    return "on"
+
+
 async def gather_worldview(query: str, top_k: int = 15) -> list[Citation]:
     """Nearest-neighbour records from the WorldView latent space → Citations.
 
@@ -3816,8 +3835,11 @@ async def gather_worldview(query: str, top_k: int = 15) -> list[Citation]:
             return []
         # Only cite the worldview when its health verdict is "ok" (doc 49 §4.1, RF-07):
         # an overfit or untrained model otherwise feeds research citations.
-        # VERA_RESEARCH_WORLDVIEW_UNGATED=1 restores the old behaviour.
-        if os.environ.get("VERA_RESEARCH_WORLDVIEW_UNGATED", "") != "1":
+        # The switch fix.worldview_source_gate decides (default 'on' = gated; 'off' = the old ungated behaviour);
+        # before D10-1 (18 Oct) nothing read it, so switching it off did nothing.
+        # VERA_RESEARCH_WORLDVIEW_UNGATED=1 still forces ungated, as an override.
+        if (os.environ.get("VERA_RESEARCH_WORLDVIEW_UNGATED", "") != "1"
+                and await _worldview_gate_mode() != "off"):
             hreg = CAPABILITY_REGISTRY.get("worldview.health")
             hfn = (hreg.get("raw") or hreg.get("func")) if hreg else None
             health = await hfn(trace_id=None) if hfn else {"status": "unknown"}
