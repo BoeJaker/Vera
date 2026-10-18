@@ -3466,36 +3466,15 @@
   "title": "Portfolio value vs cost"
  },
  "markets.portfolio.positions": {
-  "kind": "composite",
-  "parts": [
-   {
-    "draw": {
-     "columns": [
-      "name",
-      "qty",
-      "avg_cost",
-      "last",
-      "market_value",
-      "unrealized_pnl",
-      "unrealized_pct",
-      "allocation_pct"
-     ]
-    },
-    "form": "table",
-    "kind": "table",
-    "map": {
-     "rows": "positions"
-    },
-    "title": "Positions"
-   },
-   {
-    "kind": "kv",
-    "map": {
-     "fields": "totals"
-    },
-    "title": "Totals"
-   }
-  ]
+  "empty": "the real book is empty",
+  "form": "spark-table",
+  "kind": "table",
+  "map": {
+   "name": "symbol_key",
+   "rows": "positions",
+   "value": "market_value"
+  },
+  "title": "Portfolio"
  },
  "markets.portfolio.tx_list": {
   "draw": {

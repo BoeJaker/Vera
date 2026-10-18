@@ -161,6 +161,27 @@
       `<div class="macroRow"><a href="${esc(h.url)}" target="_blank" rel="noopener"
         style="color:var(--ink);text-decoration:none">${esc(h.title)}</a></div>`).join(''); },
   };
+  /* the Quant Studio's real book (its Portfolio page): /markets/portfolio/positions' answer as holdings rows and the head's tiles
+     [label, value, up|dn|''] - total value, cost basis, unrealized, realized, open positions, concentration (HHI) */
+  M.realBook = function(pos, f){ const fmtN=f.fmtN;
+    const positions=((pos&&pos.positions)||[]);
+    const tot=(pos&&pos.totals)||{};
+    const holdings=positions.map(p=>({symbol_key:p.symbol_key,qty:p.qty,avg_cost:p.avg_cost,last:p.last,
+      value:p.market_value,unrealized:p.unrealized_pnl,unrealized_pct:p.unrealized_pct,
+      realized:p.realized_pnl,alloc:p.allocation_pct}));
+    const totVal=tot.value||0;
+    const open=holdings.filter(p=>(p.qty||0)>0);
+    const hhi=open.reduce((s,p)=>s+Math.pow((p.value||0)/Math.max(1,totVal),2),0);
+    const tiles=[['total value','$'+fmtN(totVal),''],['cost basis','$'+fmtN(tot.cost||0),''],
+      ['unrealized',(tot.unrealized>=0?'+':'')+'$'+fmtN(Math.abs(tot.unrealized||0)),(tot.unrealized||0)>=0?'up':'dn'],
+      ['realized',(tot.realized>=0?'+':'')+'$'+fmtN(Math.abs(tot.realized||0)),(tot.realized||0)>=0?'up':'dn'],
+      ['positions',String(open.length),''],
+      ['concentration',open.length?(hhi*100).toFixed(0)+' HHI':'—',hhi>0.35?'dn':'up']];
+    return { holdings, tiles };
+  };
+  /* the Quant Studio's Portfolio tiles */
+  M.tilesHtml = (tiles) => tiles.map(r=>
+    '<div class="stat"><div class="v num '+r[2]+'">'+r[1]+'</div><div class="l">'+r[0]+'</div></div>').join('');
   /* the Quant Studio's pulse stats from daily closes (every asset class, customs too) */
   M.computeStats = function(c){
   if(!c||c.length<2) return null;
@@ -479,7 +500,7 @@
         .vw button{font:inherit;font-size:9.5px;padding:0 6px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--dim2,#8a7e70);cursor:pointer}
         .vw button.on{color:var(--t1,#e8e0d4);border-bottom-color:var(--acc,#5a9e8f)}
         /* the deeper views: the Markets pages' own rows (M.rows), their classes given here */
-        .side{flex:1 1 auto;min-height:0;overflow:auto;padding:2px 4px 6px;font-size:11px}
+        .side{flex:1 1 auto;min-height:0;overflow:auto;padding:2px 4px 6px;font-size:11px;--up:var(--ok,#3fd0a4);--dn:var(--err,#e0705a);--warn:#e8b34d}
         .side .muted{color:var(--dim2,#8a7e70)} .side .num{font-family:var(--mono,ui-monospace,monospace)}
         .side .pos,.side .up,.side .bull{color:var(--ok,#3fd0a4)} .side .neg,.side .dn,.side .bear{color:var(--err,#e0705a)}
         .side .chip{display:inline-block;padding:0 6px;border-radius:8px;border:1px solid var(--bd,rgba(127,127,127,.3))}
@@ -659,12 +680,9 @@
       } else if (v === 'pos') {
         const [p, tx] = await Promise.all([this._call('markets.portfolio.positions', {}), this._call('markets.portfolio.tx_list', { symbol_key: key, limit: 50 })]);
         /* the real book's row for this asset, as the Quant Studio's Portfolio page maps and draws it */
-        const mine = ((p && p.positions) || []).filter((x) => x.symbol_key === key).map((x) => ({ symbol_key: x.symbol_key, qty: x.qty, avg_cost: x.avg_cost, last: x.last,
-          value: x.market_value, unrealized: x.unrealized_pnl, unrealized_pct: x.unrealized_pct, realized: x.realized_pnl, alloc: x.allocation_pct }));
+        const mine = M.realBook(p, F).holdings.filter((x) => x.symbol_key === key);
         const txs = ((tx && tx.transactions) || []).filter((x) => !x.symbol_key || x.symbol_key === key);
-        if (mine.length) after = (host) => M.fillHoldings(host, { fmtPx: F.fmtPx, fmtPct: F.fmtPct, spark: (cv, vals, up) => M.drawSpark(cv, vals, up, this._sparkCol()),
-          closes: async (k) => { const r = await api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(prov, sym, '1d')) + '&limit=300'); return r && r.c && r.c.length ? r : null; },
-          sent: async () => { const r = await this._call('markets.sentiment.map', {}); const idx = {}; ((r && r.tracked) || []).concat((r && r.benchmarks) || []).forEach((x) => { if (x && x.key) idx[x.key] = x; }); return idx; } });
+        if (mine.length) after = (host) => M.fillHoldings(host, holdFill(this));
         html = (mine.length ? `<div style="overflow-x:auto"><table>${M.rows.holdings(mine, F, true)}</table></div>` : none('No position in ' + sym + ' in the real book'))
           + (txs.length ? '<h5>recorded trades</h5><table><tr><th>when</th><th>side</th><th>qty</th><th>price</th></tr>' + txs.map((x) => `<tr><td>${esc(String(x.ts || x.created_at || '').slice(0, 16).replace('T', ' '))}</td><td class="${String(x.side || '').toLowerCase() === 'sell' ? 'dn' : 'up'}">${esc(x.side || '')}</td><td>${esc(x.qty)}</td><td>${F.fmtPx(Number(x.price))}</td></tr>`).join('') + '</table>' : '');
       } else if (v === 'alerts') {
@@ -679,8 +697,6 @@
         html = mine.length ? M.rows.backtests(mine, F) + '<div class="muted" style="font-size:9.5px;margin-top:5px">pick one to put its trades on the candles</div>' : none('No backtests run on ' + sym + ' (of the latest 200)');
       }
       if (this._sideId !== want) return; side.innerHTML = html; if (after) after(side); }
-    /* the sparkline in the desk's theme colours */
-    _sparkCol() { return themeCol(this); }
     /* a backtest's trades on the candles, on the timeframe it ran on */
     async _openBt(id) {
       const r = await this._call('markets.backtest.get', { id }); if (!r || r.error) return;
@@ -765,4 +781,64 @@
   }
   M.Map = VeraMktMap;
   if (root.customElements && !root.customElements.get('vera-mkt-map')) root.customElements.define('vera-mkt-map', VeraMktMap);
+
+  /* the holdings table's pulse cells, read for an element on the desk: each asset's daily closes, the sentiment map once */
+  const holdFill = (el) => { let sp = null; return { fmtPx: F.fmtPx, fmtPct: F.fmtPct, spark: (cv, vals, up) => M.drawSpark(cv, vals, up, themeCol(el)),
+    closes: async (k) => { const i = String(k).indexOf(':'); const r = await api('/markets/bars?dataset_id=' + encodeURIComponent(M.dsId(i > 0 ? k.slice(0, i) : 'yahoo', i > 0 ? k.slice(i + 1) : k, '1d')) + '&limit=300'); return r && r.c && r.c.length ? r : null; },
+    sent: () => sp || (sp = VeraMktChart.prototype._call.call(el, 'markets.sentiment.map', {}).then((r) => { const idx = {}; ((r && r.tracked) || []).concat((r && r.benchmarks) || []).forEach((x) => { if (x && x.key) idx[x.key] = x; }); return idx; })) }; };
+  M.holdFill = holdFill;
+
+  /* ── <vera-mkt-folio> - the Quant Studio's Portfolio (the real book) on the desk (the redesign plan section 4: the Studio's views as
+     elements): its tiles and its holdings table with the pulse stats (M.realBook, M.tilesHtml, M.rows.holdings, M.fillHoldings - the
+     Studio draws with the same). Read-only: the ledger stays in the Studio. A holding opens its chart in place; read again every
+     60 s while seen. ── */
+  class VeraMktFolio extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'open' }); }
+    connectedCallback() {
+      if (this._built) return; this._built = true;
+      this.shadowRoot.innerHTML = `<style>
+        :host{display:block;width:100%;height:100%;min-height:160px;--up:var(--ok,#3fd0a4);--dn:var(--err,#e0705a);--warn:#e8b34d}   /* the Studio's names, for the shared rows' 52-week bar */
+        [hidden]{display:none!important}
+        .wrap{display:flex;flex-direction:column;width:100%;height:100%;font:11px/1.3 var(--mono,ui-monospace,monospace);color:var(--t2,#b9aea0);background:var(--bg1,#15181d)}
+        .hd{display:flex;align-items:center;gap:4px 8px;padding:2px 2px 4px} .hd b{color:var(--t1,#e8e0d4);font-size:12px} .info{color:var(--dim2,#8a7e70);font-size:10px;margin-left:auto}
+        .hd button{font:inherit;font-size:10px;padding:0 6px;border-radius:5px;border:1px solid var(--bd,rgba(127,127,127,.25));background:transparent;color:var(--dim2,#8a7e70);cursor:pointer}
+        .main{flex:1 1 auto;min-height:0;overflow:auto;padding:0 4px 6px}
+        .tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;margin:2px 0 8px}
+        .stat{border:1px solid var(--bd,rgba(127,127,127,.2));border-radius:7px;padding:5px 8px} .stat .v{font-size:14px;font-weight:700;color:var(--t1,#e8e0d4)} .stat .l{font-size:9.5px;color:var(--dim2,#8a7e70);text-transform:uppercase;letter-spacing:.4px}
+        .up,.bull{color:var(--ok,#3fd0a4)!important} .dn,.bear{color:var(--err,#e0705a)!important} .muted{color:var(--dim2,#8a7e70)} .num{font-family:var(--mono,ui-monospace,monospace)}
+        .chip{display:inline-block;padding:0 6px;border-radius:8px;border:1px solid var(--bd,rgba(127,127,127,.3))}
+        table{border-collapse:collapse;width:100%} th,td{padding:2px 5px;text-align:left;white-space:nowrap;border-bottom:1px solid var(--bd,rgba(127,127,127,.15))} th{color:var(--dim2,#8a7e70);font-weight:normal}
+        tr[data-hk]:hover td{background:var(--bg3,rgba(127,127,127,.12))}
+        .pbar{height:6px;background:rgba(127,127,127,.2);border-radius:3px;overflow:hidden} .pbar i{display:block;height:100%}
+        .deep{flex:1 1 auto;min-height:0;display:flex} .deep vera-mkt-chart{flex:1 1 auto}
+        .msg{padding:12px;color:var(--dim2,#8a7e70)}
+      </style>
+      <div class="wrap"><div class="hd"><button class="bk" data-a="back" title="Back to the portfolio" hidden>← Portfolio</button><b class="ttl">Portfolio · real book</b><span class="info"></span></div>
+        <div class="main"><div class="msg">reading…</div></div><div class="deep" hidden></div></div>`;
+      this.shadowRoot.addEventListener('click', (ev) => { const b = ev.target.closest && ev.target.closest('button[data-a="back"]'); if (b) { ev.stopPropagation(); this._back(); return; }
+        const tr = ev.target.closest && ev.target.closest('tr[data-hk]'); if (tr) { ev.stopPropagation(); this._open(tr.getAttribute('data-hk')); } });
+      this._io = new IntersectionObserver((es) => { this._seen = es.some((e) => e.isIntersecting); this._livePlan(); }); this._io.observe(this);
+      document.addEventListener('visibilitychange', this._vis = () => this._livePlan());
+      this._load();
+    }
+    disconnectedCallback() { clearTimeout(this._liveT); try { this._io.disconnect(); } catch (e) { /* gone */ } document.removeEventListener('visibilitychange', this._vis); this._built = false; }
+    async _load() { const r = await api('/markets/portfolio/positions');
+      if (r && !r.failed && !r.error) { this._pos = r; this._draw(); } else if (!this._pos) this.shadowRoot.querySelector('.main').innerHTML = `<div class="msg">${esc((r && r.error) || 'portfolio read failed')}</div>`;
+      this._livePlan(); }
+    _livePlan() { clearTimeout(this._liveT); if (!this._seen || document.visibilityState === 'hidden') return; this._liveT = setTimeout(() => this._load(), 60000); }
+    _draw() { const sr = this.shadowRoot, main = sr.querySelector('.main'); if (main.hidden) return;
+      const rb = M.realBook(this._pos, F); sr.querySelector('.info').textContent = rb.holdings.length + ' holding' + (rb.holdings.length === 1 ? '' : 's');
+      main.innerHTML = `<div class="tiles">${M.tilesHtml(rb.tiles)}</div>` + (rb.holdings.length ? `<div style="overflow-x:auto"><table>${M.rows.holdings(rb.holdings, F, true)}</table></div>`
+        : '<div class="msg">The real book is empty - holdings are recorded in the Quant Studio\'s ledger</div>');
+      if (rb.holdings.length) M.fillHoldings(main, holdFill(this)); }
+    /* a holding picked: its chart, here */
+    _open(key) { const sr = this.shadowRoot, i = String(key).indexOf(':'); const prov = i > 0 ? key.slice(0, i) : 'yahoo', sym = i > 0 ? key.slice(i + 1) : key;
+      const deep = sr.querySelector('.deep'); deep.innerHTML = ''; const c = document.createElement('vera-mkt-chart'); c.setAttribute('provider', prov); c.setAttribute('symbol', sym); c.setAttribute('tf', '1d'); deep.appendChild(c);
+      sr.querySelector('.main').hidden = true; deep.hidden = false; sr.querySelector('.bk').hidden = false; sr.querySelector('.ttl').textContent = sym;
+      this.dispatchEvent(new CustomEvent('mkt-symbol', { bubbles: true, composed: true, detail: { provider: prov, symbol: sym } })); }
+    _back() { const sr = this.shadowRoot; sr.querySelector('.deep').hidden = true; sr.querySelector('.deep').innerHTML = ''; sr.querySelector('.main').hidden = false;
+      sr.querySelector('.bk').hidden = true; sr.querySelector('.ttl').textContent = 'Portfolio · real book'; this._draw(); }
+  }
+  M.Folio = VeraMktFolio;
+  if (root.customElements && !root.customElements.get('vera-mkt-folio')) root.customElements.define('vera-mkt-folio', VeraMktFolio);
 })(window);

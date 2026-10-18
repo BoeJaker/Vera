@@ -18,7 +18,7 @@ const VI = require(path.join(ROOT, 'vera', 'ui', 'vera_item.js'));
 const SNAP = path.join(__dirname, 'fixtures', 'element_registry_heads.json');
 const KINDS = Object.keys(V.BLOCK).filter((k) => k[0] !== '_');
 const SHARED = ['vera-mkt-chart', 'vera-graph', 'vera-graph-embed', 'vera-out', 'vera-mermaid', 'vera-terminal', 'vera-flow-builder',
-  'vera-research-card', 'vera-exploded', 'vera-mkt-map'];
+  'vera-research-card', 'vera-exploded', 'vera-mkt-map', 'vera-mkt-folio'];
 
 /* ── what the head and the menu read, kind by kind, in every state a host can ask for ─────────────────────────────── */
 function headAnswers(kind) {

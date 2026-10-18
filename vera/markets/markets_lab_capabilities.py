@@ -2859,7 +2859,10 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.portfolio.positions", http_method="GET",
-        contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "positions"}, "title": "Positions", "form": "table", "draw": {"columns": ["name", "qty", "avg_cost", "last", "market_value", "unrealized_pnl", "unrealized_pct", "allocation_pct"]}}, {"kind": "kv", "map": {"fields": "totals"}, "title": "Totals"}]}},
+        # the Quant Studio's Portfolio (the real book): the desk mounts <vera-mkt-folio> for it - its tiles carry the totals;
+        # elsewhere the spark-table form draws the holdings
+        contract={"presentation": {"kind": "table", "form": "spark-table", "map": {"rows": "positions", "name": "symbol_key", "value": "market_value"},
+                                   "title": "Portfolio", "empty": "the real book is empty"}},
         http_path="/markets/portfolio/positions", http_tags=["markets"],
         memory="off", silent=True,
         description="Current portfolio: open positions with live valuation from stored "

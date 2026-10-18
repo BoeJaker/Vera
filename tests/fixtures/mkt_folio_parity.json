@@ -1,0 +1,243 @@
+{
+ "answers": [
+  {
+   "positions": [
+    {
+     "symbol_key": "yahoo:BTC-USD",
+     "qty": 0.1,
+     "avg_cost": 60000,
+     "last": 81500,
+     "market_value": 8150,
+     "unrealized_pnl": 2150,
+     "unrealized_pct": 35.8,
+     "realized_pnl": 0,
+     "allocation_pct": 71
+    },
+    {
+     "symbol_key": "yahoo:SPY",
+     "qty": 5,
+     "avg_cost": 500,
+     "last": 660,
+     "market_value": 3300,
+     "unrealized_pnl": 800,
+     "unrealized_pct": 32,
+     "realized_pnl": -40,
+     "allocation_pct": 29
+    },
+    {
+     "symbol_key": "yahoo:OLD",
+     "qty": 0,
+     "realized_pnl": 120
+    }
+   ],
+   "totals": {
+    "value": 11450,
+    "cost": 8500,
+    "unrealized": 2950,
+    "realized": 80
+   }
+  },
+  {
+   "positions": [],
+   "totals": {}
+  },
+  {},
+  {
+   "positions": [
+    {
+     "symbol_key": "x:Y",
+     "qty": 1,
+     "market_value": 10
+    }
+   ],
+   "totals": {
+    "value": 10,
+    "cost": 12,
+    "unrealized": -2,
+    "realized": -5
+   }
+  }
+ ],
+ "books": [
+  {
+   "holdings": [
+    {
+     "symbol_key": "yahoo:BTC-USD",
+     "qty": 0.1,
+     "avg_cost": 60000,
+     "last": 81500,
+     "value": 8150,
+     "unrealized": 2150,
+     "unrealized_pct": 35.8,
+     "realized": 0,
+     "alloc": 71
+    },
+    {
+     "symbol_key": "yahoo:SPY",
+     "qty": 5,
+     "avg_cost": 500,
+     "last": 660,
+     "value": 3300,
+     "unrealized": 800,
+     "unrealized_pct": 32,
+     "realized": -40,
+     "alloc": 29
+    },
+    {
+     "symbol_key": "yahoo:OLD",
+     "qty": 0,
+     "realized": 120
+    }
+   ],
+   "tiles": [
+    [
+     "total value",
+     "$11.4K",
+     ""
+    ],
+    [
+     "cost basis",
+     "$8.5K",
+     ""
+    ],
+    [
+     "unrealized",
+     "+$3.0K",
+     "up"
+    ],
+    [
+     "realized",
+     "+$80.00",
+     "up"
+    ],
+    [
+     "positions",
+     "2",
+     ""
+    ],
+    [
+     "concentration",
+     "59 HHI",
+     "dn"
+    ]
+   ]
+  },
+  {
+   "holdings": [],
+   "tiles": [
+    [
+     "total value",
+     "$0.00",
+     ""
+    ],
+    [
+     "cost basis",
+     "$0.00",
+     ""
+    ],
+    [
+     "unrealized",
+     "$0.00",
+     "up"
+    ],
+    [
+     "realized",
+     "$0.00",
+     "up"
+    ],
+    [
+     "positions",
+     "0",
+     ""
+    ],
+    [
+     "concentration",
+     "—",
+     "up"
+    ]
+   ]
+  },
+  {
+   "holdings": [],
+   "tiles": [
+    [
+     "total value",
+     "$0.00",
+     ""
+    ],
+    [
+     "cost basis",
+     "$0.00",
+     ""
+    ],
+    [
+     "unrealized",
+     "$0.00",
+     "up"
+    ],
+    [
+     "realized",
+     "$0.00",
+     "up"
+    ],
+    [
+     "positions",
+     "0",
+     ""
+    ],
+    [
+     "concentration",
+     "—",
+     "up"
+    ]
+   ]
+  },
+  {
+   "holdings": [
+    {
+     "symbol_key": "x:Y",
+     "qty": 1,
+     "value": 10
+    }
+   ],
+   "tiles": [
+    [
+     "total value",
+     "$10.00",
+     ""
+    ],
+    [
+     "cost basis",
+     "$12.00",
+     ""
+    ],
+    [
+     "unrealized",
+     "$2.00",
+     "dn"
+    ],
+    [
+     "realized",
+     "$5.00",
+     "dn"
+    ],
+    [
+     "positions",
+     "1",
+     ""
+    ],
+    [
+     "concentration",
+     "100 HHI",
+     "dn"
+    ]
+   ]
+  }
+ ],
+ "tiles": [
+  "<div class=\"stat\"><div class=\"v num \">$11.4K</div><div class=\"l\">total value</div></div><div class=\"stat\"><div class=\"v num \">$8.5K</div><div class=\"l\">cost basis</div></div><div class=\"stat\"><div class=\"v num up\">+$3.0K</div><div class=\"l\">unrealized</div></div><div class=\"stat\"><div class=\"v num up\">+$80.00</div><div class=\"l\">realized</div></div><div class=\"stat\"><div class=\"v num \">2</div><div class=\"l\">positions</div></div><div class=\"stat\"><div class=\"v num dn\">59 HHI</div><div class=\"l\">concentration</div></div>",
+  "<div class=\"stat\"><div class=\"v num \">$0.00</div><div class=\"l\">total value</div></div><div class=\"stat\"><div class=\"v num \">$0.00</div><div class=\"l\">cost basis</div></div><div class=\"stat\"><div class=\"v num up\">$0.00</div><div class=\"l\">unrealized</div></div><div class=\"stat\"><div class=\"v num up\">$0.00</div><div class=\"l\">realized</div></div><div class=\"stat\"><div class=\"v num \">0</div><div class=\"l\">positions</div></div><div class=\"stat\"><div class=\"v num up\">—</div><div class=\"l\">concentration</div></div>",
+  "<div class=\"stat\"><div class=\"v num \">$0.00</div><div class=\"l\">total value</div></div><div class=\"stat\"><div class=\"v num \">$0.00</div><div class=\"l\">cost basis</div></div><div class=\"stat\"><div class=\"v num up\">$0.00</div><div class=\"l\">unrealized</div></div><div class=\"stat\"><div class=\"v num up\">$0.00</div><div class=\"l\">realized</div></div><div class=\"stat\"><div class=\"v num \">0</div><div class=\"l\">positions</div></div><div class=\"stat\"><div class=\"v num up\">—</div><div class=\"l\">concentration</div></div>",
+  "<div class=\"stat\"><div class=\"v num \">$10.00</div><div class=\"l\">total value</div></div><div class=\"stat\"><div class=\"v num \">$12.00</div><div class=\"l\">cost basis</div></div><div class=\"stat\"><div class=\"v num dn\">$2.00</div><div class=\"l\">unrealized</div></div><div class=\"stat\"><div class=\"v num dn\">$5.00</div><div class=\"l\">realized</div></div><div class=\"stat\"><div class=\"v num \">1</div><div class=\"l\">positions</div></div><div class=\"stat\"><div class=\"v num dn\">100 HHI</div><div class=\"l\">concentration</div></div>"
+ ]
+}
