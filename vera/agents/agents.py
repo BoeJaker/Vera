@@ -3158,13 +3158,21 @@ class AgentRunner:
         if agent.domain_caps and agent.tool_mode != "none":
             cap_names = agent.domain_caps if agent.domain_caps != ["*"] \
                 else list(CAPABILITY_REGISTRY.keys())[:40]
-            try:
-                from vera_dag_store import CAP_INDEX
-                sigs = "\n".join(CAP_INDEX.cap_signature(c) for c in cap_names
-                                 if c in CAPABILITY_REGISTRY)
-                system += f"\n\nAvailable tools you may reference:\n{sigs}"
-            except ImportError:
-                pass
+            # The capability index lives in dag_store (loaded under its bare name). This imported a module that does
+            # not exist, `vera_dag_store`, and the ImportError was swallowed: Telegram, agent.chat and agent.consult
+            # replies never got their tool list (S5 / DEEP-04 §6.2, backbone 18 Oct).
+            _ds = sys.modules.get("dag_store") or sys.modules.get("Vera.vera.dag.dag_store")
+            _idx = getattr(_ds, "CAP_INDEX", None)
+            if _idx is not None:
+                try:
+                    sigs = "\n".join(_idx.cap_signature(c) for c in cap_names
+                                     if c in CAPABILITY_REGISTRY)
+                    if sigs:
+                        system += f"\n\nAvailable tools you may reference:\n{sigs}"
+                except Exception as _se:
+                    log.debug("agent tool signatures: %s", _se)
+            else:
+                log.debug("agent tool signatures: dag_store not loaded")
         # Think mode: native Ollama flag only — no system prompt injection
         # Models like qwen3 have built-in thinking activated by body["think"]=True
 
