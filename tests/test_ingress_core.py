@@ -200,3 +200,19 @@ def test_byte_caps_and_archive_guards():
     with zipfile.ZipFile(io.BytesIO(bomb)) as z:
         i = z.infolist()[0]
         assert not ic.archive_member_ok(i.compress_size, i.file_size)
+
+
+
+def test_accept_encoding_names_only_decoders_httpx_has_and_binary_text_is_caught():
+    """18 Oct: the crawl asked for br without a brotli decoder; 13.6 % of fabric_pages were compressed bytes."""
+    from httpx._decoders import SUPPORTED_DECODERS
+    enc = [e.strip() for e in ic.accept_encoding().split(",")]
+    assert enc and all(e in SUPPORTED_DECODERS for e in enc) and "gzip" in enc
+    garbled = "\ufffd\ufffd\x05\x00\ufffdZ\ufffd\ufffd]f\ufffd\x06\ufffdV/" * 20
+    assert ic.looks_binary(garbled) and not ic.looks_binary("")
+    assert not ic.looks_binary("Plain English text, with tabs\tand\nnew lines. " * 40)
+    assert not ic.looks_binary("Żubrówka – żółć, 日本語のテキスト, Ελληνικά, العربية " * 30)
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    assert '"Accept-Encoding": "gzip, deflate, br"' not in src and src.count("_ic_binary(") >= 4
+    col = (ROOT / "vera" / "fabric" / "data_fabric_collectors.py").read_text(encoding="utf-8")
+    assert '"gzip, deflate, br"' not in col

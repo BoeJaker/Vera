@@ -109,6 +109,22 @@ _UA_POOL = [
 ]
 
 
+def _ic_accept_encoding() -> str:
+    try:
+        from Vera.vera.fabric import ingress_core as _icm
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_core as _icm
+    return _icm.accept_encoding()
+
+
+def _ic_binary(text: str) -> bool:
+    try:
+        from Vera.vera.fabric import ingress_core as _icm
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_core as _icm
+    return _icm.looks_binary(text)
+
+
 def _browser_headers(custom_ua: str = "", rotate: bool = False,
                      referer: str = "") -> Dict[str, str]:
     """Return a full, self-consistent modern-browser header block. `custom_ua`
@@ -125,7 +141,7 @@ def _browser_headers(custom_ua: str = "", rotate: bool = False,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
                   "image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
+        "Accept-Encoding": _ic_accept_encoding(),       # only what httpx can decode (br was read as text)
         "Upgrade-Insecure-Requests": "1",
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
@@ -201,6 +217,9 @@ def _write_fabric_page(ds_id: str, crawl_id: str, url: str, title: str, full_tex
     """Mirror a page into fabric_pages, the index recall, discover.query/compile and the KB read. One writer for
     crawls (which never wrote it: B1), discover_ingest_page and scrape_page; a shorter text never overwrites a
     longer one (B18)."""
+    if _ic_binary(full_text):
+        log.warning("fabric_pages %s: not stored - the body is binary, not text", url)
+        return False
     try:
         _ensure_tables()
         conn = _sqlite_conn()
@@ -2591,6 +2610,9 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                 raw, page_url, max_links=page_link_cap, max_text=page_text_cap)
             title = structure.get("title", "")
             full_text = structure.get("full_text", "")
+            if _ic_binary(full_text):        # an undecoded or binary body is not a page (18 Oct: br read as text)
+                await _emit("page_error", url=page_url, message="binary body - not read as a page")
+                return
             page_links = structure.get("links", [])
             await _emit("content_extracted", url=page_url,
                         chars=len(full_text), links=len(page_links),
@@ -3550,6 +3572,8 @@ async def discover_ingest_page(
     title = (title or structure.get("title", "") or url.split("/")[-1]).strip()
     if not full_text:
         return {"error": "no text", "url": url, "dataset_id": ds_id}
+    if _ic_binary(full_text):
+        return {"error": "binary body, not text", "url": url, "dataset_id": ds_id}
 
     headings = structure.get("headings", []) or []
     links = structure.get("links", []) or []
