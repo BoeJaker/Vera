@@ -64,3 +64,39 @@ def test_the_queued_batch_shows_on_the_schedule_releases_layer():
     assert len(ev) == 1 and ev[0]["kind"] == "release-request" and "2 request(s)" in ev[0]["title"]
     assert "vera-6e: WI-14b" in ev[0]["detail"]
     assert RV.lane_events({"queued": []}, T0, T0 + timedelta(hours=1), T0) == []
+
+
+
+def test_only_a_full_critical_run_of_bleeding_edge_counts():
+    full = {"branch": "bleeding-edge", "pipeline_id": "", "paths": "tests", "markers": "critical", "failed": 1, "ts": "t2"}
+    assert L.is_full_run(full)
+    assert not L.is_full_run(dict(full, pipeline_id="abc"))                       # an adopt gate
+    assert not L.is_full_run(dict(full, paths=["tests/test_one.py"]))            # a targeted run (vera-d2)
+    assert not L.is_full_run(dict(full, markers=""))                             # not the critical tier
+    assert not L.is_full_run(dict(full, branch="feat/x"))
+
+
+def test_the_lane_holds_while_the_latest_full_run_of_bleeding_edge_is_red():
+    red = {"branch": "bleeding-edge", "pipeline_id": "", "paths": "tests", "markers": "critical", "failed": 1, "errors": 0, "ts": "t2"}
+    held, why = L.full_tier_hold(red)
+    assert held and "t2" in why and "1 failed" in why
+    assert L.full_tier_hold(dict(red, failed=0, ts="t4")) == (False, "the last full run of bleeding-edge (t4) is green")
+    assert L.full_tier_hold(None)[0] is False
+    assert L.full_tier_hold(dict(red, paths=["tests/test_one.py"]))[0] is False   # a targeted run never holds
+
+
+def test_the_full_run_is_kept_apart_from_the_history_and_written_when_recorded():
+    import os as _os
+    root = _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))
+    ev = open(_os.path.join(root, "vera", "evolve", "evolve_capabilities.py"), encoding="utf-8").read()
+    rec = ev[ev.index("async def _record_unittest_run("):ev.index("async def _get_unittest_history(")]
+    assert "_rlc.is_full_run(row)" in rec and "_rlc.KEY_FULL_TIER_LAST" in rec
+    rel = open(_os.path.join(root, "vera", "evolve", "release_capabilities.py"), encoding="utf-8").read()
+    assert "lane.KEY_FULL_TIER_LAST" in rel and "lrange(\"vera:evolve:unittest_history\"" not in rel
+
+
+def test_the_tick_checks_the_full_tier_before_it_fires():
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vera", "evolve", "release_capabilities.py"), encoding="utf-8").read()
+    step = src[src.index("async def _lane_step("):src.index("async def run_tick()")]
+    assert step.index("lane.full_tier_hold(") < step.index("_open_release(")
+    assert '"evolve.release.lane.held"' in step

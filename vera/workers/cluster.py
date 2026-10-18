@@ -338,6 +338,13 @@ def _pick_instance_load_aware(
             explain["chosen"] = chosen
         return chosen
 
+    # This function REPLACES the base pick_instance, so everything the base guarantees must happen here too
+    # (S2 / D01-1, backbone 18 Oct): the stuck-slot sweep, the per-request "GPU off" (NO_GPU), avoid_embed
+    # sharing and the GPU slot guard. Each uses the base's own helper, so the two cannot drift apart again.
+    _sweep = getattr(_orch, "_inflight_sweep", None)
+    if _sweep is not None:
+        _sweep()            # reclaim slots whose request never returned; a stuck in_use would steer routing
+
     # Only online AND enabled nodes are routable - plus a node switched to vLLM,
     # which stays a candidate served by its vLLM server (when that serves the
     # model); the caller sends a pick of it there (ollama_generate / agents).
@@ -354,6 +361,15 @@ def _pick_instance_load_aware(
     if instance_id and instance_id in online:
         _note(f"caller pinned '{instance_id}'")
         return _out(instance_id)
+    _no_gpu = getattr(_orch, "NO_GPU", None)
+    if _no_gpu is not None and _no_gpu.get():
+        _nong = {iid: i for iid, i in online.items() if not i.get("has_gpu")}
+        if _nong:
+            online = _nong
+            prefer_gpu = False
+            _note("GPU off for this request: GPU nodes excluded")
+        else:
+            _note("GPU off for this request, but no CPU node is online: the GPU serves it")
 
     # ── Job-type routing rule (reuse the orchestrator's resolver) ──────────────
     # Honour a caller-supplied per-cap rule override (as the base pick_instance
@@ -410,8 +426,16 @@ def _pick_instance_load_aware(
                 _note(f"avoid_embed: '{_embed_id}' is the ONLY candidate — "
                       "keeping it (nothing else to route to)")
             else:
-                online = {iid: i for iid, i in online.items() if iid != _embed_id}
-                _note(f"avoid_embed: excluded '{_embed_id}' → {sorted(online)}")
+                _rest = {iid: i for iid, i in online.items() if iid != _embed_id}
+                _emb_busy = int((online[_embed_id] or {}).get("in_use") or 0)
+                _rest_min = min(int((i or {}).get("in_use") or 0) for i in _rest.values())
+                _share = getattr(_orch, "_avoid_embed_share", None)
+                if _share is not None and _share(_emb_busy, _rest_min):
+                    _note(f"avoid_embed relaxed: alternatives busy (min in_use={_rest_min}), "
+                          f"embed node '{_embed_id}' idle - sharing")
+                else:
+                    online = _rest
+                    _note(f"avoid_embed: excluded '{_embed_id}' → {sorted(online)}")
         prefer_gpu = prefer_gpu or bool(rule.get("prefer_gpu"))
     elif job_type:
         _note(f"no rule for job-type '{job_type}'")
@@ -503,6 +527,31 @@ def _pick_instance_load_aware(
                 _note(f"ctx escalation: prompt ~{_need} tokens exceeds the GPU window - "
                       f"CPU nodes {sorted(_c)}")
                 return _best(_c, "ctx escalation")
+
+    # GPU slot guard: a model NOT resident on a busy GPU would wait inside Ollama for the resident model to go
+    # idle, which a loop never lets happen (300 s timeouts on every coder call, 11 Oct). Send it to a CPU node that
+    # has it. Only when every fact agrees (gpu_slot_core.skip_gpu); otherwise the GPU stays a candidate.
+    _gsc = getattr(_orch, "_gpu_slot_core", None)
+    if model and _gsc is not None:
+        _resident_map = getattr(_orch, "_GPU_RESIDENT", None) or {}
+        _lp_map = getattr(_orch, "_LAST_PICKED", None)
+        _lp_map = _lp_map if isinstance(_lp_map, dict) else {}
+        _with = {iid: i for iid, i in online.items() if _has_model(i)}
+        _cpu_alt = any(not i.get("has_gpu") for i in _with.values())
+        _now = time.time()
+        for _g in [iid for iid, i in _with.items() if i.get("has_gpu")]:
+            _at, _res = _resident_map.get(_g) or (0.0, [])
+            try:
+                _skip, _why = _gsc.skip_gpu(
+                    model=model, model_resident=_model_tags.is_served(model, _res), resident=_res,
+                    resident_at=_at, cpu_alternative=_cpu_alt, now=_now,
+                    busy=_gsc.is_busy((_with[_g] or {}).get("in_use") or 0, _lp_map.get(_g, 0.0), _now))
+            except Exception as _e:                  # the guard must never stop routing
+                _skip, _why = False, ""
+                log.debug("gpu slot guard %s: %s", _g, _e)
+            if _skip:
+                online = {iid: i for iid, i in online.items() if iid != _g}
+                _note(_why)
 
     if prefer_gpu:
         gpu = {iid: i for iid, i in online.items() if i.get("has_gpu")}

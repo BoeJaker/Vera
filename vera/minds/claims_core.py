@@ -41,7 +41,10 @@ _WORD = re.compile(r"[a-z0-9]+(?:\.[0-9]+)*")
 _TERMINAL = re.compile(r"[.!?:;]\s*[\"')\]]*\s*$")
 _SELF = re.compile(r"\b(?:this|the) (?:run|report|document|explainer|summary|deliverable|answer)\b|\bartifacts?\b|"
                    r"^here(?: is|'s)\b|\bhas been (?:defined|created|written|prepared|drafted)\b|\bthe following\b|"
-                   r"\bbelow\b", re.I)
+                   r"\bbelow\b|\bhere (?:are|is)\b|\bstep \d+\b|\bsynthesi[sz]ed from\b|"
+                   r"\bbased on the (?:execution|output|results?) of\b", re.I)
+#: a source list the run wrote ("1. meow-sci/brutal-browser-poc : Confirmed ...", "web.research : Live aggregation ...")
+_CITATION = re.compile(r"^(?:\d+\.\s*)?[^:]{1,80}:\s+(?:confirmed|verified|live aggregation|aggregated|source[sd]?)\b", re.I)
 _LABEL = re.compile(r"^[^:]{1,60}?\s*:\s+")
 _ADVICE = re.compile(r"^(?:use|prefer|ensure|design|implement|avoid|consider|add|make|keep|run|install|create|build|"
                      r"define|check|try|apply|enable|set|write|test|deploy|configure)\b", re.I)
@@ -60,7 +63,7 @@ def is_claim(s: str) -> bool:
     """A sentence that states something about the world - not a heading, not the run describing its own output,
     not advice or a plan step (those are neither supported nor unsupported by a page)."""
     s = (s or "").strip()
-    if not _TERMINAL.search(s) or _SELF.search(s) or _PLAN_STEP.match(s) or _ADVICE.match(s):
+    if not _TERMINAL.search(s) or _SELF.search(s) or _PLAN_STEP.match(s) or _ADVICE.match(s) or _CITATION.match(s):
         return False
     rest = _LABEL.sub("", s, count=1)
     return not _ADVICE.match(rest)

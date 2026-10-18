@@ -2217,7 +2217,10 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
                             COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gw,
                             required=True)
                     except _gate.GateAcquisitionError as _ge:
-                        if str(_ge) == "queue_timeout":
+                        # Compare the REASON, not the message: str() of the error is "required inference lease
+                        # unavailable: queue_timeout", so the old `str(_ge) == "queue_timeout"` never matched and
+                        # every gate timeout generated ungated (S1 / D03-1, backbone 18 Oct).
+                        if getattr(_ge, "reason", "") == "queue_timeout":
                             raise Exception(
                                 f"gpu gate timeout on {iid}: no free slot after "
                                 f"{int(_gw)}s (node busy with earlier requests)")
@@ -8190,6 +8193,11 @@ def schedule(fn: Callable, interval: float, name: Optional[str] = None,
     days old, each running every ambient sweep against the one shared Redis.
     Jobs without the flag are unaffected.
     """
+    _nm = name or fn.__name__
+    if any(t.get("name") == _nm for t in SCHEDULED_TASKS):
+        # D10-2: a second registration under one name is nearly always a second copy of a module (imported by its
+        # full name beside the loader's bare name) - its state and jobs run twice
+        log.warning("schedule: job %r registered twice (a second copy of its module?)", _nm)
     SCHEDULED_TASKS.append({"fn": fn, "int": interval, "name": name or fn.__name__,
                             "last": None, "runs": 0, "skip_in_sandbox": skip_in_sandbox,
                             "singleton": singleton})

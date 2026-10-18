@@ -23,6 +23,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 BENCH_STALE_DAYS = 14        # a benchmark older than this no longer describes the models in use
 CORPUS_STALE_DAYS = 8        # the chat corpus runs weekly (Sun 14:00)
 MIN_OUTCOMES = 20            # a student's accuracy against real outcomes means little on fewer
+STALE_MODEL_DAYS = 7         # a (model, node) not called for this long is history, not a live path - 18 Oct:
+                             # qwen2.5-coder:14b (457 s a call, last used 10 Sep) read as the slowest live path
 
 
 def _f(v: Any) -> Optional[float]:
@@ -118,10 +120,13 @@ def model_rows(passive: Iterable[Dict[str, Any]], route: Iterable[Dict[str, Any]
         k = _key(p.get("model"), p.get("instance_id"))
         node = p.get("instance_id") or ""
         b = newest.get(k)
+        age = _age_days(p.get("last_ts"), now)
         rows.append({"key": k, "model": p.get("model") or "", "node": node, "node_label": p.get("node_label") or "",
                      "gpu": bool(p.get("has_gpu")), "calls": int(p.get("calls") or 0), "tps": _f(p.get("obs_tps")),
                      "wall_s": _f(p.get("avg_latency_s")), "prompt_chars": _f(p.get("avg_prompt_chars")),
-                     "last": p.get("last_ts") or "", "job_types": list(p.get("job_types") or []),
+                     "last": p.get("last_ts") or "", "last_age_days": age,
+                     "stale": bool(age is not None and age > STALE_MODEL_DAYS),
+                     "job_types": list(p.get("job_types") or []),
                      "jobs": sorted(jobs.get(k, []), key=lambda j: -j["n"]),
                      "bench": bench_row(b, now) if b else None,
                      "warm": any(_same_model(m, str(p.get("model") or "")) for m in warm.get(node, []))})
@@ -194,7 +199,7 @@ def models_view(passive: Dict[str, Any], route: Dict[str, Any], bench: Dict[str,
     for b in runs:
         if b["broken"]:
             issues.append({"what": "benchmark %s (%s)" % (b["id"], b["model"]), "why": b["broken"], "tone": "bad"})
-    live = [r for r in rows if r["tps"] is not None and r["calls"] >= 50]
+    live = [r for r in rows if r["tps"] is not None and r["calls"] >= 50 and not r["stale"]]
     return {"models": rows, "matrix": role_matrix(stats), "benchmarks": runs, "students": students,
             "issues": issues, "nodes": [{"id": n.get("id"), "label": n.get("label"), "status": n.get("status"),
                                          "gpu": n.get("has_gpu"), "hw": n.get("hw") or {}, "ping_ms": n.get("ping_ms"),
@@ -269,14 +274,15 @@ def queue_kpis(bg: Dict[str, Any]) -> Dict[str, Any]:
     run = q.get("running") or None
     ages = [_f(w.get("waiting_for_s")) for w in waiting] + ([_f(run.get("waiting_for_s"))] if run else [])
     oldest = max([a for a in ages if a is not None], default=None)
-    # jobs that only run after N seconds of quiet - the owner, 18 Oct: "there is no such thing as quiet time"
-    quiet = [{"name": j.get("name"), "defers": j.get("defers"), "runs": j.get("runs"), "why": j.get("last_defer") or ""}
-             for j in (bg or {}).get("jobs") or [] if int(j.get("defers") or 0) and not int(j.get("runs") or 0)]
+    # Outside the booked Background-work windows the queue still waits for this much quiet (inside a window it
+    # does not). background.status `jobs` is NOT a list of held-back work: its one row, ide.claude_sessions.ingest,
+    # is the drain's own label (the import runs every tick) - read as "deferred, never ran" on 18 Oct by mistake.
+    min_quiet = (bg or {}).get("min_quiet_s")
     return {"depth": q.get("depth", len(waiting)), "oldest_h": round(oldest / 3600, 1) if oldest is not None else None,
             "running": {"title": run.get("title"), "waiting_h": round((_f(run.get("waiting_for_s")) or 0) / 3600, 1),
                         "stranded": run.get("stranded")} if run else None,
             "stranded": sum(int(w.get("stranded") or 0) for w in waiting) + (int(run.get("stranded") or 0) if run else 0),
-            "quiet_gated": quiet, "source": "background.status"}
+            "min_quiet_s": min_quiet, "blocked": q.get("blocked_reason") or "", "source": "background.status"}
 
 
 def chat_kpis(route: Dict[str, Any]) -> Dict[str, Any]:
@@ -353,9 +359,5 @@ def performance_view(census: Dict[str, Any], rel: Dict[str, Any], bg: Dict[str, 
         broken.append({"what": "chat test corpus", "why": co["broken"], "source": co["source"]})
     elif co["stale"]:
         broken.append({"what": "chat test corpus", "why": "last run %s days ago (weekly)" % int(co["age_days"]), "source": co["source"]})
-    if q["quiet_gated"]:
-        broken.append({"what": "quiet-gated background jobs",
-                       "why": ", ".join("%s (deferred %s times, never ran)" % (j["name"], j["defers"]) for j in q["quiet_gated"]),
-                       "source": q["source"]})
     return {"days": days, "at": now.isoformat(), "loop_lab": {"census": c, "gates": g, "queue": q},
             "vera_use": {"chat": ch, "corpus": co, "services": sv}, "share": share(route), "broken": broken}

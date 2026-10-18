@@ -133,6 +133,21 @@ html.vpb-nav-hosted body{padding-left:0}
 .wf-arrow{display:flex;align-items:center;padding:0 4px;color:var(--dim2);font-size:16px}
 .wf-arrow.flow{color:var(--acc);animation:pulse 1s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.olv-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px}
+.olv-tile{background:var(--bg2,var(--bg1));border:1px solid var(--border);border-radius:8px;padding:7px 10px;cursor:pointer;transition:border-color .15s}
+.olv-tile:hover{border-color:var(--accent,#7aa2f7)}
+.olv-tile .v{font-size:18px;font-weight:600}.olv-tile .k{font-size:11px;color:var(--muted)}.olv-tile .s{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.olv-tile.live .v::before{content:'';display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:6px;vertical-align:middle;animation:olvPulse 1.6s infinite}
+@keyframes olvPulse{0%,100%{opacity:1}50%{opacity:.25}}
+.olv-lanes{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.olv-lanes button{font-size:11px;padding:2px 8px;border-radius:10px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer}
+.olv-lanes button.on{color:inherit;border-color:currentColor}
+.olv-lanes button i{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:5px;vertical-align:middle}
+.olv-drill{margin-top:10px;border-top:1px solid var(--border);padding-top:8px;font-size:12px}
+.olv-drill .dk{color:var(--muted);display:inline-block;min-width:80px}
+.olv-drill pre{white-space:pre-wrap;max-height:320px;overflow:auto;font-size:11px;background:var(--bg2,var(--bg1));padding:6px 8px;border-radius:6px}
+.olv-drill table{border-collapse:collapse;width:100%}.olv-drill td{padding:2px 6px;border-bottom:1px solid var(--border);vertical-align:top}
+.olv-live{display:flex;align-items:center;gap:8px;margin-bottom:10px}.olv-live-k{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
 .seg{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
 .seg button{border:none;background:var(--bg2);color:var(--dim2);padding:5px 12px;font-size:11px;cursor:pointer}
 .seg button.on{background:var(--acc);color:var(--on-acc,#12100e);font-weight:600}
@@ -197,7 +212,8 @@ html.vpb-nav-hosted body{padding-left:0}
 
 <div class="nav rail" id="nav">
   <div class="rail-logo">🧪 LOOP LAB</div>
-  <button class="btn on" data-sec="work" onclick="nav('work')" title="Every task and every driver run &mdash; census, suite, improvement, single &mdash; in one table, with what is live on top"><span class="ic">&#9636;</span>Work</button>
+  <button class="btn on" data-sec="overview" onclick="nav('overview')" title="Every Loop Lab operation on one timeline &mdash; schedule windows, runs, results, releases, agents' work and (optionally) tests &mdash; with what is running now and what is next"><span class="ic">&#9678;</span>Overview</button>
+  <button class="btn" data-sec="work" onclick="nav('work')" title="Every task and every driver run &mdash; census, suite, improvement, single &mdash; in one table, with what is live on top"><span class="ic">&#9636;</span>Work</button>
   <button class="btn" data-sec="ship" onclick="nav('ship')" title="Every branch &mdash; its pipeline, review, sandbox and tests &mdash; in one table, the commit graph, race lanes, authorship and gate strip below it"><span class="ic">&#8599;</span>Ship</button>
   <button class="btn" data-sec="agents" onclick="nav('agents')" title="Every agent session &mdash; Claude Code, Codex, a Vera loop, an edit-queue agent &mdash; with its board items, pipelines and sandboxes; the board by lane, notes and seats fold up under it"><span class="ic">&#9737;</span>Agents</button>
   <button class="btn" data-sec="mission" onclick="nav('mission')" title="Every event &mdash; actions, errors, gates &mdash; in one table, with what is live and what needs a person above it; the run-once and improve-live theatres fold up under it"><span class="ic">&#9673;</span>Mission control</button>
@@ -470,7 +486,24 @@ html.vpb-nav-hosted body{padding-left:0}
 </div>
 
 <!-- ── WORK: one table — every task, or every driver run — with what is live on top ── -->
-<div class="sec" id="sec-work">
+<div class="sec" id="sec-overview">
+  <!-- Overview (looplab-control §9 S1, owner O1): every Loop Lab operation in one pane, on THE timeline
+       (/ui/vera-timeline.js, K1). The lanes are records this page registers; the range and lane chips, the tiles and
+       the drill panel are the page's - the timeline's face carries no controls. -->
+  <div class="card" id="olv-card">
+    <div class="card-h"><span class="card-t">Overview</span>
+      <div class="seg" id="olv-range" style="margin-left:10px"><button data-r="12h" onclick="olvRange('12h')" title="the last 12 hours and the next 2">12 h</button><button data-r="day" onclick="olvRange('day')" title="the last day and the next">day &plusmn; 1</button><button data-r="7d" onclick="olvRange('7d')" title="the last 7 days and tomorrow">7 d</button></div>
+      <span class="hint" id="olv-hint" style="margin-left:auto">drag across the timeline to zoom &middot; click an item for its detail</span>
+    </div>
+    <div class="olv-live"><span class="olv-live-k">live</span><vera-live-strip id="olv-live" none="nothing running right now"></vera-live-strip></div>
+    <div class="olv-tiles" id="olv-tiles"></div>
+    <div class="olv-lanes" id="olv-lanes"></div>
+    <div id="olv-tl-host"><div class="hint">loading the timeline&hellip;</div></div>
+    <vera-drill class="olv-drill" id="olv-drill" url></vera-drill>
+  </div>
+</div>
+
+<div class="sec" id="sec-work" style="display:none">
   <!-- Work, live: the page's own lens (vera/widgets/layouts/looplab-work.json) - the census as it runs and its routing,
        the loops and where their time goes, the census runs among the commits, every task's recent runs. Widgets:
        each can be configured, moved, and placed on the canvas; the tables below stay for the full record. -->
@@ -1124,14 +1157,14 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={work:loadWork,ship:loadShip,agents:agentsPoll,mission:missionPoll,
+  const f={overview:loadOverviewPage,work:loadWork,ship:loadShip,agents:agentsPoll,mission:missionPoll,
     tests:()=>{const fr=document.getElementById('tests-frame');if(fr&&!fr.getAttribute('src'))fr.setAttribute('src',(window._veraBase||'')+fr.dataset.src);},
     // Pages Mission control absorbed (slice 7): the compose form is a modal,
     // the theatres the live panel, the rest its table.
     test:()=>mcOpen('test'),watch:()=>mcOpen('watch'),errors:()=>mcOpen('errors'),master:()=>nav('mission'),activity:()=>nav('mission'),
     // Pages the Work page absorbed (flattening slice 3): an old deep-link
     // or injected nav item still lands on the table that holds their data.
-    tasks:()=>nav('work'),runs:()=>nav('work'),census:()=>nav('work'),overview:()=>nav('work'),variants:()=>nav('work'),improve:()=>nav('work'),
+    tasks:()=>nav('work'),runs:()=>nav('work'),census:()=>nav('work'),variants:()=>nav('work'),improve:()=>nav('work'),
     // Pages the Agents page absorbed (slice 6): Sessions, Board and Swarm are
     // its table (board items = the items mode); Notes and Capacity are modals
     // over it, so an old deep-link opens the modal on the page.
@@ -1164,14 +1197,148 @@ function nav(sec){
 // generic nav_select fallback matches directly.
 if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
   // icon, desc (short, on hover) and desc_long (for agents) ride into the docked menu (2026-10-03)
+  {id:'overview', label:'Overview', icon:'\u25ce', desc:'Every Loop Lab operation on one timeline', desc_long:'Every Loop Lab operation on one timeline - schedule windows, runs, results, releases, agents\' work and (optionally) tests - with what is running now and what is next.'},
   {id:'work', label:'Work', icon:'\u25a4', desc:'Every task and driver run', desc_long:'Every task and every driver run - census, suite, improvement, single - in one table, with what is live on top.'},
   {id:'ship', label:'Ship', icon:'\u2197', desc:'Every branch and its pipeline', desc_long:'Every branch - its pipeline, review, sandbox and tests - in one table, with the commit graph, race lanes, authorship and gate strip below it.'},
   {id:'agents', label:'Agents', icon:'\u2609', desc:'Every agent session', desc_long:'Every agent session - Claude Code, Codex, a Vera loop, an edit-queue agent - with its board items, pipelines and sandboxes, and the board by lane.'},
   {id:'mission', label:'Mission control', icon:'\u25c9', desc:'Every event; what needs a person', desc_long:'Every event - actions, errors, gates - in one table, with what is live and what needs a person above it.'},
+  {id:'releases', label:'Releases', icon:'\u25b2', desc:'Gating, promotions and releases', desc_long:'What is being gated, promoted to bleeding-edge and released to prod - each pipeline\'s stages and tests, the release in flight, and what every release carried.'},
   {id:'schedule', label:'Schedule', icon:'\u25a6', desc:'A calendar of Loop Lab work', desc_long:'A calendar of Loop Lab work - censuses, suites, tasks, pipeline steps, board items - started by the scheduler only when the box is free.'},
   {id:'tests', label:'Tests', icon:'\u2713', desc:'Scheduled tests and their health', desc_long:'Every scheduled test (four-minds matrix, claims, tool shortlist, memory census, chat corpus, census arms) - its schedule entries, next fire, health (failed / interrupted / missed / recovering / running / ok), last runs and report headline.'},
+  {id:'models', label:'Models', icon:'\u25c8', desc:'Every model: speed, jobs, benchmarks', desc_long:'Every model Vera uses - which jobs it serves, how fast it runs on real traffic, its benchmarks, and the students scored in shadow.'},
+  {id:'performance', label:'Performance', icon:'\u26a1', desc:'Loop Lab and Vera use, side by side', desc_long:'How well things run - Loop Lab (censuses, gates, releases, the background queue) beside Vera\'s normal use (chat reply time, the chat corpus, services), each number with its source.'},
   {id:'settings', label:'Settings', icon:'\u2699', desc:'Loop Lab settings', desc_long:'Loop Lab settings.'},
 ]);
+
+/* ═══ OVERVIEW — every Loop Lab operation on one timeline (looplab-control §9 S1) ═══ */
+// THE timeline (/ui/vera-timeline.js, K1) with lanes this page registers as RECORDS: one read of evolve.schedule.events
+// feeds five lanes (map.where on its source), evolve.unittest.history feeds the tests lane (optional - owner 18 Oct:
+// "be able to see tests in the overview/schedule too (optionally)"). Other families add lanes by registering their own
+// records; nothing here changes for them. A click opens the drill panel, which links to the page that owns the item.
+const OLV_RANGES={'12h':['-12h','+2h',1],'day':['-24h','+24h',2],'7d':['-7d','+1d',8]};
+const OLV_LANES=[
+  {lane:'ll.windows',label:'Windows',type:'band',where:'loop-lab',sec:'schedule',on:1,c:'#c9a35a',tip:'{title}'},
+  {lane:'ll.runs',label:'Runs',type:'bar',where:'loop-lab-run',sec:'schedule',on:1,c:'#7aa2f7',tip:'{title} · {detail}'},
+  {lane:'ll.results',label:'Results',type:'mark',where:'results',sec:'work',on:1,c:'#4ade80',tip:'{title} · {grade}'},
+  {lane:'ll.releases',label:'Releases',type:'mark',where:'releases',sec:'releases',on:1,c:'#4ade80',tip:'{title} · {detail}'},
+  {lane:'ll.agents',label:"Agents' work",type:'chip',where:'agents-work',sec:'agents',on:1,c:'#e0a458',tip:'{title} · {status}'},
+  {lane:'ll.tests',label:'Tests',type:'mark',sec:'ship',on:0,c:'#6db87a',tip:'{branch} · {summary} · {ts}'},
+];
+let _olvRange='day',_olvOn=null,_olvEv=[],_olvTimer=null;
+function _olvIso(rel,now){const m=/^([+-])(\d+)([hd])$/.exec(rel);const n=m?(+m[2])*(m[3]==='d'?864e5:36e5):0;return new Date(m&&m[1]==='-'?now-n:now+n).toISOString()}
+function _olvArgs(){const r=OLV_RANGES[_olvRange],now=Date.now(),pad=36e5*r[2];
+  return {mode:'both',granularity:'runs',start:new Date(Date.parse(_olvIso(r[0],now))-pad).toISOString(),end:new Date(Date.parse(_olvIso(r[1],now))+pad).toISOString()}}
+function _olvSpec(L){
+  if(L.lane==='ll.tests')return {lane:L.lane,label:L.label,group:'Loop Lab',type:L.type,color:L.c,live:120,
+    source:{cap:'evolve.unittest.history',args:{limit:200}},
+    map:{items:'runs',t:'ts',id:'ts',tip:L.tip,color:{field:'ok',map:{'true':'#6db87a','false':'#c96b6b'},else:'#5a6270'}}};
+  return {lane:L.lane,label:L.label,group:'Loop Lab',type:L.type,color:L.c,live:60,source:{cap:'evolve.schedule.events',args:_olvArgs()},
+    map:{items:'events',t:'start',end:'end',id:'id',label:L.type==='chip'?'title':'',tip:L.tip,where:{source:L.where},color:{field:'color',else:L.c}}};
+}
+function _olvLoad(){try{const s=JSON.parse(localStorage.getItem('looplab-overview')||'null');if(s&&OLV_RANGES[s.r])_olvRange=s.r;if(s&&Array.isArray(s.on))_olvOn=new Set(s.on)}catch(_){}
+  if(!_olvOn)_olvOn=new Set(OLV_LANES.filter(l=>l.on).map(l=>l.lane))}
+function _olvSave(){try{localStorage.setItem('looplab-overview',JSON.stringify({r:_olvRange,on:[..._olvOn]}))}catch(_){}}
+function _olvLib(name,ready){return new Promise((ok,no)=>{if(ready())return ok();
+  const sc=document.createElement('script');sc.src=(window._veraBase||'')+'/ui/'+name;sc.onload=()=>ok();sc.onerror=()=>no(new Error(name));document.head.appendChild(sc)})}
+function _olvScript(){return Promise.all([_olvLib('vera-timeline.js',()=>window.VeraTimeline&&customElements.get('vera-timeline')),
+  _olvLib('vera-kit.js',()=>window.VeraDrill&&customElements.get('vera-drill'))])}
+async function loadOverviewPage(){
+  if(_olvOn==null)_olvLoad();
+  try{await _olvScript()}catch(e){$('olv-tl-host').innerHTML='<div class="hint">the timeline did not load: '+esc(e.message)+'</div>';return}
+  OLV_LANES.forEach(L=>VeraTimeline.registerLane(_olvSpec(L)));
+  _olvKit();
+  document.querySelectorAll('#olv-range button').forEach(b=>b.classList.toggle('on',b.dataset.r===_olvRange));
+  $('olv-lanes').innerHTML=OLV_LANES.map(L=>'<button class="'+(_olvOn.has(L.lane)?'on':'')+'" onclick="olvLane(\''+L.lane+'\')" title="show or hide the '+esc(L.label.toLowerCase())+' lane"><i style="background:'+L.c+'"></i>'+esc(L.label)+'</button>').join('');
+  const r=OLV_RANGES[_olvRange],ids=OLV_LANES.filter(L=>_olvOn.has(L.lane)).map(L=>L.lane).join(',');
+  let tl=$('olv-tl');
+  if(!tl){$('olv-tl-host').innerHTML='<vera-timeline id="olv-tl"></vera-timeline>';tl=$('olv-tl');
+    tl.addEventListener('timeline:select',e=>olvDrill(e.detail));
+    tl.addEventListener('timeline:brush',e=>{tl.setRange(new Date(e.detail.from).toISOString(),new Date(e.detail.to).toISOString());$('olv-hint').innerHTML='zoomed &middot; <a href="#" onclick="olvRange(_olvRange);return false">reset</a>'})}
+  tl.setAttribute('from',r[0]);tl.setAttribute('to',r[1]);tl.setAttribute('lanes',ids);
+  olvTiles();
+  clearInterval(_olvTimer);_olvTimer=setInterval(()=>{if(_curSec()==='overview')olvTiles();else{clearInterval(_olvTimer);_olvTimer=null}},60000);
+}
+function olvRange(k){_olvRange=k;_olvSave();$('olv-hint').textContent='drag across the timeline to zoom · click an item for its detail';loadOverviewPage()}
+function olvLane(id){_olvOn.has(id)?_olvOn.delete(id):_olvOn.add(id);_olvSave();loadOverviewPage()}
+/* the tiles: counts over the same answer the lanes read (one more read a minute, not one per lane) */
+async function olvTiles(){
+  const a=_olvArgs(),q=new URLSearchParams(a).toString();
+  const d=await api('/evolve/schedule/events?'+q);if(!d||!Array.isArray(d.events))return;
+  _olvEv=d.events;const now=Date.now(),r=OLV_RANGES[_olvRange],from=Date.parse(_olvIso(r[0],now));
+  const inR=e=>{const t=Date.parse(e.start);return t>=from&&t<=now};
+  const runs=_olvEv.filter(e=>e.source==='loop-lab-run'&&inR(e)),live=_olvEv.filter(e=>e.running),res=_olvEv.filter(e=>e.source==='results'&&inR(e));
+  const byT=(x,y)=>Date.parse(x.start)-Date.parse(y.start),relL=_olvEv.filter(e=>e.source==='releases'&&inR(e)).sort(byT),rel=relL.filter(e=>e.kind==='release'),prom=relL.filter(e=>e.kind==='promotion').length,next=_olvEv.filter(e=>e.source==='loop-lab'&&Date.parse(e.start)>now).sort((x,y)=>Date.parse(x.start)-Date.parse(y.start))[0];
+  const pr=res.length?Math.round(100*res.reduce((s,e)=>s+(+e.pass_rate||0),0)/res.length):null;
+  const bad=runs.filter(e=>/fail|error|stopped|capped/i.test(String(e.result||''))).length;
+  const T=(k,v,s,sec,cls)=>'<div class="olv-tile'+(cls?' '+cls:'')+'" onclick="nav(\''+sec+'\')" title="open '+sec+'"><div class="k">'+k+'</div><div class="v">'+v+'</div><div class="s">'+esc(s||'')+'</div></div>';
+  $('olv-tiles').innerHTML=
+    T('Running now',live.length,live.map(e=>e.title).join(' · ')||'nothing running','work',live.length?'live':'')+
+    T('Runs',runs.length,bad?bad+' did not finish clean':'all clean','schedule')+
+    T('Pass rate',pr==null?'–':pr+'%',res.length+' result(s)','work')+
+    T('Releases',rel.length,prom+' promotion(s)'+(rel.length?' · last: '+String(rel[rel.length-1].title||'').replace(/^▲\s*/,''):''),'releases')+
+    T('Next window',next?new Date(next.start).toLocaleString([],{weekday:'short',hour:'2-digit',minute:'2-digit'}):'–',next?next.title:'none booked','schedule');
+}
+/* THE drill panel (/ui/vera-kit.js, K3): a click on a lane, a live chip or a link inside a drill opens a frame; the
+   path rides in the hash (drill=...), so a reload or a shared link reopens it. Each kind loads its own record, so a
+   frame never depends on what the timeline happened to hold. */
+const OLV_SEC_NAME={schedule:'Schedule',work:'Work',releases:'Releases',agents:'Agents',ship:'Ship'};
+const OLV_SRC_SEC={'loop-lab':'schedule','loop-lab-run':'schedule',results:'work',releases:'releases','agents-work':'agents'};
+const OLV_LIVE=[
+  {live:'runs',label:'Runs',source:{cap:'evolve.schedule.events',args:{mode:'windows',include_agents:false,include_releases:false}},every:20,
+   map:{items:'events',where:{running:true},id:'id',label:'title',sub:'{kind}',started:'start',color:{field:'color'},drill:'event'}},
+  {live:'census',label:'Census',source:{cap:'evolve.work.live',args:{}},every:15,
+   map:{items:'census.harness',one:true,where:{live:true},id:'census_run',label:'census_run',sub:'{current_goal}',started:'started_at',progress:{done:'goals_done',total:'goals_total'},color:'#c9a35a'}},
+  {live:'gates',label:'Gates',source:{cap:'evolve.test_pool.status',args:{}},every:20,
+   map:{items:'queue',id:'gate',label:'gate',sub:'place {place} · {chunks_waiting} chunk(s) waiting',color:'#a78bfa'}},
+];
+let _olvKitDone=false;
+function _olvRow(k,v){return v==null||v===''?'':'<div><span class="dk">'+esc(k)+'</span>'+esc(String(v))+'</div>'}
+function _olvWhen(v){return v?new Date(v).toLocaleString():''}
+function _olvKit(){
+  if(_olvKitDone)return;_olvKitDone=true;
+  const open=(sec)=>'<button class="btn" style="margin-top:6px" onclick="nav(\''+sec+'\')">open in '+esc(OLV_SEC_NAME[sec]||sec)+'</button>';
+  VeraDrill.registerKind('event',{label:'Event',
+    load:(id,ctx)=>ctx.call('evolve.schedule.events',_olvArgs()).then(a=>{const e=((a&&a.events)||[]).find(x=>x.id===id);if(!e)throw new Error('not in the range shown - widen the range');return e}),
+    title:(e,id)=>(e&&e.title)||id,
+    tabs:[{id:'detail',label:'Detail'},{id:'raw',label:'Record'}],
+    render:(e,tab)=>{
+      if(tab==='raw')return '<pre>'+esc(JSON.stringify(e,null,2))+'</pre>';
+      const sec=OLV_SRC_SEC[e.source]||'schedule';
+      return _olvRow('what',e.title)+_olvRow('when',_olvWhen(e.start)+(e.end?' → '+_olvWhen(e.end):''))+_olvRow('detail',e.detail)+_olvRow('kind',e.kind)+
+        _olvRow('result',e.result||e.grade||e.status)+_olvRow('pass rate',e.pass_rate!=null?Math.round(100*e.pass_rate)+'%':'')+
+        (e.schedule_id?'<div><span class="dk">schedule</span><a href="#" data-drill="schedule:'+esc(e.schedule_id)+'">'+esc(e.schedule_id)+' ›</a></div>':'')+open(sec);
+    }});
+  VeraDrill.registerKind('schedule',{label:'Schedule',
+    load:(id,ctx)=>ctx.call('evolve.schedule.get',{id}).then(a=>{if(!a||!a.schedule)throw new Error((a&&a.error)||'no such schedule');return a.schedule}),
+    title:(s,id)=>(s&&(s.title||s.label))||id,
+    tabs:[{id:'detail',label:'Detail'},{id:'runs',label:'Runs'},{id:'raw',label:'Record'}],
+    render:(s,tab,ctx)=>{
+      if(tab==='raw')return '<pre>'+esc(JSON.stringify(s,null,2))+'</pre>';
+      if(tab==='runs')return ctx.call('evolve.schedule.history',{limit:200}).then(a=>{
+        const runs=((a&&a.runs)||[]).filter(r=>r.schedule_id===s.id);
+        if(!runs.length)return ctx.states.html('empty','no runs of this schedule in the recent history');
+        return '<table>'+runs.slice(0,40).map(r=>'<tr><td>'+esc(_olvWhen(r.started_at))+'</td><td>'+esc(r.result||'')+'</td><td>'+esc(r.detail||r.reason||'')+'</td></tr>').join('')+'</table>'});
+      const days=(s.days||[]).map(d=>['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][d]||d).join(' ');
+      return _olvRow('title',s.title)+_olvRow('kind',s.kind)+_olvRow('window',(days?days+' ':'')+(s.start||'')+'–'+(s.end||''))+_olvRow('repeat',s.repeat)+
+        _olvRow('enabled',s.enabled?'yes':'no')+_olvRow('notes',s.notes)+open('schedule');
+    }});
+  VeraDrill.registerKind('test-run',{label:'Test run',
+    load:(id,ctx)=>ctx.call('evolve.unittest.history',{limit:200}).then(a=>{const r=((a&&a.runs)||[]).find(x=>x.ts===id);if(!r)throw new Error('no longer in the history');return r}),
+    title:(r,id)=>r?(r.branch||'')+' · '+(r.ok?'green':'red'):id,
+    tabs:[{id:'detail',label:'Detail'},{id:'failures',label:'Failures'}],
+    render:(r,tab)=>{
+      if(tab==='failures')return (r.failures||[]).length?'<pre>'+esc((r.failures||[]).map(f=>typeof f==='string'?f:JSON.stringify(f)).join('\n'))+'</pre>':'';
+      return _olvRow('branch',r.branch)+_olvRow('pipeline',r.pipeline_id||'(a run of its own)')+_olvRow('summary',r.summary)+_olvRow('paths',r.paths)+_olvRow('when',_olvWhen(r.ts))+open('ship');
+    }});
+  const live=$('olv-live');live.setRecords(OLV_LIVE);
+  live.addEventListener('live:select',e=>{const d=e.detail;
+    if(d.drill==='event')$('olv-drill').open('event',d.id,{rec:d.item,root:true});else nav(d.record==='gates'?'releases':'work')});
+}
+function olvDrill(d){
+  const it=d.item||{};
+  if(d.lane==='ll.tests')$('olv-drill').open('test-run',it.ts,{rec:it,root:true});
+  else if(it.id)$('olv-drill').open('event',it.id,{rec:it,root:true});
+}
 
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
 // Any Loop Lab work on a weekly window or once: a census, a suite, a task, a pipeline step, a board item's dispatch, an
@@ -1313,10 +1480,10 @@ async function loadModels(){
     +kpTile('Last benchmark',lb?String(lb.at).slice(0,10):'never',lb?(lb.broken?'broken: nothing passed':(lb.accuracy!=null?Math.round(lb.accuracy*100)+'% · ':'')+kpShort(lb.model)):'',!lb||lb.broken||(lb.age_days||0)>14);
   const allRows=d.models||[], rows=_mdlAll?allRows:allRows.filter(r=>r.calls>=MDL_MIN_CALLS||r.key===_mdlSel), maxT=Math.max(1,...rows.map(r=>r.tps||0));
   $('mdl-table').innerHTML=rows.length?'<table class="kp-tbl"><thead><tr><th>model</th><th>node</th><th>jobs it serves</th><th style="text-align:right">calls</th><th>live tok/s</th><th style="text-align:right">avg wall</th><th>benchmark</th><th>now</th></tr></thead><tbody>'
-    +rows.map((r,i)=>{const b=r.bench;return '<tr class="'+(_mdlSel===r.key?'sel':'')+'" style="cursor:pointer" onclick="mdlOpen('+i+')"><td><b>'+esc(kpShort(r.model))+'</b></td><td class="mono">'+esc(r.node)+'</td><td>'+esc((r.jobs||[]).slice(0,3).map(j=>j.job.replace(/_/g,' ')).join(' · ')||(r.job_types||[]).slice(0,3).join(' · '))+'</td>'
+    +rows.map((r,i)=>{const b=r.bench;return '<tr class="'+(_mdlSel===r.key?'sel':'')+(r.stale?' stale':'')+'" style="cursor:pointer" onclick="mdlOpen('+i+')"'+(r.stale?' title="not called since '+esc(String(r.last).slice(0,10))+' - history, not a live path"':'')+'><td><b>'+esc(kpShort(r.model))+'</b></td><td class="mono">'+esc(r.node)+'</td><td>'+esc((r.jobs||[]).slice(0,3).map(j=>j.job.replace(/_/g,' ')).join(' · ')||(r.job_types||[]).slice(0,3).join(' · '))+'</td>'
       +'<td class="mono" style="text-align:right">'+kpN(r.calls)+'</td><td class="mono">'+kpN(r.tps,1)+' '+kpBar(100*(r.tps||0)/maxT,(r.tps||0)<2?'#f87171':'#7aa2f7')+'</td><td class="mono" style="text-align:right'+((r.wall_s||0)>120?';color:#f87171':'')+'">'+kpS(r.wall_s)+'</td>'
       +'<td>'+(b?(b.broken?'<span style="color:#f87171" title="'+esc(b.broken)+'">broken · '+esc(String(b.at).slice(5,10))+'</span>':(b.accuracy!=null?Math.round(b.accuracy*100)+'%':'-')+' · '+esc(String(b.at).slice(5,10))):'<span class="hint">never</span>')+'</td>'
-      +'<td>'+(r.warm?'<span style="color:#4ade80">warm</span>':'<span class="hint">cold</span>')+'</td></tr>'}).join('')+'</tbody></table>'
+      +'<td>'+(r.stale?'<span class="hint">unused since '+esc(String(r.last).slice(5,10))+'</span>':r.warm?'<span style="color:#4ade80">warm</span>':'<span class="hint">cold</span>')+'</td></tr>'}).join('')+'</tbody></table>'
     +(allRows.length>rows.length||_mdlAll?'<a class="hint" style="cursor:pointer" onclick="_mdlAll=!_mdlAll;loadModels()">'+(_mdlAll?'show only models with '+MDL_MIN_CALLS+'+ calls':'show all '+allRows.length+' (another '+(allRows.length-rows.length)+' with under '+MDL_MIN_CALLS+' calls)')+'</a>':''):'<div class="empty">no model calls on record</div>';
   const mx=d.matrix||{}, ms=(mx.models||[]).slice(0,4);
   $('mdl-matrix').innerHTML=ms.length?'<div style="overflow-x:auto"><table class="kp-mx"><thead><tr><th>job type</th>'+ms.map(k=>'<th title="'+esc(k)+'">'+esc(kpShort(k).replace('@',' @ '))+'</th>').join('')+'</tr></thead><tbody>'
@@ -1340,9 +1507,10 @@ async function loadModels(){
   $('mdl-nodes').innerHTML=(d.nodes||[]).length?'<table class="kp-tbl"><thead><tr><th>node</th><th>hardware</th><th>warm now</th><th style="text-align:right">ping</th></tr></thead><tbody>'
     +(d.nodes||[]).map(n=>{const hw=n.hw||{};return '<tr><td class="mono">'+esc(n.id)+' <span style="color:'+(n.status==='online'?'#4ade80':'#f87171')+'">'+esc(n.status||'')+'</span></td><td>'+esc(hw.gpu_name||((hw.cpu_cores?hw.cpu_cores+' cores':'')+(hw.ram_gb?' · '+hw.ram_gb+' GB':'')))+'</td><td>'+esc((n.loaded||[]).map(kpShort).join(' · ')||'-')+'</td><td class="mono" style="text-align:right">'+(n.ping_ms!=null?Math.round(n.ping_ms)+' ms':'-')+'</td></tr>'}).join('')+'</tbody></table>':'<span class="hint">no nodes</span>';
   if(_mdlSel){const i=rows.findIndex(r=>r.key===_mdlSel);if(i>=0)mdlOpen(i,true)}
+  // the table's rows are the filtered list: mdlOpen(i) indexes the same list
 }
 function mdlOpen(i,keep){
-  const r=((_mdl||{}).models||[])[i]; if(!r)return;
+  const all=((_mdl||{}).models||[]), shown=_mdlAll?all:all.filter(x=>x.calls>=MDL_MIN_CALLS||x.key===_mdlSel), r=shown[i]; if(!r)return;
   if(!keep&&_mdlSel===r.key){_mdlSel=null;$('mdl-detail').innerHTML='';loadModels();return}
   _mdlSel=r.key; const b=r.bench, maxN=Math.max(1,...(r.jobs||[]).map(j=>j.n));
   document.querySelectorAll('#mdl-table tr.sel').forEach(t=>t.classList.remove('sel'));
@@ -1394,7 +1562,7 @@ async function loadPerformance(){
     pfKpi('Pipeline time',g.gate_min!=null?kpN(g.gate_min,1)+' min':'-','median adopt → last stage, gated pipelines','evolve.releases.view · stages'),
     pfKpi('Adopt → prod',g.lead_h!=null?kpN(g.lead_h,1)+' h':'-',g.lead_n?'median of '+g.lead_n+' released change(s) · most of it waits for census goals':'no released change in the window','evolve.releases.view · releases carried'),
     pfKpi('Waiting to release',String((g.on_edge||0)+(g.ready||0)),(g.on_edge||0)+' on an edge, '+(g.ready||0)+' passed, not promoted'+(g.edge_ahead!=null?' · bleeding-edge '+g.edge_ahead+' commit(s) ahead of main':''),'evolve.releases.view'),
-    pfKpi('Background queue',q.depth!=null?q.depth+' job(s)':'-',(q.oldest_h!=null?'oldest waiting '+q.oldest_h+' h':'')+(q.running?' · running: '+q.running.title:'')+(q.stranded?' · '+q.stranded+' stranded':''),q.source,(q.oldest_h||0)>12)].join('');
+    pfKpi('Background queue',q.depth!=null?q.depth+' job(s)':'-',(q.oldest_h!=null?'oldest waiting '+q.oldest_h+' h':'')+(q.running?' · running: '+q.running.title:'')+(q.stranded?' · '+q.stranded+' stranded':'')+(q.min_quiet_s?' · runs in the booked Background-work windows (outside them it waits for '+Math.round(q.min_quiet_s/60)+' min of quiet)':''),q.source,(q.oldest_h||0)>12)].join('');
   $('pf-vera').innerHTML=[
     pfKpi('Chat reply time',kpS(ch.wall_s),'average of the recent replies'+(ch.tokens?' · '+kpN(ch.tokens)+' tokens at '+kpN(ch.tps,1)+' tok/s':''),ch.source,(ch.wall_s||0)>30),
     pfKpi('Chat replies',kpN(ch.replies),(ch.by_model||[]).slice(0,2).map(m=>kpShort(m.model)+' @ '+m.node+' '+kpN(m.n)).join(' · '),'ollama.route_stats · n'),
@@ -2423,7 +2591,7 @@ async function loadAll(){
   // Work is the home — but this init awaits slow config/targets, so only land on
   // Work if the user hasn't already switched tabs DURING the load (else we'd yank
   // them off the tab they opened). _curSec() reads the active nav button.
-  if(!routeHash()&&_curSec()==='work')nav('work');
+  if(!routeHash()&&_curSec()==='overview')nav('overview');
   pollSuite();       // reflect any in-flight suite immediately
 }
 
@@ -4689,7 +4857,7 @@ async function openEditq(id){
 }
 async function editqSave(id){const r=await post('/evolve/editq/update',{id,prompt:$('eq-prompt').value});if(r&&r.ok){toast('Saved');closeModal();loadEditq()}else toast((r&&r.error)||'failed')}
 async function editqCancel(id){const r=await post('/evolve/editq/cancel',{id});toast(r&&r.ok?'Cancelled':(r&&r.error)||'failed');closeModal&&closeModal();loadEditq()}
-function _curSec(){const b=document.querySelector('#nav .btn.on');return b?b.dataset.sec:'work'}
+function _curSec(){const b=document.querySelector('#nav .btn.on');return b?b.dataset.sec:'overview'}
 // subscribe: parent bus if available, else own WS to /ws/mcp
 // ONE socket for the page: the panel's dispatcher AND every element in it
 // (window._veraSubscribe is declared before the element scripts load, above).
@@ -6662,7 +6830,7 @@ vera-agent-loop-output.alo-fill{display:block;height:max(360px,calc(100vh - 230p
 .kp-note{padding:8px 10px;border-radius:8px;margin:6px 0;font-size:12.5px;border:1px solid}
 .kp-note.warn{background:rgba(224,164,88,.08);border-color:rgba(224,164,88,.35)}.kp-note.bad{background:rgba(248,113,113,.08);border-color:rgba(248,113,113,.4)}.kp-note.info{background:rgba(122,162,247,.08);border-color:rgba(122,162,247,.35)}
 .kp-tbl{width:100%;border-collapse:collapse;font-size:12.5px}.kp-tbl th{text-align:left;font-weight:500;opacity:.7;padding:6px 8px}.kp-tbl td{padding:6px 8px;border-top:1px solid var(--border)}
-.kp-tbl tr.sel td{background:rgba(122,162,247,.10)}.kp-tbl tr.lead td{background:rgba(74,222,128,.06)}
+.kp-tbl tr.sel td{background:rgba(122,162,247,.10)}.kp-tbl tr.stale td{opacity:.5}.kp-tbl tr.lead td{background:rgba(74,222,128,.06)}
 .kp-bar{display:inline-block;width:70px;height:6px;border-radius:3px;background:rgba(127,127,127,.2);vertical-align:middle}.kp-bar i{display:block;height:100%;border-radius:3px}
 .kp-mx{border-collapse:separate;border-spacing:3px;font-size:12px}.kp-mx th{font-weight:500;opacity:.7;text-align:left;padding:4px 8px}.kp-mx td{padding:6px 8px;border-radius:4px;font-family:var(--mono,monospace)}
 .kp-mx td span{opacity:.7;font-size:11px}.kp-mx td.g{background:rgba(74,222,128,.12)}.kp-mx td.a{background:rgba(224,164,88,.14)}.kp-mx td.r{background:rgba(248,113,113,.14)}.kp-mx td.none{opacity:.3;text-align:center}

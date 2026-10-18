@@ -72,3 +72,28 @@ def parse_row(raw: Any) -> Optional[Dict[str, Any]]:
         return json.loads(raw) if raw else None
     except Exception:
         return None
+
+
+def shadows_for(decisions: Iterable[Dict[str, Any]], shadow_rows: Iterable[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    """{decision_id: [shadow rows]}: a shadow belongs to the decision its detail.for names (D10-4, 18 Oct - the
+    queue had grouped shadows by (run, question), so each claim of a run showed every claim's 42 shadows). A shadow
+    with no detail.for (older rows) falls back to the decisions of its run and question.
+    decisions: {decision_id, run_id, question_id}; shadow_rows: {run_id, question_id, row}."""
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    by_run: Dict[tuple, List[str]] = {}
+    ids = set()
+    for d in decisions:
+        did = str(d.get("decision_id") or "")
+        ids.add(did)
+        out.setdefault(did, [])
+        by_run.setdefault((d.get("run_id"), d.get("question_id")), []).append(did)
+    for s in shadow_rows:
+        row = s.get("row") if isinstance(s.get("row"), dict) else {}
+        target = str((row.get("detail") or {}).get("for") or "")
+        if target:
+            if target in ids:
+                out[target].append(row)
+            continue
+        for did in by_run.get((s.get("run_id"), s.get("question_id")), []):
+            out[did].append(row)
+    return out

@@ -64,6 +64,15 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+# ONE module object, whatever name it is imported by (S16 / D12-4, backbone 18 Oct; same block as data_fabric). The
+# loader loads this file as `dag_workshop_capabilities`; about nine sites imported `Vera.vera.dag.
+# dag_workshop_capabilities` too, which EXECUTED the file a second time. That copy re-registered the loop caps over
+# the first and ran with the un-extended _DEFAULT_CAP_BLACKLIST, because loop_profiles, loop_orchestrator, evolve and
+# the session sandbox extend the copy under the bare name. So loops.run, the v8 and evolve caps and the sandbox
+# controls were back in loop toolkits. Both names now point at this one object before anything else runs.
+for _alias in ("dag_workshop_capabilities", "Vera.vera.dag.dag_workshop_capabilities"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
+
 from fastapi import Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 

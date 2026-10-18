@@ -19,7 +19,8 @@ def test_the_frame_starts_only_behind_its_switch():
     src = _agents()
     i = src.index("_frame_task = None")
     block = src[i:i + 700]
-    assert 'await _switch_mode("sense.chat_pre", body.get("minds")) == "on"' in block
+    # one switchboard read per turn since D10-1 (cache=_sw)
+    assert 'await _switch_mode("sense.chat_pre", body.get("minds"), cache=_sw) == "on"' in block
     assert 'asyncio.create_task(_sf_fn(text=_bare_q, kind="chat"))' in block
     assert '_sf.get("raw") or _sf.get("func")' in block
 

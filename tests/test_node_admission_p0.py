@@ -61,7 +61,7 @@ def test_capacity_reads_the_averaged_own_cores_when_reported():
 def test_pinned_reservations_stop_counting_once_the_average_covers_them():
     res = {"cpu": 8.0, "mem_gb": 12.0, "jobs": 2.0,
            "sent": [[NOW - 200, 4.0, 6.0], [NOW - 10, 4.0, 6.0]]}
-    assert nc.reserved_now(res, NOW, "pinned") == (4.0, 6.0)  # the 200 s-old job is in the reading now
+    assert nc.reserved_now(res, NOW, "pinned") == (4.0, 12.0)  # CPU: the 200 s-old job is in the reading; memory: whole run
     assert nc.reserved_now(res, NOW, "host") == (8.0, 12.0)   # a host reading never shows them: whole run
 
 

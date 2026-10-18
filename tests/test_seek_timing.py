@@ -83,7 +83,7 @@ def test_without_an_envelope_nothing_changes():
 
 
 def test_seek_records_on_every_return():
-    seek = ast.get_source_segment(TEXT, _fn("cap_memory_seek"))
+    seek = ast.get_source_segment(TEXT, _fn("_memory_seek_body"))     # memory.seek's body since D10-1
     assert seek.count("_record(env)") == 2
     for stage in ('"fuse"', '"hydrate"', '"memory"', '"select"', '"legacy"'):
         assert stage in seek

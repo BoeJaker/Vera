@@ -8984,6 +8984,17 @@ async def _record_unittest_run(parsed: Dict[str, Any], *, branch: str = "",
                               repo=DEFAULT_REPO_ID)
         await r.lpush(KEY_UT_HISTORY, json.dumps(row, default=str))
         await r.ltrim(KEY_UT_HISTORY, 0, _ut_hist.HISTORY_CAP - 1)
+        # the latest FULL critical run of bleeding-edge, under its own key: the release lane holds on it while red,
+        # and gate rows would push it out of the history within hours (vera-d2's review, 18 Oct 2026)
+        try:
+            try:
+                from Vera.vera.evolve import release_lane_core as _rlc
+            except ImportError:                            # pragma: no cover
+                from vera.evolve import release_lane_core as _rlc  # type: ignore
+            if _rlc.is_full_run(row):
+                await r.set(_rlc.KEY_FULL_TIER_LAST, json.dumps(row, default=str))
+        except Exception as _fe:                           # pragma: no cover
+            log.debug("full tier record: %s", _fe)
     except Exception as e:                                 # pragma: no cover
         log.debug("unittest history write: %s", e)
 

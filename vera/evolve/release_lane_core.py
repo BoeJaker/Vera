@@ -92,3 +92,30 @@ def expired(r: Dict[str, Any], now: datetime) -> bool:
         return False
     d = _dt(r.get("done_at") or r.get("at"))
     return d is not None and (now - d).total_seconds() > KEEP_S
+
+
+
+#: where the latest FULL critical run of bleeding-edge is kept, apart from the gate-heavy history list (vera-d2)
+KEY_FULL_TIER_LAST = "vera:evolve:full_tier:last"
+
+
+def is_full_run(row: Dict[str, Any]) -> bool:
+    """A full critical run of bleeding-edge: no pipeline (an adopt gate always has one), the whole tests/ tree (not a
+    targeted file), the critical marker. vera-d2's review: a targeted run must neither hold nor lift the lane."""
+    paths = row.get("paths")
+    paths = "" if paths is None else (",".join(paths) if isinstance(paths, list) else str(paths)).strip()
+    return (str(row.get("branch") or "") == "bleeding-edge" and not row.get("pipeline_id")
+            and paths in ("", "tests", "tests/") and str(row.get("markers") or "").strip() == "critical")
+
+
+def full_tier_hold(last: Optional[Dict[str, Any]]) -> Tuple[bool, str]:
+    """(hold, why) from the latest full run of bleeding-edge (KEY_FULL_TIER_LAST): the lane holds while it is red.
+    Adopt gates run only the tests their change touches (P0-6, owner 18 Oct 2026), so the nightly full critical tier
+    is what proves what a release carries. A green full run lifts the hold."""
+    if not last or not is_full_run(last):
+        return False, "no full run of bleeding-edge on record yet"
+    bad = int(last.get("failed") or 0) + int(last.get("errors") or 0)
+    if bad:
+        return True, ("the last full critical run of bleeding-edge (%s) is red: %s failed, %s errors - fix it "
+                      "(a green full run lifts the hold) or withdraw" % (last.get("ts") or "?", last.get("failed") or 0, last.get("errors") or 0))
+    return False, "the last full run of bleeding-edge (%s) is green" % (last.get("ts") or "?")
