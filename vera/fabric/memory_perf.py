@@ -23,6 +23,11 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability, schedule
 
 try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import test_activity as _TA
+except Exception:                        # worktree / app-free import
+    from vera.minds import test_activity as _TA   # type: ignore
+
+try:                                     # pragma: no cover - import-shape only
     from Vera.vera.fabric import memory_perf_core as MP
     from Vera.vera.minds import switchboard_core as SB
     from Vera.vera.minds import contract_core as _MC
@@ -258,30 +263,31 @@ async def cap_memory_perf_compare(base_sha: str = "", head_sha: str = "", kind: 
 )
 async def cap_memory_perf_probe(name: str = "v1", limit: int = 50, minds: Optional[Dict[str, str]] = None,
                                 label: str = "", trace_id=None) -> Dict[str, Any]:
-    run = (CAPABILITY_REGISTRY.get("retrieval.known_items.run") or {}).get("func")
-    w = _window("retrieval")
-    if not run or w is None or not hasattr(w, "since"):
-        return {"ok": False, "error": "retrieval.known_items.run or the retrieval window is not loaded"}
-    async with _LOCK:
-        await _log_once_locked()                  # live calls so far go to a live row first
-        before = w.marks()
-        res = await run(name=name, limit=max(1, min(200, int(limit))), minds=minds or None, label=label)
-        paths, after = w.since(before)
-        _STATE["marks"]["retrieval"] = after      # the probe's calls never reach a live row
-    if not (res or {}).get("ok"):
-        return {"ok": False, "error": (res or {}).get("error") or "known-item run failed"}
-    paths = {p: s for p, s in paths.items() if p == "memory.seek"}
-    summ = res.get("summary") or {}
-    eff = await _effective(minds)
-    r = MP.row("probe", "retrieval", paths, _provenance(), eff["modes"], eff["digest"],
-               extra={"set": name, "label": res.get("label") or label, "items": summ.get("n"),
-                      "quality": {k: summ.get(k) for k in ("mrr", "ndcg@10", "hit@1", "hit@10", "missing")},
-                      "latency": {k: summ.get(k) for k in ("ms_p50", "ms_p95")},
-                      "run_path": res.get("path")})
-    stored = await _store([r] if r else [])
-    seek = paths.get("memory.seek") or {}
-    return {"ok": True, "stored": stored, "calls": seek.get("calls", 0), "total": seek.get("total"),
-            "quality": (r or {}).get("extra", {}).get("quality"), "label": res.get("label")}
+    async with _TA.declared("four-minds:memory-census", "memory census (FM-7.9)", ttl_s=1800):
+        run = (CAPABILITY_REGISTRY.get("retrieval.known_items.run") or {}).get("func")
+        w = _window("retrieval")
+        if not run or w is None or not hasattr(w, "since"):
+            return {"ok": False, "error": "retrieval.known_items.run or the retrieval window is not loaded"}
+        async with _LOCK:
+            await _log_once_locked()                  # live calls so far go to a live row first
+            before = w.marks()
+            res = await run(name=name, limit=max(1, min(200, int(limit))), minds=minds or None, label=label)
+            paths, after = w.since(before)
+            _STATE["marks"]["retrieval"] = after      # the probe's calls never reach a live row
+        if not (res or {}).get("ok"):
+            return {"ok": False, "error": (res or {}).get("error") or "known-item run failed"}
+        paths = {p: s for p, s in paths.items() if p == "memory.seek"}
+        summ = res.get("summary") or {}
+        eff = await _effective(minds)
+        r = MP.row("probe", "retrieval", paths, _provenance(), eff["modes"], eff["digest"],
+                   extra={"set": name, "label": res.get("label") or label, "items": summ.get("n"),
+                          "quality": {k: summ.get(k) for k in ("mrr", "ndcg@10", "hit@1", "hit@10", "missing")},
+                          "latency": {k: summ.get(k) for k in ("ms_p50", "ms_p95")},
+                          "run_path": res.get("path")})
+        stored = await _store([r] if r else [])
+        seek = paths.get("memory.seek") or {}
+        return {"ok": True, "stored": stored, "calls": seek.get("calls", 0), "total": seek.get("total"),
+                "quality": (r or {}).get("extra", {}).get("quality"), "label": res.get("label")}
 
 
 @capability(

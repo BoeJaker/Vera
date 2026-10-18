@@ -202,6 +202,7 @@ html.vpb-nav-hosted body{padding-left:0}
   <button class="btn" data-sec="agents" onclick="nav('agents')" title="Every agent session &mdash; Claude Code, Codex, a Vera loop, an edit-queue agent &mdash; with its board items, pipelines and sandboxes; the board by lane, notes and seats fold up under it"><span class="ic">&#9737;</span>Agents</button>
   <button class="btn" data-sec="mission" onclick="nav('mission')" title="Every event &mdash; actions, errors, gates &mdash; in one table, with what is live and what needs a person above it; the run-once and improve-live theatres fold up under it"><span class="ic">&#9673;</span>Mission control</button>
   <button class="btn" data-sec="schedule" onclick="nav('schedule')" title="A calendar of Loop Lab work &mdash; censuses, suites, tasks, pipeline steps, board items &mdash; started by the scheduler only when the box is free"><span class="ic">🗓</span>Schedule</button>
+  <button class="btn" data-sec="tests" onclick="nav('tests')" title="Four-minds' tests on the schedule &mdash; each one's health (failed, interrupted, missed, recovering, running), its last runs and what it found"><span class="ic">&#10003;</span>Tests</button>
   <button class="btn" data-sec="settings" data-vera-settings="#sec-settings" onclick="nav('settings')"><span class="ic">⚙</span>Settings</button>
 </div>
 
@@ -737,6 +738,12 @@ html.vpb-nav-hosted body{padding-left:0}
   </div>
 </div>
 
+<!-- == TESTS: four-minds' scheduled tests on their own page (owner, 18 Oct 2026) - /decide/tests in a frame,
+     loaded the first time the section opens (a full page is a frame, never inline) == -->
+<div class="sec" id="sec-tests" style="display:none;height:calc(100vh - 60px)">
+  <iframe id="tests-frame" title="Tests" data-src="/decide/tests" style="width:100%;height:100%;border:0;background:transparent"></iframe>
+</div>
+
 <div class="sec" id="sec-settings" style="display:none">
   <div class="card">
     <div class="card-h"><span class="card-t">Loop Lab configuration</span></div>
@@ -1046,6 +1053,7 @@ function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
   const f={work:loadWork,ship:loadShip,agents:agentsPoll,mission:missionPoll,
+    tests:()=>{const fr=document.getElementById('tests-frame');if(fr&&!fr.getAttribute('src'))fr.setAttribute('src',(window._veraBase||'')+fr.dataset.src);},
     // Pages Mission control absorbed (slice 7): the compose form is a modal,
     // the theatres the live panel, the rest its table.
     test:()=>mcOpen('test'),watch:()=>mcOpen('watch'),errors:()=>mcOpen('errors'),master:()=>nav('mission'),activity:()=>nav('mission'),
