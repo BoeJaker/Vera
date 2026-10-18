@@ -172,6 +172,66 @@
     if (out.length > 8) { const by = out.slice().sort((a, b) => b.value - a.value); out = by.slice(0, 7).concat([{ name: 'other', value: by.slice(7).reduce((s, p) => s + p.value, 0) }]); }
     return out;
   }
+  /* DA-01e (3): OPTIONS on a declaration's rows, read here (and by the server mirror) before the form draws them - so the
+     form's own row limit cuts the arranged rows. draw: {sort, group_by, units}; without them nothing below runs and the
+     answer reads exactly as it did.
+       sort: 'field' low first, '-field' high first - numbers by value then words without case, a missing value (none, '',
+             an object) last either way; ties keep the answer's order                          table, records, reading
+       group_by: 'field' - the rows by group, the groups in the order they first appear (no value: last), the group's
+             field the row's FIRST key (the table's first column - its label; the table form has no section rows)  table
+       units: {field: 'ms'} - a number in that field becomes its text with the unit ("12.5 ms", "40%"): the table and kv
+             forms have no unit per column, so it is said in the data             table, records, reading, kv (fields)
+     A declaration that names a row form (table, rows, cards, list, reading) has them read too, and the form is handed its
+     draw without them (the table form's own draw.sort would sort again, high first). */
+  const OPT_KEYS = ['sort', 'group_by', 'units'];
+  const OPT_ROW_FORMS = ['table', 'rows', 'cards', 'list', 'reading'];
+  const optNum = (x) => (typeof x === 'number' && isFinite(x)) ? x : (typeof x === 'boolean' ? +x : null);
+  const optMissing = (x) => nil(x) || typeof x === 'object' || (typeof x === 'number' && !isFinite(x)) || (typeof x === 'string' && !x.trim());
+  const optCmp = (a, b) => { const na = optNum(a), nb = optNum(b);
+    if (na !== null && nb !== null) return na < nb ? -1 : na > nb ? 1 : 0;
+    if (na !== null) return -1; if (nb !== null) return 1;
+    const sa = String(a).toLowerCase(), sb = String(b).toLowerCase(); return sa < sb ? -1 : sa > sb ? 1 : 0; };
+  const optPath = (p) => String(p).replace(/^\$\.?/, '').replace(/\[(-?\d+)\]/g, '.$1').split('.').filter(Boolean);
+  /* a copy of x with the value at path set (each object or list on the way copied, nothing else); x itself when the path
+     does not reach */
+  function optSet(x, parts, v) {
+    if (!parts.length) return v; const k = parts[0], rest = parts.slice(1);
+    if (Array.isArray(x) && /^-?\d+$/.test(k)) { let i = +k; if (i < 0) i += x.length; if (i < 0 || i >= x.length) return x; const y = x.slice(); y[i] = optSet(x[i], rest, v); return y; }
+    if (isObj(x) && (!rest.length || k in x)) { const y = Object.assign({}, x); y[k] = optSet(x[k], rest, v); return y; }
+    return x;
+  }
+  function optSort(rows, spec) {
+    const desc = spec[0] === '-', f = (desc ? spec.slice(1) : spec).trim();
+    return rows.map((r, i) => [r, isObj(r) ? pick(r, f) : undefined, i]).sort((x, y) => { const mx = optMissing(x[1]) ? 1 : 0, my = optMissing(y[1]) ? 1 : 0;
+      if (mx || my) return (mx - my) || (x[2] - y[2]);
+      const tx = optNum(x[1]) === null ? 1 : 0, ty = optNum(y[1]) === null ? 1 : 0;   // numbers before words either way
+      if (tx !== ty) return tx - ty; return (desc ? -optCmp(x[1], y[1]) : optCmp(x[1], y[1])) || (x[2] - y[2]); }).map((x) => x[0]);
+  }
+  function optGroup(rows, f) {
+    const order = [], by = {}, none = [];
+    rows.forEach((r) => { const v = isObj(r) ? pick(r, f) : undefined; if (optMissing(v)) { none.push(r); return; }
+      const k = optNum(v) !== null ? 'n:' + optNum(v) : 's:' + v; if (!by[k]) { by[k] = []; order.push(k); }
+      by[k].push(Object.assign({ [f]: v }, r)); });   // the group's field first (a nested one under its path's name)
+    return order.flatMap((k) => by[k]).concat(none);
+  }
+  const optFmt = (x, u) => { const a = Math.abs(x), d = a >= 100 ? 0 : a >= 10 ? 1 : a >= 1 ? 2 : 3, k = Math.pow(10, d);
+    return String(Math.round(x * k) / k) + (/^[%°]/.test(u) ? '' : ' ') + u; };
+  function optUnits(r, units) {
+    if (!isObj(r)) return r;
+    Object.keys(units).forEach((f) => { const u = units[f], v = pick(r, f); if (typeof u === 'string' && u && typeof v === 'number' && isFinite(v)) r = optSet(r, optPath(f), optFmt(v, u)); });
+    return r;
+  }
+  /* the options a declaration's draw holds, or null - none of them: nothing changes */
+  const optsOf = (P) => (isObj(P.draw) && OPT_KEYS.some((k) => !nil(P.draw[k])) ? P.draw : null);
+  function arrange(rows, d, grouped) {
+    let rw = rows;
+    if (typeof d.sort === 'string' && d.sort.replace(/^-/, '').trim()) rw = optSort(rw, d.sort.trim());
+    if (grouped && typeof d.group_by === 'string' && d.group_by.trim()) rw = optGroup(rw, d.group_by.trim());
+    if (isObj(d.units)) rw = rw.map((r) => optUnits(r, d.units));
+    return rw;
+  }
+  /* the rows at path in c, arranged, put back in a copy of c - c as it is when the path holds no rows */
+  const arrangedAt = (c, path, d, grouped) => { const rs = pick(c, path || ''); return (Array.isArray(rs) || isObj(rs)) ? optSet(c, optPath(path || ''), arrange(asRows(rs), d, grouped)) : c; };
 
   let REG = {};
   /* THE LAST DECLARATIONS SEEN ARE KEPT (review 2026-10-15 U12): with the hint table gone (DA-01d), a capability list that
@@ -199,19 +259,32 @@
       presentation: P }, extra && extra.draw ? { draw: extra.draw } : {}); out.push(r); return r; };
     /* a declaration that names its widget form (DA-01d): the form draws the answer through the map in its own words,
        with its drawing options - what a widget hint held */
-    if (typeof P.form === 'string' && P.form) { rec(P.form, c, { map: m, draw: isObj(P.draw) ? P.draw : undefined }); return { records: out.slice(0, 1) }; }
+    const opts = optsOf(P), rowKind = P.kind === 'table' || P.kind === 'records' || P.kind === 'reading';
+    if (typeof P.form === 'string' && P.form) {
+      /* a row form with no rows drew its SAMPLE rows ("sample · no source"), which read as real data: the declaration's
+         empty line instead (a composite's part drops out, as a plain table part with no rows does) */
+      if (rowKind && OPT_ROW_FORMS.includes(P.form) && empty(pick(c, m.rows || ''))) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' };
+      if (opts && rowKind && OPT_ROW_FORMS.includes(P.form)) {   /* DA-01e (3): the options read here, the rest of draw is the form's */
+        const g = P.kind === 'table' && typeof opts.group_by === 'string' && opts.group_by.trim() ? opts.group_by.trim() : '';
+        const dr = {}; Object.keys(opts).forEach((k) => { if (!OPT_KEYS.includes(k)) dr[k] = opts[k]; });
+        if (g && Array.isArray(dr.columns)) dr.columns = [g].concat(dr.columns.filter((x) => x !== g));
+        rec(P.form, arrangedAt(c, m.rows, opts, P.kind === 'table'), { map: m, draw: Object.keys(dr).length ? dr : undefined });
+        return { records: out.slice(0, 1) };
+      }
+      rec(P.form, c, { map: m, draw: isObj(P.draw) ? P.draw : undefined }); return { records: out.slice(0, 1) };
+    }
     const at = (k) => (m[k] ? pick(c, m[k]) : undefined);
     const content = (K.content || []).map((k) => at(k)).find((v) => v !== undefined);
     if (K.content.length && empty(content)) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' };
     const rowsOf = (k) => asRows(at(k)), renamed = (rows, keys) => rows.map((r) => { if (!isObj(r)) return r; const x = Object.assign({}, r); keys.forEach((k) => { if (m[k] && x[k] === undefined) { const v = pick(r, m[k]); if (v !== undefined) x[k] = v; } }); return x; });
     switch (P.kind) {
       case 'table': {
-        rec('table', c, { map: { rows: m.rows } });
+        rec('table', opts ? arrangedAt(c, m.rows, opts, true) : c, { map: { rows: m.rows } });
         if (m.name && m.value) rec('ranked', c, { map: { values: m.rows, name: m.name, value: m.value }, title: title + ' · by ' + String(m.value).split('.').pop().replace(/_/g, ' ') });
         break; }
       case 'records': case 'reading': {
         const rows = renamed(rowsOf('rows'), ['id', 'title', 'url', 'snippet', 'when', 'score', 'domain', 'text', 'cited']);
-        rec('reading', rows); break; }
+        rec('reading', opts ? arrange(rows, opts, false) : rows); break; }
       case 'document': rec('markdown', String(at('body'))); break;
       case 'status': rec('status', Object.assign({ status: at('verdict') }, m.checks ? { checks: asRows(at('checks')) } : {})); break;
       case 'metric': rec(m.max ? 'ring' : 'hero', c, { map: { value: m.value, max: m.max, unit: m.unit, trend: m.trend } }); break;
@@ -233,7 +306,7 @@
       case 'media': { const u = at('url'), b = at('b64'); rec('media', Object.assign({}, u ? { url: u } : {}, b ? { image_b64: b } : {}, m.kind ? { kind: at('kind') } : {}, m.caption ? { caption: at('caption') } : {})); break; }
       case 'code': rec('code', { code: String(at('code')), lang: at('lang') || '', path: at('path') || '' }); break;
       case 'diff': rec('diff', { diff: String(at('diff')) }); break;
-      case 'kv': rec('kv', at('fields')); break;
+      case 'kv': { const f = at('fields'); rec('kv', opts && isObj(opts.units) && isObj(f) ? optUnits(f, opts.units) : f); break; }
       case 'calendar': rec('schedule', renamed(rowsOf('events'), ['start', 'end', 'title'])); break;
       /* DA-01e (1): the new kinds read to their form's own data - nothing left in it to draw: the empty line */
       case 'timeline': { const sp = timelineSpans(asRows(at('spans')), m); if (!sp.length) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' }; rec('gantt', sp); break; }

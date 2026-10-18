@@ -177,6 +177,7 @@ async def _timed(coro, what: str) -> Any:
 
 @capability(
     "certs.list",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "parts", "map": {"parts": "counts"}, "title": "By state"}, {"kind": "table", "form": "table", "map": {"rows": "findings"}, "draw": {"columns": ["severity", "subject", "message"]}, "title": "Findings", "empty": "No findings"}, {"kind": "table", "form": "table", "map": {"rows": "certs"}, "draw": {"columns": ["name", "where", "issuer_kind", "days_left", "state", "source"]}, "title": "Certificates", "empty": "No certificates"}]}},
     http_method="GET", http_path="/certs/list", http_tags=["security", "estate"],
     memory="off", silent=True,
     description="One certificate list across the estate: the certificate each known HTTPS service "

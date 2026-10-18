@@ -174,6 +174,7 @@ def source(id_: str) -> Optional[Dict[str, Any]]:
 # ── capabilities ──────────────────────────────────────────────────────────────
 @capability(
     "widget.forms", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "forms"}, "draw": {"columns": ["name", "id", "shape", "boards", "sizes", "options", "motion"]}, "empty": "No forms match"}},
     http_method="GET", http_path="/ui/widgets/forms", http_tags=["ui", "widgets"],
     description="The widget catalogue's FORMS (the Widgets, WidgetsMotion and WidgetsIso galleries + the three the spec "
                 "adds: panel, form, scatter), each under the board's own name. Inputs: shape (str - level, series, values, "
@@ -195,6 +196,7 @@ async def widget_forms(shape: str = "", q: str = "", board: str = "", trace_id=N
 
 @capability(
     "widget.sources", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sources"}, "draw": {"columns": ["cap", "shape", "domain", "tier", "refresh_min", "desc"]}, "empty": "No sources match"}},
     http_method="GET", http_path="/ui/widgets/sources", http_tags=["ui", "widgets"],
     description="The widget catalogue's SOURCES: every quiet read of the live capability registry with the shape a widget "
                 "reads it as (hand > measured > declared), grouped by domain, with its arguments and a one-line description; "
@@ -374,6 +376,7 @@ async def widget_read(calls: Optional[List[Dict[str, Any]]] = None, trace_id=Non
 
 @capability(
     "widget.layouts", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "layouts"}, "draw": {"columns": ["key", "dashboard", "widgets", "records"]}, "empty": "No layouts"}},
     http_method="GET", http_path="/ui/widgets/layouts", http_tags=["ui", "widgets"],
     description="The dashboards' layout files: one per VeraDash grid, every widget of the grid as a record. "
                 "Input: key (str - one grid; omit for the list). Output: {ok, layouts:[{key, dashboard, widgets, "

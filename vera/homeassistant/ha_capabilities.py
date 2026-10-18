@@ -161,6 +161,7 @@ def _unconfigured() -> Dict[str, Any]:
 
 @capability(
     "ha.config.get", http_method="GET", http_path="/ha/config",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["base_url", "configured", "verify_tls", "updated"]}}},
     http_tags=["homeassistant"], memory="off",
     description="Read the Home Assistant connection config (token redacted). "
                 "Output: {base_url, token, verify_tls, configured}.",
@@ -273,6 +274,7 @@ async def cap_health(trace_id=None):
 
 @capability(
     "ha.states", http_method="GET", http_path="/ha/states",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "entities"}, "draw": {"columns": ["name", "entity_id", "state", "domain", "available"]}, "empty": "No entities"}},
     http_tags=["homeassistant"], memory="off",
     description="List Home Assistant entities, newest state included. "
                 "Input: domain (str - e.g. light, switch, scene, sensor), "
@@ -318,6 +320,7 @@ async def cap_state(entity: str = "", trace_id=None):
 
 @capability(
     "ha.find", http_method="GET", http_path="/ha/find",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "matches"}, "draw": {"columns": ["name", "entity_id", "state", "domain", "available", "score"]}, "empty": "Nothing matches"}},
     http_tags=["homeassistant"], memory="off",
     description="Rank entities against a human phrase - what 'the bedside "
                 "lamp' actually refers to. "
@@ -338,6 +341,7 @@ async def cap_find(query: str = "", domain: str = "", limit: int = 10,
 
 @capability(
     "ha.summary", http_method="GET", http_path="/ha/summary",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "House"}, {"kind": "parts", "map": {"parts": "domains"}, "title": "Entities by domain"}, {"kind": "table", "form": "list", "map": {"rows": "unavailable"}, "title": "Unavailable"}]}},
     http_tags=["homeassistant"], memory="off",
     description="Entity counts per domain and what is currently unreachable - "
                 "the health view of the house. "
@@ -353,6 +357,7 @@ async def cap_summary(trace_id=None):
 
 @capability(
     "ha.services", http_method="GET", http_path="/ha/services",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "services"}, "draw": {"columns": ["domain", "services"]}, "empty": "No services"}},
     http_tags=["homeassistant"], memory="off",
     description="Services Home Assistant exposes, optionally for one domain. "
                 "Input: domain (str). Output: {services, count}.",
@@ -583,6 +588,7 @@ async def _probe(url: str, timeout: float = 4.0) -> bool:
 
 @capability(
     "ha.estate.plan", http_method="GET", http_path="/ha/estate/plan",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "counts"}, "title": "Plan"}, {"kind": "table", "form": "table", "map": {"rows": "update"}, "draw": {"columns": ["label", "entity_id", "kind"]}, "title": "To refresh"}, {"kind": "table", "form": "table", "map": {"rows": "skipped"}, "draw": {"columns": ["label", "reason"]}, "title": "Skipped"}]}},
     http_tags=["homeassistant"], memory="off",
     description="What an estate sync would push into Home Assistant, without "
                 "pushing it. One entity per registered service. Ephemeral "

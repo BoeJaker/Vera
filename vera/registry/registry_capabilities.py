@@ -615,7 +615,7 @@ async def _startup_load():
                         "WITH. Query: kind (skill|tool|loop|technique|os), owner "
                         "(agent name), tag, q (search), limit. "
                         "Output: {entries:[...], count, kinds}.",
-            contract=_orch._inspection_contract("registry.list", effects=["read"]))
+            contract={**_orch._inspection_contract("registry.list", effects=["read"]), "presentation": {"kind": "table", "form": "table", "map": {"rows": "entries"}, "draw": {"columns": ["name", "kind", "summary", "tags", "updated_at"]}, "empty": "No registry entries match"}})
 async def registry_list(kind: str = "", owner: str = "", tag: str = "",
                         q: str = "", limit: int = 100, trace_id=None):
     found = RC.search(list(ENTRIES.values()), q, kind=kind, owner=owner,

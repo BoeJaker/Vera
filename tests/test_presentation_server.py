@@ -72,7 +72,7 @@ def test_fixture(path):
         assert got["declared"] is True
         # each record carries the declaration it was read by (a composite's parts: their own)
         parts = fx["presentation"].get("parts") or []
-        want = [p["kind"] for p in parts] if fx["presentation"]["kind"] == "composite" else [fx["presentation"]["kind"]] * len(got["records"])
+        want = (e.get("part_kinds") or [p["kind"] for p in parts]) if fx["presentation"]["kind"] == "composite" else [fx["presentation"]["kind"]] * len(got["records"])
         assert [r.get("presentation", {}).get("kind") for r in got["records"]] == want
 
 
@@ -128,3 +128,18 @@ def test_widget_from_result_reads_the_capabilitys_own_declaration():
     # an undeclared capability: the records are from_cap_result's, as before
     r3 = run(fn(cap="evolve.pipeline.diff", result={"diff": "--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y"}))
     assert r3["records"][0]["form"] == "diff" and r3["presentation"]["declared"] is False and "markdown" in r3["forms"]
+
+
+def test_the_options_change_nothing_unless_declared_and_a_row_form_gets_its_own_draw():
+    # DA-01e (3): no sort / group_by / units - the record is what it was; with them on a row form, the form is handed
+    # its draw without them (the table form's own draw.sort would sort again, high first) and group_by's column first
+    rows = {"rows": [{"a": 2, "b": "x"}, {"a": 1, "b": "y"}]}
+    plain = {"kind": "table", "form": "table", "map": {"rows": "rows"}, "draw": {"columns": ["a", "b"], "limit": 4}}
+    got = CO.present("demo.t", rows, presentation=plain)["records"][0]
+    assert got["data"] is rows and got["draw"] == {"columns": ["a", "b"], "limit": 4}
+    got = CO.present("demo.t", rows, presentation=dict(plain, draw={"columns": ["a", "b"], "sort": "a", "group_by": "b"}))["records"][0]
+    assert got["draw"] == {"columns": ["b", "a"]} and [r["a"] for r in got["data"]["rows"]] == [1, 2]
+    assert rows == {"rows": [{"a": 2, "b": "x"}, {"a": 1, "b": "y"}]}   # the answer itself is not changed
+    # a form that does not draw rows keeps its draw as its own words
+    temps = CO.present("demo.t", {"t": {"a": 50}}, presentation={"kind": "table", "form": "temps", "map": {"rows": "t"}, "draw": {"sort": "name"}})
+    assert temps["records"][0]["draw"] == {"sort": "name"}

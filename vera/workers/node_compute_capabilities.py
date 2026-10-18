@@ -588,6 +588,7 @@ async def cap_compute_run(job: str = "", fn: str = "", trace_id=None) -> Dict:
 # ═════════════════════════════════════════════════════════════════════════════
 @capability(
     "compute.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "workers"}, "draw": {"columns": ["host", "status", "compute_slots", "compute_running", "current_task"]}, "title": "Workers", "empty": "No workers"}, {"kind": "table", "form": "table", "map": {"rows": "functions"}, "draw": {"columns": ["name", "would_run", "why", "next_node"]}, "title": "Functions", "empty": "No functions"}, {"kind": "table", "form": "table", "map": {"rows": "jobs"}, "draw": {"columns": ["fn", "label", "state", "node", "started", "attempt"]}, "title": "Recent jobs", "empty": "No recent jobs"}, {"kind": "kv", "map": {"fields": "config"}, "title": "Config"}]}},
     http_method="GET", http_path="/compute/status", http_tags=["compute", "workers"],
     memory="off", silent=True,
     description="Model training on the nodes: the config (host_fallback, threads), "

@@ -757,7 +757,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "markets.quotes", http_method="GET", http_path="/markets/quotes",
-        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "quotes"}, "draw": {"columns": ["symbol", "exchange", "last", "change_pct", "live", "ts"]}, "empty": "No watched assets"}},
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "quotes"}, "draw": {"columns": ["symbol", "exchange", "last", "change_pct", "live", "ts"], "sort": "-change_pct"}, "empty": "No watched assets"}},
         http_tags=["markets"], memory="off", silent=True,
         description="Last price + day change for every watchlist asset (from stored bars; "
                     "no network). Input: none. Output: {quotes:[{key,exchange,symbol,last,"

@@ -1436,6 +1436,7 @@ async def cap_loops_config_set(model: Optional[str] = None,
 
 @capability(
     "loops.program.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "programs"}, "draw": {"columns": ["name", "status", "horizon_days", "created", "owner_ref"]}, "empty": "No loop programs"}},
     http_method="GET", http_path="/loops/program/list", http_tags=["dag", "agents"],
     description="List V8 loop programs (id, name, status, loop states). "
                 "Input: status (str filter — active|done|failed|paused, empty = all).",

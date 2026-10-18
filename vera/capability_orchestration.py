@@ -8310,6 +8310,7 @@ async def scheduler_loop():
 # ── Observability ─────────────────────────────────────────────────────────────
 
 @capability("obs.provenance", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["branch", "git_sha_short", "dirty", "source", "instance", "pid", "started_at"]}}},
             http_method="GET", http_path="/obs/provenance", http_tags=["obs"],
             description="Git provenance of the RUNNING process: which commit/branch it "
                         "is on, whether the checkout is dirty (uncommitted code), plus "
@@ -9312,6 +9313,7 @@ async def cap_sys_activity_clear(id: str = "", trace_id=None):
 
 
 @capability("sys.debug.tasks", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "tasks"}, "draw": {"columns": ["name", "coro", "done", "chain"]}, "empty": "No tasks match"}},
             http_method="GET", http_path="/sys/debug/tasks", http_tags=["sys"],
             description="READ-ONLY. Where every asyncio task in this process is waiting: each "
                         "task's await chain (file:line in function, down to the future it is "
@@ -9779,6 +9781,7 @@ async def _health_search() -> Dict[str, Any]:
 
 
 @capability("obs.neo4j_diag", memory="off", silent=True,
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "Driver"}, {"kind": "table", "form": "table", "map": {"rows": "probe.attempts"}, "draw": {"columns": ["auth", "ok", "error_type", "error"]}, "title": "Probe"}]}},
             http_method="GET", http_path="/health/neo4j", http_tags=["obs"],
             description="Diagnose why the Neo4j backend is up/down: shows the driver "
                         "package presence, the RESOLVED uri/user (from cfg/env — password "
@@ -9867,6 +9870,7 @@ async def ollama_gate_status(trace_id=None):
 
 
 @capability("obs.workers", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["name", "host", "role", "status", "current_task", "cpu_pct", "ram_pct", "tasks_done"]}, "empty": "No workers registered"}},
             http_method="GET", http_path="/workers", http_tags=["obs"],
             description="Worker registry — all hosts merged from Redis + local fallback.")
 async def obs_workers(trace_id=None):
@@ -9949,12 +9953,14 @@ async def obs_workers(trace_id=None):
     return merged
 
 @capability("obs.pending", memory="off", silent=True,
+            contract={"presentation": {"kind": "metric", "map": {"value": "count"}, "title": "Pending results"}},
             http_method="GET", http_path="/pending", http_tags=["obs"],
             description="Pending result futures (tasks awaiting distributed completion).")
 async def obs_pending(trace_id=None):
     return {"count":len(PENDING_RESULTS),"ids":list(PENDING_RESULTS.keys())}
 
 @capability("obs.scheduler", memory="off", silent=True,
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "$"}, "draw": {"columns": ["name", "interval", "runs", "last"]}, "empty": "No scheduled jobs"}},
             http_method="GET", http_path="/scheduler", http_tags=["obs"],
             description="Scheduled background jobs — name, interval, run count, last run.")
 async def obs_scheduler(trace_id=None):
@@ -9983,6 +9989,7 @@ async def obs_stream_history(name: str = "", limit: int = 50, trace_id=None):
     return [json.loads(x[1][b"data"]) for x in data]
 
 @capability("obs.redis", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["connected_clients", "used_memory_human", "uptime_days"]}}},
             http_method="GET", http_path="/redis/inspect", http_tags=["obs"],
             description="Redis server info and vera:* stream key statistics. keys (bool=true): "
                         "false answers the server figures alone (clients, memory, uptime) - the "
@@ -10019,6 +10026,7 @@ def _redact_redis_url(url):
         return "redis://***"
 
 @capability("obs.diagnostics", memory="off", silent=True,
+            contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["host", "mode", "redis_connected", "redis_ping", "redis_version", "redis_port", "workers_in_redis", "worker_count_local", "caps"]}}},
             http_method="GET", http_path="/diagnostics", http_tags=["obs"],
             description="Full connection diagnostics — Redis reachability, bind config, "
                         "worker count, host identity. Use to debug multi-host setup.")

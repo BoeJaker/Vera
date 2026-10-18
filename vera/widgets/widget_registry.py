@@ -392,6 +392,7 @@ def _with_counts(templates: List[Dict[str, Any]], insts: List[Dict[str, Any]]) -
 # ── capabilities ──────────────────────────────────────────────────────────────
 @capability(
     "widget.template.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "templates"}, "draw": {"columns": ["name", "form", "id", "instances", "version"]}, "empty": "No widget templates"}},
     http_method="GET", http_path="/ui/widgets/templates", http_tags=["ui", "widgets"],
     description="The widget registry: every widget template - the saved ones, the chat LHM's "
                 "own parts, and every registered UI panel as a `panel` widget. Inputs: kind "

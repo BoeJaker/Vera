@@ -1,0 +1,101 @@
+{
+ "cap": "demo.quotes",
+ "args": {},
+ "presentation": {
+  "kind": "table",
+  "map": {
+   "rows": "quotes"
+  },
+  "draw": {
+   "sort": "-change_pct"
+  }
+ },
+ "result": {
+  "quotes": [
+   {
+    "symbol": "btc",
+    "exchange": "kraken",
+    "last": 61000,
+    "change_pct": 1.2
+   },
+   {
+    "symbol": "ETH",
+    "exchange": "kraken",
+    "last": 2400,
+    "change_pct": -0.4
+   },
+   {
+    "symbol": "SPXL",
+    "exchange": "yahoo",
+    "last": 280.17,
+    "change_pct": null
+   },
+   {
+    "symbol": "Gold",
+    "exchange": "yahoo",
+    "last": 2650.5,
+    "change_pct": 3
+   },
+   {
+    "symbol": "aapl",
+    "exchange": "yahoo",
+    "last": 231.4,
+    "change_pct": 1.2
+   },
+   {
+    "symbol": "TLT",
+    "exchange": "yahoo",
+    "last": 88.1
+   }
+  ],
+  "count": 6
+ },
+ "expect": {
+  "element": "table",
+  "kind": "table",
+  "title": "demo.quotes",
+  "forms": [
+   "table"
+  ],
+  "data": {
+   "quotes": [
+    {
+     "symbol": "Gold",
+     "exchange": "yahoo",
+     "last": 2650.5,
+     "change_pct": 3
+    },
+    {
+     "symbol": "btc",
+     "exchange": "kraken",
+     "last": 61000,
+     "change_pct": 1.2
+    },
+    {
+     "symbol": "aapl",
+     "exchange": "yahoo",
+     "last": 231.4,
+     "change_pct": 1.2
+    },
+    {
+     "symbol": "ETH",
+     "exchange": "kraken",
+     "last": 2400,
+     "change_pct": -0.4
+    },
+    {
+     "symbol": "SPXL",
+     "exchange": "yahoo",
+     "last": 280.17,
+     "change_pct": null
+    },
+    {
+     "symbol": "TLT",
+     "exchange": "yahoo",
+     "last": 88.1
+    }
+   ],
+   "count": 6
+  }
+ }
+}

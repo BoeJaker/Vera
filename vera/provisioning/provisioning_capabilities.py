@@ -235,6 +235,7 @@ async def cap_config_save(
 
 @capability(
     "prov.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "openbao"}, "title": "OpenBao"}, {"kind": "kv", "map": {"fields": "stepca"}, "title": "step-ca"}]}},
     http_method="GET", http_path="/provisioning/status", http_tags=["provisioning"],
     memory="off", silent=True,
     description="Aggregate health of the suite. Output: {openbao:{configured,"

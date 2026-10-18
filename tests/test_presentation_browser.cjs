@@ -58,6 +58,15 @@ t('present() reads the registry when not handed one', viaReg.kind === 'document'
 const both = fs.readFileSync(path.join(root, 'vera', 'widgets', 'widget_element.js'), 'utf8') + String.fromCharCode(10) + fs.readFileSync(path.join(root, 'vera', 'widgets', 'present.js'), 'utf8');
 let parsed = true; try { new vm.Script(both); } catch (e) { parsed = String(e); }
 t('widget_element.js + present.js parse as one script', parsed === true, parsed);
+// DA-01e (3): no options - the record is what it was; with them on a row form, the form gets its draw without them
+// (its own draw.sort would sort again, high first) and group_by's column first - test_presentation_server says the same
+{ const rows = { rows: [{ a: 2, b: 'x' }, { a: 1, b: 'y' }] }; const plain = { kind: 'table', form: 'table', map: { rows: 'rows' }, draw: { columns: ['a', 'b'], limit: 4 } };
+  const g0 = W.present('demo.t', rows, { presentation: plain }).records[0];
+  t('no options: the data and the draw as they were', g0.data === rows && JSON.stringify(g0.draw) === '{"columns":["a","b"],"limit":4}');
+  const g1 = W.present('demo.t', rows, { presentation: Object.assign({}, plain, { draw: { columns: ['a', 'b'], sort: 'a', group_by: 'b' } }) }).records[0];
+  t('options on a row form: arranged, the form\'s draw without them', JSON.stringify(g1.draw) === '{"columns":["b","a"]}' && JSON.stringify(g1.data.rows.map((r) => r.a)) === '[1,2]' && rows.rows[0].a === 2, JSON.stringify(g1.draw));
+  const g2 = W.present('demo.t', { t: { a: 50 } }, { presentation: { kind: 'table', form: 'temps', map: { rows: 't' }, draw: { sort: 'name' } } }).records[0];
+  t('another form keeps its draw as its own words', JSON.stringify(g2.draw) === '{"sort":"name"}'); }
 const ui = fs.readFileSync(path.join(root, 'vera', 'ui builder', 'ui_capabilities.py'), 'utf8');
 t('the widget route appends present.js', /extra = p\.parent \/ "present\.js"[\s\S]{0,120}body \+= chr\(10\) \+ extra\.read_text/.test(ui));
 console.log(fails ? fails + ' FAILED' : 'all passed');
