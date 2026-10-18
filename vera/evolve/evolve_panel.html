@@ -527,6 +527,20 @@ html.vpb-nav-hosted body{padding-left:0}
 </div>
 
 <div class="sec" id="sec-work" style="display:none">
+  <!-- Runs on the kit (looplab-control §9.4 S5: "every run, goal drill with waterfall and step diff, goals x steps,
+       regression matrix, causes, trend"): one series at a time from evolve.suites - THE matrix of goals x runs, THE
+       timeline of pass rate and quality, why goals did not pass, and THE drill for a goal in a run (its loop's trace as
+       a waterfall, its steps against the run before, the goal across runs). The tables below keep every run. -->
+  <div class="card" id="runs-card">
+    <div class="card-h"><span class="card-t">Runs</span>
+      <select id="runs-series" onchange="runsLoad()" title="which census or suite series"></select>
+      <select id="runs-n" onchange="runsLoad()" title="how many runs"><option value="8">last 8 runs</option><option value="16" selected>last 16</option><option value="30">last 30</option></select>
+      <span class="hint" id="runs-hint" style="margin-left:auto"></span></div>
+    <div id="runs-tl-host"></div>
+    <div id="runs-mx" style="margin-top:8px"></div>
+    <div id="runs-causes" style="margin-top:10px"></div>
+    <vera-drill class="olv-drill" id="runs-drill" url></vera-drill>
+  </div>
   <!-- Work, live: the page's own lens (vera/widgets/layouts/looplab-work.json) - the census as it runs and its routing,
        the loops and where their time goes, the census runs among the commits, every task's recent runs. Widgets:
        each can be configured, moved, and placed on the canvas; the tables below stay for the full record. -->
@@ -1686,6 +1700,112 @@ async function shipCompare(pid,t,label){
   nav('compare');await loadComparePage();
   const c=$('cmp');if(c&&c.setAnchor&&n)c.setAnchor(n.pin,'1d');
   toast('Compare: '+label+' against '+sys.length+' system lane(s), aligned on the moment it landed');
+}
+
+/* ═══ RUNS — every run of a series on the kit (looplab-control §9.4 S5) ═══ */
+// One series (a census template or a suite tag) at a time: THE matrix of goals x runs, THE timeline of the series' pass
+// rate and quality, why goals did not pass, and THE drill for a goal in a run - its loop's trace as a waterfall
+// (workshop.agent_loop.trace), its steps against the same goal in the run before, and the goal across runs.
+const RUNS_OK={done:'#3fae6c',failed:'#f87171',error:'#f87171',capped:'#e0a458',partial:'#e0a458',skipped:'#5a6270'};
+let _runsSuites=[],_runsKitOn=false;
+function _runsStatus(r){return r.hit_cap?'capped':(r.status||'?')}
+async function runsLoad(){
+  try{await Promise.all([_olvScript(),_olvLib('vera-matrix.js',()=>window.VeraMatrix&&customElements.get('vera-matrix'))])}catch(e){return}
+  _olvKit();if(!_runsKitOn){_runsKitOn=true;_runsKinds()}
+  const d=await VeraDrill.call('evolve.suites',{limit:300}).catch(e=>({error:e.message}));
+  if(!d||d.error||!Array.isArray(d.suites)){$('runs-mx').innerHTML=VeraStates.html('error','could not read evolve.suites'+(d&&d.error?': '+d.error:''));return}
+  const tags={};d.suites.forEach(s=>{const k=s.tag||'(untagged)';tags[k]=(tags[k]||0)+1});
+  const sel=$('runs-series'),keep=sel.value;
+  sel.innerHTML=Object.keys(tags).sort((a,b)=>tags[b]-tags[a]).map(k=>'<option value="'+esc(k)+'">'+esc(k)+' · '+tags[k]+'</option>').join('');
+  if(keep&&tags[keep])sel.value=keep;
+  const tag=sel.value,n=+$('runs-n').value||16;
+  _runsSuites=d.suites.filter(s=>(s.tag||'(untagged)')===tag).sort((a,b)=>Date.parse(a.ts||a.started_at)-Date.parse(b.ts||b.started_at)).slice(-n);
+  runsMatrix();runsCauses();runsTimeline(tag);
+}
+function runsMatrix(){
+  const cells=[];_runsSuites.forEach((s,i)=>(s.results||[]).forEach(r=>cells.push({goal:r.label||r.task,run:s.suite_id,n:i,v:_runsStatus(r),
+    tip:(r.label||r.task)+' · '+s.suite_id+' · '+_runsStatus(r)+' · checks '+(r.checks||'')+' · '+Math.round(r.elapsed_s||0)+' s'+(r.error?' · '+String(r.error).slice(0,80):''),suite:s.suite_id,task:r.task})));
+  const goals=new Set(cells.map(c=>c.goal)).size,fails=cells.filter(c=>c.v!=='done').length;
+  const last=_runsSuites[_runsSuites.length-1],prev=_runsSuites[_runsSuites.length-2];
+  const reg=last&&prev?(last.results||[]).filter(r=>_runsStatus(r)!=='done'&&(prev.results||[]).some(p=>p.task===r.task&&_runsStatus(p)==='done')).map(r=>r.label||r.task):[];
+  $('runs-hint').innerHTML=esc(_runsSuites.length+' runs · '+goals+' goals · '+fails+' goal-run(s) not done'+(reg.length?' · regressed in the last run: '+reg.join(', '):''))+' · <code>evolve.suites</code>';
+  let el=$('runs-mxel');
+  if(!el){$('runs-mx').innerHTML='<vera-matrix id="runs-mxel"></vera-matrix>';el=$('runs-mxel');
+    el.addEventListener('matrix:select',e=>{const c=e.detail.cell;if(c)$('runs-drill').open('goal-run',c.suite+'|'+c.task,{root:true})})}
+  el.record={map:{cells:'cells',row:'goal',col:'run',value:'v',cols_order:'n',tip:'{tip}'},colour:Object.assign({'*':'#5a6270'},RUNS_OK),ok:['done'],sort:'failures',data:{cells}};
+}
+/* why goals did not pass, over the runs shown: the status, the error's first line, how often, which goals */
+function runsCauses(){
+  const by={};_runsSuites.forEach(s=>(s.results||[]).forEach(r=>{const st=_runsStatus(r);if(st==='done')return;
+    const why=st==='capped'?'hit the wall-clock cap':(String(r.error||'').split('\n')[0].slice(0,140)||(st+' with checks '+(r.checks||'?')));
+    const k=st+'|'+why;(by[k]=by[k]||{st,why,n:0,goals:new Set()}).n++;by[k].goals.add(r.label||r.task)}));
+  const rows=Object.values(by).sort((a,b)=>b.n-a.n);
+  $('runs-causes').innerHTML=rows.length?'<div class="hint" style="margin-bottom:4px">why goals did not pass, over these runs</div><table class="tst-t"><tr><th>how</th><th>why</th><th>times</th><th>goals</th></tr>'+
+    rows.slice(0,12).map(r=>'<tr><td style="color:'+(RUNS_OK[r.st]||'#8b93a1')+'">'+esc(r.st)+'</td><td>'+esc(r.why)+'</td><td>'+r.n+'</td><td class="tst-src">'+esc([...r.goals].join(', '))+'</td></tr>').join('')+'</table>'
+    :VeraStates.html('empty','every goal passed in these runs');
+}
+function runsTimeline(tag){
+  const src={cap:'evolve.suites',args:{limit:300}};
+  const lanes=[
+    {lane:'runs.pass',label:'Pass rate',group:'Runs',type:'strip',color:'#3fae6c',live:300,source:src,map:{items:'suites',t:'ts',value:'pass_rate',where:{tag},tip:'{suite_id} · pass {pass_rate} · {done}/{tasks_n} done',color:'#3fae6c'}},
+    {lane:'runs.quality',label:'Quality (combined)',group:'Runs',type:'strip',color:'#a78bfa',live:300,source:src,map:{items:'suites',t:'ts',value:'avg_combined',where:{tag},tip:'{suite_id} · combined {avg_combined}',color:'#a78bfa'}},
+    {lane:'runs.runs',label:'Runs',group:'Runs',type:'mark',color:'#7aa2f7',live:300,source:src,map:{items:'suites',t:'ts',id:'suite_id',where:{tag},tip:'{suite_id} · {done}/{tasks_n} done · {capped} capped',color:'#7aa2f7'}},
+  ];
+  lanes.forEach(s=>VeraTimeline.registerLane(s));
+  const first=_runsSuites[0],days=first?Math.max(2,Math.ceil((Date.now()-Date.parse(first.ts||first.started_at))/864e5)+1):7;
+  let tl=$('runs-tl');
+  if(!tl){$('runs-tl-host').innerHTML='<vera-timeline id="runs-tl"></vera-timeline>';tl=$('runs-tl');
+    tl.addEventListener('timeline:select',e=>{const it=e.detail.item||{};if(it.suite_id)$('runs-drill').open('suite-run',it.suite_id,{root:true})})}
+  tl.setAttribute('from','-'+days+'d');tl.setAttribute('to','+6h');tl.setAttribute('lanes',lanes.map(s=>s.lane).join(','));
+}
+function _runsFind(suite,task){const s=_runsSuites.find(x=>x.suite_id===suite);return s?{s,r:(s.results||[]).find(x=>x.task===task)}:null}
+function _runsKinds(){
+  const row=_olvRow,when=_olvWhen;
+  VeraDrill.registerKind('suite-run',{label:'Run',
+    load:(id)=>{const s=_runsSuites.find(x=>x.suite_id===id);if(!s)throw new Error('not in the runs shown');return s},
+    title:(s,id)=>id,
+    render:(s)=>row('series',s.tag)+row('started',when(s.ts||s.started_at))+row('goals',(s.done||0)+' done of '+(s.tasks_n||0)+(s.capped?' · '+s.capped+' capped':''))+
+      row('pass rate',s.pass_rate!=null?Math.round(100*s.pass_rate)+'%':'')+row('combined',s.avg_combined)+row('code',(s.code_versions||[]).map(c=>c.sha_short||c).join(', '))+
+      '<table style="margin-top:6px">'+(s.results||[]).map(r=>'<tr><td><a href="#" data-drill="goal-run:'+esc(s.suite_id+'|'+r.task)+'">'+esc(r.label||r.task)+' ›</a></td><td style="color:'+(RUNS_OK[_runsStatus(r)]||'#8b93a1')+'">'+esc(_runsStatus(r))+'</td><td>'+esc(r.checks||'')+'</td><td class="tst-src">'+Math.round(r.elapsed_s||0)+' s</td></tr>').join('')+'</table>'});
+  VeraDrill.registerKind('goal-run',{label:'Goal',
+    load:(id)=>{const [suite,task]=id.split('|');const f=_runsFind(suite,task);if(!f||!f.r)throw new Error('not in the runs shown');return Object.assign({suite_id:suite},f.r)},
+    title:(r)=>(r.label||r.task)+' · '+r.suite_id,
+    tabs:[{id:'detail',label:'Detail'},{id:'waterfall',label:'Waterfall'},{id:'steps',label:'Steps vs the run before'},{id:'history',label:'Across runs'}],
+    render:(r,tab,ctx)=>{
+      if(tab==='history'){const rows=_runsSuites.map(s=>({s,x:(s.results||[]).find(y=>y.task===r.task)})).filter(o=>o.x);
+        return '<table>'+rows.map(o=>'<tr><td><a href="#" data-drill="goal-run:'+esc(o.s.suite_id+'|'+r.task)+'">'+esc(o.s.suite_id)+'</a></td><td style="color:'+(RUNS_OK[_runsStatus(o.x)]||'#8b93a1')+'">'+esc(_runsStatus(o.x))+'</td><td>'+esc(o.x.checks||'')+'</td><td class="tst-src">'+Math.round(o.x.elapsed_s||0)+' s</td></tr>').join('')+'</table>'}
+      if(tab==='waterfall'||tab==='steps'){
+        if(!r.loop_session)return ctx.states.html('empty','this goal has no loop session to trace');
+        const tr=sid=>ctx.call('workshop.agent_loop.trace',{session_id:sid});
+        if(tab==='waterfall')return tr(r.loop_session).then(t=>runsWaterfall(t));
+        // the same goal in the run before this one
+        const i=_runsSuites.findIndex(s=>s.suite_id===r.suite_id),prev=i>0?(_runsSuites[i-1].results||[]).find(x=>x.task===r.task):null;
+        if(!prev||!prev.loop_session)return ctx.states.html('empty','no earlier run of this goal in the series shown');
+        return Promise.all([tr(prev.loop_session),tr(r.loop_session)]).then(([a,b])=>runsStepDiff(a,b,_runsSuites[i-1].suite_id,r.suite_id));
+      }
+      return row('goal',r.label||r.task)+row('run',r.suite_id)+'<div><span class="dk">status</span><b style="color:'+(RUNS_OK[_runsStatus(r)]||'#8b93a1')+'">'+esc(_runsStatus(r))+'</b></div>'+
+        row('checks',r.checks)+row('took',Math.round(r.elapsed_s||0)+' s')+row('combined',r.combined)+row('error',r.error)+row('loop session',r.loop_session);
+    }});
+}
+/* a loop's trace as a waterfall: each step's calls on one time axis, by how long each took */
+function runsWaterfall(t){
+  const steps=(t&&t.steps)||[];if(!steps.length)return VeraStates.html('empty','the trace has no steps');
+  const calls=[];steps.forEach(s=>(s.calls||[]).forEach(c=>calls.push({step:s.step_id,title:s.title||'',tool:c.tool,ms:+c.ms||0,ok:c.ok!==false,repeat:c.repeat})));
+  const total=calls.reduce((a,c)=>a+c.ms,0)||1;let at=0;
+  const w=t.counters||{};
+  return '<div class="hint" style="margin-bottom:6px">'+calls.length+' call(s) over '+steps.length+' step(s) · '+Math.round(total/1000)+' s in calls'+(typeof w.cycles_per_step==='number'?' · '+w.cycles_per_step+' cycles a step':'')+(typeof w.failures==='number'&&w.failures?' · '+w.failures+' failed call(s)':'')+((t.warnings||[]).length?' · '+esc(t.warnings.slice(0,2).join(' · ')):'')+' · <code>workshop.agent_loop.trace</code></div>'+
+    calls.map(c=>{const l=at/total*100,wd=Math.max(.6,c.ms/total*100);at+=c.ms;
+      return '<div style="display:grid;grid-template-columns:220px 1fr 60px;gap:6px;align-items:center;font-size:11.5px;margin:2px 0"><span title="'+esc(c.title)+'">'+esc('#'+c.step+' '+c.tool)+(c.repeat?' <span class="tst-f">repeat</span>':'')+'</span>'+
+        '<span style="position:relative;height:12px;background:var(--bg2,var(--bg1));border-radius:3px"><i style="position:absolute;left:'+l.toFixed(2)+'%;width:'+wd.toFixed(2)+'%;top:0;bottom:0;border-radius:3px;background:'+(c.ok?'#7aa2f7':'#f87171')+'"></i></span><span class="tst-src">'+(c.ms/1000).toFixed(1)+' s</span></div>'}).join('');
+}
+/* the steps of one run against the run before: what it planned and called, side by side */
+function runsStepDiff(a,b,an,bn){
+  const line=s=>(s.title||'')+' — '+(s.calls||[]).map(c=>c.tool).join(', ');
+  const A=((a&&a.steps)||[]).map(line),B=((b&&b.steps)||[]).map(line),n=Math.max(A.length,B.length);
+  const rows=[];for(let i=0;i<n;i++){const x=A[i]||'',y=B[i]||'',same=x===y;rows.push('<tr'+(same?'':' style="background:rgba(224,164,88,.08)"')+'><td class="tst-src">'+(i+1)+'</td><td>'+esc(x||'—')+'</td><td>'+esc(y||'—')+'</td></tr>')}
+  const ms=t=>((t&&t.steps)||[]).reduce((s,st)=>s+(st.calls||[]).reduce((q,c)=>q+(+c.ms||0),0),0);
+  return '<div class="hint" style="margin-bottom:4px">'+A.length+' step(s) in '+esc(an)+' ('+Math.round(ms(a)/1000)+' s) · '+B.length+' in '+esc(bn)+' ('+Math.round(ms(b)/1000)+' s) · '+rows.filter(r=>r.includes('rgba')).length+' differ</div>'+
+    '<table class="tst-t"><tr><th>#</th><th>'+esc(an)+'</th><th>'+esc(bn)+'</th></tr>'+rows.join('')+'</table>';
 }
 
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
@@ -4333,7 +4453,7 @@ async function openCensusGoal(run,goal){
 let _workMode='runs', _workRows=[], _workMeta={}, _workKind='', _workSrc='',
     _workTasks=[], _workTaskText='', _workTaskTemplate='', _workTaskProblems=false, _workTaskOpen={},
     _workLive=null, _workLiveSig='';
-function loadWork(){ if(_workMode==='tasks')loadWorkTasks(); else loadCensusRuns(); loadCensusTemplates&&loadCensusTemplates(); censusPoll(); }
+function loadWork(){ runsLoad(); if(_workMode==='tasks')loadWorkTasks(); else loadCensusRuns(); loadCensusTemplates&&loadCensusTemplates(); censusPoll(); }
 function setWorkMode(m){
   _workMode=(m==='tasks')?'tasks':'runs';
   document.querySelectorAll('#work-mode button').forEach(b=>b.classList.toggle('on',b.dataset.mode===_workMode));
