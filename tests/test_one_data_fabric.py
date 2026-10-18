@@ -66,3 +66,23 @@ def test_the_alias_pattern_keeps_one_object(tmp_path, monkeypatch):
     spec.loader.exec_module(mod)
     import pkga.fab as again                                  # the full-name import a module would do
     assert again is mod and mod.RUNS == [1]
+
+
+
+@pytest.mark.parametrize("bare", ["ledger_capabilities", "tool_shortlist"])
+def test_minds_ledger_and_shortlist_alias_themselves_too(bare):
+    # D10-2 (18 Oct): the loader loads them as `<bare>`, judge / labels / loop_ledger / claims import the full name
+    src = _src(f"vera/minds/{bare}.py")
+    alias = (f'for _alias in ("{bare}", "Vera.vera.minds.{bare}"):\n'
+             '    sys.modules.setdefault(_alias, sys.modules[__name__])')
+    assert alias in src
+    assert src.index(alias) < src.index("import Vera.vera.capability_orchestration as _orch")
+    assert src.index(alias) < src.index("schedule(") if "schedule(_" in src else True
+
+
+def test_a_job_name_registered_twice_is_a_warning():
+    src = _src("vera/capability_orchestration.py")
+    body = src[src.index("def schedule(fn: Callable"):]
+    body = body[:body.index("def start_at_import(")]
+    assert 'log.warning("schedule: job %r registered twice' in body
+    assert body.index("registered twice") < body.index("SCHEDULED_TASKS.append(")
