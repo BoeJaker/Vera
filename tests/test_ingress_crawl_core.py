@@ -66,10 +66,7 @@ def test_the_caps_fetch_behind_the_shared_slot_and_record_on_the_host():
 
 def test_a_crawl_worker_reserves_for_itself_while_a_batch_runs():
     from vera.workers import node_compute_core as ncc
-    need = ncc.NEEDS["ingress.fetch.batch"]
-    r = cc.reservation(need, 1000.0, 3)
-    assert r == {"cpu": 0.25, "mem_gb": 0.25, "until": 1000.0 + 30 + 75, "cap": "ingress.fetch.batch"}
-    assert cc.EXTRA_RES_KEY.format(host_id="h1") == "vera:node_compute:extra_res:h1"
+    assert ncc.NEEDS["ingress.fetch.batch"] == {"cpu": 0.25, "mem_gb": 0.25} and cc.batch_timeout_s(3) == 105
     import ast
     src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
     fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_ingress_fetch_batch")
@@ -77,4 +74,8 @@ def test_a_crawl_worker_reserves_for_itself_while_a_batch_runs():
     assert "_reserve_self(" in seg and "finally:" in seg and "_release_self(" in seg       # released on error too
     rs = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_reserve_self")
     seg = ast.get_source_segment(src, rs)
-    assert "_IS_WORKER" in seg and "hset" in seg and "NEEDS" in seg and "expire" not in seg    # per-field until, no key TTL
+    assert "_IS_WORKER" in seg and "hset" in seg and "extra_entry(cc.BATCH_FN" in seg and "expire" not in seg
+    assert "KEY_EXTRA_RES" in seg                                                            # the key P0d's admit() reads
+    import json as _j
+    e = _j.loads(ncc.extra_entry("ingress.fetch.batch", cc.batch_timeout_s(3), 1000.0))
+    assert e == {"cpu": 0.25, "mem_gb": 0.25, "until": 1105.0, "cap": "ingress.fetch.batch"}

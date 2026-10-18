@@ -901,7 +901,6 @@ async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY
 async def _reserve_self(n_urls: int):
     """On a crawl node: note this batch in the node's reservation hash so test-chunk admission counts it
     (node_compute admit(), vera-44). Best effort; on the host, or without Redis, nothing."""
-    import json as _json
     import uuid
     hid = os.environ.get("VERA_WORKER_HOST_ID", "")
     r = getattr(_orch, "REDIS", None)
@@ -912,8 +911,8 @@ async def _reserve_self(n_urls: int):
             from Vera.vera.workers import node_compute_core as _ncc
         except ImportError:  # pragma: no cover
             from vera.workers import node_compute_core as _ncc
-        key, field = cc.EXTRA_RES_KEY.format(host_id=hid), uuid.uuid4().hex
-        await r.hset(key, field, _json.dumps(cc.reservation(_ncc.NEEDS.get(cc.BATCH_FN) or {}, time.time(), n_urls)))
+        key, field = _ncc.KEY_EXTRA_RES + hid, uuid.uuid4().hex          # vera-44's P0d reads this hash
+        await r.hset(key, field, _ncc.extra_entry(cc.BATCH_FN, cc.batch_timeout_s(n_urls), time.time()))
         return key, field
     except Exception as e:  # noqa: BLE001
         log.debug("crawl reservation: %s", e)
