@@ -1,0 +1,65 @@
+{
+ "cap": "demo.job_spans",
+ "args": {},
+ "presentation": {
+  "kind": "timeline",
+  "map": {
+   "spans": "jobs",
+   "duration": "took_s"
+  }
+ },
+ "result": {
+  "jobs": {
+   "build": {
+    "start": 1792314700,
+    "took_s": 95.5,
+    "state": "ok"
+   },
+   "test": {
+    "start": "1792314800",
+    "took_s": "40",
+    "state": "FAILED"
+   },
+   "deploy": {
+    "start": 1792314850.25
+   },
+   "lint": {
+    "start": "yesterday",
+    "took_s": 3
+   }
+  }
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "timeline",
+  "title": "demo.job_spans",
+  "forms": [
+   "gantt"
+  ],
+  "data": [
+   {
+    "name": "build",
+    "start": 0,
+    "end": 95.5,
+    "at": 1792314700,
+    "status": "ok",
+    "state": "done"
+   },
+   {
+    "name": "test",
+    "start": 100,
+    "end": 140,
+    "at": "1792314800",
+    "status": "FAILED",
+    "state": "failed"
+   },
+   {
+    "name": "deploy",
+    "start": 150.25,
+    "end": 150.25,
+    "at": 1792314850.25,
+    "state": "running"
+   }
+  ]
+ }
+}

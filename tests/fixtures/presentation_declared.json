@@ -499,6 +499,18 @@
   },
   "title": "Sandbox CPU %"
  },
+ "evolve.schedule.history": {
+  "empty": "No scheduled runs yet",
+  "kind": "timeline",
+  "map": {
+   "end": "finished_at",
+   "name": "title",
+   "spans": "runs",
+   "start": "started_at",
+   "status": "result"
+  },
+  "title": "Scheduler runs"
+ },
  "evolve.tasks.overview": {
   "form": "status-matrix",
   "kind": "status"
@@ -941,6 +953,14 @@
    "rows": "nodes"
   }
  },
+ "nodes.parity.status": {
+  "empty": "No parity audit yet",
+  "kind": "matrix",
+  "map": {
+   "cells": "namespaces"
+  },
+  "title": "Node parity by namespace"
+ },
  "nodes.runner.list": {
   "draw": {
    "columns": [
@@ -960,6 +980,14 @@
   "map": {
    "rows": "runners"
   }
+ },
+ "nodes.storage": {
+  "empty": "No Docker host read",
+  "kind": "parts",
+  "map": {
+   "parts": "docker[0]"
+  },
+  "title": "Docker disk by type"
  },
  "nodes.testenv.status": {
   "draw": {

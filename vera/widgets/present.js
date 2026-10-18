@@ -11,7 +11,8 @@
        2 its widget hint · 3 the shape rules - both fromCapResult's, unchanged
        4 nothing drawable → records [] and element 'none' (the tool card stays in the chat)
      element names the desk element that shows it (table, records, markdown, widget, code, session, image, kv, calendar,
-     entities, composite; receipt and job: no item of their own); records are widget records that draw it now - each
+     entities, composite; receipt and job: no item of their own; timeline, matrix and parts are widgets - the gantt, the heat
+     map or the status matrix, the donut - DA-01e); records are widget records that draw it now - each
      carries the declaration (record.presentation), so a re-read is read through present() again.
 
      VeraWidget.presentations(list?)  → the declarations by capability; given /mcp/tools' list, it keeps theirs
@@ -45,6 +46,9 @@
     diff: { element: 'code', form: 'diff', content: ['diff'], views: ['diff', 'split'] },
     kv: { element: 'kv', form: 'kv', content: ['fields'], views: ['tiles', 'rows', 'graph'] },
     calendar: { element: 'calendar', form: 'schedule', content: ['events'], views: ['month', 'agenda', 'schedule'] },
+    timeline: { element: 'widget', form: 'gantt', content: ['spans'], views: ['gantt', 'stepper', 'table'] },
+    matrix: { element: 'widget', form: 'heat', content: ['cells'], views: ['heat', 'matrix', 'table'] },
+    parts: { element: 'widget', form: 'donut', content: ['parts'], views: ['donut', 'treemap', 'waffle', 'table'] },
     entities: { element: 'entities', form: 'json', content: ['groups', 'entities'], views: ['chips', 'list', 'graph'] },
     receipt: { element: 'receipt', form: '', content: [], views: [] },
     job: { element: 'job', form: '', content: ['job_id'], views: [] },
@@ -88,6 +92,86 @@
       if (pts && pts.length) out[k] = pts; });
     return out; }
   const asRows = (v) => Array.isArray(v) ? v : isObj(v) ? Object.keys(v).map((k) => isObj(v[k]) ? Object.assign({ name: k }, v[k]) : { name: k, value: v[k] }) : [];
+
+  /* DA-01e (1): three kinds read onto forms the widget already draws. The server mirror (widget_cap_output.py) reads them
+     the same way, field for field - the shared fixtures hold both to it. */
+  const nil = (x) => x === undefined || x === null;
+  /* a field: the declared path (map[k]) if there is one, else the first of the usual names the row has */
+  const field = (r, m, k, names) => { if (m[k]) return pick(r, m[k]); for (const n of names) if (!nil(r[n])) return r[n]; return undefined; };
+  const label = (x, i) => (nil(x) || typeof x === 'object') ? '#' + (i + 1) : String(x);
+  /* timeline: a time in seconds - a number as it is, a plain number string, an ISO date or date-time (no zone = UTC);
+     else null. Parsed by hand, so the page and the server agree to the millisecond (Date.parse reads a zone-less time as
+     local) */
+  const ISO_T = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$/i;
+  function spanTime(x) {
+    if (typeof x === 'number') return isFinite(x) ? x : null;
+    if (typeof x !== 'string') return null;
+    const s = x.trim(); if (/^-?\d+(\.\d+)?$/.test(s)) return +s;
+    const t = s.match(ISO_T); if (!t || +t[1] < 100 || +t[2] < 1 || +t[2] > 12) return null;
+    let off = 0; if (t[8] && t[8].toUpperCase() !== 'Z') { const z = t[8].replace(':', ''); off = (z[0] === '-' ? -1 : 1) * (+z.slice(1, 3) * 60 + +z.slice(3, 5)); }
+    return (Date.UTC(+t[1], +t[2] - 1, +t[3], +(t[4] || 0), +(t[5] || 0), +(t[6] || 0)) + +(String(t[7] || '') + '000').slice(0, 3) - off * 60000) / 1000;
+  }
+  /* a span's status as the gantt colours it (state: done green, running the accent, failed red); the status kept as said */
+  const SPAN_STATE = [[/^(ok|done|pass|passed|success|succeeded|merged|complete|completed|finished|ended|green)$/i, 'done'],
+    [/^(running|active|started|live|current|in[ _-]?progress)$/i, 'running'],
+    [/^(fail|failed|failure|error|errored|red|timeout|timed[ _-]?out|crashed|aborted|interrupted|cancelled|canceled)$/i, 'failed']];
+  const spanState = (s) => { const x = SPAN_STATE.find((p) => p[0].test(s)); return x ? x[1] : ''; };
+  /* dated spans -> gantt rows {name, start, end, at, status?, state?}: start and end in seconds from the first start (the
+     gantt lays them on one axis), at the start as the answer gave it. No end: the duration's (seconds, in the start's
+     unit) - else still open, so it runs to the latest time in the answer and reads as running. No start: not a span. */
+  function timelineSpans(rows, m) {
+    const got = [];
+    rows.forEach((r, i) => { if (!isObj(r)) return;
+      const a = field(r, m, 'start', ['start', 'started_at', 'start_at', 'begin', 'from']), t0 = spanTime(a); if (t0 === null) return;
+      let t1 = spanTime(field(r, m, 'end', ['end', 'finished_at', 'ended_at', 'end_at', 'until', 'to']));
+      if (t1 === null) { const du = spanTime(field(r, m, 'duration', ['duration', 'duration_s', 'seconds'])); if (du !== null) t1 = t0 + du; }
+      const st = field(r, m, 'status', ['status', 'state', 'result']);
+      got.push({ name: label(field(r, m, 'name', ['name', 'title', 'label', 'id']), i), t0, t1, at: a, status: (nil(st) || typeof st === 'object') ? '' : String(st) }); });
+    if (!got.length) return [];
+    const lo = Math.min(...got.map((g) => g.t0)), hi = Math.max(...got.map((g) => (g.t1 === null ? g.t0 : Math.max(g.t0, g.t1))));
+    const rel = (x) => Math.round((x - lo) * 1000) / 1000;
+    return got.map((g) => { const state = spanState(g.status) || (g.t1 === null ? 'running' : '');
+      const o = { name: g.name, start: rel(g.t0), end: rel(g.t1 === null ? hi : g.t1), at: g.at }; if (g.status) o.status = g.status; if (state) o.state = state; return o; });
+  }
+  /* rows x columns of a measure -> {row: {column: value}} (every row has every column, '' where it has none - the heat map
+     and the matrix take their columns from the first row; a grid, not rows, so a column called value / count / id is a
+     column and not the row's number or name) and the form: the heat map when every value is a number, else the status matrix. Read from
+       {row: {column: cell}}                       a grid
+       [{<row>, <column>: cell, ...}]              wide rows (map.row names the row, the rest are its columns)
+       [{<row>, <column>, <value>}]                long rows, one cell each (map.column set)
+       [{<row>, <entries>: [{<column>, <value>}]}] each row's cells in a list of its own (map.entries)
+     a cell that is an object is read at map.value; a list (or an object with no map.value) is not a cell */
+  function matrixOf(v, m) {
+    const order = [], cols = [], at = new Map();
+    const put = (rn, cn, x) => { rn = String(rn); cn = String(cn); if (cn === 'name') return; if (!at.has(rn)) { at.set(rn, new Map()); order.push(rn); } if (!cols.includes(cn)) cols.push(cn); at.get(rn).set(cn, x); };
+    const scalar = (x) => (nil(x) || typeof x === 'object') ? '' : x;
+    const cellOf = (x) => (isObj(x) && m.value ? scalar(pick(x, m.value)) : scalar(x));
+    const isCell = (x) => !Array.isArray(x) && !(isObj(x) && !m.value);
+    const valueOf = (e) => scalar(field(e, m, 'value', ['value', 'v', 'status', 'state']));
+    const rowName = (r, i) => label(field(r, m, 'row', ['name', 'id', 'key', 'label', 'title']), i);
+    if (isObj(v)) Object.keys(v).forEach((k) => { if (isObj(v[k])) Object.keys(v[k]).forEach((c) => { if (isCell(v[k][c])) put(k, c, cellOf(v[k][c])); }); });
+    else if (Array.isArray(v)) v.forEach((r, i) => { if (!isObj(r)) return; const rn = rowName(r, i);
+      if (m.entries) { const es = pick(r, m.entries); if (Array.isArray(es)) es.forEach((e, j) => { if (isObj(e)) put(rn, label(field(e, m, 'column', ['column', 'name', 'key', 'label', 'dimension']), j), valueOf(e)); }); }
+      else if (m.column) { const cn = pick(r, m.column); if (!nil(cn) && typeof cn !== 'object') put(rn, cn, valueOf(r)); }
+      else { const own = m.row ? (/^[A-Za-z0-9_-]+$/.test(String(m.row)) ? String(m.row) : null) : ['name', 'id', 'key', 'label', 'title'].find((n) => !nil(r[n]));
+        Object.keys(r).forEach((c) => { if (c !== own && isCell(r[c])) put(rn, c, cellOf(r[c])); }); } });
+    if (!order.length || !cols.length) return null;
+    const rows = {}; order.forEach((rn) => { const o = {}; const cs = at.get(rn); cols.forEach((c) => { o[c] = cs.has(c) ? cs.get(c) : ''; }); rows[rn] = o; });
+    const vals = order.flatMap((rn) => cols.map((c) => rows[rn][c])).filter((x) => x !== '');
+    return { rows, form: vals.length && vals.every((x) => typeof x === 'number') ? 'heat' : 'matrix' };
+  }
+  /* shares of a whole -> [{name, value}], the parts that are more than nothing (a number, or a number string); past eight
+     the seven largest and 'other' (the donut draws eight - the ninth on would drop out of the whole). Read from
+     {name: number} . {name: {<value>}} . [{<name>, <value>}] */
+  const PART_VALUE = ['value', 'v', 'count', 'n', 'size', 'total'];
+  function partsOf(v, m) {
+    let out = [];
+    if (Array.isArray(v)) v.forEach((r, i) => { if (isObj(r)) out.push({ name: label(field(r, m, 'name', ['name', 'label', 'key', 'id', 'type']), i), value: keyedNum(field(r, m, 'value', PART_VALUE)) }); });
+    else if (isObj(v)) Object.keys(v).forEach((k) => { const x = v[k]; out.push({ name: k, value: keyedNum(isObj(x) ? field(x, m, 'value', PART_VALUE) : x) }); });
+    out = out.filter((p) => p.value !== null && p.value > 0);
+    if (out.length > 8) { const by = out.slice().sort((a, b) => b.value - a.value); out = by.slice(0, 7).concat([{ name: 'other', value: by.slice(7).reduce((s, p) => s + p.value, 0) }]); }
+    return out;
+  }
 
   let REG = {};
   /* THE LAST DECLARATIONS SEEN ARE KEPT (review 2026-10-15 U12): with the hint table gone (DA-01d), a capability list that
@@ -151,6 +235,10 @@
       case 'diff': rec('diff', { diff: String(at('diff')) }); break;
       case 'kv': rec('kv', at('fields')); break;
       case 'calendar': rec('schedule', renamed(rowsOf('events'), ['start', 'end', 'title'])); break;
+      /* DA-01e (1): the new kinds read to their form's own data - nothing left in it to draw: the empty line */
+      case 'timeline': { const sp = timelineSpans(asRows(at('spans')), m); if (!sp.length) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' }; rec('gantt', sp); break; }
+      case 'matrix': { const mx = matrixOf(at('cells'), m); if (!mx) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' }; rec(mx.form, mx.rows); break; }
+      case 'parts': { const ps = partsOf(at('parts'), m); if (!ps.length) return { records: [], empty: P.empty ? fill(P.empty, o.args) : 'nothing to show' }; rec('donut', ps); break; }
       case 'entities': rec('json', m.groups ? { groups: at('groups') } : { entities: at('entities') }); break;
       default: break;
     }

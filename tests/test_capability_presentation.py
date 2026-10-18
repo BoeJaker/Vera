@@ -280,3 +280,33 @@ def test_a_series_keyed_by_name_is_a_flag_on_the_series_map():
     assert presentation_problems(ok, schema) == []
     off = {"kind": "series", "map": {"points": "series", "keyed": True, "t": "t", "v": "pong"}}
     assert [(p[0], p[1], p[2]) for p in presentation_problems(off, schema)] == [("presentation.map_unresolved", "warning", "presentation.map.v")]
+
+
+def test_the_timeline_matrix_and_parts_kinds_validate_like_the_rest():
+    # DA-01e (1): dated spans (the gantt), rows x columns of a measure (heat map / status matrix), shares of a whole (donut)
+    assert presentation_problems({"kind": "timeline", "map": {"spans": "runs", "name": "title", "start": "started_at", "end": "finished_at", "status": "result"}}) == []
+    assert presentation_problems({"kind": "matrix", "map": {"cells": "candidates", "row": "label", "entries": "assessments", "column": "dimension", "value": "vera"}}) == []
+    assert presentation_problems({"kind": "parts", "map": {"parts": "docker[0]"}}) == []
+    assert P.timeline("runs", start="started_at", end="finished_at") == {"kind": "timeline", "map": {"spans": "runs", "start": "started_at", "end": "finished_at"}}
+    assert P.matrix("nodes") == {"kind": "matrix", "map": {"cells": "nodes"}}
+    assert P.parts("by_type", name="label", value="size", views=["treemap", "donut"])["views"] == ["treemap", "donut"]
+    # each needs its content, reads only its own map keys, takes paths and its own views
+    assert _codes(presentation_problems({"kind": "timeline", "map": {"start": "t"}})) == ["presentation.map_missing"]
+    assert _codes(presentation_problems({"kind": "matrix", "map": {"cells": "c", "lanes": "l"}})) == ["presentation.map_key_unknown"]
+    assert _codes(presentation_problems({"kind": "parts", "map": {"parts": "p", "value": 3}})) == ["presentation.map_path_invalid"]
+    assert _codes(presentation_problems({"kind": "parts", "map": {"parts": "p"}, "views": ["donut", "trace"]})) == ["presentation.view_unknown"]
+    assert project_presentation({"presentation": {"kind": "timeline", "map": {"spans": "runs"}}})["views"] == ["gantt", "stepper", "table"]
+
+
+def test_the_new_kinds_row_keys_are_checked_where_they_are_read():
+    # a matrix's column and value inside each row's entries; a grid's and a dict of parts' rows one level down, by name
+    schema = {"type": "object", "properties": {
+        "candidates": {"type": "array", "items": {"type": "object", "properties": {"label": {"type": "string"}, "assessments": {
+            "type": "array", "items": {"type": "object", "properties": {"dimension": {"type": "string"}, "vera": {"type": "string"}}}}}}},
+        "by_type": {"type": "object", "additionalProperties": {"type": "object", "properties": {"size": {"type": "number"}}}}}}
+    ok = {"kind": "matrix", "map": {"cells": "candidates", "row": "label", "entries": "assessments", "column": "dimension", "value": "vera"}}
+    assert presentation_problems(ok, schema) == []
+    off = dict(ok, map=dict(ok["map"], value="upstream"))
+    assert [(p[0], p[2]) for p in presentation_problems(off, schema)] == [("presentation.map_unresolved", "presentation.map.value")]
+    assert presentation_problems({"kind": "parts", "map": {"parts": "by_type", "value": "size"}}, schema) == []
+    assert [p[2] for p in presentation_problems({"kind": "parts", "map": {"parts": "by_type", "value": "bytes"}}, schema)] == ["presentation.map.value"]

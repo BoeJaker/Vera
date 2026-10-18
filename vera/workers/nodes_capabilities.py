@@ -1244,6 +1244,9 @@ async def cap_nodes_provision(node_id: str = "",
                 "Output: {proxmox:[{cluster_id,node,pools,datasets,mounts,"
                 "storages,guests}], docker:[{host_id,volumes,images_gb,"
                 "containers_gb}], errors}.",
+    # DA-01e (1): the first Docker host's disk by type (volumes, images, containers) as shares of the whole
+    contract={"presentation": {"kind": "parts", "map": {"parts": "docker[0]"}, "title": "Docker disk by type",
+                               "empty": "No Docker host read"}},
 )
 async def cap_nodes_storage(cluster_id: str = "", docker: bool = True,
                             trace_id=None) -> Dict:

@@ -1,0 +1,58 @@
+{
+ "cap": "demo.parity_by_namespace",
+ "args": {},
+ "presentation": {
+  "kind": "matrix",
+  "map": {
+   "cells": "namespaces"
+  }
+ },
+ "result": {
+  "ok": true,
+  "namespaces": {
+   "fabric": {
+    "host": 168,
+    "vetted": 1,
+    "unproven": 16
+   },
+   "evolve": {
+    "vetted": 21,
+    "host": 130,
+    "unproven": 17
+   },
+   "docker": {
+    "host": 12,
+    "safe": 4
+   },
+   "notes": "not a row"
+  }
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "matrix",
+  "title": "demo.parity_by_namespace",
+  "forms": [
+   "heat"
+  ],
+  "data": {
+   "fabric": {
+    "host": 168,
+    "vetted": 1,
+    "unproven": 16,
+    "safe": ""
+   },
+   "evolve": {
+    "host": 130,
+    "vetted": 21,
+    "unproven": 17,
+    "safe": ""
+   },
+   "docker": {
+    "host": 12,
+    "vetted": "",
+    "unproven": "",
+    "safe": 4
+   }
+  }
+ }
+}

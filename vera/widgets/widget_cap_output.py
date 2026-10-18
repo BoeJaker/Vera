@@ -13,9 +13,13 @@ The rules (see widget_element.js for the long form): error . terminal . media . 
 progress . events . series . files . level . prose . status . table . list . numbers . record . json . text.
 
 The result forms it picks from (CAP_FORMS) are all in widget_record.FORMS.
+
+present() below is the mirror of VeraWidget.present (a declared presentation first); its timeline, matrix and parts kinds
+(DA-01e) read onto the gantt, the heat map / status matrix and the donut.
 """
 from __future__ import annotations
 
+import calendar
 import math
 import re
 from typing import Any, Dict, List, Optional
@@ -333,6 +337,9 @@ PRESENT_KINDS: Dict[str, Dict[str, Any]] = {
     "diff": {"element": "code", "form": "diff", "content": ["diff"], "views": ["diff", "split"]},
     "kv": {"element": "kv", "form": "kv", "content": ["fields"], "views": ["tiles", "rows", "graph"]},
     "calendar": {"element": "calendar", "form": "schedule", "content": ["events"], "views": ["month", "agenda", "schedule"]},
+    "timeline": {"element": "widget", "form": "gantt", "content": ["spans"], "views": ["gantt", "stepper", "table"]},
+    "matrix": {"element": "widget", "form": "heat", "content": ["cells"], "views": ["heat", "matrix", "table"]},
+    "parts": {"element": "widget", "form": "donut", "content": ["parts"], "views": ["donut", "treemap", "waffle", "table"]},
     "entities": {"element": "entities", "form": "json", "content": ["groups", "entities"], "views": ["chips", "list", "graph"]},
     "receipt": {"element": "receipt", "form": "", "content": [], "views": []},
     "job": {"element": "job", "form": "", "content": ["job_id"], "views": []},
@@ -474,6 +481,214 @@ def keyed_series(v: Any, tk: Any = None, vk: Any = None) -> Dict[str, list]:
     return out
 
 
+# ── DA-01e (1): three kinds read onto forms the widget already draws - present.js timelineSpans / matrixOf / partsOf,
+#    field for field (the shared fixtures hold both sides to it) ─────────────────────────────────────────────────────
+def _nil(x: Any) -> bool:
+    return x is None or x is _MISSING
+
+
+def _field(r: dict, m: dict, k: str, names) -> Any:
+    """The declared path (map[k]) if there is one, else the first of the usual names the row has; _MISSING when none."""
+    if m.get(k):
+        return pick(r, m[k])
+    for n in names:
+        if r.get(n) is not None:
+            return r[n]
+    return _MISSING
+
+
+def _jstr(x: Any) -> str:
+    """String(x) as the page writes it: true / false, 1 not 1.0."""
+    if isinstance(x, bool):
+        return "true" if x else "false"
+    if isinstance(x, float) and x.is_integer() and math.isfinite(x):
+        return str(int(x))
+    return str(x)
+
+
+def _label(x: Any, i: int) -> str:
+    return "#" + str(i + 1) if _nil(x) or isinstance(x, (dict, list)) else _jstr(x)
+
+
+def _js_num(x: Any) -> Any:
+    """A number as the page keeps it: an integral float as an int (JSON writes 3, not 3.0)."""
+    return int(x) if isinstance(x, float) and x.is_integer() else x
+
+
+_ISO_T = re.compile(r"^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?)?\s*(Z|[+-]\d{2}:?\d{2})?$", re.I)
+
+
+def _span_time(x: Any) -> Any:
+    """A time in seconds - a number as it is, a plain number string, an ISO date or date-time (no zone = UTC); else None."""
+    if isinstance(x, bool):
+        return None
+    if isinstance(x, (int, float)):
+        return x if math.isfinite(x) else None
+    if not isinstance(x, str):
+        return None
+    s = x.strip()
+    if re.fullmatch(r"-?\d+(\.\d+)?", s):
+        return _js_num(float(s))
+    t = _ISO_T.match(s)
+    if not t or int(t.group(1)) < 100 or not 1 <= int(t.group(2)) <= 12:
+        return None
+    off = 0
+    if t.group(8) and t.group(8).upper() != "Z":
+        z = t.group(8).replace(":", "")
+        off = (-1 if z[0] == "-" else 1) * (int(z[1:3]) * 60 + int(z[3:5]))
+    ms = (calendar.timegm((int(t.group(1)), int(t.group(2)), int(t.group(3)), int(t.group(4) or 0), int(t.group(5) or 0),
+                           int(t.group(6) or 0), 0, 0, 0)) * 1000 + int(((t.group(7) or "") + "000")[:3]) - off * 60000)
+    return ms // 1000 if ms % 1000 == 0 else ms / 1000
+
+
+_SPAN_STATE = [(re.compile(r"^(ok|done|pass|passed|success|succeeded|merged|complete|completed|finished|ended|green)$", re.I), "done"),
+               (re.compile(r"^(running|active|started|live|current|in[ _-]?progress)$", re.I), "running"),
+               (re.compile(r"^(fail|failed|failure|error|errored|red|timeout|timed[ _-]?out|crashed|aborted|interrupted|cancelled|canceled)$", re.I), "failed")]
+
+
+def _span_state(s: str) -> str:
+    return next((st for rx, st in _SPAN_STATE if rx.match(s)), "")
+
+
+def _js_round3(x: float) -> Any:
+    """Math.round(x * 1000) / 1000 as the page does it (half up)."""
+    return _js_num(math.floor(x * 1000 + 0.5) / 1000)
+
+
+def timeline_spans(rows: Any, m: dict) -> List[dict]:
+    """Dated spans -> gantt rows {name, start, end, at, status?, state?}: start / end in seconds from the first start, at the
+    start as given. No end: start + duration, else open (to the latest time in the answer, running). No start: skipped."""
+    got = []
+    for i, r in enumerate(rows if isinstance(rows, list) else []):
+        if not _is_obj(r):
+            continue
+        a = _field(r, m, "start", ["start", "started_at", "start_at", "begin", "from"])
+        t0 = _span_time(None if a is _MISSING else a)
+        if t0 is None:
+            continue
+        e = _field(r, m, "end", ["end", "finished_at", "ended_at", "end_at", "until", "to"])
+        t1 = _span_time(None if e is _MISSING else e)
+        if t1 is None:
+            d = _field(r, m, "duration", ["duration", "duration_s", "seconds"])
+            du = _span_time(None if d is _MISSING else d)
+            if du is not None:
+                t1 = t0 + du
+        st = _field(r, m, "status", ["status", "state", "result"])
+        nm = _field(r, m, "name", ["name", "title", "label", "id"])
+        got.append({"name": _label(nm, i), "t0": t0, "t1": t1, "at": a,
+                    "status": "" if _nil(st) or isinstance(st, (dict, list)) else _jstr(st)})
+    if not got:
+        return []
+    lo = min(g["t0"] for g in got)
+    hi = max(g["t0"] if g["t1"] is None else max(g["t0"], g["t1"]) for g in got)
+    out = []
+    for g in got:
+        state = _span_state(g["status"]) or ("running" if g["t1"] is None else "")
+        o = {"name": g["name"], "start": _js_round3(g["t0"] - lo), "end": _js_round3((hi if g["t1"] is None else g["t1"]) - lo),
+             "at": g["at"]}
+        if g["status"]:
+            o["status"] = g["status"]
+        if state:
+            o["state"] = state
+        out.append(o)
+    return out
+
+
+def matrix_of(v: Any, m: dict) -> Optional[dict]:
+    """Rows x columns of a measure -> {rows: {row: {column: value}}, form: heat | matrix} - every row has every column
+    ('' where it has none); heat when every value is a number. From a grid {row: {column: cell}}, wide rows, long
+    rows (map.column) or rows with their cells in a list (map.entries); an object cell is read at map.value."""
+    order: List[str] = []
+    cols: List[str] = []
+    at: Dict[str, Dict[str, Any]] = {}
+
+    def put(rn, cn, x):
+        rn, cn = _jstr(rn), _jstr(cn)
+        if cn == "name":
+            return
+        if rn not in at:
+            at[rn] = {}
+            order.append(rn)
+        if cn not in cols:
+            cols.append(cn)
+        at[rn][cn] = x
+
+    def scalar(x):
+        return "" if _nil(x) or isinstance(x, (dict, list)) else x
+
+    def cell_of(x):
+        return scalar(pick(x, m["value"])) if _is_obj(x) and m.get("value") else scalar(x)
+
+    def is_cell(x):
+        return not isinstance(x, list) and not (_is_obj(x) and not m.get("value"))
+
+    def value_of(e):
+        return scalar(_field(e, m, "value", ["value", "v", "status", "state"]))
+
+    if _is_obj(v):
+        for k, row in v.items():
+            if _is_obj(row):
+                for c, x in row.items():
+                    if is_cell(x):
+                        put(k, c, cell_of(x))
+    elif isinstance(v, list):
+        for i, r in enumerate(v):
+            if not _is_obj(r):
+                continue
+            rn = _label(_field(r, m, "row", ["name", "id", "key", "label", "title"]), i)
+            if m.get("entries"):
+                es = pick(r, m["entries"])
+                if isinstance(es, list):
+                    for j, e in enumerate(es):
+                        if _is_obj(e):
+                            put(rn, _label(_field(e, m, "column", ["column", "name", "key", "label", "dimension"]), j), value_of(e))
+            elif m.get("column"):
+                cn = pick(r, m["column"])
+                if not _nil(cn) and not isinstance(cn, (dict, list)):
+                    put(rn, cn, value_of(r))
+            else:
+                if m.get("row"):
+                    own = str(m["row"]) if re.fullmatch(r"[A-Za-z0-9_-]+", str(m["row"])) else None
+                else:
+                    own = next((n for n in ("name", "id", "key", "label", "title") if r.get(n) is not None), None)
+                for c, x in r.items():
+                    if c != own and is_cell(x):
+                        put(rn, c, cell_of(x))
+    if not order or not cols:
+        return None
+    rows = {rn: {c: at[rn].get(c, "") for c in cols} for rn in order}
+    vals = [rows[rn][c] for rn in order for c in cols if not (isinstance(rows[rn][c], str) and rows[rn][c] == "")]
+    heat = bool(vals) and all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in vals)
+    return {"rows": rows, "form": "heat" if heat else "matrix"}
+
+
+_PART_VALUE = ["value", "v", "count", "n", "size", "total"]
+
+
+def parts_of(v: Any, m: dict) -> List[dict]:
+    """Shares of a whole -> [{name, value}], the parts more than nothing; past eight, the seven largest and 'other'."""
+    out = []
+    if isinstance(v, list):
+        for i, r in enumerate(v):
+            if _is_obj(r):
+                x = _field(r, m, "value", _PART_VALUE)
+                out.append({"name": _label(_field(r, m, "name", ["name", "label", "key", "id", "type"]), i),
+                            "value": _keyed_num(None if x is _MISSING else x)})
+    elif _is_obj(v):
+        for k, x in v.items():
+            if _is_obj(x):
+                x = _field(x, m, "value", _PART_VALUE)
+            out.append({"name": str(k), "value": _keyed_num(None if x is _MISSING else x)})
+    out = [p for p in out if p["value"] is not None and p["value"] > 0]
+    if len(out) > 8:
+        by = sorted(out, key=lambda p: -p["value"])
+        rest = 0
+        for p in by[7:]:
+            rest = rest + p["value"]
+        out = by[:7] + [{"name": "other", "value": _js_num(rest)}]
+    return out
+
+
 def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size: str, max_records: int) -> Dict[str, Any]:
     K = PRESENT_KINDS[P["kind"]]
     m = P.get("map") if _is_obj(P.get("map")) else {}
@@ -601,6 +816,24 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
         rec("schedule", renamed(_as_rows(val("events")), ["start", "end", "title"]))
     elif kind == "entities":
         rec("json", {"groups": val("groups")} if m.get("groups") else {"entities": val("entities")})
+    # DA-01e (1): the new kinds read to their form's own data - nothing left in it to draw: the empty line
+    elif kind in ("timeline", "matrix", "parts"):
+        nothing = {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+        if kind == "timeline":
+            sp = timeline_spans(_as_rows(val("spans")), m)
+            if not sp:
+                return nothing
+            rec("gantt", sp)
+        elif kind == "matrix":
+            mx = matrix_of(val("cells"), m)
+            if not mx:
+                return nothing
+            rec(mx["form"], mx["rows"])
+        else:
+            ps = parts_of(val("parts"), m)
+            if not ps:
+                return nothing
+            rec("donut", ps)
     return {"records": out[:max(1, int(max_records or 3))]}
 
 

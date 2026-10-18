@@ -1,0 +1,74 @@
+{
+ "cap": "demo.node_checks",
+ "args": {},
+ "presentation": {
+  "kind": "matrix",
+  "map": {
+   "cells": "checks",
+   "row": "node",
+   "column": "check",
+   "value": "result.ms"
+  }
+ },
+ "result": {
+  "checks": [
+   {
+    "node": "ct126",
+    "check": "api",
+    "result": {
+     "ms": 12
+    }
+   },
+   {
+    "node": "ct126",
+    "check": "db",
+    "result": {
+     "ms": 30.5
+    }
+   },
+   {
+    "node": "ct121",
+    "check": "db",
+    "result": {
+     "ms": "7"
+    }
+   },
+   {
+    "node": "ct121",
+    "check": "gpu",
+    "result": {
+     "ms": 3
+    }
+   },
+   {
+    "node": "ct118",
+    "check": {
+     "bad": 1
+    },
+    "result": {
+     "ms": 9
+    }
+   }
+  ]
+ },
+ "expect": {
+  "element": "widget",
+  "kind": "matrix",
+  "title": "demo.node_checks",
+  "forms": [
+   "matrix"
+  ],
+  "data": {
+   "ct126": {
+    "api": 12,
+    "db": 30.5,
+    "gpu": ""
+   },
+   "ct121": {
+    "api": "",
+    "db": "7",
+    "gpu": 3
+   }
+  }
+ }
+}
