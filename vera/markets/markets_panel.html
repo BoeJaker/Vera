@@ -244,10 +244,7 @@ canvas.mini{width:100%;height:110px;background:var(--bg0);border:1px solid var(-
   <span class="railtoggle" id="railT" title="watchlist" onclick="toggleRail()">☰</span>
   <span class="brand">⟁ Markets</span>
   <div class="lookup">
-    <span class="mag">⌕</span>
-    <input id="lkIn" placeholder="Search crypto, stocks, ETFs, collectables…" autocomplete="off"
-           oninput="lkInput()" onfocus="lkInput()" onkeydown="lkKey(event)">
-    <div class="dd-list" id="lkList"></div>
+    <vera-mkt-lookup id="lkEl" placeholder="Search crypto, stocks, ETFs, collectables…" style="display:block;--lk-size:12px;--lk-pad:6px 10px 6px 28px"></vera-mkt-lookup>
   </div>
   <div style="min-width:0">
     <div class="sym-name" id="hSym">—</div>
@@ -773,40 +770,8 @@ document.querySelectorAll('#dockTabs button').forEach(b=>b.onclick=()=>openDock(
 function toggleForm(id){ $(id).classList.toggle('open'); }
 
 /* ═══════════════════════════════ header lookup ═══════════════════════════ */
-let _lkItems=[], _lkActive=-1;
-const lkInput=debounce(async ()=>{
-  const q=$('lkIn').value.trim();
-  if(q.length<1){ hideLk(); return; }
-  const r=await api('/markets/lookup?query='+encodeURIComponent(q)+'&limit=8');
-  if(!r||r.error) return;
-  _lkItems=r.results||[]; _lkActive=-1; renderLk();
-},250);
-function renderLk(){
-  const el=$('lkList');
-  if(!_lkItems.length){ el.innerHTML='<div class="dd-item muted">no matches</div>'; el.style.display='block'; return; }
-  el.innerHTML=_lkItems.map((it,i)=>
-    `<div class="dd-item${i===_lkActive?' active':''}" data-i="${i}">
-      <span class="cls">${esc((it.asset_class||'?').replace('_',' '))}</span>
-      <b>${esc(it.symbol)}</b>
-      <span class="nm">${esc(it.name||'')}</span>
-      ${it.tracked?'<span class="track">tracked</span>':''}</div>`).join('');
-  el.style.display='block';
-  el.querySelectorAll('.dd-item').forEach(d=>d.onmousedown=e=>{e.preventDefault();pickLk(parseInt(d.dataset.i));});
-}
-function hideLk(){ $('lkList').style.display='none'; }
-function lkKey(e){
-  if($('lkList').style.display==='none') return;
-  if(e.key==='ArrowDown'){ _lkActive=Math.min(_lkItems.length-1,_lkActive+1); renderLk(); e.preventDefault(); }
-  else if(e.key==='ArrowUp'){ _lkActive=Math.max(0,_lkActive-1); renderLk(); e.preventDefault(); }
-  else if(e.key==='Enter'&&_lkActive>=0){ pickLk(_lkActive); e.preventDefault(); }
-  else if(e.key==='Escape') hideLk();
-}
-document.addEventListener('click',e=>{ if(!e.target.closest('.lookup')) hideLk(); });
-async function pickLk(i){
-  const it=_lkItems[i]; if(!it) return;
-  hideLk(); $('lkIn').value='';
-  await loadKey(it.key, null, it);
-}
+/* the search is the shared <vera-mkt-lookup> (markets/chart.js) - the desk chart has the same one; a pick loads the asset here */
+document.getElementById('lkEl').addEventListener('mkt-pick', (e) => { const d = e.detail || {}; if (d.key) loadKey(d.key, null, d.item); });
 
 /* ═══════════════════════════ asset load / fetch ══════════════════════════ */
 function watchRow(key){ return S.watch.find(w=>w.id===key); }
