@@ -2753,7 +2753,10 @@
     if (el._elHost && el._elSig === sig) return;
     if (el._elHost) { el._elHost.remove(); el._elHost = null; }
     const host = document.createElement('div'); host.setAttribute('slot', 'el'); host.style.cssText = 'width:100%;height:100%;overflow:auto;min-height:0';
-    const go = () => { const x = document.createElement(e.tag); Object.keys(e.attrs || {}).forEach((k) => x.setAttribute(k, String(e.attrs[k]))); x.style.display = 'block'; host.appendChild(x); };
+    /* an element that can take the answer it was opened from (seed) starts with it - an event stream opened from obs.events shows
+       those events at once instead of waiting for the next ones */
+    const go = () => { const x = document.createElement(e.tag); Object.keys(e.attrs || {}).forEach((k) => x.setAttribute(k, String(e.attrs[k]))); x.style.display = 'block'; host.appendChild(x);
+      if (typeof x.seed === 'function' && rec && rec.data != null) { try { x.seed(rec.data); } catch (_) { /* the element runs as it would */ } } };
     const base = (el.base || '').replace(/\/$/, ''), src = EL_SRC[e.tag];
     if (window.customElements && customElements.get(e.tag)) go();
     else if (src) { let sc = document.querySelector('script[data-vw-el="' + e.tag + '"]'); if (!sc) { sc = document.createElement('script'); sc.src = base + '/ui/elements/' + src + '.js'; sc.setAttribute('data-vw-el', e.tag); document.head.appendChild(sc); }

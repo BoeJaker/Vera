@@ -4214,14 +4214,18 @@
   }
  },
  "obs.events": {
-  "form": "log",
+  "draw": {
+   "tag": "vera-live-event-stream"
+  },
+  "form": "element",
   "kind": "log",
   "map": {
    "events": "$",
    "kind": "type",
    "t": "ts",
    "text": "name"
-  }
+  },
+  "title": "Event stream"
  },
  "obs.health": {
   "form": "status",

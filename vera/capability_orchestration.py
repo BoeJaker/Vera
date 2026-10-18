@@ -10171,7 +10171,9 @@ async def obs_scheduler(trace_id=None):
 
 @capability("obs.events", memory="off", silent=True,
             http_method="GET", http_path="/events", http_tags=["obs"],
-            description="Recent events from Redis event stream.", contract={"presentation": {'kind': 'log', 'form': 'log', 'map': {'events': '$', 't': 'ts', 'kind': 'type', 'text': 'name'}}})
+            description="Recent events from Redis event stream.",
+            # the Observe panel's own event stream on the desk (Wave 1: panel-derived) - the answer seeds it, then it runs live
+            contract={"presentation": {'kind': 'log', 'form': 'element', 'map': {'events': '$', 't': 'ts', 'kind': 'type', 'text': 'name'}, 'draw': {'tag': 'vera-live-event-stream'}, 'title': 'Event stream'}})
 async def obs_events(limit: int = 100, since: str = "", trace_id=None):
     """newest first; since (an event ts): only the ones after it - what a live page missed while its socket was down
     (VeraLive's catch-up, DA-03b)"""
