@@ -413,6 +413,40 @@ async def _dispatch_via_research(query: str, limit: int, engine: str
     return (n, eng) if n else ([], "none")
 
 
+PREFETCH_TOP = 3
+_PREFETCHING: set = set()
+
+
+def _prefetch_top(results: List[Dict[str, Any]]) -> None:
+    """With switch web.search.prefetch on: read the top results into the reader cache in the background, one at a
+    time, skipping URLs already being prefetched. Never on the caller's path; never raises."""
+    try:
+        ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+        if ing is None or ing.switch("web.search.prefetch") != "on":
+            return
+        rmod = sys.modules.get("Vera.vera.web.browser_capabilities") or sys.modules.get("browser_capabilities")
+        rr = getattr(rmod, "reader_read", None) if rmod else None
+        if rr is None:
+            return
+        urls = [str(r.get("url") or "") for r in (results or []) if r.get("url")][:PREFETCH_TOP]
+        urls = [u for u in urls if u not in _PREFETCHING]
+        if not urls:
+            return
+
+        async def _go():
+            for u in urls:
+                _PREFETCHING.add(u)
+                try:
+                    await asyncio.wait_for(rr(u, mode="fetch"), 45)
+                except Exception as e:  # noqa: BLE001
+                    log.debug("prefetch %s: %s", u, e)
+                finally:
+                    _PREFETCHING.discard(u)
+        _spawn(_go())
+    except Exception as e:  # noqa: BLE001
+        log.debug("prefetch: %s", e)
+
+
 async def _dispatch_search(query: str, limit: int, engine: str = "auto",
                            searxng_host: str = "",
                            brave_api_key: str = "") -> Tuple[List[Dict[str, Any]], str]:
@@ -562,6 +596,7 @@ async def cap_web_search(
                         log.debug("web.search bg fetch %s: %s", u, e)
             _spawn(_bg_fetch())
 
+    _prefetch_top(results)                      # WI-13: the likely next read, cached before it is asked for
     try:    # the web map keeps the searches Vera sends (owner, 11 Oct; web-ingress WI-3b) - never on the hot path
         _ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
         if _ing is not None:

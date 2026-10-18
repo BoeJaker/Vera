@@ -203,6 +203,10 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "web.searxng.heal.status; 'on' = also restart the container on the dead-network signature (every engine times "
        "out, or SearXNG unreachable - not on CAPTCHA / rate limits), at most once per 30 min and 4 a day, and tell the "
        "owner on Telegram when two restarts in a row did not bring it back.", owner="web-ingress"),
+    _f("web.search.prefetch", ("off", "on"), "web", "WI-13",
+       "After a web.search, read its top 3 results into the reader cache in the background, one at a time (a URL "
+       "already cached costs nothing): the fetch or read that usually follows a search is then instant. 'off' "
+       "(default) = no prefetch.", owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),
