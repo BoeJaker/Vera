@@ -570,6 +570,7 @@ async def cap_topic_save(name: str = "", id: str = "", brief: str = None, why: s
     except ValueError as e:
         return {"error": str(e)}
     st.put_topic(t)
+    _touch_topic_map(t, None, source="intel.topic.save")
     if t.get("dream_loop"):
         await _ensure_think_loop(t)
     elif existing and existing.get("dream_loop"):
@@ -941,6 +942,28 @@ async def _triage(t: Dict[str, Any], cands: List[Dict[str, Any]], *, stats: Dict
     return out
 
 
+def _touch_topic_map(t: Dict[str, Any], signals: Optional[List[Dict[str, Any]]] = None, *, source: str = "intel"):
+    """The web map's topic map for this intel topic (web-ingress WI-10): the topic is the canonical id, its queries,
+    sites and entities are the seeds, and a sweep's signals are members. Fire-and-forget: a map that is missing
+    or slow never touches a sweep. Returns the task (tests await it) or None."""
+    if not _has("fabric.map.topic.touch"):
+        return None
+    urls = [str(s.get("url") or "") for s in (signals or []) if s.get("url")]
+    kw = {"topic_id": t["id"], "name": t.get("name") or "", "urls": urls[:200], "role": "source", "source": source,
+          "seeds": list(t.get("sites") or []), "queries": list(t.get("queries") or []) + list(t.get("questions") or [])[:10],
+          "entities": list(t.get("entities") or [])}
+
+    async def _go():
+        try:
+            await _call("fabric.map.topic.touch", **kw)
+        except Exception as ex:  # noqa: BLE001
+            log.debug("intel: topic map touch: %s", ex)
+    try:
+        return asyncio.get_running_loop().create_task(_go())
+    except RuntimeError:
+        return None
+
+
 async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
     """Run the topic's next searches through discovery-first web search (every
     page also lands in the topic's discovery dataset and entity graph), then let
@@ -978,6 +1001,7 @@ async def sweep_topic(t: Dict[str, Any], *, depth: str = "") -> Dict[str, Any]:
     new += await _research_signals(t)
     st.patch_topic(t["id"], {"query_cursor": cursor, "last_sweep": core.now_iso()})
     await _to_fabric(new)
+    _touch_topic_map(t, new, source="intel.sweep")             # the web map's topic map (WI-10), off the path
     for s in new[:20]:
         await _event("signal.new", topic=t["id"], id=s["id"], title=s["title"], score=s.get("score"))
     return {"topic": t["id"], "queries": queries, "new": len(new), "joined": stats.get("joined", 0),
