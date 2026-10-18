@@ -92,3 +92,20 @@ def expired(r: Dict[str, Any], now: datetime) -> bool:
         return False
     d = _dt(r.get("done_at") or r.get("at"))
     return d is not None and (now - d).total_seconds() > KEEP_S
+
+
+
+def full_tier_hold(rows: Iterable[Dict[str, Any]]) -> Tuple[bool, str]:
+    """(hold, why) from the unit-test history (newest first): the lane holds while the LATEST full run of
+    bleeding-edge is red. Adopt gates run only the tests their change touches (P0-6, owner 18 Oct 2026), so the
+    nightly full critical tier is what proves what a release carries (vera-d2's review). A full run is a
+    bleeding-edge run with no pipeline (an adopt gate always has one)."""
+    for r in rows or []:
+        if str(r.get("branch") or "") != "bleeding-edge" or r.get("pipeline_id"):
+            continue
+        bad = int(r.get("failed") or 0) + int(r.get("errors") or 0)
+        if bad:
+            return True, ("the last full critical run of bleeding-edge (%s) is red: %s failed, %s errors - fix it "
+                          "(a green full run lifts the hold) or withdraw" % (r.get("ts") or "?", r.get("failed") or 0, r.get("errors") or 0))
+        return False, "the last full run of bleeding-edge (%s) is green" % (r.get("ts") or "?")
+    return False, "no full run of bleeding-edge on record yet"

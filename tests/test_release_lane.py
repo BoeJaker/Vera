@@ -64,3 +64,22 @@ def test_the_queued_batch_shows_on_the_schedule_releases_layer():
     assert len(ev) == 1 and ev[0]["kind"] == "release-request" and "2 request(s)" in ev[0]["title"]
     assert "vera-6e: WI-14b" in ev[0]["detail"]
     assert RV.lane_events({"queued": []}, T0, T0 + timedelta(hours=1), T0) == []
+
+
+
+def test_the_lane_holds_while_the_latest_full_run_of_bleeding_edge_is_red():
+    # vera-d2's review of P0-6: adopt gates run a selection; the nightly full tier proves what a release carries
+    rows = [{"branch": "bleeding-edge", "pipeline_id": "abc", "failed": 3, "ts": "t3"},       # an adopt gate: not full
+            {"branch": "bleeding-edge", "pipeline_id": "", "failed": 1, "errors": 0, "ts": "t2"},
+            {"branch": "bleeding-edge", "pipeline_id": "", "failed": 0, "ts": "t1"}]
+    held, why = L.full_tier_hold(rows)
+    assert held and "t2" in why and "1 failed" in why
+    assert L.full_tier_hold([{"branch": "bleeding-edge", "pipeline_id": "", "failed": 0, "ts": "t4"}] + rows) == (False, "the last full run of bleeding-edge (t4) is green")
+    assert L.full_tier_hold([{"branch": "feat/x", "failed": 9}])[0] is False
+
+
+def test_the_tick_checks_the_full_tier_before_it_fires():
+    src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vera", "evolve", "release_capabilities.py"), encoding="utf-8").read()
+    step = src[src.index("async def _lane_step("):src.index("async def run_tick()")]
+    assert step.index("lane.full_tier_hold(") < step.index("_open_release(")
+    assert '"evolve.release.lane.held"' in step

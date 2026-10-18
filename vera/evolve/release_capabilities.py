@@ -414,6 +414,17 @@ async def _last_release_done() -> Optional[datetime]:
     return core.parse_iso(last.get("finished_at") or last.get("requested_at") or "")
 
 
+async def _ut_rows() -> list:
+    """The unit-test history, newest first (evolve's KEY_UT_HISTORY)."""
+    r = _redis()
+    if r is None:
+        return []
+    try:
+        return [json.loads(x) for x in (await r.lrange("vera:evolve:unittest_history", 0, 60) or [])]
+    except Exception:
+        return []
+
+
 async def _lane_step(pending: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """B1.0: when the batch is due and nothing is in flight, open ONE release carrying every queued request."""
     reqs = await _lane_load()
@@ -425,6 +436,13 @@ async def _lane_step(pending: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     go, why = lane.should_fire(reqs, now, await _last_release_done(), bool(pending))
     if not go:
         return {"lane": "wait", "why": why}
+    held, hwhy = lane.full_tier_hold(await _ut_rows())
+    if held:
+        if r is not None and not await r.set("vera:evolve:release:lane:held_note", hwhy[:200], nx=True, ex=3600):
+            return {"lane": "held", "why": hwhy}
+        await emit_event({"type": "evolve.release.lane.held", "why": hwhy, "requests": [x["id"] for x in lane.queued(reqs)]})
+        log.warning("release lane held: %s", hwhy)
+        return {"lane": "held", "why": hwhy}
     q = lane.queued(reqs)
     res = await _open_release(mode=lane.batch_mode(q), edge="", by="release-lane", reason=lane.batch_reason(q),
                               restart=True, sync_nodes=True)
@@ -693,9 +711,12 @@ async def cap_release_lane(trace_id=None) -> Dict[str, Any]:
     last = await _last_release_done()
     t = lane.next_fire_at(reqs, last)
     go, why = lane.should_fire(reqs, _now(), last, bool(p))
+    held, hwhy = lane.full_tier_hold(await _ut_rows())
+    if held and lane.queued(reqs):
+        go, why = False, hwhy
     recent = sorted([q for q in reqs if q.get("status") != "queued"], key=lambda q: str(q.get("done_at") or ""), reverse=True)
     return {"queued": lane.queued(reqs), "fires_at": t.isoformat(timespec="seconds") if t else "",
-            "due": go, "why": why, "recent": recent[:30],
+            "due": go, "why": why, "recent": recent[:30], "full_tier": {"held": held, "why": hwhy},
             "pending": {"id": p.get("id"), "status": p.get("status"), "why": p.get("last_why")} if p else None}
 
 
