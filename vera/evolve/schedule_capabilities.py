@@ -986,7 +986,6 @@ async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windo
 
 
 @capability("evolve.schedule.history", memory="off", silent=True,
-            contract={"presentation": {"kind": "log", "map": {"events": "runs", "t": "started_at", "text": "title", "kind": "kind", "level": "result"}, "empty": "The scheduler has started nothing yet"}},
             http_method="GET", http_path="/evolve/schedule/history", http_tags=["evolve", "schedule"],
             description="Runs the scheduler started, newest first. Input: limit (int, default 50).",
             # DA-01e (1): each run a span on the gantt, coloured by how it ended
