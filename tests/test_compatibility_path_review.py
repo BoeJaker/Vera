@@ -40,8 +40,9 @@ def test_no_path_is_misclassified_as_confirmed_dead_or_removable():
     assert result["conclusion"] == "no_path_has_complete_removal_evidence"
     assert result["bulk_removal_authority"] is False
     assert set(result["decisions"]["insufficient_evidence"]) == {
-        "memory.patch_new_cap", "memory.record_cap_interaction"}
-    assert result["decisions"]["migrate"] == ["memory.patch_capability_for_memory"]
+        "memory.patch_capability_for_memory", "memory.patch_new_cap",
+        "memory.record_cap_interaction"}
+    assert result["decisions"]["migrate"] == []
 
 
 def test_research_aliases_are_active_callable_compatibility_not_dead_code():
@@ -57,13 +58,18 @@ def test_research_aliases_are_active_callable_compatibility_not_dead_code():
             "researcher_api.py")
 
 
-def test_noop_shims_require_external_inventory_and_internal_call_migrates_first():
+def test_noop_shims_require_external_inventory_after_internal_call_is_migrated():
     result = build_compatibility_path_review_set(ROOT)
     by_name = {item["name"]: item for item in result["reviews"]}
     startup = by_name["memory.patch_capability_for_memory"]
-    assert startup["in_repo_runtime_consumer"] is True
-    assert "remove_internal_startup_call_first" in startup["required_actions"]
-    for name in ("memory.record_cap_interaction", "memory.patch_new_cap"):
+    assert startup["in_repo_runtime_consumer"] is False
+    assert "internal_startup_call_migrated" in startup["rationale"]
+    source = (ROOT / "vera" / "fabric" / "memory_hooks.py").read_text(encoding="utf-8")
+    assert source.count("patch_capability_for_memory()") == 1  # definition only
+    for name in (
+        "memory.record_cap_interaction", "memory.patch_capability_for_memory",
+        "memory.patch_new_cap",
+    ):
         assert by_name[name]["coverage"]["external_consumers"] == "not_examined"
         assert "retain_import_shim" in by_name[name]["required_actions"]
 

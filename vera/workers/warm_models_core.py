@@ -49,8 +49,18 @@ REARM_WITHIN_S = 300
 
 #: Share of a node's memory the planned models may take (weights + KV room).
 MEM_SHARE = 0.85
+#: A node's memory figures (vram_gb, ram_gb) are GiB; treating them as 1e9 bytes left every budget 7% short
+#: (11 Oct 2026: a 1.7B refused beside the 9b on gpu-250 that measured 83.5% of the card).
+GIB = 2 ** 30
 #: KV/runtime overhead on top of the weights, as a fraction of the weights.
 KV_OVERHEAD = 0.20
+
+#: At most this many BIG models on one node, planned or resident (owner, 12 Oct 2026: three - the 9B, the
+#: 35B and qwen3-coder:30b - on cpu-246 AND cpu-247 ran the Proxmox host's NUMA node 0 out of memory and
+#: took the Vera VM down). Embedders and small specialists (under BIG_MIN_BYTES) ride beside and do not
+#: count. `slots` still says how many models a node keeps; this caps the big ones among them.
+MAX_BIG_MODELS = 2
+BIG_MIN_BYTES = 4 * GIB
 
 EMBED_HINTS = ("embed", "minilm", "bge-", "bge:", "e5-", "gte-", "snowflake-arctic-embed")
 
@@ -97,6 +107,18 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 def is_embed_model(name: Any) -> bool:
     n = str(name or "").lower()
     return any(h in n for h in EMBED_HINTS)
+
+
+def is_big(name: Any, size: Any = 0) -> bool:
+    """Counts against MAX_BIG_MODELS: not an embedder and not a small specialist. An unknown size
+    counts as big - it cannot be priced, and guessing small is how a node overfills."""
+    if is_embed_model(name):
+        return False
+    try:
+        size = int(size or 0)
+    except (TypeError, ValueError):
+        size = 0
+    return not size or size >= BIG_MIN_BYTES
 
 
 def base_tag(name: Any) -> str:
@@ -292,10 +314,31 @@ def fit_memory(models: List[str], sizes: Dict[str, int], budget_bytes: float,
     for m in models:
         s = size_of(m) * (1 + KV_OVERHEAD)
         if budget_bytes and s and used + s > budget_bytes:
-            dropped.append({"model": m, "why": "does not fit: %.1f GB over a %.1f GB budget"
-                            % ((used + s) / 1e9, budget_bytes / 1e9)})
+            dropped.append({"model": m, "why": "does not fit: %.1f GiB over a %.1f GiB budget"
+                            % ((used + s) / GIB, budget_bytes / GIB)})
             continue
         used += s
+        kept.append(m)
+    return kept, dropped
+
+
+def size_in(sizes: Dict[str, int], model: str) -> int:
+    for k, v in (sizes or {}).items():
+        if same_model(k, model):
+            return int(v or 0)
+    return 0
+
+
+def limit_big(models: List[str], sizes: Dict[str, int],
+              cap: int = MAX_BIG_MODELS) -> Tuple[List[str], List[Dict[str, Any]]]:
+    """Keep models in order with at most `cap` big ones (is_big). Returns (kept, dropped[{model, why}])."""
+    kept, dropped, n = [], [], 0
+    for m in models:
+        if is_big(m, size_in(sizes, m)):
+            if n >= cap:
+                dropped.append({"model": m, "why": "over the %d-big-model limit per node" % cap})
+                continue
+            n += 1
         kept.append(m)
     return kept, dropped
 
@@ -336,12 +379,17 @@ def plan(instances: Dict[str, Dict[str, Any]], cfg: Dict[str, Any],
             missing.append(embed)
             embed = ""
         ram = float(ncfg.get("ram_gb") or ram_by_node.get(iid) or 0)
-        budget = ram * 1e9 * MEM_SHARE if ram else 0
-        models, dropped = fit_memory(models, sizes_by_node.get(iid) or {}, budget, embed)
+        # node sizes (catalog vram_gb / ram_gb, node_config ram_gb) are GiB: 12 on gpu-250 is its 12,288 MiB
+        budget = ram * GIB * MEM_SHARE if ram else 0
+        sizes = sizes_by_node.get(iid) or {}
+        models, dropped = fit_memory(models, sizes, budget, embed)
+        models, over = limit_big(models, sizes)
+        dropped += over
         dropped += [{"model": m, "why": "not on this node"} for m in missing]
         gw = (gpu_windows or {}).get(iid, 0)
         out[iid] = {"class": cls, "slots": slots, "source": src, "scenarios": took,
-                    "models": [{"model": m, "num_ctx": window_for(m, cls, cfg, gw)} for m in models],
+                    "models": [{"model": m, "num_ctx": window_for(m, cls, cfg, gw),
+                                "big": is_big(m, size_in(sizes, m))} for m in models],
                     "embed": embed, "dropped": dropped}
     return out
 
@@ -381,7 +429,11 @@ def actions(p: Dict[str, Dict[str, Any]], running: Dict[str, List[Dict[str, Any]
     (epoch seconds), context_length}; a node absent from it is skipped. At most ONE load per node per tick (loads
     are heavy); nothing on a busy node. A resident model that is not planned is
     released only when it is one of OURS (a forever expiry) - a model someone
-    else loaded is left to its own keep_alive."""
+    else loaded is left to its own keep_alive.
+
+    A load that would put a third BIG model on the node (MAX_BIG_MODELS) waits: this tick releases
+    our unplanned ones, the load comes on a later tick once the node is down to its limit. A swap
+    used to load the new model BEFORE the old one went (12 Oct 2026 crash)."""
     busy = set(busy or ())
     out: List[Dict[str, Any]] = []
     # only nodes whose residency was read: a node missing from `running` is
@@ -396,9 +448,13 @@ def actions(p: Dict[str, Dict[str, Any]], running: Dict[str, List[Dict[str, Any]
             want.append({"model": node["embed"], "num_ctx": int((embed_windows or {}).get(iid, 0)),
                          "embed": True})
         loaded = False
+        big_resident = sum(1 for x in rows if is_big(x.get("name"), x.get("size")))
         for w in want:
+            big = w.pop("big", True) and not w.get("embed")
             r = next((x for x in rows if same_model(x.get("name"), w["model"])), None)
             if r is None:
+                if big and big_resident >= MAX_BIG_MODELS:
+                    continue                      # release first (below); load on a later tick
                 if not loaded:
                     out.append({"node": iid, "action": "load", **w})
                     loaded = True

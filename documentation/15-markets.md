@@ -27,8 +27,9 @@ the dependency as unavailable, rather than breaking start-up.
 > Almost everything here is analysis, simulation or paper trading. The exceptions
 > are `markets.broker.order`, which places **real orders** on a linked exchange
 > or broker, and real-mode `markets.trader` ledger records. Broker accounts are
-> linked read-only, and an order needs trading enabled on the account **and**
-> `confirm=true` ([§6](#6-brokers-and-real-accounts)).
+> linked read-only. An order needs trading **armed** on the account (an out-of-band
+> code, valid for a limited number of hours), must pass the account's limits, and
+> needs `confirm=true` ([§6](#6-brokers-and-real-accounts)).
 
 ## Contents
 
@@ -769,11 +770,24 @@ and the markers refresh with each bar update.
 | Capability | Purpose |
 |---|---|
 | `markets.broker.link` | Link an account. The keys are **sealed at rest** with `security/secrets.py` ([29](./29-security.md)) and never returned. A balance read verifies the keys before saving. The account is linked **read-only** (`can_trade = 0`). |
-| `markets.broker.list` | Linked accounts (`id`, exchange, label, `can_trade`); never keys. |
+| `markets.broker.list` | Linked accounts (`id`, exchange, label, `can_trade`, `trade_until`, `limits`); never keys. `can_trade` is true only while trading is armed and unexpired. |
 | `markets.broker.balances` | Read live balances (a read-only call). |
-| `markets.broker.set_trading` | Enable or disable real order placement on one account. It is off by default. |
-| `markets.broker.order` | Place a **real** order: `id`, `symbol`, `side` (buy/sell), `type` (market/limit), `amount` (base units), `price` (required for limit), `confirm`. It is refused unless trading is enabled **and** `confirm=true`. It emits a `markets.broker` event and sends a Telegram notice when Telegram is loaded. |
+| `markets.broker.arm` | Start enabling real trading: sends a 6-digit code out of band (Telegram, and a 0600 file `markets/broker-arm-<id>.txt` in Vera's state root on the host). The code is never returned by the API. It is valid for 10 minutes and works once. |
+| `markets.broker.set_trading` | Enable or disable real order placement on one account. It is off by default. Enabling needs `arm_code` and lasts `hours` (default 8, max 24), then expires. Accounts enabled before arming existed count as not armed. Disabling needs no code. |
+| `markets.broker.limits.set` | Set an account's caps (needs `arm_code`): `max_order_amount` (base units), `max_order_notional`, `max_daily_notional` (quote currency, per UTC day), `symbols` (allow-list). `0` means no cap. A capped market order needs a price: the live ticker on CCXT exchanges; otherwise use a limit order. |
+| `markets.broker.order` | Place a **real** order: `id`, `symbol`, `side` (buy/sell), `type` (market/limit), `amount` (base units), `price` (required for limit), `confirm`, `client_order_id`. It is refused unless trading is armed and unexpired, the account's limits allow it, **and** `confirm=true`. `client_order_id` makes it idempotent: the same id never places a second order. Every attempt is recorded in `mkt_broker_orders`. An exception marks it `unknown` (it may still have been placed; it counts toward the daily cap). It emits a `markets.broker` event and sends a Telegram notice when Telegram is loaded. |
 | `markets.broker.unlink` | Remove an account and its sealed keys. |
+
+**Only the owner, from the panel.** `arm`, `set_trading`, `limits.set` and
+`order` carry the `money` tag. They run only through their own HTTP route
+(the studio's buttons), as the outermost capability and outside background
+work. A loop, an agent turn, a dream, a DAG step, a schedule or trigger, a
+widget read, an MCP bridge and `/mcp/call` (which the chat's cap-in-chat and
+the copilots use) all get `{ok: false, refused: "money"}` and a `cap.denied`
+event. `markets.broker.` is also in the Loop Lab test denylist. Until
+caller tokens land (B0.3b), a server-side HTTP client calling the route over
+loopback is not told apart from the panel; the arm code, expiry and limits
+still apply to it.
 
 Linked accounts are stored in the `mkt_broker` table.
 
@@ -888,7 +902,7 @@ Bars live in `fabric_records` under `mkt.*` datasets ([06](./06-data-fabric.md))
 | Gaps in a series | Run `markets.history.audit`, then `markets.history.repair`. |
 | `backtrader` engine missing | It is optional. `markets.backtest.engines` shows availability. Use `native` for shorts and leverage. |
 | Sentiment returns *"no headlines found"* | `web.search` is unavailable or returned nothing. |
-| `markets.broker.order` refused | Enable trading with `markets.broker.set_trading` and pass `confirm=true`. |
+| `markets.broker.order` refused | Arm trading (`markets.broker.arm`, then `markets.broker.set_trading` with the code), check the account's limits in `markets.broker.list`, and pass `confirm=true`. `refused: "money"` means it was not called from the studio panel's own route. |
 | The trader director never acts | Check `markets.trader.status`: is it enabled, has `interval_min` elapsed, and is a sim account set for sim mode? |
 
 ---

@@ -84,3 +84,24 @@ def test_an_untouched_aide_is_upgraded_and_a_customised_one_is_not():
     seed = seed[:seed.index("\n# ───")]
     assert 'hashlib.sha1((existing.system_prompt or "").encode()).hexdigest() in _AIDE_PRIOR_PROMPTS' in seed
     assert "not in _AIDE_RETIRED_CAPS" in seed
+
+
+def test_pre_answer_snippets_send_the_model_to_info_seek():
+    # owner 2026-10-11: info.seek is never triggered before the answer - the model calls it; the quick snippet
+    # pre-fetch must say it is not the evidence
+    src = _src("agents", "agents.py")
+    body = src[src.index("def _format_web_context"):src.index("async def _safe_gen")]
+    assert "Ground your answer in these results" not in body
+    assert "SNIPPETS only" in body and "call info.seek before answering" in body
+    assert "info.seek" not in src[src.index("async def _run_web_search"):src.index("_web_task = asyncio.create_task")]
+
+
+def test_chat_and_the_loop_use_the_same_memory_pair():
+    # info-seeking plan SK-2.6: the loop's canonical memory.seek / memory.read; the aide had only recall/search
+    v, tree = _agents_module_values()
+    assert "memory.seek (one search over every store), then memory.read" in v["AIDE_PROMPT"]
+    aide = next(n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "AgentRecord"
+                and any(k.arg == "name" and getattr(k.value, "value", "") == "aide" for k in n.keywords))
+    caps = ast.literal_eval(next(k.value for k in aide.keywords if k.arg == "domain_caps"))
+    assert {"memory.seek", "memory.read", "memory.recall"} <= set(caps)
+    assert "b99329fc86df0e71ed4d6f4fe7da18a21d9c89a7" in v["_AIDE_PRIOR_PROMPTS"]

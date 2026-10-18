@@ -236,3 +236,130 @@ def test_seek_read_reads_the_next_result_when_one_is_blocked():
     assert got == 3 and calls == ["https://a/1", "https://blocked/2", "https://c/3", "https://d/4"]
     assert items[1]["unreadable"].startswith("blocked") and not items[1].get("text")
     assert items[3]["text"] and items[3]["published"] == "2026-10-09" and "text" not in items[4]
+
+
+def test_deep_without_a_background_job_for_loops():
+    # loops block research.* job caps (compute-roles, 10 Oct): need=deep with start_report=false is the overview only
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    body = src[src.index("async def cap_info_seek"):]
+    assert "start_report: bool = True" in body
+    i, j = body.index('if need == "deep" and not start_report:'), body.index('elif need == "deep":')
+    assert i < j and "research.run" not in body[i:j] and "research.run" in body[j:j + 300]
+
+
+# baseline run 10 Oct (tools/info-eval): L19 "updates on the ... white paper" was taken as a report request and
+# started research.run; F04 "When does ... apply?" searched the question and got dictionary pages for "does"
+@pytest.mark.parametrize("q,need", [
+    ("Any updates on the UK AI regulation white paper or AI bill?", "latest"),
+    ("what does the research report say about rates", "fact"),
+    ("write a white paper on AI in valuation", "deep"), ("give me a detailed report on n8n", "deep"),
+])
+def test_a_named_document_is_not_a_report_request(q, need):
+    assert C.classify_need(q)["need"] == need
+
+
+def test_wh_questions_search_their_keywords_first():
+    assert C.keywords_of("When does the EU AI Act's high-risk obligation apply?") == "EU AI Act's high-risk obligation apply"
+    q = "When does the EU AI Act's high-risk obligation apply?"
+    assert C.fact_queries(C.subject_of(q), q)[0] == "EU AI Act's high-risk obligation apply"
+    assert C.fact_queries("Bank of England base rate", "What is the Bank of England base rate?")[0] == "Bank of England base rate"
+
+
+def test_no_control_characters_in_the_core():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "info_seek_core.py").read_text(encoding="utf-8")
+    assert not any(ord(ch) < 9 for ch in src)          # a patch once wrote \b as a backspace byte
+
+
+@pytest.mark.parametrize("text,day", [
+    ("# High-level summary\nUpdated on 31 August 2026\nThe AI Act...", "2026-08-31"),
+    ("Title\nPublished Time: 2026-09-17T10:00:00\n...", "2026-09-17"),
+    ("By X | Posted on Oct 3, 2026 | 4 min read", "2026-10-03"),
+    ("Last updated: 1st October 2026", "2026-10-01"),
+])
+def test_a_labelled_page_date(text, day):
+    assert C.labelled_date(text).strftime("%Y-%m-%d") == day
+
+
+@pytest.mark.parametrize("text", [
+    "Ollama is a tool... Initial release July 8, 2023",          # an event, not the page's date
+    "Consultation closes 31 October 2026",                        # a deadline
+    "x" * 1600 + " Updated on 1 May 2026",                        # too far down to be the page's own line
+])
+def test_a_bare_or_distant_date_is_not_the_page_date(text):
+    assert C.labelled_date(text) is None
+
+
+def test_since_your_last_look():
+    assert C.subject_key("EU AI Act!") == "eu-ai-act"
+    s = C.since_for("2026-10-01T09:00:00+00:00", NOW)
+    assert s == {"since": "2026-10-01", "why": "since you last looked on 2026-10-01"}
+    assert C.since_for("2026-10-10T09:00:00+00:00", NOW)["since"] == "2026-09-26"      # same day: default window
+    assert C.since_for("2026-08-01", NOW)["since"] == "2026-09-26"                      # over a month: default
+    assert C.since_for("", NOW) == {"since": "2026-09-26", "why": "the last 14 days"}
+
+
+def test_latest_records_and_reads_the_last_look():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    body = src[src.index("async def cap_info_seek"):]
+    latest = body[body.index('if need == "latest":'):body.index("    else:\n        # fact")]
+    assert "_seek.since_for(await _last_seek(subject), now)" in latest
+    assert latest.index("await _last_seek(subject)") < latest.index("await _last_seek(subject, now.isoformat(")
+    helper = src[src.index("async def _last_seek"):src.index("def _report_seller")]
+    assert "except Exception" in helper and "ex=_LAST_SEEK_TTL" in helper
+
+
+# caps.search (plan SK-1.2): measured on prod 11 Oct - "latest news about MCP" -> mcp.register_server first,
+# "what is the bank of england base rate" -> evolve.delegate.rate, "find out about the EU AI Act" -> operator caps
+@pytest.mark.parametrize("q,want", [
+    ("latest news about MCP", True), ("what is the bank of england base rate", True),
+    ("find out about the EU AI Act", True), ("who won the f1 race", True), ("latest updates on UK house prices", True),
+    ("find tools for sending email", False), ("what caps handle image generation", False),
+    ("what is the census status", False), ("send an email to bob", False), ("create a dashboard panel", False),
+])
+def test_info_intent(q, want):
+    assert C.info_intent(q) is want
+
+
+def test_boost_puts_the_information_caps_first():
+    res = [("mcp.register_server", 8.7), ("mcp.tools", 8.6), ("web.research", 6.0), ("x", 1.0)]
+    out = C.boost_info(res, {"info.seek", "web.research", "intel.lookup", "mcp.tools"}, 5)
+    assert [n for n, _ in out] == ["info.seek", "web.research", "intel.lookup", "mcp.register_server", "mcp.tools"]
+    assert out[0][1] > out[1][1] > out[2][1] > 8.7
+    assert [n for n, _ in C.boost_info(res, {"web.research"}, 3)] == ["web.research", "mcp.register_server", "mcp.tools"]
+
+
+def test_caps_search_applies_the_boost_only_without_filters():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "vera" / "dag" / "dag_store.py").read_text(encoding="utf-8")
+    body = src[src.index("async def caps_search"):src.index("def caps_list_categories")]
+    assert "if not category and not tags:" in body and "_isc.boost_info(results, CAPABILITY_REGISTRY.keys(), top_k)" in body
+
+
+def test_feed_hits_match_the_feeds_vera_follows():
+    # plan SK-3.5: an untracked subject still gets what the followed feeds carried (live 11 Oct: the Guardian property
+    # feed had "UK house prices flatline..." for "UK house prices")
+    import asyncio
+    from pathlib import Path
+    from vera.intel import intel_sources_core as isrc
+    src = (Path(__file__).resolve().parents[1] / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    fn = src[src.index("async def _feed_hits"):src.index("async def _seek_read")]
+    recs = [{"data": {"title": "UK house prices flatline as rising mortgage costs weigh", "link": "https://g.co/a",
+                      "published": "Wed, 07 Oct 2026 07:56:02 GMT"}, "created_at": "2026-10-07T08:00:00Z"},
+            {"data": {"title": "UK house price growth halves", "link": "https://g.co/b"}, "created_at": "x"},
+            {"data": {"title": "Office rents rise in London", "link": "https://g.co/c"}, "created_at": "x"}]
+
+    async def call(name, timeout, **kw):
+        if name == "fabric.sources":
+            return {"sources": [{"id": "intel-src-1", "label": "Guardian: property", "dataset_id": "d1"},
+                                {"id": "other-src", "dataset_id": "d2"}]}
+        assert kw["dataset_id"] == "d1"                      # only the feeds intel added
+        return {"records": recs}
+    ns = {"asyncio": asyncio, "List": list, "Dict": dict, "Any": object, "_seek_call": call, "_seek": C}
+    exec(fn, ns)
+    hits = asyncio.run(ns["_feed_hits"]("UK house prices"))
+    assert [h["url"] for h in hits] == ["https://g.co/a", "https://g.co/b"]
+    assert hits[0]["engine"] == "feed: Guardian: property" and hits[0]["published"].startswith("2026-10-07")
+    assert "feed_task = asyncio.create_task(_feed_hits(subject))" in src

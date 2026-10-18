@@ -41,6 +41,9 @@ FAMILIES = frozenset({
     "sklearn",       # a tabular student
     "knn",           # nearest neighbours over stored decisions
     "rules",         # patterns / rules (System 1 tier 1)
+    "whisper", "kokoro", "coqui",               # speech
+    "diffusers", "controlnet", "rembg", "esrgan",   # images
+    "jepa",          # the worldview's latent model
 })
 
 #: What goes in and what comes out, coarsely - enough for a planner to know
@@ -48,6 +51,7 @@ FAMILIES = frozenset({
 IO_KINDS = frozenset({
     "text", "texts", "pair", "query+texts", "text+labels", "question+context",
     "state",                                   # a decision state
+    "audio", "image", "image+text", "text+image",    # media
     "spans", "label", "labels", "scores", "vector", "vectors", "answer",
 })
 
@@ -165,9 +169,11 @@ def describe(bindings: Sequence[Mapping[str, Any]]) -> str:
         sel = b.get("selector") or {}
         pick = ", ".join(f"{k}={v!r}" for k, v in sorted(sel.items()))
         head = f"{pick}: " if pick else ""
-        line = f"- {head}{b.get('uses', '')}"
+        # first sentences only: this text rides in every tool listing; the
+        # full uses / limits are in model.callable
+        line = f"- {head}{_first_sentence(b.get('uses', ''), 160)}."
         if b.get("limits"):
-            line += f" Not for: {b['limits']}"
+            line += f" Not for: {_first_sentence(b['limits'], 110)}."
         lines.append(line)
     return "Models:\n" + "\n".join(lines)
 
@@ -291,6 +297,17 @@ def llm_describe(model: str, facts: Optional[Mapping[str, Any]] = None,
         desc = (kind.strip() or "General") + " LLM"
         if active:
             desc += f", mixture-of-experts with {active.group(1)}B active (fast for its size)"
+        # first, what it is FOR in task words: a list of facts alone ranked
+        # NER above every coder model for "write python code" (2026-10-10)
+        if "coder" in low or "code" in low:
+            purpose = "Writes, edits, reviews and explains code; general text generation too."
+        elif "vision" in ab or "-vl" in low or "vision" in low:
+            purpose = "Reads images and answers about them; writes and reasons in free text."
+        elif size is not None and size < 4 and not active:
+            purpose = "Quick short answers, simple rewrites and classification by generation."
+        else:
+            purpose = "Writes, summarises, plans, reasons and answers questions in free text; chat."
+        uses.append(purpose)
         uses.append(desc + (": " + ", ".join(what) if what else "") + ".")
         if f.get("ctx"):
             uses.append(f"Context window {int(f['ctx']) // 1024}k tokens.")
@@ -315,14 +332,16 @@ def llm_describe(model: str, facts: Optional[Mapping[str, Any]] = None,
 
 # ── the view ─────────────────────────────────────────────────────────────────
 def _node_rows(nodes: Sequence[Mapping[str, Any]], key: str) -> Dict[str, Dict[str, Any]]:
-    """Per node: what it reports for one served task key ({model, present, loaded})."""
+    """Per node facts for one served task, including reported package identity."""
     out = {}
     for n in nodes or ():
         row = (n.get("tasks") or {}).get(key)
         if isinstance(row, Mapping):
+            package = row.get("model_package") if isinstance(row.get("model_package"), Mapping) else {}
             out[str(n.get("node_id") or n.get("node") or "?")] = {
                 "model": row.get("model") or "", "present": bool(row.get("present")),
-                "loaded": bool(row.get("loaded"))}
+                "loaded": bool(row.get("loaded")),
+                "package_id": str(package.get("package_id") or row.get("package_id") or "")}
     return out
 
 
@@ -355,11 +374,20 @@ def callable_view(registry: Mapping[str, Mapping[str, Any]], *,
                 continue
             served = _node_rows(nodes, b.get("served_as") or b.get("task") or "")
             model = b.get("model") or defaults.get(b.get("served_as") or "", "") or ""
+            declared_package = str(b.get("package_id") or "")
+            observed_packages = sorted({str(v.get("package_id")) for v in served.values()
+                                        if v.get("package_id")})
+            package_id = declared_package or (observed_packages[0] if len(observed_packages) == 1 else "")
             rows.append({
                 **{k: b.get(k) for k in ("id", "cap", "selector", "task", "family", "uses", "limits",
                                          "io", "labels", "questions", "tier", "placement",
-                                         "package_id", "note")},
+                                         "package_id", "note", "served_as")},
                 "model": model,
+                "package_id": package_id,
+                "package_ids": observed_packages,
+                "package_conflict": bool(len(observed_packages) > 1 or
+                                         (declared_package and observed_packages
+                                          and declared_package not in observed_packages)),
                 "nodes": served,
                 "loaded_on": sorted(k for k, v in served.items() if v["loaded"]),
                 "present_on": sorted(k for k, v in served.items() if v["present"]),
@@ -427,3 +455,212 @@ def llm_rows(instances: Mapping[str, Mapping[str, Any]], tags: Mapping[str, Sequ
             "mcp_expose": True, "tags": t, "facts": f, "tps": speeds.get(m, {}),
         })
     return rows
+
+
+# ── measured: what the calls actually took ───────────────────────────────────
+def _norm_model(m: str) -> str:
+    m = str(m or "").strip().lower()
+    return m[:-7] if m.endswith(":latest") else m
+
+
+def _pct(xs: List[float], q: float) -> Optional[float]:
+    if not xs:
+        return None
+    xs = sorted(xs)
+    i = min(len(xs) - 1, max(0, int(round(q * (len(xs) - 1)))))
+    return round(xs[i], 3)
+
+
+def measure(rows: List[Dict[str, Any]], records: Iterable[Mapping[str, Any]], *,
+            window_s: float = 86400.0, now: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Add `measured` to each row from node activity records: calls, p50 / p95
+    seconds, error rate and nodes, over the last `window_s`.
+
+    LLM rows match on the model name. Node NLP / media calls are recorded per
+    endpoint (kind = ner, embed ...) without the model, so a binding matches on
+    its served key or task - several bindings behind one endpoint (nlp.ner's
+    ner / gliner / spacy) then share the figure, and the row says so (scope)."""
+    import time as _time
+    now = _time.time() if now is None else now
+    by_model: Dict[str, List[Mapping[str, Any]]] = {}
+    by_kind: Dict[str, List[Mapping[str, Any]]] = {}
+    for r in records or ():
+        end = float(r.get("end") or r.get("start") or 0)
+        if end and end < now - window_s:
+            continue
+        if r.get("service") == "ollama" and r.get("model"):
+            by_model.setdefault(_norm_model(r["model"]), []).append(r)
+        elif r.get("service") in ("nlp", "media") and r.get("kind"):
+            by_kind.setdefault(str(r["kind"]), []).append(r)
+    shared: Dict[str, int] = {}
+    for row in rows:
+        if row.get("family") != "ollama":
+            k = row.get("served_as") or row.get("task") or ""
+            if k not in by_kind:
+                k = row.get("task") or ""
+            row["_mkey"] = k
+            shared[k] = shared.get(k, 0) + 1
+    for row in rows:
+        if row.get("family") == "ollama":
+            recs, scope = by_model.get(_norm_model(row.get("model"))) or [], "model"
+        else:
+            k = row.pop("_mkey", "")
+            recs = by_kind.get(k) or []
+            scope = "model" if shared.get(k, 0) <= 1 else f"endpoint '{k}' (shared)"
+        if not recs:
+            row["measured"] = {"calls": 0}
+            continue
+        d = [float(r.get("duration_s") or 0) for r in recs if r.get("duration_s") is not None]
+        errs = sum(1 for r in recs if r.get("error") or int(r.get("status") or 200) >= 400)
+        row["measured"] = {"calls": len(recs), "p50_s": _pct(d, 0.5), "p95_s": _pct(d, 0.95),
+                           "error_rate": round(errs / len(recs), 3),
+                           "nodes": sorted({str(r.get("node")) for r in recs if r.get("node")}),
+                           "scope": scope, "window_h": round(window_s / 3600, 1)}
+    for row in rows:
+        row.pop("_mkey", None)
+    return rows
+
+
+# ── pick: the models that fit a task described in words ─────────────────────
+_WORD = re.compile(r"[a-z][a-z0-9+-]{2,}")
+_STOP = frozenset("the and for with from that this into text any are not use can its per one all "
+                  "you your when what which their them they has have will about over".split())
+
+
+def _stem(w: str) -> str:
+    """Plural / -ing / -ed folded, crudely (languages -> language, dates -> date)."""
+    if len(w) > 5 and w.endswith("ies"):
+        return w[:-3] + "y"
+    if len(w) > 5 and w.endswith(("sses", "xes", "ches", "shes")):
+        return w[:-2]
+    if len(w) > 4 and w.endswith("s") and not w.endswith("ss"):
+        return w[:-1]
+    if len(w) > 6 and w.endswith("ing"):
+        return w[:-3]
+    if len(w) > 5 and w.endswith("ed"):
+        return w[:-2]
+    return w
+
+
+def _words(t: str) -> set:
+    return {_stem(w) for w in _WORD.findall(str(t or "").lower()) if w not in _STOP}
+
+
+def _cos(a: Sequence[float], b: Sequence[float]) -> float:
+    num = sum(x * y for x, y in zip(a, b))
+    da = sum(x * x for x in a) ** 0.5
+    db = sum(y * y for y in b) ** 0.5
+    return num / (da * db) if da and db else 0.0
+
+
+#: words that name a medium, and which medium each io kind is
+_MEDIA_WORDS = {
+    "audio": ("audio", "voice", "speech", "spoken", "recording", "memo", "podcast", "sound", "mp3", "wav"),
+    "image": ("image", "photo", "picture", "screenshot", "png", "jpg", "drawing", "diagram", "chart"),
+    "text": ("text", "transcript", "words", "caption", "summary", "label", "labels", "answer"),
+}
+_IO_MEDIUM = {"audio": "audio", "image": "image", "image+text": "image", "text+image": "image",
+              "vector": "vector", "vectors": "vector"}     # an embedding is not text
+_LANGS = ("german", "french", "spanish", "italian", "dutch", "portuguese", "russian", "chinese",
+          "japanese", "arabic", "polish", "swedish", "turkish", "korean", "hindi", "welsh")
+
+
+#: verbs that ask for free text to be produced (stemmed as _words does)
+_GEN_VERBS = frozenset({"write", "draft", "generate", "compose", "plan", "summarise", "summarize",
+                        "explain", "code", "program", "script", "rewrite", "reason", "chat", "brainstorm",
+                        "outline", "debug", "refactor", "implement"})
+#: families that generate text, and outputs that are extracted / scored, not written
+_GENERATORS = frozenset({"ollama", "llama-server", "vllm"})
+_EXTRACTED = frozenset({"spans", "label", "labels", "scores", "vector", "vectors"})
+
+
+def _media_in(text: str) -> List[str]:
+    t = f" {str(text or '').lower()} "
+    return [m for m, ws in _MEDIA_WORDS.items() if any(f" {w} " in t or f" {w}s " in t for w in ws)]
+
+
+def _wanted_io(need: str) -> Tuple[set, Optional[str]]:
+    """(media the need starts from, the medium it wants out) - 'turn this voice
+    memo into text' is audio in, text out."""
+    low = str(need or "").lower()
+    out = None
+    for sep in (" into ", " to ", " as "):
+        if sep in low:
+            after = _media_in(low.split(sep, 1)[1])
+            if after:
+                out = after[0]
+                break
+    src = set(_media_in(low)) - ({out} if out else set())
+    return src, out
+
+
+def _io_medium(kind: str, side: str) -> str:
+    return _IO_MEDIUM.get(str(kind or ""), "text")
+
+
+def pick(rows: Sequence[Mapping[str, Any]], need: str, *, top_k: int = 5,
+         need_vec: Optional[Sequence[float]] = None,
+         row_vecs: Optional[Mapping[str, Sequence[float]]] = None) -> List[Dict[str, Any]]:
+    """Rank callable models for a task described in words.
+
+    score = meaning (cosine of the need against `uses`, when vectors are given)
+          + words shared with uses / task / io
+          - words the need shares with `limits` (a model that says "not for X")
+          + a little for a model loaded somewhere now, minus for errors seen.
+    Returns the top rows with `score` and `why`."""
+    nw = _words(need)
+    src, want_out = _wanted_io(need)
+    other_lang = any(l in str(need or "").lower() for l in _LANGS)
+    generative = bool(nw & _GEN_VERBS)
+    out = []
+    for r in rows:
+        io = r.get("io") or {}
+        m_in, m_out = _io_medium(io.get("in"), "in"), _io_medium(io.get("out"), "out")
+        direction = 0.0
+        if want_out and m_out == want_out:
+            direction += 0.15
+        elif want_out:
+            direction -= 0.1                       # gives something else
+        if src and m_in in src:
+            direction += 0.1
+        if want_out and m_in == want_out and m_out in src:
+            direction -= 0.25                      # the reverse of what is asked
+        # a need to produce free text (write, plan, code ...) wants a generator,
+        # not an extractor or classifier
+        if generative:
+            out_kind = str(io.get("out") or "")
+            if out_kind == "answer" and r.get("family") in _GENERATORS:
+                direction += 0.2
+            elif out_kind in _EXTRACTED:
+                direction -= 0.1
+        uses_low = str(r.get("uses") or "").lower()
+        lang = 0.0
+        if other_lang:
+            if "languages" in uses_low or "multilingual" in uses_low:
+                lang += 0.15
+            if "english" in uses_low:
+                lang -= 0.15
+        uw = _words(" ".join(str(r.get(k) or "") for k in ("uses", "task", "id"))
+                    + " " + " ".join(str(v) for v in (r.get("io") or {}).values()))
+        # only what the limits add: they reuse the model's own domain words
+        lw = _words(r.get("limits")) - uw
+        lex = len(nw & uw) / max(1, len(nw))
+        bad = len(nw & lw) / max(1, len(nw))
+        sem = _cos(need_vec, (row_vecs or {}).get(r.get("id"), ())) if need_vec is not None else 0.0
+        loaded = bool(r.get("loaded_on"))
+        err = float(((r.get("measured") or {}).get("error_rate")) or 0)
+        score = (0.6 * sem if need_vec is not None else 0.0) + 0.4 * lex - 0.3 * bad \
+            + (0.05 if loaded else 0.0) - 0.2 * err + direction + lang
+        why = []
+        if direction > 0:
+            why.append(f"takes {m_in}, gives {m_out}")
+        elif direction < 0:
+            why.append(f"wrong way round ({m_in} to {m_out})")
+        if nw & uw:
+            why.append("matches: " + ", ".join(sorted(nw & uw)[:6]))
+        if nw & lw:
+            why.append("but its limits mention: " + ", ".join(sorted(nw & lw)[:4]))
+        why.append("loaded on " + ", ".join(r["loaded_on"]) if loaded else "not loaded anywhere now")
+        out.append({**r, "score": round(score, 4), "why": "; ".join(why)})
+    out.sort(key=lambda x: -x["score"])
+    return out[:max(1, int(top_k or 5))]

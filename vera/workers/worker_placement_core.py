@@ -88,6 +88,26 @@ VETTED: Dict[str, Tuple[str, str]] = {}
 #: operator enables it there (Workers > roles).
 VETTED_CLASS = "extended"
 
+#: Where a capability's model runs, from its `serves=` bindings (cap ->
+#: nlp | media | gpu | cpu_compute | host), filled by the decorator in every
+#: process. It never makes a cap node-eligible - only evidence or a reviewed
+#: list does that - but it keeps a cap whose model lives in the host process
+#: on the host, and sends an eligible model cap to the class of nodes that
+#: serve that kind of work instead of the catch-all vetted class.
+MODEL_PLACEMENT: Dict[str, str] = {}
+#: binding placement -> worker class (gpu media servers are the media class)
+_MODEL_CLASS = {"nlp": "nlp", "media": "media", "gpu": "media"}
+
+
+def set_model_placement(cap_name: str, placements: Iterable[str]) -> None:
+    """Record a capability's model placement: one value when all its bindings
+    agree (ignoring 'any'), else nothing."""
+    ps = {str(p) for p in (placements or ()) if p and p != "any"}
+    if len(ps) == 1:
+        MODEL_PLACEMENT[str(cap_name)] = ps.pop()
+    else:
+        MODEL_PLACEMENT.pop(str(cap_name), None)
+
 
 def set_vetted(mapping: Optional[Dict[str, object]]) -> bool:
     """Replace the vetted set; True when it changed. Values: (class, why) or
@@ -123,6 +143,66 @@ HOST_BOUND_CAPS: Dict[str, str] = {
     "memory.noise.mark":     "a background marking job held by this process",
     "memory.canonical.mark": "a background folding job held by this process",
 }
+
+#: memory.* is node-safe for the memory module's own backends (memory_startup connects them on a worker). These
+#: caps go through data_fabric instead, whose Postgres and Chroma only the host's fabric_startup connects and whose
+#: SQLite store of record is a host file: on 2026-10-11 (dispatch stage full) memory.seek answered from node workers
+#: with no vector and no keyword leg, and a worker's memory.record_turn sent its chat-entity ingest into an
+#: unconnected fabric.
+_FABRIC = "reads or writes data_fabric, whose stores only the host connects"
+HOST_BOUND_CAPS.update({
+    "memory.seek":        _FABRIC,
+    "memory.read":        _FABRIC,
+    "memory.map":         _FABRIC,
+    "memory.browse":      _FABRIC,
+    "memory.tooling":     _FABRIC,
+    "memory.select":      _FABRIC,
+    "memory.record_turn": _FABRIC,
+    "memory.chroma.pool": "reports this process's Chroma connections",
+})
+
+#: SW-05's revision canary and its evidence journal are deliberately local to
+#: the authoritative Vera host.  The ordinary Memory backends are shared, but
+#: these capabilities also touch the host's canonical SQLite revision store
+#: and payload-free receipt journal.  Letting the full-dispatch stage offload
+#: them produced split-brain evidence: a rollback rehearsal could be written
+#: by one node while the next readiness read reached another and reported it
+#: missing.  Keep the complete write/reconcile/review boundary together; a
+#: future shared store may relax this only after its own placement review.
+_MEMORY_REVISION_STATE = (
+    "uses the host-authoritative SW-05 revision/receipt stores"
+)
+HOST_BOUND_CAPS.update({
+    "memory.store": _MEMORY_REVISION_STATE,
+    "memory.dual_write.reconcile": _MEMORY_REVISION_STATE,
+    "memory.dual_write.readiness": _MEMORY_REVISION_STATE,
+    "memory.dual_write.rollback_rehearse": _MEMORY_REVISION_STATE,
+})
+
+#: The switchboard validates against the switch REGISTRY in the code that runs it. A node worker runs the code it was
+#: last deployed with, so a switch added in a release is unknown there until the next worker deploy: on 18 Oct 2026
+#: minds.switch.set answered "unknown ids: discovery.read_files" from a worker and minds.effective listed the switch
+#: as ignored, so the ingress module's 15 s switch read flipped a just-released feature on and off by whichever
+#: process answered. The global layer is in Redis either way; the registry must be the host's.
+_SWITCH_REGISTRY = "validates against the host's switch registry (a worker's code may predate a new switch)"
+HOST_BOUND_CAPS.update({
+    "minds.switch.list": _SWITCH_REGISTRY,
+    "minds.switch.get": _SWITCH_REGISTRY,
+    "minds.switch.set": _SWITCH_REGISTRY,
+    "minds.validate": _SWITCH_REGISTRY,
+    "minds.effective": _SWITCH_REGISTRY,
+})
+
+#: The memory performance log (four-minds FM-7.9) reads this process's timing windows and git provenance: on a
+#: worker memory.perf.versions reported no running sha (17 Oct 2026), and compare's default head would have been "".
+_PERF_STATE = "reads the host process's timing windows and provenance"
+HOST_BOUND_CAPS.update({
+    "memory.perf.probe": _PERF_STATE,
+    "memory.perf.log_now": _PERF_STATE,
+    "memory.perf.versions": _PERF_STATE,
+    "memory.perf.compare": _PERF_STATE,
+    "memory.perf.rows": _PERF_STATE,
+})
 
 MUTATOR_SEGMENTS = frozenset({
     "set", "config", "configure", "enable", "disable", "reset", "reload",
@@ -176,6 +256,8 @@ def placement(cap_name: str, *, node_ok: Iterable[str] = (),
         return "host", "listed in VERA_WORKER_HOST_ONLY"
     if name in HOST_BOUND_CAPS:
         return "host", HOST_BOUND_CAPS[name]
+    if MODEL_PLACEMENT.get(name) == "host":
+        return "host", "its model runs in the host process (serves=)"
     ok = set(_names(node_ok))
     if name in ok:
         return "any", "admitted by VERA_WORKER_NODE_OK"
@@ -265,6 +347,10 @@ def class_of(cap_name: str, env: Optional[Dict[str, str]] = None) -> str:
         return ""
     if cap_name in NODE_SAFE_CAPS:
         return NODE_SAFE_CAPS[cap_name][0]
+    # an eligible model cap goes where its kind of model is served
+    mcls = _MODEL_CLASS.get(MODEL_PLACEMENT.get(cap_name, ""))
+    if mcls and mcls in CLASSES:
+        return mcls
     if cap_name in VETTED:
         return VETTED[cap_name][0]
     ns = namespace(cap_name)

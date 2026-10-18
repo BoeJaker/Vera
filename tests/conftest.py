@@ -13,6 +13,12 @@ known set of modules, so the tier is defined in one place.
 import pytest
 
 _CRITICAL_MODULES = {
+    "test_edge_guard_core",  # a page on another site could run any capability: no auth + CORS * (2026-10-17)
+    "test_edge_guard_asgi",  # the guard refuses before routing and closes foreign WebSockets (2026-10-17)
+    "test_term_tickets",  # a terminal socket was a shell for anyone who knew the path (2026-10-17)
+    "test_terminal_ws_tickets",  # the terminal routes refuse a foreign Origin and a missing ticket (2026-10-17)
+    "test_money_guard_core",  # a loop or widget could place a real broker order by name (2026-10-17)
+    "test_money_tag_dispatch",  # the dispatcher refuses money caps except from their own route (2026-10-17)
     "test_sandbox_idle_plan",  # sleep the container you judged, never an alias's target (2026-09-12)
     "test_operator_session_sweep",  # a cancelled run must not leak its browser context (2026-09-16)
     "test_gpu_residency",  # media models must not sit on the LLM's GPU while idle (2026-09-16)
@@ -31,6 +37,11 @@ _CRITICAL_MODULES = {
     "test_node_compute",  # model training ran on the Vera host, not the nodes (2026-10-02)
     "test_node_scheduling_and_test_pool",  # node jobs ignored node load; gates ran one at a time on the host (2026-10-04)
     "test_node_parity_evidence",  # node workers ran 91 of 2,700 caps; parity needs evidence per cap (2026-10-04)
+    "test_student_training",  # System 1 students: the W2 training path end to end, night-only guard rails (2026-10-12)
+    "test_node_compute_slots",  # a node worker ran one compute job at a time; a sweep ran in waves of three (2026-10-11)
+    "test_ml_workshop_pool",  # ML trials ran one at a time; data re-sent per job; jobs used 4 threads on 1 reserved core (2026-10-11)
+    "test_ml_inference_on_nodes",  # ML inference ran in the host process; only training epochs used the nodes (2026-10-11)
+    "test_ml_inference_off_event_loop",  # ml.onnx.run / ml.run ran inline on the event loop of the 2-core host (2026-10-11)
     "test_model_bindings",  # no list of callable models said what each is for; LLMs could not pick one (2026-10-10)
     "test_route_warm",  # the picker scored raw in_use (a 2-slot CPU node looked full) and ignored residency (2026-09-28)
     "test_route_warm_picker",  # an oversized context went to the GPU and spilled: the patched picker dropped ctx_need (2026-09-28)

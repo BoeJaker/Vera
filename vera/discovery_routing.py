@@ -14,9 +14,14 @@ import json
 import re
 from typing import Any, Sequence
 
-from vera.discovery_contract import (
-    CollectionOption, DiscoveryRequest, SourceCandidate,
-)
+try:
+    from vera.discovery_contract import (
+        CollectionOption, DiscoveryRequest, SourceCandidate,
+    )
+except ImportError:  # pragma: no cover - installed application spelling
+    from Vera.vera.discovery_contract import (
+        CollectionOption, DiscoveryRequest, SourceCandidate,
+    )
 
 
 WORKER_OFFER_SCHEMA = "vera.discovery-worker-offer/v1"

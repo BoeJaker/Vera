@@ -76,3 +76,24 @@ def test_capabilities_are_called_by_keyword():
     for rel in (("vera", "minds", "tool_shortlist.py"), ("vera", "minds", "judge.py")):
         src = open(os.path.join(ROOT, *rel), encoding="utf-8").read()
         assert not re.findall(r"await cap_\w+\((?!\)|\w+=)", src), rel
+
+
+def test_the_replay_holds_each_run_out_and_counts_what_no_past_run_used():
+    # FM-3.2: each step asks the shortlist with its own run held out; prose.author (r2 only) and exec.bash.run (r4
+    # only) were never used by another run, so no shortlist built from the past can offer them
+    out = TC.replay(INDEX)
+    assert out["n"] == 4 and out["tools_used"] == 6
+    assert out["unknown_rate"] == round(2 / 6, 3)
+    assert out["recall@28"] == round(4 / 6, 3) and out["hit@5"] == 1.0
+    assert out["recall@5"] <= out["recall@10"] <= out["recall@28"] and 0 < out["mrr"] <= 1.0
+    assert out["median_position"] in (1, 2)
+    assert TC.replay([]) == {"n": 0} and TC.replay([{"run": "x", "vec": [], "tools": ["a"]}]) == {"n": 0}
+
+
+def test_the_night_job_replays_after_a_successful_build_and_keeps_snapshots():
+    src = open(os.path.join(ROOT, "vera", "minds", "tool_shortlist.py"), encoding="utf-8").read()
+    job = src[src.index("async def _night_job("):src.index("# On the Loop Lab schedule")]
+    assert job.index('await r.set(KEY_NIGHT + night, "1", ex=86400)') < job.index("await run_replay(night)")
+    rep = src[src.index("async def run_replay("):src.index("try:                                     # pragma: no cover - import-shape only\n    from Vera.vera.minds import chat_tools_core")]
+    assert "asyncio.to_thread(TC.replay, rows)" in rep and "ltrim(KEY_REPLAY, 0, REPLAY_KEEP - 1)" in rep
+    assert '"caps.shortlist.replay"' in src

@@ -25,6 +25,13 @@ AUTHOR_TOOLS = frozenset({"code.author", "prose.author"})
 #: A step planned with only these caps has nothing to do after the author call.
 STEP_CAPS_OK = frozenset({"code.author", "prose.author", "code.edit",
                           "sandbox.session.fs.read", "code.read", "ide.fs.read"})
+#: Information-gathering caps a step may plan BEFORE its author call (per-run author_gather,
+#: compute-roles 11 Oct 2026): census prose-only took 380-1,148 s instead of ~200 s when its one
+#: step was planned [web.research, prose.author] - the author call could not end the step, so the
+#: executor re-read the file and counted its words 4-10 times. Gathering done, the author's ok
+#: result answers the step exactly as for an authoring-only plan.
+GATHER_CAPS = frozenset({"web.research", "web.fetch", "web.search", "info.seek", "intel.lookup",
+                         "memory.seek", "memory.read", "http.get"})
 FILE_RE = re.compile(r"\b[\w./-]+\.(?:html?|py|js|ts|css|md|txt|json|sh|yaml|yml|csv|rst)\b", re.I)
 SEAM_RE = re.compile(r"\b(?:then|after that|afterwards?|followed by|next,|and then)\b", re.I)
 URL_RE = re.compile(r"https?://\S+", re.I)
@@ -77,13 +84,16 @@ def reauthor_note(tool: str, path: str, earlier: str, *, failed_since: bool) -> 
 
 
 def step_is_answered(step_caps: Iterable[str], step_text: str, tool: str, result: Any,
-                     *, has_seam: Optional[Callable[[str], bool]] = None) -> Tuple[bool, str]:
-    """(True, why) when this author call answers the whole step."""
+                     *, has_seam: Optional[Callable[[str], bool]] = None,
+                     allow_gather: bool = False) -> Tuple[bool, str]:
+    """(True, why) when this author call answers the whole step. `allow_gather`: a step may
+    also plan information-gathering caps (GATHER_CAPS) - they come before the writing."""
     tool = str(tool or "")
     if tool not in AUTHOR_TOOLS:
         return False, ""
     caps = {str(c) for c in (step_caps or []) if c}
-    if not caps or not caps <= STEP_CAPS_OK:
+    ok_caps = STEP_CAPS_OK | GATHER_CAPS if allow_gather else STEP_CAPS_OK
+    if not caps or not caps <= ok_caps:
         return False, "the step plans more than authoring"
     if not isinstance(result, dict) or not result.get("ok"):
         return False, "the author call did not succeed"

@@ -301,6 +301,23 @@ remains mandatory.
 compatibility paths. It reads source and checks the runtime registration, but
 never imports the reviewed modules.
 
+The historical `memory.patch_capability_for_memory` startup invocation has
+been removed because the function is already a no-op and activity is owned by
+`capability_orchestration.act_enqueue`. The function itself, along with the
+other memory compatibility shims, remains importable. Its review is therefore
+`insufficient_evidence`, not removable: external-consumer coverage and two
+normal zero-use cycles are still required.
+
+`compatibility_consumer_inventory.py` can examine explicitly declared external
+source roots without importing or executing them. The scan is bounded by file
+count and bytes, ignores dependency and VCS directories, and records only root
+labels, relative paths, line numbers and content digests—never matching source
+text or absolute paths. Symlink targets and unsupported file types are reported
+as coverage exclusions rather than followed. Its evidence can be attached to the independent path
+reviews, but is deliberately labelled `declared_roots_only` and
+`global_external_coverage: false`. A clean scan of selected repositories is not
+proof that no other consumer exists and never creates removal authority.
+
 ### 7.3 The removal gate
 
 `removal_gate.py` (schema `vera.compatibility-removal-gate/v1`) evaluates one

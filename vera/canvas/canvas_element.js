@@ -226,6 +226,21 @@
   if (root.__veraCanvasElement) return;
   root.__veraCanvasElement = true;
 
+  /* four-minds FM-6 (Q7, owner yes 17 Oct): what an action on an item says about the person's interest in it - the
+     canvas curator's outcome. closed = parked or removed; restored = a parked or hidden item brought back; opened =
+     opened in place or maximised; used = acted on. Anything else says nothing and is not sent. */
+  const ENGAGE_USED = new Set(['pin', 'ctx', 'rerun', 'edit', 'save', 'explode', 'answer', 'take', 'nbrun', 'psend',
+    'pquery', 'pdispatch', 'prefresh', 'read', 'page', 'view', 'goto', 'loadmore', 'more', 'dgcopy', 'dgopen', 'entopen',
+    'entlook', 'shot', 'size']);
+  function engagementOf(act, state) {
+    if (act === 'park' || act === 'remove') return 'closed';
+    if (state === 'parked' || state === 'hidden') return act ? 'restored' : '';
+    if (act === 'open' || act === 'max' || act === 'nbopen') return 'opened';
+    return ENGAGE_USED.has(act) ? 'used' : '';
+  }
+  /* the surface an item shows, in the curator's terms: the capability or panel behind it, else its type */
+  function surfaceOf(b) { const c = (b && b.content) || {}; return String(c.surface || c.cap || c.panel || (b && b.type) || ''); }
+
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -6297,9 +6312,9 @@
         if (ln && body.contains(ln)) { const w = ln.closest('.vc-codewrap');
           w.querySelectorAll('.vc-line.tap').forEach((x) => x.classList.remove('tap')); ln.classList.add('tap');
           this._sourceToExplode(w); return; }
-        const ch = t.closest('.chip[data-key]'); if (ch) { ev.stopPropagation(); this.call('canvas.add', { key: ch.dataset.key }); return; }
+        const ch = t.closest('.chip[data-key]'); if (ch) { ev.stopPropagation(); this.call('canvas.add', { key: ch.dataset.key }); this._engage('restore', ch.dataset.key); return; }
         const hd = t.closest('.it-hd'); const it = hd && hd.closest('.it[data-key]');
-        if (it && !it.classList.contains('ghost')) { ev.stopPropagation(); if (it.classList.contains('ufold')) this._setFold(it.dataset.key, false); else this._toggleOpen(it.dataset.key); }
+        if (it && !it.classList.contains('ghost')) { ev.stopPropagation(); if (it.classList.contains('ufold')) this._setFold(it.dataset.key, false); else { this._engage('open', it.dataset.key, it); this._toggleOpen(it.dataset.key); } }
       });
       // hover: the host hears which item is under the pointer (the runs light up); in the Hover tier a folded item
       // opens in the layout while the pointer is on it — the column makes room, like a click in Zen
@@ -7271,6 +7286,7 @@
          (a code item's preview switch, say) would otherwise act on the LEAD's key. The nearest pane wins. */
       const pane = btn.closest('.fu-p[data-key]');
       const key = btn.dataset.layerKey || (pane ? pane.dataset.key : it ? it.dataset.key : '');   /* a layered panel's pill is outside its card */
+      this._engage(act, key, it);
       /* the desk's ⋯ menu sits on the stage, outside its card: it acts on its card, and goes once one of its entries is used */
       const pop = btn.closest('.hd-pop'); if (pop) pop.remove();
       if (!it && key) { const all = [...this.shadowRoot.querySelectorAll('.it[data-key]')]; it = all.find((x) => x.dataset.key === key)
@@ -8827,6 +8843,28 @@
       this._switch(r.id); return this._railRefresh();
     }
     _switch(id) { id = String(id || ''); if (!id) return; this._open = new Set(); this._px = {}; this._pw = {}; this._editKey = null; this.setAttribute('canvas-id', id); this._railMark(); try { this.dispatchEvent(new CustomEvent('vera:canvas:switch', { bubbles: true, detail: { id } })); } catch (e) {} }
+    /* four-minds FM-6 (Q7): engagement events, batched for 5 s (at most 50) and posted once, keepalive. Never in the
+       way of the action it describes: any failure is swallowed, and a lost batch is not retried. */
+    _engage(act, key, it) {
+      try {
+        if (!act || !key) return;
+        if (act === 'open' && this._open && this._open.has(String(key))) return;      // closing in place is not interest
+        if (act === 'max' && it && it.classList.contains('maxed')) return;
+        const b = this._blockOf(key); const event = engagementOf(act, b && b.state); const surface = surfaceOf(b);
+        if (!event || !surface) return;
+        const q = this._engQ || (this._engQ = []);
+        if (q.length < 50) q.push({ event, surface, kind: String((b && b.type) || ''), act: String(act), key: String(key), canvas: String(this.canvasId || ''), session: this._sid() });
+        if (!this._engT) this._engT = setTimeout(() => this._engFlush(), 5000);
+      } catch (e) { /* never in the way */ }
+    }
+    _engFlush() {
+      this._engT = 0; const q = this._engQ || []; this._engQ = []; if (!q.length) return;
+      const base = (window._veraBase || '').replace(/\/$/, '');
+      try {
+        fetch(base + '/mcp/call', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'canvas.engagement.record', arguments: { events: q } }) }).catch(() => {});
+      } catch (e) { /* dropped */ }
+    }
     /* Every per-item action is the capability the chat and the model use — one implementation — through the
        same /mcp/call the chat uses; the element only asks for a repaint afterwards. */
     async call(name, args, opts) {
@@ -8840,7 +8878,7 @@
     }
   }
 
-  const api = { NATURAL, NAT, divesOf, modelDivesOf, diveText, diveStrip, MODEL_DIVES, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
+  const api = { engagementOf, surfaceOf, NATURAL, NAT, divesOf, modelDivesOf, diveText, diveStrip, MODEL_DIVES, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

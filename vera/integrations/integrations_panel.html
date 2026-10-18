@@ -97,6 +97,7 @@
   </header>
   <div id="intake" role="status" aria-live="polite"></div>
   <div id="grid"></div>
+  <div id="pconns" style="margin-top:14px"></div>
 </div>
 
 <!-- payload-free external-effect evidence -->
@@ -247,15 +248,22 @@ async function loadEffects(){
     '<button class="btn" onclick="recordEffectActivation(\'deactivate\','+Number(activation.revision||0)+')">Deactivate</button></div>';
   const boundaries=(inventory.domains||[]).map(d=>{
     const ops=d.operations||{}, writes=(ops.remote_mutations||[]).length;
+    const coverage=d.effect_observation==='complete'?'observation complete':
+      d.effect_observation==='partial'?'observation partial':'not observed';
+    const enforcement=d.effect_enforcement||'not available';
     return '<div class="receipt"><b>'+esc(d.label||d.id)+'</b> <span class="bdg '+(writes?'warn':'ok')+'">'+
       (writes?esc(writes)+' remote write boundaries':'local/simulated')+'</span><div class="sub">'+
-      esc(String(d.boundary||'').replaceAll('_',' '))+' · shared effect contract '+
-      (d.effect_contract_applied?'applied':'not yet applied')+'</div></div>';
+      esc(String(d.boundary||'').replaceAll('_',' '))+' · observe-only projection: '+
+      esc(coverage)+' · enforcement: '+esc(enforcement)+'</div></div>';
   }).join('');
   const next=inventory.next_adapter||{};
+  const nextProviders=(next.providers||[]).join(' / ');
+  const nextText=nextProviders
+    ?'The next bounded observation candidate is '+esc(nextProviders)+'.'
+    :'No additional observation adapter is selected; enforcement evidence and provider guarantees remain separate work.';
   const inventoryInfo=inventory.error?'<div class="hint">Provider boundary inventory unavailable: '+esc(inventory.error)+'</div>':
-    '<div class="sec">Provider boundaries</div><div class="hint">Static inventory only — these labels do not probe providers or claim enforcement. The next bounded migration candidate is '+
-    esc((next.providers||[]).join(' / ')||'not selected')+' commerce writes; credentialed validation remains separate.</div>'+boundaries;
+    '<div class="sec">Provider boundaries</div><div class="hint">Static inventory only — these labels do not probe providers or claim enforcement. '+
+    nextText+'</div>'+boundaries;
   el.innerHTML='<div class="hint">Durable outcomes and replay evidence. Request/response bodies, credentials, and raw approval or idempotency references are never shown.</div>'
     +'<div class="metrics"><div class="metric"><b>'+esc(t.plans||0)+'</b><span>effect plans</span></div>'
     +'<div class="metric"><b>'+esc(t.receipts||0)+'</b><span>receipts</span></div>'
@@ -292,12 +300,22 @@ async function load(){
     api('/integrations/source/build/status')
   ]); ITEMS=r.integrations||[];
   renderIntake(life,build);
+  renderPlatformConns(r.platform_connections||[]);
   $('#count').textContent=ITEMS.length?ITEMS.length+' services':'';
   const g=$('#grid');
   if(!ITEMS.length){g.innerHTML='<div id="empty">No integrations yet.<br><br>'
     +'<button class="btn pri" onclick="openDiscover()">⌕ Discover local services</button></div>';return;}
   g.innerHTML='';
   ITEMS.forEach(it=>g.appendChild(card(it)));
+}
+/* the API connections kept on the Platforms page: the hub is a view over them (data-connections plan) */
+function renderPlatformConns(cs){
+  const el=$('#pconns');
+  if(!cs.length){el.innerHTML='';return;}
+  el.innerHTML='<div class="sub" style="margin:0 0 6px">API connections - kept on the Platforms page, with their keys in its credential store</div>'
+    +'<div style="display:flex;flex-wrap:wrap;gap:6px">'+cs.map(c=>
+      `<a class="bdg ${c.configured&&c.enabled?'ok':'warn'}" href="/platform/panel" target="_blank" rel="noopener"
+          title="${esc(c.base_url)}" style="text-decoration:none">⇄ ${esc(c.label)}</a>`).join('')+'</div>';
 }
 function renderIntake(life,build){
   const el=$('#intake');

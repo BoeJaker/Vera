@@ -69,7 +69,48 @@ NEEDS: Dict[str, Dict[str, float]] = {
     "markets.ml.train": {"cpu": 4.0, "mem_gb": 2.0},
     # a chunk runs as test_pool node_parallel (4) pytest processes
     "pytest.shard":     {"cpu": 4.0, "mem_gb": 6.0},
+    # ML Workshop inference (ml-workshop-compute MW-1)
+    "ml.forward":        {"cpu": 1.0, "mem_gb": 1.0},
+    "ml.module_forward": {"cpu": 1.0, "mem_gb": 1.0},
+    "onnx.run":          {"cpu": 1.0, "mem_gb": 1.0},
 }
+def threads_for(fn: str, default: int) -> int:
+    """Threads a job of `fn` may use: the cores it was admitted for (NEEDS).
+    Every job used the config-wide 4 while ml.train reserved 1 core, so
+    parallel trials would oversubscribe a node (2026-10-11, MW-4)."""
+    need = (NEEDS.get(fn) or {}).get("cpu")
+    return max(1, int(round(need))) if need else max(1, int(default or 1))
+
+
+#: Kept for the record: MW-7 stopped counting a job this long after the node's
+#: metrics passed its send time, assuming the metrics then show its load. They
+#: do not - a node CT's psutil reads the whole Proxmox host - so a node took 4
+#: four-core gate chunks at once on 12 cores (2026-10-12). Reservations now
+#: count for the job's whole run again (reserved_now).
+RESERVE_LAG_S = 15
+
+
+def compute_slots_default(ncpu: int) -> int:
+    """Compute jobs a node worker runs side by side (VERA_COMPUTE_SLOTS
+    overrides): an upper bound - free CPU / memory admit each job."""
+    return max(1, int(ncpu or 2) - 2)
+
+
+def run_detached(cap_name: str, is_worker: bool, slots: int) -> bool:
+    """Does a node worker run this task beside others instead of one at a
+    time? Only compute jobs, and only with more than one slot (MW-7)."""
+    return bool(is_worker and int(slots or 0) > 1 and cap_name == "compute.run")
+
+
+def reserved_now(res: Optional[Dict[str, Any]], metrics_at: float) -> Tuple[float, float]:
+    """(cpu, mem_gb) this host has in flight on a node: every job it sent and
+    has not heard back about, for the job's whole run. A node's metrics cannot
+    be trusted to show its own jobs (its psutil reads the Proxmox host), so a
+    reservation is never dropped early (2026-10-12, see RESERVE_LAG_S)."""
+    res = res or {}
+    return float(res.get("cpu", 0.0)), float(res.get("mem_gb", 0.0))
+
+
 #: Node metrics older than this are not trusted for admission.
 METRICS_STALE_S = 60
 
@@ -116,6 +157,12 @@ FUNCTIONS: Dict[str, Tuple[str, str, Tuple[str, ...]]] = {
     # a shard of a pipeline gate's pytest run, in the node's pinned test venv
     # (`testenv`: the node's venv matches the gate image's packages)
     "pytest.shard":    ("test_runner_core", "node_run_shard", ("testenv",)),
+    # ML Workshop inference off the host (ml-workshop-compute MW-1): a trained
+    # module's forward pass, a module's per-node introspection pass, and an
+    # exported ONNX model (the artifact travels by reference, _blob_refs)
+    "ml.forward":        ("ml_training", "node_forward", ("numpy",)),
+    "ml.module_forward": ("ml_workshop", "node_module_forward", ("numpy",)),
+    "onnx.run":          ("ml_onnx", "node_onnx_run", ("numpy", "onnxruntime")),
 }
 
 #: Modules that are not capability modules (so not loaded by a worker at
@@ -123,7 +170,7 @@ FUNCTIONS: Dict[str, Tuple[str, str, Tuple[str, ...]]] = {
 IMPORTS: Dict[str, str] = {"test_runner_core": "Vera.vera.evolve.test_runner_core"}
 
 #: What a worker reports it can run (registration field `libs`).
-PROBED_LIBS = ("numpy", "torch", "sklearn", "scipy")
+PROBED_LIBS = ("numpy", "torch", "sklearn", "scipy", "onnxruntime")
 
 
 def available_libs(find=importlib.util.find_spec) -> Dict[str, bool]:
@@ -281,20 +328,30 @@ def admit(fn: str, w: Dict[str, Any], cfg: Dict[str, Any],
     job, in units of what the job needs."""
     need = NEEDS.get(fn, {"cpu": 1.0, "mem_gb": 1.0})
     status = str(w.get("status") or "")
-    if status != "idle":
+    res = reserved or {}
+    slots = int(_f(w, "compute_slots") or 0)
+    if slots > 0:
+        # a worker that runs compute jobs side by side (MW-7): a free slot, and
+        # then free CPU / memory below, decide
+        busy = max(int(res.get("jobs", 0) or 0), int(_f(w, "compute_running") or 0))
+        if busy >= slots:
+            return False, f"all {slots} compute slots in use", 0.0
+        if status == "starting":
+            return False, "worker starting", 0.0
+    elif status != "idle":
         return False, f"worker busy ({status or 'unknown'})", 0.0
     if now is not None and _f(w, "metrics_at") and now - _f(w, "metrics_at") > METRICS_STALE_S:
         return False, "no fresh metrics", 0.0
-    res = reserved or {}
-    if res.get("jobs", 0) >= 1:
-        # a worker runs one task at a time: a second job sent now would only
-        # queue behind the first
+    if slots <= 0 and res.get("jobs", 0) >= 1:
+        # a worker on older code runs one task at a time: a second job sent
+        # now would only queue behind the first
         return False, "a job was just sent to it", 0.0
     cap = capacity(w)
     r_cpu = float(cfg.get("reserve_cpu", 2.0))
     r_mem = float(cfg.get("reserve_mem_gb", 8.0))
-    cpu_left = cap["cpu_free"] - r_cpu - res.get("cpu", 0.0)
-    mem_left = cap["mem_free_gb"] - r_mem - res.get("mem_gb", 0.0)
+    rc, rm = reserved_now(res, _f(w, "metrics_at"))
+    cpu_left = cap["cpu_free"] - r_cpu - rc
+    mem_left = cap["mem_free_gb"] - r_mem - rm
     if cpu_left < need["cpu"]:
         return False, (f"CPU: {cap['cpu_free']:.1f} of {cap['cores']:.0f} cores free, "
                        f"needs {need['cpu']:.1f} + {r_cpu:.0f} reserved"), 0.0
@@ -452,7 +509,7 @@ def ml_pins(versions: Dict[str, str]) -> Dict[str, str]:
     pickles must load on the host, so the libraries match. The local build tag
     goes - the worker takes torch's CPU build of the same release."""
     out = {}
-    for pkg in ("torch", "scikit-learn"):
+    for pkg in ("torch", "scikit-learn", "onnxruntime"):
         v = str((versions or {}).get(pkg) or "").split("+", 1)[0].strip()
         if v and all(p.isdigit() for p in v.split(".")):
             out[pkg] = v
@@ -465,3 +522,16 @@ def job_record(job: str, fn: str, *, where: str, why: str, label: str = "",
            "state": state}
     rec.update(extra)
     return rec
+
+
+async def resolve_blob_refs(inputs: Dict[str, Any], get) -> Optional[str]:
+    """Replace `_blob_refs` ({name: redis key}) in `inputs` with the stored
+    bytes, using `get` (an async Redis get). Returns an error, or None. One
+    place for the worker path and the host fallback - the host path used to
+    hand a function the bare key (2026-10-11)."""
+    for name, k in (inputs.pop("_blob_refs", None) or {}).items():
+        data = await get(str(k))
+        if data is None:
+            return f"input {name!r} expired or was withdrawn"
+        inputs[name] = data
+    return None

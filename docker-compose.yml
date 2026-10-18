@@ -100,9 +100,23 @@ services:
       #    PlatformIO, gcc/cmake, esptool, mpy-cross. Used by mesh.firmware.build
       #    and the build.* capabilities so Vera never needs a compiler in its image.
       VERA_BUILDER_URL: "${VERA_BUILDER_URL:-http://vera-builder:8080}"
+      # Shared token the builder requires on every route but /health (set it in .env).
+      VERA_BUILDER_TOKEN: "${VERA_BUILDER_TOKEN:-}"
 
       # ── IDE projects root (inside container)
       VERA_PROJECT_ROOT: "/data/projects"
+
+      # ── Durable application state and default-off Memory authority canary.
+      #    The revision and evidence paths must remain on the same persistent
+      #    volume. Enabling the canary still requires an explicit policy.
+      VERA_STATE_DIR: "${VERA_STATE_DIR:-/var/lib/vera-state}"
+      # Empty preserves the guarded legacy fallback until
+      # fabric.revision.state.migrate has copied existing state.
+      FABRIC_REVISION_SQLITE: "${FABRIC_REVISION_SQLITE:-}"
+      VERA_MEMORY_DUAL_WRITE_RECEIPTS: "${VERA_MEMORY_DUAL_WRITE_RECEIPTS:-/var/lib/vera-state/fabric/memory-dual-write-receipts.sqlite3}"
+      VERA_MEMORY_REVISION_CANARY: "${VERA_MEMORY_REVISION_CANARY:-0}"
+      VERA_MEMORY_RECONCILIATION_ENABLED: "${VERA_MEMORY_RECONCILIATION_ENABLED:-0}"
+      FABRIC_REVISION_POLICY: "${FABRIC_REVISION_POLICY:-}"
 
       # ── Durable Run observation state. This uses its own volume rather than
       #    moving VERA_STATE_DIR (which may already own unrelated live state).
@@ -132,6 +146,7 @@ services:
       - vera-projects:/data/projects
       - vera-tls:/root/.vera/tls   # persist auto-generated self-signed TLS cert
       - vera-run-observation:/var/lib/vera-run-observation
+      - vera-state:/var/lib/vera-state
     depends_on:
       redis:
         condition: service_healthy
@@ -327,9 +342,10 @@ services:
     image: vera-builder:latest
     container_name: vera-builder
     ports:
-      - "${BUILDER_PORT:-8785}:8080"
+      - "127.0.0.1:${BUILDER_PORT:-8785}:8080"   # loopback only: it runs arbitrary build commands
     environment:
       BUILDER_DEFAULT_FQBN: "${BUILDER_DEFAULT_FQBN:-esp32:esp32:esp32}"
+      BUILDER_TOKEN: "${VERA_BUILDER_TOKEN:-}"
     volumes:
       - builder-cache:/opt/arduino
       - builder-pio:/opt/platformio
@@ -346,6 +362,7 @@ volumes:
   vera-projects:
   vera-tls:
   vera-run-observation:
+  vera-state:
   vscode-data:
   garage-meta:
   garage-data:

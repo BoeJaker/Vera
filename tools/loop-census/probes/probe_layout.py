@@ -12,6 +12,11 @@ Layouts are per-run loop overrides (no config change):
   L6  the agentic MoE (Qwen-AgentWorld-35B-A3B, cpu-246) drives AND executes
   L7  L3 + answer check - the CPU MoE also checks the FINAL answer against the files
   L8  L7 + the warm CPU coder
+  I1  info-first: info.seek leads the catalogue for a goal that needs the web
+  I2  I1 + answer check (the CPU MoE checks the final answer against the files)
+  C1  verifier + final gate on the CPU MoE (qwen3.6:35b-a3b, cpu-246) - stronger checks, off the GPU
+  C2  journal/finalize/adjust/strategist on the 9B on gpu-250-cpu - same model, off the GPU slot
+  C3  C1 + C2
 Out: ~/loop-census/probe_layout/<layout>-<goal_id>.json (+ ev/<sid>.jsonl; CENSUS_PROBE_LAYOUT_OUT).
     python3 probe_layout.py --rescore <sid> <template> <goal_id> [layout]
 rebuilds a probe's result from its records (Redis events + sandbox files) without running
@@ -55,6 +60,39 @@ LAYOUTS = {
     "L7": {"deliverable_review": True, "answer_check": True},
     "L8": {"deliverable_review": True, "answer_check": True,
            "coder_model": "qwen3-coder:30b", "coder_node": "cpu-246"},
+    # info-first (compute-roles P1a, 10 Oct 2026)
+    "I1": {"info_first": True},
+    "I2": {"info_first": True, "answer_check": True},
+    # goal constraints into done_when + the final gate (plan.goal_frame, B2, 11 Oct 2026)
+    "G1": {"minds": {"plan.goal_frame": "on"}},
+    "G2": {"info_first": True, "answer_check": True, "minds": {"plan.goal_frame": "on"}},
+    "W2": {"minds": {"plan.goal_frame": "writer"}},            # R-B2: constraints to the writer (four-minds)
+    # NLI claim check (compute-roles P3, 11 Oct 2026): I2 + claim_nli shadow (recorded) / hint (to the checker)
+    "N0": {"info_first": True, "answer_check": True, "claim_nli": "shadow"},
+    "N1": {"info_first": True, "answer_check": True, "claim_nli": "hint"},
+    # P1b known dated facts from intel.lookup before planning (11 Oct 2026): alone / on top of I2
+    "F1": {"intel_prefacts": True},
+    "F2": {"info_first": True, "answer_check": True, "intel_prefacts": True},
+    # A3 plan critique (11 Oct 2026): the CPU 35B reviews the whole plan beside the run
+    "R1": {"plan_critique": True},
+    # A6 one journal view for the executor (11 Oct 2026): the live block shows only what is new
+    "J1": {"journal_delta": True},
+    # B3 step-result entities into the journal (node NER), alone / with the A6 journal view
+    "E1": {"journal_ner": True},
+    "E2": {"journal_ner": True, "journal_delta": True},
+    # gather-then-write steps end at their author call (prose-only 380-1,148 s on re-checks, 11 Oct 2026)
+    "W1": {"author_gather": True},
+    # the loop's role-less stages placed on CPU nodes (stage_models, 10 Oct 2026)
+    "C1": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246"},
+    "C2": {"stage_models": "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "finalize=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "adjust=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "strategist=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu"},
+    "C3": {"stage_models": "verifier=qwen3.6:35b-a3b@cpu-246,gate=qwen3.6:35b-a3b@cpu-246,"
+                           "journal=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "finalize=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "adjust=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu,"
+                           "strategist=jaahas/qwen3.5-uncensored:9b@gpu-250-cpu"},
 }
 RESCORE = ""
 if len(sys.argv) > 2 and sys.argv[1] == "--rescore":

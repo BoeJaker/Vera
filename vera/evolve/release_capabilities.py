@@ -164,6 +164,15 @@ async def census_summary() -> Dict[str, Any]:
                       if g.get("state") == "running"]
     except Exception as e:
         log.debug("running gates unavailable: %s", e)
+    # Protected scheduled test runs (release_core.may_release), from the schedule's Redis run list
+    try:
+        import sys as _sys
+        sc = (_sys.modules.get("schedule_capabilities")
+              or _sys.modules.get("Vera.vera.evolve.schedule_capabilities"))
+        if sc is not None and hasattr(sc, "protected_running"):
+            s["protected"] = await sc.protected_running()
+    except Exception as e:
+        log.debug("protected runs unavailable: %s", e)
     return s
 
 

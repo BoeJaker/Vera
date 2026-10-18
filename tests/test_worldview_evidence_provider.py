@@ -30,6 +30,21 @@ def _checkpoint(version="1"):
         framework="torch", framework_version="fixture")
 
 
+def _retrieval_checkpoint(version="1"):
+    return ModelPackage(
+        name="worldview-jepa", version=version, architecture="graph-jepa",
+        format="pytorch",
+        artifacts=(ModelArtifact(role="checkpoint", uri="artifact://worldview-live",
+                                 sha256="b" * 64, size_bytes=200),),
+        compatibility=ModelCompatibility(
+            tasks=("retrieval", "world-model"),
+            input_contract="vera.dataset-snapshot/v1",
+            output_contract="vera.worldview-retrieval/v1",
+            accelerators=("cuda",)),
+        framework="torch", framework_version="fixture",
+        source_revision="training-run-7", metadata=(("corpus", "canonical"),))
+
+
 def _observation(oid="obs-1"):
     return EvidenceObservation(
         observation_id=oid, subject_id="concept:7", score=0.75,
@@ -189,6 +204,71 @@ def test_projector_strips_anomaly_and_reranking_payloads():
     assert reranking.observations[0].score == 0.4
     assert "secret source text" not in str(anomaly.to_dict())
     assert "private" not in str(reranking.to_dict())
+
+
+def test_bound_retrieval_projection_derives_pinned_evidence_package():
+    snapshot = _snapshot()
+    retrieval = _retrieval_checkpoint()
+    checkpoint = JepaResultProjector.evidence_checkpoint(retrieval)
+    assert checkpoint == JepaResultProjector.evidence_checkpoint(retrieval)
+    assert checkpoint.artifacts == retrieval.artifacts
+    assert checkpoint.source_revision == retrieval.package_id
+    assert checkpoint.compatibility.tasks == ("worldview.evidence",)
+    assert dict(checkpoint.metadata)["source_model_package_id"] == retrieval.package_id
+
+    evidence = JepaResultProjector().project_bound_reranking(
+        result={
+            "ok": True, "eligible": True, "query_digest": "c" * 64,
+            "provenance": {
+                "snapshot_id": snapshot.snapshot_id,
+                "model_package_id": retrieval.package_id,
+                "provider_revision": "runtime-9",
+            },
+            "results": [{"id": "record-2", "text": "private", "score": 0.6,
+                         "concept": 3, "concept_label": "systems"}],
+            "citations": [{"record_id": "record-2", "revision_id": "revision-2"}],
+        }, snapshot=snapshot, retrieval_checkpoint=retrieval,
+        observed_at="2026-09-11T10:02:00Z")
+    assert evidence.model_package_id == checkpoint.package_id
+    assert evidence.provider_revision == "runtime-9"
+    assert evidence.observations[0].attributes["query_digest"] == "c" * 64
+    assert evidence.observations[0].citations == (
+        EvidenceCitation("record-2", "revision-2"),)
+    assert "private" not in str(evidence.to_dict())
+
+
+@pytest.mark.parametrize(("mutation", "message"), [
+    (lambda value: value.update(eligible=False), "not eligible"),
+    (lambda value: value["provenance"].update(snapshot_id="snap_" + "0" * 64),
+     "snapshot does not match"),
+    (lambda value: value["provenance"].update(model_package_id="mpkg_" + "0" * 64),
+     "model package does not match"),
+    (lambda value: value.update(query_digest="bad"), "canonical sha256"),
+    (lambda value: value.update(citations=[]), "exactly match"),
+    (lambda value: value["citations"].append(dict(value["citations"][0])), "unique"),
+])
+def test_bound_retrieval_projection_fails_closed_on_receipt_drift(mutation, message):
+    snapshot = _snapshot()
+    retrieval = _retrieval_checkpoint()
+    result = {
+        "ok": True, "eligible": True, "query_digest": "c" * 64,
+        "provenance": {"snapshot_id": snapshot.snapshot_id,
+                       "model_package_id": retrieval.package_id,
+                       "provider_revision": "runtime-9"},
+        "results": [{"id": "record-1", "score": 0.1,
+                     "concept": 3, "concept_label": "systems"}],
+        "citations": [{"record_id": "record-1", "revision_id": "revision-1"}],
+    }
+    mutation(result)
+    with pytest.raises(ValueError, match=message):
+        JepaResultProjector().project_bound_reranking(
+            result=result, snapshot=snapshot, retrieval_checkpoint=retrieval,
+            observed_at="2026-09-11T10:02:00Z")
+
+
+def test_evidence_checkpoint_rejects_non_retrieval_package():
+    with pytest.raises(ValueError, match="retrieval package"):
+        JepaResultProjector.evidence_checkpoint(_checkpoint())
 
 
 def test_projector_preserves_counterfactual_distinction_without_causal_claim():

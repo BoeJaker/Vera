@@ -395,6 +395,34 @@ if _CAP_AVAILABLE:
                                 {"question": question, "context": context})
 
     @capability(
+        "nlp.nli",
+        http_method="POST", http_path="/nlp/nli", http_tags=["nlp", "onnx"],
+        memory="off", serves=NLP_SERVES.get("nlp.nli"),
+        description=("Natural-language inference on pairs: does each premise (a passage) "
+                     "entail, contradict or not address its hypothesis (a statement)? No LLM "
+                     "call. Input: pairs (JSON array of {premise, hypothesis}, max 64) - or "
+                     "premise (str) + hypotheses (array) for one passage. Output: {results: "
+                     "[{entailment, neutral, contradiction}] in order, model, node}. Runs only "
+                     "on a node."),
+    )
+    async def cap_nlp_nli(pairs: Any = None, premise: str = "", hypotheses: Any = None,
+                          trace_id=None):
+        items = []
+        if isinstance(pairs, str):
+            try:
+                pairs = json.loads(pairs)
+            except ValueError:
+                pairs = []
+        for p in pairs or []:
+            if isinstance(p, dict) and p.get("premise") and p.get("hypothesis"):
+                items.append({"premise": str(p["premise"]), "hypothesis": str(p["hypothesis"])})
+        if premise:
+            items += [{"premise": premise, "hypothesis": h} for h in _coerce_docs(hypotheses)]
+        if not items:
+            return {"error": "pairs is required: [{premise, hypothesis}, ...]"}
+        return await _node_only("nlp.nli", "/nli", {"pairs": items[:64]})
+
+    @capability(
         "nlp.langid",
         http_method="POST", http_path="/nlp/langid", http_tags=["nlp", "onnx"],
         memory="on", serves=NLP_SERVES["nlp.langid"],

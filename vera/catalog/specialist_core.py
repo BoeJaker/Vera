@@ -31,9 +31,17 @@ def nlp_node_row(node: Dict[str, Any], host_version: Dict[str, Any],
     state = "modified" if comp.get("intact") is False else cmp["state"]
     tasks = {}
     for task, row in sorted((node.get("tasks") or {}).items()):
-        tasks[task] = {"model": row.get("model", ""), "present": bool(row.get("present")),
-                       "loaded": bool(row.get("loaded")),
-                       "package": ((row.get("model_package") or {}).get("version") or "")}
+        package = row.get("model_package") or {}
+        detail = {"model": row.get("model", ""), "present": bool(row.get("present")),
+                  "loaded": bool(row.get("loaded")),
+                  "package": package.get("version") or ""}
+        # Preserve the established compact row for legacy observations, while
+        # exposing portable identity whenever the node actually reports it.
+        if package.get("package_id"):
+            detail["package_id"] = package["package_id"]
+        if package.get("format"):
+            detail["format"] = package["format"]
+        tasks[task] = detail
     return {"node_id": str(node.get("node_id") or ""), "url": node.get("nlp_url", ""),
             "version": comp.get("version", ""), "state": state,
             "changed": list(comp.get("changed") or cmp.get("changed") or []),

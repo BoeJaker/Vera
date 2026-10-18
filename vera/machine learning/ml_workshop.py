@@ -1178,6 +1178,12 @@ ACTIVATIONS = {
 }
 
 
+def node_module_forward(inputs: dict, progress, should_stop) -> dict:
+    """compute.run entry (FUNCTIONS["ml.module_forward"]): ml.run's per-node
+    forward pass, as plain lists (it carries every node's output)."""
+    return {"result": _numpy_forward(inputs["module"], inputs["inputs"])}
+
+
 def _numpy_forward(module: dict, inputs: dict) -> dict:
     """Execute a forward pass using NumPy. Returns {node_id: output_array}."""
     if not HAS_NP:
@@ -1976,7 +1982,15 @@ if _CAP_AVAILABLE:
             return {"error": f"inputs JSON: {e}"}
 
         t0 = time.monotonic()
-        result = _numpy_forward(m, inp)
+        # on a node worker (ml-workshop-compute MW-1), else off the event loop
+        run = getattr(sys.modules.get("Vera.vera.capability_orchestration"), "NODE_COMPUTE", None)
+        ran_on = "host"
+        if run is not None:
+            out = await run("ml.module_forward", {"module": m, "inputs": inp}, label=f"ml.run {id}",
+                            max_wait_s=20, host_fallback=True)
+            result, ran_on = out["result"], (out.get("_node") or out.get("_where") or "")
+        else:
+            result = await asyncio.get_running_loop().run_in_executor(None, _numpy_forward, m, inp)
         elapsed_ms = round((time.monotonic() - t0) * 1000, 2)
 
         if "error" in result:
@@ -2009,6 +2023,7 @@ if _CAP_AVAILABLE:
         return {
             "id": id,
             "elapsed_ms": elapsed_ms,
+            "ran_on": ran_on,
             "summary": summary,
             "outputs": result if not summarise else {k: v for k, v in result.items()
                                                       if m.get("nodes") and

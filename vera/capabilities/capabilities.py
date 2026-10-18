@@ -108,8 +108,53 @@ async def gpu_health(trace_id=None):
 
 # ── STT ───────────────────────────────────────────────────────────────────────
 
+try:
+    from Vera.vera.model_binding_core import binding as _bind
+except ImportError:  # standalone/test import path
+    from vera.model_binding_core import binding as _bind
+
+# What each GPU media model is FOR (model.callable; appended to descriptions).
+# The model ids live on the GPU server (WHISPER_MODEL, SD_MODEL_ID,
+# TTS_MODEL_NAME in edge/GPU_inference.py), so they are not repeated here.
+_SERVES_STT = _bind(
+    "transcribe", "whisper", io_in="audio", io_out="text", placement="gpu",
+    uses="Transcribe speech in an audio clip to text in its own language, or translate it to English "
+         "(translate=true); detects the language when none is given.",
+    limits="music or non-speech sound; live streaming; noisy or long recordings lose accuracy with "
+           "the default 'base' Whisper model.")
+_SERVES_TTS = [
+    _bind("speak", "kokoro", selector={"engine": "kokoro"}, io_in="text", io_out="audio", placement="gpu",
+          uses="Natural-sounding speech from text in preset voices (voice=af_heart and others; "
+               "tts.voices lists them) - the default engine for Vera's voice.",
+          limits="cloning a new voice; languages beyond its voice set."),
+    _bind("speak", "coqui", selector={"engine": "coqui"}, io_in="text", io_out="audio", placement="gpu",
+          uses="Coqui TTS - the alternative engine; by default a single English voice "
+               "(LJSpeech Tacotron2), other Coqui models when the GPU server is configured for one.",
+          limits="choosing among voices (use kokoro)."),
+]
+_SERVES_IMAGE = _bind(
+    "text-to-image", "diffusers", io_in="text", io_out="image", placement="gpu",
+    uses="Generate a picture from a text prompt with Stable Diffusion (LoRAs for style, a seed to "
+         "reproduce, a transparent background on request).",
+    limits="readable text inside the image; exact layouts; pixel art (draw it, do not prompt SD).")
+_SERVES_POSE = _bind(
+    "pose-to-image", "controlnet", io_in="text+image", io_out="image", placement="gpu",
+    uses="Generate a picture of a figure in a given pose (a skeleton image, or a reference image the "
+         "pose is taken from), optionally keeping the reference's identity.",
+    limits="scenes without a person or pose.")
+_SERVES_REMBG = _bind(
+    "background-removal", "rembg", io_in="image", io_out="image", placement="gpu",
+    uses="Cut the subject out of an image onto a transparent background (u2net by default; "
+         "isnet-general-use for finer edges; alpha_matting for hair).",
+    limits="images whose subject and background are the same colour and texture.")
+_SERVES_UPSCALE = _bind(
+    "upscale", "esrgan", io_in="image", io_out="image", placement="gpu",
+    uses="Enlarge an image 2x or 4x with Real-ESRGAN, adding plausible detail (an anime model for "
+         "drawn art).",
+    limits="recovering text or faces that are not in the source.")
+
 @capability(
-    "stt.transcribe",
+    "stt.transcribe", serves=_SERVES_STT,
     http_method="POST", http_path="/stt/transcribe", http_tags=["gpu", "stt"],
     memory="auto",
     description="Transcribe audio to text using Whisper on the GPU node. "
@@ -147,7 +192,7 @@ async def stt_transcribe(
 # ── TTS ───────────────────────────────────────────────────────────────────────
 
 @capability(
-    "tts.synthesize",
+    "tts.synthesize", serves=_SERVES_TTS,
     http_method="POST", http_path="/tts/synthesize", http_tags=["gpu", "tts"],
     memory="off",
     description="Synthesize text to speech on the GPU node. "
@@ -348,7 +393,7 @@ def _archive_image(image_b64: str, **meta):
 
 
 @capability(
-    "image.generate",
+    "image.generate", serves=_SERVES_IMAGE,
     http_method="POST", http_path="/image/generate", http_tags=["gpu", "sd", "image"],
     memory="on",
     description="Generate an image with Stable Diffusion on the GPU node. "
@@ -1093,7 +1138,7 @@ def _parse_loras(loras: str):
 
 
 @capability(
-    "image.rembg",
+    "image.rembg", serves=_SERVES_REMBG,
     http_method="POST", http_path="/image/rembg", http_tags=["gpu", "sd", "image"],
     memory="off",
     description="Remove an image's background to transparent RGBA via rembg/SAM2 on the GPU "
@@ -1123,7 +1168,7 @@ async def image_rembg(image_b64: str, model: str = "u2net", alpha_matting: bool 
 
 
 @capability(
-    "image.pose",
+    "image.pose", serves=_SERVES_POSE,
     http_method="POST", http_path="/image/pose", http_tags=["gpu", "sd", "image"],
     memory="on",
     description="Generate an image conditioned on a pose via ControlNet OpenPose on the GPU "
@@ -1238,7 +1283,7 @@ async def image_ipadapter(
 
 
 @capability(
-    "image.upscale",
+    "image.upscale", serves=_SERVES_UPSCALE,
     http_method="POST", http_path="/image/upscale", http_tags=["gpu", "sd", "image"],
     memory="off",
     description="Upscale an image with Real-ESRGAN on the GPU node. Inputs: image_b64 (str!), "
@@ -2586,6 +2631,15 @@ async def http_get(url: str, timeout: int = 15, trace_id=None):
                                      verify=_verify,
                                      headers={"User-Agent": _WEB_USER_AGENT}) as c:
             t0=time.monotonic(); r=await c.get(url); ms=round((time.monotonic()-t0)*1000)
+        try:    # the web map's receipt (web-ingress WI-3); a missing gateway costs nothing
+            import sys as _sys
+            _ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+            if _ing is not None:
+                _ing.record_response(url, status=r.status_code, content_type=r.headers.get("content-type", ""),
+                                     body=r.text, elapsed_ms=ms, caller="http.get", final_url=str(r.url),
+                                     headers=dict(r.headers))
+        except Exception as _e:
+            log.debug("http.get receipt: %s", _e)
         return {"url":str(r.url),"status":r.status_code,"ok":r.is_success,"latency_ms":ms,
                 "content_type":r.headers.get("content-type",""),"body":r.text[:65536]}
     except Exception as e: return {"url":url,"error":str(e),"ok":False}
