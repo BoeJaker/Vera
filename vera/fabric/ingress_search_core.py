@@ -6,6 +6,7 @@ how often it changes, and how new it was when first seen. The result says, per p
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
@@ -259,3 +260,58 @@ def retention_curves(revisits: Iterable[Mapping[str, Any]], recall: Iterable[Map
             "cost": {"map_bytes": total_bytes,
                      "bytes_per_day": round(total_bytes / span_days) if span_days and span_days > 0 else None,
                      "bytes_per_receipt": per("web_fetches"), "bytes_per_link": per("web_links")}}
+
+
+# ── worldview concept seeds (WI-15, PLAN §13.4; vera-62's terms, 18 Oct) ─────
+
+SEED_MIN_POP, SEED_MAX_POP, SEED_CAP = 3, 19, 10
+GENERIC_LABEL_WORDS = frozenset({"fragments", "fragment", "misc", "miscellaneous", "various", "diverse", "samples",
+                                 "sample", "mixed", "assorted", "general", "clustering", "other", "unsorted"})
+
+
+def _title(text: Any) -> str:
+    return " ".join(str(text or "").strip().split("\n", 1)[0].split())[:80]
+
+
+def concept_seeds(concepts: Iterable[Mapping[str, Any]], last_seeded: Mapping[int, Any],
+                  cap: int = SEED_CAP) -> List[Dict[str, Any]]:
+    """The concepts tonight's crawl seeds (vera-62): population 3-19 only (singletons and doubletons are mostly dead
+    codebook codes), never a generic label, at most `cap`, never-seeded first then the longest ago; the query is the
+    label plus the titles of two member records, so the search hits the concept and not only its label's words."""
+    rows = []
+    for c in concepts or ():
+        pop = int(c.get("population") or 0)
+        label = " ".join(str(c.get("label") or "").split())
+        if not (SEED_MIN_POP <= pop <= SEED_MAX_POP) or not label:
+            continue
+        if set(re.findall(r"[a-z]+", label.lower())) & GENERIC_LABEL_WORDS:
+            continue
+        idx = int(c.get("idx"))
+        titles = [t for t in (_title(m.get("text")) for m in (c.get("members_sample") or [])[:2]) if t]
+        rows.append({"idx": idx, "label": label, "population": pop,
+                     "query": " ".join([label] + titles)[:300], "last": _ts(last_seeded.get(idx))})
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    rows.sort(key=lambda r: (r["last"] is not None, r["last"] or epoch, r["population"]))
+    for r in rows:
+        r.pop("last")
+    return rows[:max(0, int(cap if cap is not None else SEED_CAP))]
+
+
+def seed_effect(seeded: Iterable[Mapping[str, Any]], current: Mapping[int, int]) -> List[Dict[str, Any]]:
+    """Per seeded concept: population at its first seeding, now, and the change (worldview's own count judges it)."""
+    first: Dict[int, Dict[str, Any]] = {}
+    for r in seeded or ():
+        i = int(r.get("concept_idx"))
+        if i not in first:
+            first[i] = dict(r)
+            first[i]["times"] = 0
+            first[i]["pages"] = 0
+        first[i]["times"] += 1
+        first[i]["pages"] += int(r.get("pages") or 0)
+    out = []
+    for i, r in first.items():
+        before, now = int(r.get("population_at") or 0), current.get(i)
+        out.append({"idx": i, "label": r.get("label") or "", "population_at_first_seed": before,
+                    "population_now": now, "change": (now - before) if now is not None else None,
+                    "seedings": r["times"], "pages": r["pages"]})
+    return sorted(out, key=lambda x: x["idx"])

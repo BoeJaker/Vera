@@ -146,3 +146,22 @@ def test_fetch_receipts_carry_their_content_hash():
     assert any("web_fetches ADD COLUMN IF NOT EXISTS content_hash" in s for s in rc.DDL)
     caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
     assert '@capability("fabric.map.retention"' in caps and 'm["retention"]' in caps
+
+
+def test_concept_seeds_follow_vera62s_terms():
+    cs = [{"idx": 1, "population": 19, "label": "Advances in Reasoning AI",
+           "members_sample": [{"text": "From Soliloquy to Agora\nbody"}, {"text": "SOLAR-RL: long horizon\nx"}, {"text": "third"}]},
+          {"idx": 2, "population": 18, "label": "Diverse Topic Clustering Samples", "members_sample": []},
+          {"idx": 3, "population": 2, "label": "Tiny", "members_sample": []},
+          {"idx": 4, "population": 424, "label": "Tech News", "members_sample": []},
+          {"idx": 5, "population": 5, "label": "UK Lab Space", "members_sample": [{"text": "Cambridge vacancy"}]},
+          {"idx": 6, "population": 7, "label": "Proptech", "members_sample": []}]
+    seeds = sc.concept_seeds(cs, {6: NOW - timedelta(days=3), 5: NOW - timedelta(days=9)})
+    assert [s["idx"] for s in seeds] == [1, 5, 6]               # never seeded first, then oldest-seeded
+    assert seeds[0]["query"] == "Advances in Reasoning AI From Soliloquy to Agora SOLAR-RL: long horizon"
+    assert seeds[1]["query"] == "UK Lab Space Cambridge vacancy" and len(sc.concept_seeds(cs, {}, cap=1)) == 1
+    eff = sc.seed_effect([{"concept_idx": 5, "label": "UK Lab Space", "population_at": 5, "pages": 4},
+                          {"concept_idx": 5, "label": "UK Lab Space", "population_at": 6, "pages": 3}], {5: 9})
+    assert eff == [{"idx": 5, "label": "UK Lab Space", "population_at_first_seed": 5, "population_now": 9, "change": 4,
+                    "seedings": 2, "pages": 7}]
+    assert sc.seed_effect([{"concept_idx": 7, "population_at": 3}], {})[0]["change"] is None
