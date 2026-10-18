@@ -1604,6 +1604,28 @@
     const st = stagesOf(d); if (!st.length) return EMPTY('a gantt needs rows with a start and a length'); /* draw.names: the name column's width in px (a turn's steps need more than a tile's 52) */ const nw = (o && o.draw && +o.draw.names) ? Math.max(40, Math.min(260, +o.draw.names, (o.width > 0 ? Math.floor(o.width * 0.45) : 260))) : 0; /* never more than 45% of a narrow widget: the bars must stay readable (a 330 px reply left them none) */ const s0 = st.map((s) => num(s.start ?? s.x ?? s.from ?? 0)), s1 = st.map((s, i) => num(s.end ?? s.to ?? (s0[i] + num(s.duration ?? s.w ?? s.ms ?? s.len ?? 1)))); const lo = Math.min(...s0), hi = Math.max(...s1), sp = (hi - lo) || 1;
     return wrap('gantt', st.slice(0, (o && o.draw && o.draw.rows) || 8).map((s, i) => '<span class="vb-gr"><span class="n"' + (nw ? ' style="width:' + nw + 'px"' : '') + ' title="' + esc(nameOf(s)) + '">' + esc(nameOf(s)) + '</span><span class="track"><i style="left:' + ((s0[i] - lo) / sp * 100).toFixed(1) + '%;width:' + Math.max(1, (s1[i] - s0[i]) / sp * 100).toFixed(1) + '%;background:' + (s.col || (s.st === 'done' ? B.ac2 : s.st === 'now' ? B.ac : s.st === 'bad' ? B.ac4 : B.t3)) + '" title="' + esc(nameOf(s)) + ' · ' + fmt(s0[i]) + ' → ' + fmt(s1[i]) + '"></i></span></span>').join(''));
   };
+  // THE timeline (looplab-control §9 K1): the element reads each lane's own source; a record's draw carries the lane
+  // ids (draw.lanes), lane records it brings along (draw.lane_specs) and the range (draw.from / draw.to)
+  function ensureTimeline(base) {
+    if (typeof document === 'undefined' || !document.head || window.VeraTimeline || ensureTimeline.loading) return;
+    ensureTimeline.loading = true; const sc = document.createElement('script'); sc.src = (base || window._veraBase || '') + '/ui/vera-timeline.js'; sc.async = true;
+    sc.onload = () => { INSTANCES.forEach((el) => { try { el.render(); } catch (_) {} }); };
+    sc.onerror = () => { ensureTimeline.loading = false; sc.remove(); };
+    document.head.appendChild(sc);
+  }
+  // the face a lanes timeline has before its script or its lanes arrive: three lanes of sample marks, said so
+  const LANES_FACE = () => '<svg viewBox="0 0 300 66" width="100%" style="display:block"><g font-size="8" fill="#8a93a0">' +
+    ['code', 'runs', 'errors'].map((n, i) => '<text x="2" y="' + (14 + i * 20) + '">' + n + '</text><line x1="40" x2="298" y1="' + (11 + i * 20) + '" y2="' + (11 + i * 20) + '" stroke="#252c36"/>').join('') +
+    '</g>' + [[60, 0, 30], [120, 0, 18], [200, 1, 60], [90, 1, 24], [150, 2, 6], [230, 2, 6], [250, 2, 6]].map((b) => '<rect x="' + b[0] + '" y="' + (6 + b[1] * 20) + '" width="' + b[2] + '" height="9" rx="2" fill="' + ['#7aa2f7', '#c9a35a', '#f87171'][b[1]] + '" opacity=".75"/>').join('') +
+    '<line x1="210" x2="210" y1="2" y2="64" stroke="#e0a458" stroke-width="1.5"/></svg>';
+  R.lanes = (d, H, o) => {
+    const dr = Object.assign({}, (o && o.record && o.record.draw) || {}, (o && o.draw) || {});
+    if (typeof window === 'undefined' || !window.VeraTimeline) { if (typeof window !== 'undefined') ensureTimeline(o && o.base); return LANES_FACE(); }
+    (Array.isArray(dr.lane_specs) ? dr.lane_specs : []).forEach((s) => { try { window.VeraTimeline.registerLane(s); } catch (_) {} });
+    const ids = (Array.isArray(dr.lanes) ? dr.lanes : String(dr.lanes || '').split(',')).map((x) => String(x).trim()).filter(Boolean);
+    if (!ids.length) return LANES_FACE();
+    return '<vera-timeline lanes="' + esc(ids.join(',')) + '" from="' + esc(dr.from || '-24h') + '" to="' + esc(dr.to || '+12h') + '"></vera-timeline>';
+  };
   R.timeline = (d, H, o) => {
     const ev = evsOf(d).filter((r) => hhmm(r.when ?? r.t ?? r.ts ?? r.time).includes(':')); if (!ev.length) return EMPTY('a timeline needs timed events'); const mins = (t) => { const m = hhmm(t).match(/(\d{1,2}):(\d{2})/); return +m[1] * 60 + +m[2]; }; const ms = ev.map((r) => mins(r.when ?? r.t ?? r.ts ?? r.time)); const lo = Math.floor(Math.min(...ms) / 60) * 60, hi = Math.ceil((Math.max(...ms) + 1) / 60) * 60, sp = (hi - lo) || 1; const now = new Date().getHours() * 60 + new Date().getMinutes();
     return wrap('timeline', '<div class="vb-tl" style="height:' + chH(H, 22) + 'px"><b class="ax"></b>' + (now >= lo && now <= hi ? '<i class="now" style="left:' + ((now - lo) / sp * 100).toFixed(1) + '%"></i>' : '') + ev.slice(0, 10).map((r, i) => '<span class="' + (i % 2 ? 'up' : '') + '" style="left:' + ((ms[i] - lo) / sp * 100).toFixed(1) + '%;--ec:' + (r.col || r.color || (stCol(r.kind ?? r.level) === B.t3 ? DV(i) : stCol(r.kind ?? r.level))) + '"><i></i><em>' + esc(String(r.title ?? txt(r)).slice(0, 14)) + '</em><small>' + esc(hhmm(r.when ?? r.t ?? r.ts ?? r.time)) + '</small></span>').join('') + '</div>' + cap(String(lo / 60).padStart(2, '0') + ':00 → ' + String(hi / 60).padStart(2, '0') + ':00 · the marker is now'));
@@ -3004,7 +3026,7 @@
     // nothing to draw yet (no result, an empty one, or a placeholder string handed to a form that draws numbers): the
     // form's SAMPLE face, marked — never "no data yet" (opts.sample === false keeps the bare answer for a caller that asks)
     const editing = f === 'form' && opts.draw && Array.isArray(opts.draw.fields) && opts.draw.fields.length;   // a form to fill in has a face of its own, empty or not
-    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && f !== 'element' && !editing && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
+    if (f !== 'panel' && f !== 'composite' && f !== 'calnav' && f !== 'element' && f !== 'lanes' && !editing && (isEmpty(d) || (typeof d === 'string' && DRAWN[f] !== 'string'))) {
       if (opts.sample === false) { let own = ''; try { own = R[fi](d == null || typeof d === 'string' ? [] : d, H, Object.assign({ size: size }, opts)); } catch (_) { own = ''; } return (typeof own === 'string' && own) ? own : EMPTY('no data yet'); }
       return sampleFace(draw(f0, sample(f), size, Object.assign({}, opts, { sample: false, map: false })), size, opts.sampleTag);
     }

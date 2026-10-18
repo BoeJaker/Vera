@@ -8193,6 +8193,11 @@ def schedule(fn: Callable, interval: float, name: Optional[str] = None,
     days old, each running every ambient sweep against the one shared Redis.
     Jobs without the flag are unaffected.
     """
+    _nm = name or fn.__name__
+    if any(t.get("name") == _nm for t in SCHEDULED_TASKS):
+        # D10-2: a second registration under one name is nearly always a second copy of a module (imported by its
+        # full name beside the loader's bare name) - its state and jobs run twice
+        log.warning("schedule: job %r registered twice (a second copy of its module?)", _nm)
     SCHEDULED_TASKS.append({"fn": fn, "int": interval, "name": name or fn.__name__,
                             "last": None, "runs": 0, "skip_in_sandbox": skip_in_sandbox,
                             "singleton": singleton})

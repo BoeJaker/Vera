@@ -21,6 +21,12 @@ import sys
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+# ONE module object (as data_fabric and training_state; D10-2, 18 Oct 2026): the loader loads this file as `ledger_capabilities`,
+# while other modules import `Vera.vera.minds.ledger_capabilities` - a second copy with its own _STATS counters, its capabilities registered
+# over the first and the drain and sweep jobs scheduled twice. Both names point at this object before anything else runs.
+for _alias in ("ledger_capabilities", "Vera.vera.minds.ledger_capabilities"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
+
 import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, schedule
 
@@ -37,11 +43,16 @@ ORPHAN_AFTER_S = float(__import__("os").environ.get("VERA_DECIDE_ORPHAN_AFTER_S"
 GROUP = "drain"
 CONSUMER = "orchestrator"
 STREAM_MAXLEN = 200_000
+# A row the database keeps refusing (D10-3, backbone 18 Oct): after this many deliveries it moves to the dead-letter
+# stream instead of blocking every later row. Only when the database itself answers - an outage counts nothing.
+POISON_TRIES = 5
+DEAD_STREAM = "vera:decide:ledger:dead"
+DEAD_MAXLEN = 10_000
 DRAIN_BATCH = 500
 
 _STATS: Dict[str, int] = {"appended": 0, "refused": 0, "dropped_no_redis": 0,
                           "drained_decisions": 0, "drained_outcomes": 0, "drain_errors": 0,
-                          "orphaned_runs": 0, "interrupted_outcomes": 0}
+                          "orphaned_runs": 0, "interrupted_outcomes": 0, "dead_lettered": 0}
 _DDL_DONE = False
 _PARTITIONS: set = set()
 
@@ -56,6 +67,13 @@ DDL = [
            PRIMARY KEY (decision_id, ts)
        ) PARTITION BY RANGE (ts)""",
     "CREATE INDEX IF NOT EXISTS decision_ledger_question_ts ON decision_ledger (question_id, ts)",
+    # D10-3: the judge, calibration and label queue look shadows up by the live decision they answer
+    # (row->'detail'->>'for'), exports by run, and reports by mode + question over time. Without these every such
+    # query scanned every partition.
+    "CREATE INDEX IF NOT EXISTS decision_ledger_shadow_for ON decision_ledger "
+    "((row->'detail'->>'for')) WHERE mode = 'shadow'",
+    "CREATE INDEX IF NOT EXISTS decision_ledger_run ON decision_ledger (run_id)",
+    "CREATE INDEX IF NOT EXISTS decision_ledger_mode_question_ts ON decision_ledger (mode, question_id, ts)",
     """CREATE TABLE IF NOT EXISTS decision_outcomes (
            id          BIGSERIAL PRIMARY KEY,
            decision_id TEXT NOT NULL,
@@ -140,6 +158,29 @@ async def _write(conn, kind: str, row: Dict[str, Any]) -> None:
     _STATS["drained_decisions"] += 1
 
 
+async def _db_alive(conn) -> bool:
+    """Does the database answer? Tells a row the database refuses from a database that is down."""
+    try:
+        return (await conn.fetchval("SELECT 1")) == 1
+    except Exception:
+        return False
+
+
+async def _delivery_count(r, entry_id) -> int:
+    try:
+        res = await r.xpending_range(STREAM, GROUP, min=entry_id, max=entry_id, count=1)
+        return int((res[0] or {}).get("times_delivered") or 0) if res else 0
+    except Exception:
+        return 0
+
+
+async def _dead_letter(r, entry_id, fields: Dict[str, Any], error: BaseException, tries: int) -> None:
+    await r.xadd(DEAD_STREAM, {"entry": _s(entry_id), "kind": str(fields.get("kind") or ""),
+                               "row": str(fields.get("row") or "")[:200_000], "tries": str(tries),
+                               "error": f"{type(error).__name__}: {str(error)[:300]}"},
+                 maxlen=DEAD_MAXLEN, approximate=True)
+
+
 async def drain_once(batch: int = DRAIN_BATCH) -> Dict[str, Any]:
     """Move up to `batch` rows from the stream into Postgres. Own pending rows first."""
     r, pool = _orch.REDIS, _orch.PG_POOL
@@ -176,7 +217,25 @@ async def drain_once(batch: int = DRAIN_BATCH) -> Dict[str, Any]:
                                     _s(entry_id), "; ".join(bad)[:200])
                         acked.append(entry_id)
                         continue
-                    await _write(conn, kind, row)
+                    try:
+                        await _write(conn, kind, row)
+                    except Exception as e:
+                        if not await _db_alive(conn):
+                            raise                    # the database is down: stop, count nothing
+                        tries = await _delivery_count(r, entry_id)
+                        if tries >= POISON_TRIES:
+                            # This one row keeps failing while the database answers: move it aside so the
+                            # rows behind it drain (it used to block the ledger for good).
+                            await _dead_letter(r, entry_id, fields, e, tries)
+                            _STATS["dead_lettered"] += 1
+                            log.warning("decision ledger: row %s refused %d times (%s) - moved to %s",
+                                        _s(entry_id), tries, str(e)[:160], DEAD_STREAM)
+                            acked.append(entry_id)
+                            continue
+                        _STATS["drain_errors"] += 1
+                        log.warning("decision ledger: row %s refused (try %d of %d): %s",
+                                    _s(entry_id), tries, POISON_TRIES, str(e)[:160])
+                        break                        # it and the rest of this batch stay pending
                     acked.append(entry_id)
         finally:
             if acked:

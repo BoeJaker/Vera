@@ -123,3 +123,45 @@ def test_map_search_runs_the_legs_concurrently_and_never_filters_chroma():
     ms = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_map_search")
     seg = ast.get_source_segment(src, ms)
     assert "ensure_future(_text())" in seg and "sc.fuse(" in seg and '"nlp.rerank"' in seg and "RERANK_TIMEOUT_S" in seg
+
+
+def test_retention_curves():
+    rev = [{"bucket": "first", "n": 60}, {"bucket": "<1d", "n": 20, "unchanged": 15, "comparable": 20},
+           {"bucket": "7-30d", "n": 20, "unchanged": 4, "comparable": 10}]
+    rec = [{"bucket": "<1d", "n": 3}, {"bucket": "30-60d", "n": 1}]
+    r = sc.retention_curves(rev, rec, {"web_fetches": 1000, "web_links": 500, "web_urls": 500},
+                            {"web_fetches": 100, "web_links": 50}, 2.0)
+    assert r["fetches"] == 100 and r["first_fetches"] == 60
+    assert r["by_age"]["<1d"] == {"revisits": 20, "revisit_rate": 0.2, "unchanged_rate": 0.75}
+    assert r["by_age"]["7-30d"]["unchanged_rate"] == 0.4 and r["by_age"][">90d"]["revisit_rate"] == 0.0
+    assert r["recall_by_age"]["<1d"] == 0.75 and r["recall_by_age"]["30-60d"] == 0.25 and r["cited"] == 4
+    assert r["cost"] == {"map_bytes": 2000, "bytes_per_day": 1000, "bytes_per_receipt": 10, "bytes_per_link": 10}
+    e = sc.retention_curves([], [], {}, {}, 0)
+    assert e["by_age"]["<1d"]["revisit_rate"] is None and e["cost"]["bytes_per_day"] is None
+
+
+def test_fetch_receipts_carry_their_content_hash():
+    from vera.fabric import ingress_receipts_core as rc
+    assert "content_hash) VALUES" in rc.INSERT_FETCH and "$11" in rc.INSERT_FETCH
+    assert any("web_fetches ADD COLUMN IF NOT EXISTS content_hash" in s for s in rc.DDL)
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert '@capability("fabric.map.retention"' in caps and 'm["retention"]' in caps
+
+
+def test_concept_seeds_follow_vera62s_terms():
+    cs = [{"idx": 1, "population": 19, "label": "Advances in Reasoning AI",
+           "members_sample": [{"text": "From Soliloquy to Agora\nbody"}, {"text": "SOLAR-RL: long horizon\nx"}, {"text": "third"}]},
+          {"idx": 2, "population": 18, "label": "Diverse Topic Clustering Samples", "members_sample": []},
+          {"idx": 3, "population": 2, "label": "Tiny", "members_sample": []},
+          {"idx": 4, "population": 424, "label": "Tech News", "members_sample": []},
+          {"idx": 5, "population": 5, "label": "UK Lab Space", "members_sample": [{"text": "Cambridge vacancy"}]},
+          {"idx": 6, "population": 7, "label": "Proptech", "members_sample": []}]
+    seeds = sc.concept_seeds(cs, {6: NOW - timedelta(days=3), 5: NOW - timedelta(days=9)})
+    assert [s["idx"] for s in seeds] == [1, 5, 6]               # never seeded first, then oldest-seeded
+    assert seeds[0]["query"] == "Advances in Reasoning AI From Soliloquy to Agora SOLAR-RL: long horizon"
+    assert seeds[1]["query"] == "UK Lab Space Cambridge vacancy" and len(sc.concept_seeds(cs, {}, cap=1)) == 1
+    eff = sc.seed_effect([{"concept_idx": 5, "label": "UK Lab Space", "population_at": 5, "pages": 4},
+                          {"concept_idx": 5, "label": "UK Lab Space", "population_at": 6, "pages": 3}], {5: 9})
+    assert eff == [{"idx": 5, "label": "UK Lab Space", "population_at_first_seed": 5, "population_now": 9, "change": 4,
+                    "seedings": 2, "pages": 7}]
+    assert sc.seed_effect([{"concept_idx": 7, "population_at": 3}], {})[0]["change"] is None

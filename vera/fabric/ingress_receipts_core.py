@@ -106,6 +106,10 @@ DDL: Tuple[str, ...] = (
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty REAL",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS novelty_kind TEXT",
     "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS canonical_hash TEXT",
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_novelty REAL",
+    "ALTER TABLE web_fetches ADD COLUMN IF NOT EXISTS content_hash TEXT",
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_twin TEXT",
+    "ALTER TABLE web_urls ADD COLUMN IF NOT EXISTS semantic_at TIMESTAMPTZ",
     # WI-8: topic maps, keyed on the intel topic id
     """CREATE TABLE IF NOT EXISTS web_topic (
         topic_key   TEXT PRIMARY KEY,
@@ -134,6 +138,16 @@ DDL: Tuple[str, ...] = (
         source     TEXT,
         PRIMARY KEY (topic_key, url_key))""",
     "CREATE INDEX IF NOT EXISTS web_topic_members_url ON web_topic_members(url_key)",
+    """CREATE TABLE IF NOT EXISTS web_concept_seeds (
+        id            BIGSERIAL PRIMARY KEY,
+        ts            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        concept_idx   INT NOT NULL,
+        label         TEXT,
+        population_at INT,
+        query         TEXT,
+        urls          INT,
+        pages         INT)""",
+    "CREATE INDEX IF NOT EXISTS web_concept_seeds_idx ON web_concept_seeds(concept_idx, ts)",
     """CREATE TABLE IF NOT EXISTS web_metrics_daily (
         day     DATE PRIMARY KEY,
         metrics JSONB NOT NULL,
@@ -142,7 +156,7 @@ DDL: Tuple[str, ...] = (
 )
 
 MAP_TABLES = ("web_hosts", "web_urls", "web_fetches", "web_links", "web_content", "web_queries", "web_topic",
-              "web_topic_members", "web_metrics_daily")
+              "web_topic_members", "web_metrics_daily", "web_concept_seeds")
 
 #: Upserts, in the order the writer runs them. $n placeholders (asyncpg).
 UPSERT_HOST = """INSERT INTO web_hosts (host, fetches, errors, bytes) VALUES ($1, 1, $2, $3)
@@ -162,8 +176,8 @@ UPSERT_URL = """INSERT INTO web_urls (url_key, host, last_status, content_type, 
     simhash = COALESCE(EXCLUDED.simhash, web_urls.simhash), fetches = web_urls.fetches + 1,
     last_caller = EXCLUDED.last_caller, last_purpose = EXCLUDED.last_purpose, policy = EXCLUDED.policy,
     final_key = COALESCE(EXCLUDED.final_key, web_urls.final_key), title = COALESCE(EXCLUDED.title, web_urls.title)"""
-INSERT_FETCH = """INSERT INTO web_fetches (url_key, host, status, ms, bytes, from_cache, caller, purpose, policy, error)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"""
+INSERT_FETCH = """INSERT INTO web_fetches (url_key, host, status, ms, bytes, from_cache, caller, purpose, policy, error,
+    content_hash) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)"""
 UPSERT_LINK = """INSERT INTO web_links (src_key, dst_key, text, rel) VALUES ($1, $2, $3, $4)
     ON CONFLICT (src_key, dst_key) DO UPDATE SET last_seen = NOW(), text = COALESCE(EXCLUDED.text, web_links.text)"""
 UPSERT_CONTENT = """INSERT INTO web_content (content_hash, first_key, size, reader, simhash, b0, b1, b2, b3)
@@ -184,6 +198,8 @@ LOOKUP_BANDS = ("SELECT content_hash, simhash FROM web_content WHERE b0 = ANY($1
 # the other, the UPDATE failed, and (in one transaction with the receipts) took the whole batch with it (18 Oct)
 UPDATE_URL_NOVELTY = ("UPDATE web_urls SET novelty = $2::real, novelty_kind = $3::text, canonical_hash = $4::text "
                       "WHERE url_key = $1::text")
+UPDATE_URL_SEMANTIC = ("UPDATE web_urls SET semantic_novelty = $2::real, semantic_twin = $3::text, semantic_at = NOW() "
+                       "WHERE url_key = $1::text")
 UPDATE_HOST_YIELD = ("UPDATE web_hosts SET novel_yield = CASE WHEN novel_yield IS NULL THEN $2::real "
                      "ELSE novel_yield * 0.9 + $2::real * 0.1 END WHERE host = $1::text")
 
@@ -259,7 +275,7 @@ def rows_for(item: Dict[str, Any]) -> Dict[str, Any]:
                 item.get("title") or None),
         "fetch": (key, host, status or None, int(item.get("elapsed_ms") or 0), int(item.get("bytes") or 0),
                   bool(item.get("from_cache")), item.get("caller") or None, item.get("purpose") or None,
-                  item.get("policy"), item.get("error") or None),
+                  item.get("policy"), item.get("error") or None, content_hash),
         "content": content_row,
         "links": links,
         "key": key, "content_hash": content_hash,
