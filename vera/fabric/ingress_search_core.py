@@ -142,3 +142,83 @@ def daily_metrics(purpose_counts: Mapping[str, int], overlaps: Iterable[Optional
         "fetches": int(fetches or 0),
         "pages_per_question": round(int(fetches or 0) / asked, 1) if asked else None,
     }
+
+
+# ── the hybrid query (WI-14d, PLAN §13.3 "the query") ─────────────────────────
+
+RRF_K = 60
+RERANK_WEIGHT = 0.5
+
+
+def fuse(legs: Mapping[str, Iterable[Mapping[str, Any]]], key_of, *, k: int = RRF_K,
+         weights: Optional[Mapping[str, float]] = None) -> List[Dict[str, Any]]:
+    """Reciprocal rank fusion of ranked page lists ({leg: [page, ...]} in rank order), one row per url_key: the
+    page fields from the leg with the longest text, `rank` = sum of weight / (k + position), `legs` = which legs
+    found it. Scale-free, so a cosine and a ts_rank never meet as numbers."""
+    rows: Dict[str, Dict[str, Any]] = {}
+    for leg, pages in legs.items():
+        w = float((weights or {}).get(leg, 1.0))
+        for pos, p in enumerate(pages or ()):
+            url = str(p.get("url") or "")
+            key = key_of(url) if url else ""
+            if not key:
+                continue
+            row = rows.get(key)
+            if row is None:
+                row = rows[key] = dict(p, rank=0.0, legs=[])
+            elif len(str(p.get("full_text") or "")) > len(str(row.get("full_text") or "")):
+                row.update({kk: v for kk, v in p.items() if kk not in ("rank", "legs")})
+            if leg not in row["legs"]:
+                row["legs"].append(leg)
+                row["rank"] += w / (k + pos + 1)
+    return sorted(rows.values(), key=lambda r: r["rank"], reverse=True)
+
+
+def squash(x: Any) -> float:
+    """A reranker's raw score (a logit) to 0..1."""
+    import math
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return 0.0
+    if 0.0 <= v <= 1.0:
+        return v
+    return 1.0 / (1.0 + math.exp(-max(-30.0, min(30.0, v))))
+
+
+def apply_rerank(pages: List[Dict[str, Any]], ranked: Iterable[Mapping[str, Any]],
+                 weight: float = RERANK_WEIGHT) -> List[Dict[str, Any]]:
+    """Blend a reranker's verdicts ({index, score} over `pages`' order) into the fused rank: rank = (1-w) * fused
+    (normalised to the top) + w * reranker. Pages the reranker did not score keep their fused share only."""
+    if not pages:
+        return pages
+    top = max(float(p.get("rank") or 0.0) for p in pages) or 1.0
+    rr: Dict[int, float] = {}
+    for x in ranked or ():
+        try:
+            rr[int(x.get("index"))] = squash(x.get("score"))
+        except (TypeError, ValueError):
+            continue
+    if not rr:
+        return pages
+    out = []
+    for i, p in enumerate(pages):
+        q = dict(p)
+        q["rerank"] = round(rr[i], 4) if i in rr else None
+        q["rank"] = (1 - weight) * float(p.get("rank") or 0.0) / top + (weight * rr[i] if i in rr else 0.0)
+        out.append(q)
+    return sorted(out, key=lambda r: r["rank"], reverse=True)
+
+
+def record_page(rid: str, dataset_id: str, text: str, data: Any, score: float) -> Optional[Dict[str, Any]]:
+    """A fabric record as a page for the vector leg: only records that carry an http(s) url."""
+    import json as _json
+    try:
+        d = _json.loads(data) if isinstance(data, str) and data else (data if isinstance(data, dict) else {})
+    except ValueError:
+        d = {}
+    url = str(d.get("url") or "")
+    if not url.startswith(("http://", "https://")):
+        return None
+    return {"url": url, "title": str(d.get("title") or "")[:200], "full_text": str(text or d.get("text") or ""),
+            "dataset_id": dataset_id or "", "rank": float(score or 0.0), "record_id": rid}
