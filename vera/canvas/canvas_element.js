@@ -773,6 +773,10 @@
     const reg = await PANEL_REG; const p = reg.find((x) => x && (x.id === id || x.label === id)) || null;
     const m = p && String(p.html || '').match(/<iframe[^>]+src="([^"]+)"/i);
     let src = m ? m[1] : (PANEL_ALIASES[id] || '');
+    /* AN INJECT PANEL HAS NO PAGE OF ITS OWN (WSU-104: Speech -> Text, Cap List, System Log, Job Stream, ... opened on the desk as
+       "<name>_panel.html not found" - /ui/panels/<id> answers OK with that page, so the guess stuck): the server hosts it on its
+       own at /ui/panel/window?id= (the page the app's "Open panel" pops out), which the desk can frame */
+    if (!src && p && /^inject/.test(String(p.mode || ''))) src = '/ui/panel/window?id=' + encodeURIComponent(p.id || id);
     if (!src && await ok('/ui/panels/' + encodeURIComponent(id))) src = '/ui/panels/' + encodeURIComponent(id);
     if (!src) { const g = [id.replace(/-/g, '_') + '_panel.html', id.replace(/-panel$/, '').replace(/-/g, '_') + '_panel.html', id.replace(/-/g, '_') + '.html', id + '.html'];
       for (const f of g.filter((x, i) => g.indexOf(x) === i)) { if (await ok('/ui/panels/file/' + f)) { src = '/ui/panels/file/' + f; break; } } }
@@ -2230,6 +2234,7 @@
   /* a composite card (see _deskGroups): its members behind the front one are not drawn; the front one carries the tabs
      under its header, and as a pill says how many it holds */
   :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-behind:not(.cmp-front){display:none!important}   /* stronger than a pill's display:flex */
+  :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-behind.cmp-leaving:not(.cmp-front){display:flex!important;opacity:0;transition:opacity .18s;pointer-events:none}   /* ...after it fades (WSU-96) */
   .cmp-tabs{display:none}
   :host([align="desk"]:not([desk-narrow])) .stage .it.cmp-front:not(.desk-chip) > .cmp-tabs{display:flex;gap:2px;flex:none;overflow-x:auto;scrollbar-width:none;padding:0 6px;margin:0 0 4px;border-bottom:1px solid var(--border,#2a2f37)}
   .cmp-tabs::-webkit-scrollbar{display:none}
@@ -3190,6 +3195,10 @@
   .ti{height:24px;padding:0 8px;border:1px solid var(--bd,var(--border,#2a2f37));border-radius:var(--r-sm,6px);background:var(--s2,var(--bg2,#1c2026));color:var(--t1,var(--fg,#dce1e8));font:inherit;font-size:10.5px;min-width:0;flex:1 1 120px}
   .ti.sm{flex:0 1 84px}.ti:focus{outline:none;border-color:var(--ac,var(--acc,#5a9e8f))}
   .vc-term,.vc-panel,.vc-nb{display:flex;flex-direction:column;min-height:0;height:100%}
+  /* A PANEL IN THE HELD COLUMN (the Canvas tab, or a narrow desk) HAS A PAGE'S HEIGHT (WSU-105: it was a 60-110 px strip - the
+     column sizes cards by their content, and a panel's frame hole has none). On the desk the arrangement sizes it. */
+  :host(:not([align="desk"])) .vc-panel > .vc-live[data-live="frame"],:host([desk-narrow]) .vc-panel > .vc-live[data-live="frame"]{height:min(70vh,720px);min-height:320px;flex:0 0 auto}
+  :host(:not([align="desk"])) .it-bd:has(> .vc-panel),:host([desk-narrow]) .it-bd:has(> .vc-panel){max-height:none}   /* ...and its card grows to hold it (the size cap is for reading cards) */
   .vc-tconnect,.vc-bridge .row,.addpop .row{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:4px 0}
   /* the slot the overlay is sized to: a hole, not a plate (the ground it used to paint showed through as a tile
      behind every live item, and behind the ones whose content does not fill it, as a large blank area) */
@@ -4764,7 +4773,11 @@
             if (inT.length && !pickedSince) front = inT[0];
           }
           res.membersOf.set(front, g); res.groups.push(g.map((c) => c.dataset.key));
-          g.forEach((c) => { if (c !== front) { res.behind.add(c); c.classList.add('cmp-behind'); } });
+          g.forEach((c) => { if (c !== front) { res.behind.add(c); c.classList.add('cmp-behind');
+            /* A CARD GOING BEHIND A TAB FADES OUT, IT DOES NOT VANISH (WSU-96 remainder; owner 2026-10-17: "... needs to be better and
+               smoother transition, same for if items enter or leave the desk"): one that was in view the pass before stays drawn while
+               it fades (the face-swap time), then the tab rule hides it */
+            if (this._shownLast && this._shownLast.has(c.dataset.key) && !c.classList.contains('desk-new')) { c.classList.add('cmp-leaving'); clearTimeout(c._clT); c._clT = setTimeout(() => c.classList.remove('cmp-leaving'), 200); } } });
           front.classList.add('cmp-front'); front.dataset.cmpN = String(g.length);
           /* the tabs name what differs: on one subject, the part before it (Web, From the fabric, Research); else the title */
           const subs = new Set(g.map((c) => subjOf(titleOf(c))));
@@ -8779,7 +8792,7 @@
         return e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (c ? '.' + c.trim().split(/\s+/).slice(0, 2).join('.') : '') + (e.dataset && (e.dataset.key || e.dataset.kind) ? '[' + (e.dataset.kind || '') + (e.dataset.key ? ' ' + String(e.dataset.key).slice(0, 40) : '') + ']' : ''); };
       const show = (line) => { const sr = this.shadowRoot; if (!sr) return; let el = sr.querySelector('.vc-trace');
         if (!el) { el = document.createElement('div'); el.className = 'vc-trace'; el.setAttribute('aria-hidden', 'true');
-          el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;pointer-events:none;max-width:70vw;padding:4px 8px;border-radius:6px;font:10px/1.35 var(--mono,ui-monospace,monospace);white-space:pre-wrap;color:var(--fg,#e8e6e3);background:color-mix(in srgb,var(--bg2,#1d2128) 92%,transparent);border:1px solid var(--acc,#5a9e8f)';
+          el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;pointer-events:none;max-width:70vw;padding:4px 8px;border-radius:6px;font:10px/1.35 var(--mono,ui-monospace,monospace);white-space:pre-wrap;color:var(--fg,#e8e6e3);background:color-mix(in srgb,var(--bg2,#1d2128) 92%,transparent);border:1px solid var(--acc,#5a9e8f)';   /* z-local: the pointer monitor (WSU-100 debugging, off by default) is a page overlay outside the item bands, over everything incl. toasts */
           sr.appendChild(el); }
         el.textContent = 'pointer monitor: ' + line; };
       const rec = (r) => { r.t = Math.round(performance.now()); T.log.push(r); if (T.log.length > 80) T.log.shift(); T.out.push(r); if (T.out.length > 40) T.out.shift();
