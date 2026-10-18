@@ -5252,7 +5252,7 @@
         { const was = c.dataset.deskFace || '', pill = (x) => x === 'chip' || x === 'icon';
           /* ...and a card that comes into view where another was (a combined card's new front tab, a card back from behind its tabs) fades in */
           const cameIn = this._shownLast && !this._shownLast.has(key) && !!was;
-          if ((cameIn || (was && was !== s.face && pill(was) !== pill(s.face))) && !c.classList.contains('desk-new')) { c.classList.add('face-swap'); clearTimeout(c._fsT); c._fsT = setTimeout(() => c.classList.remove('face-swap'), 170); } }
+          if ((cameIn || (was && was !== s.face && pill(was) !== pill(s.face))) && !c.classList.contains('desk-new')) { c.classList.add('face-swap'); clearTimeout(c._fsT); c._fsT = setTimeout(() => { c.classList.remove('face-swap'); try { this._liveLayout(); } catch (e) { /* later */ } }, 170); } }
         c.classList.toggle('desk-chip', s.face === 'chip' || s.face === 'icon');
         c.classList.toggle('desk-icon', s.face === 'icon');
         c.dataset.deskFace = s.face;
@@ -5339,10 +5339,11 @@
         st.querySelectorAll('.it.desk-new[data-key]').forEach((c) => { const k = c.dataset.key; if (!NS[k]) NS[k] = { first: nowT, at: nowT, r: '' }; });
         out.forEach((o) => { const e = NS[o.key]; if (!e) return; const rr = [o.x, o.y, o.w, o.h, o.face].join(','); if (e.r !== rr) { e.r = rr; e.at = nowT; } });
         const reveal = () => { const t = Date.now(); let left = 0;
-          st.querySelectorAll('.it.desk-new[data-key]').forEach((c) => { const e = NS[c.dataset.key];
+          let shown = 0; st.querySelectorAll('.it.desk-new[data-key]').forEach((c) => { const e = NS[c.dataset.key];
             /* still for 340 ms AND measured: the content fit has run since it came (it re-placed the desk a second later); at most 2 s */
             const fitDone = this.getAttribute('desk-fit') === 'off' || (this._fitRanAt || 0) > (e ? e.first : 0);
-            if (!e || (t - e.at >= 340 && fitDone) || t - e.first >= 2000) { c.classList.remove('desk-new'); delete NS[c.dataset.key]; } else left++; });
+            if (!e || (t - e.at >= 340 && fitDone) || t - e.first >= 2000) { c.classList.remove('desk-new'); delete NS[c.dataset.key]; shown++; } else left++; });
+          if (shown) { try { this._liveLayout(); } catch (e) { /* the live layer follows on its next layout */ } }
           Object.keys(NS).forEach((k) => { if (t - NS[k].first > 4000) delete NS[k]; });
           if (left) this._revealT = setTimeout(reveal, 120); };
         clearTimeout(this._revealT); this._revealT = setTimeout(reveal, 120); }
@@ -7765,6 +7766,10 @@
              going dark when they fill the desk ... if i press the expand button ... until then the element is blank") */
           const z = m.z != null ? m.z : (card.style.zIndex || '');
           if (el.style.zIndex !== z) el.style.zIndex = z;
+          /* ...and fades with it (WSU-96: a card fading in, or dimmed for a pill <-> card change, left its chart or graph drawn at full
+             strength over it): unseen while its card is still settling, dimmed while it changes face */
+          const fade = card.classList.contains('desk-new') ? '0' : card.classList.contains('face-swap') ? '0.08' : '';
+          if (el.style.opacity !== fade) { el.style.transition = (el.style.transition && el.style.transition !== 'none' ? el.style.transition + ', ' : '') + 'opacity .3s'; el.style.opacity = fade; }
         }
         if (el.style.width !== w + 'px' || el.style.height !== ht + 'px') { el.style.width = w + 'px'; el.style.height = ht + 'px'; if (el.dataset.kind === 'term') { const t = el.firstChild; try { t && t._doFit && t._doFit(); } catch (e) {} } if (el.dataset.kind === 'mermaid') { const m = el.firstChild; try { m && m.fit && m.fit(); } catch (e) {} }
           /* a records item's graph takes its slot's height (owner, 2026-10-04: "elements on the canvas still dont resize on
