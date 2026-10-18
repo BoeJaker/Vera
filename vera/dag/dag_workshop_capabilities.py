@@ -29116,12 +29116,17 @@ async def cap_workshop_prompt_templates(trace_id=None):
     }
 
 
-@APP.on_event("startup")
+# @APP.on_event("startup") never fires under the app's lifespan (S28 / D28-5, backbone 18 Oct): this module loads
+# inside the lifespan with the loop running, so start_at_import starts the hook now, once.
 async def _workshop_install_hooks():
     # Try to install on startup; if context.py wasn't loaded yet, retry once
     if not _install_tool_wrapper():
         await asyncio.sleep(2.0)
         _install_tool_wrapper()
+
+
+import Vera.vera.capability_orchestration as _co_start  # noqa: E402
+_co_start.start_at_import(_workshop_install_hooks, "workshop_install_hooks")
 
 
 

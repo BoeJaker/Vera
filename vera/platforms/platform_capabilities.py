@@ -169,14 +169,16 @@ async def warm_secrets() -> int:
     return len(_PLAIN)
 
 
-@APP.on_event("startup")
+# @APP.on_event("startup") never fires under the app's lifespan (S28 / D28-5, backbone 18 Oct): this module loads
+# inside the lifespan with the loop running, so start_at_import starts the hook now, once.
 async def _warm_secrets_at_startup():
-    async def later():
-        for delay in (2, 10, 30, 120):              # the secrets service may come up after us
-            await asyncio.sleep(delay)
-            if await warm_secrets():
-                return
-    asyncio.create_task(later())
+    for delay in (2, 10, 30, 120):                  # the secrets service may come up after us
+        await asyncio.sleep(delay)
+        if await warm_secrets():
+            return
+
+
+_orch.start_at_import(_warm_secrets_at_startup, "platform_warm_secrets")
 
 
 async def secret_value(key: str) -> str:
