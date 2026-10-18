@@ -889,7 +889,10 @@ async def _host_slot(host: str) -> None:
                         "are refused. Input: urls (list of str!, at most 10), max_chars (int, default 400000). Output: "
                         "{ok, results:[{url, final_url, status, content_type, html, text, elapsed_ms, error, etag, "
                         "last_modified, bytes}], ran_on}.")
-async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY_CHARS, trace_id=None):
+async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY_CHARS, _timeout: Any = None,
+                                  trace_id=None):
+    # _timeout: the host's wait for this call - on an offloaded call the orchestrator sends it along in the payload
+    # (it pops it only after dispatch), and a worker then called this with an argument it did not take (18 Oct)
     us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])][:cc.MAX_BATCH]
     res_key, res_field = await _reserve_self(len(us))
     try:

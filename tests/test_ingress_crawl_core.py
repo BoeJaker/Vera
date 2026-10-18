@@ -79,3 +79,12 @@ def test_a_crawl_worker_reserves_for_itself_while_a_batch_runs():
     import json as _j
     e = _j.loads(ncc.extra_entry("ingress.fetch.batch", cc.batch_timeout_s(3), 1000.0))
     assert e == {"cpu": 0.25, "mem_gb": 0.25, "until": 1105.0, "cap": "ingress.fetch.batch"}
+
+
+
+def test_the_batch_cap_takes_the_timeout_an_offloaded_call_carries():
+    # 18 Oct probe: every batch sent to cpu-246 failed with "unexpected keyword argument '_timeout'"
+    import ast
+    src = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    fn = next(n for n in ast.walk(ast.parse(src)) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_ingress_fetch_batch")
+    assert "_timeout" in [a.arg for a in fn.args.args]
