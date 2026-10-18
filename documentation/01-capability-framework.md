@@ -209,10 +209,18 @@ or `name:[str]=a|b|c` (multi-select).
 The wrapper (`wrap(**kw)`) runs these steps, in order, for every invocation
 path:
 
+0. **Usage count.** The call is counted per UTC day × capability × actor kind ×
+   surface × trigger ([Who calls what](#who-calls-what-capsusage)). The count is
+   an in-process increment, flushed to Redis at most every 30 s, and it never
+   fails the call.
 1. **Sandbox estate guard.** Inside a dev sandbox (`VERA_IS_DEV_SANDBOX=1`),
    capabilities on the estate guard's deny list (pool pruning, promotion,
    branch deletion and similar) return a refusal immediately — no events, no
    retries.
+1a. **Money guard.** A capability tagged `money` (the real-broker caps) runs only
+   from its own HTTP route, as the outermost capability, outside background
+   work. Otherwise it returns `{ok: false, refused: "money"}` and emits a
+   `cap.denied` event ([29](./29-security.md), [15](./15-markets.md)).
 2. **Read-through.** In a serving sandbox whose read-through URL has been armed
    at lifespan, a capability allowed by `sandbox_guard.read_through_allowed`
    (read-only estate readings) is answered by production over HTTP instead of
@@ -805,7 +813,39 @@ Token streams are additionally cross-published to `vera:events:live` as
 | `vera:cap:result:<name>` | 300 s | Last result: `{name, trace_id, session_id, elapsed_ms, ts, preview, result (≤4096 chars)}` |
 | `vera:cap:error:<name>` | 600 s | Last error: `{name, error, ts, trace_id, elapsed_ms}` |
 | `vera:cap:recent` | sorted set, newest 500 | `{name, tid, sid, ts, elapsed_ms, via, bg, preview}` per call |
+| `vera:caps:usage:<YYYYMMDD>` | 91 days | Hash, field `cap|actor|surface|trigger` → calls that UTC day (see below) |
 | `vera:panel:dispatch:<sid>` | pub/sub | `__cap_activity__` mirror for the session's open panel (disable with `PANEL_CAP_MIRROR=0`; groups `panel`, `chat`, `obs`, `health` are skipped) |
+
+### Who calls what (`caps.usage`)
+
+Each call's **actor kind** comes from the dispatcher's own context, never from the request body alone:
+
+| Actor | When |
+|---|---|
+| `ui:route` | the capability's own HTTP route (a panel button, a desk refresh) |
+| `ui:mcp` | the browser's `/mcp/call` (a person, or the chat's cap-in-chat and copilots acting for one) |
+| `bridge:claude` / `bridge:codex` / `bridge:mcp` | an MCP bridge (`caller_kind`) |
+| `nested` | inside another capability (a loop, an agent turn, a DAG step) |
+| `background:<driver>` | a background driver (`BACKGROUND_LLM`: dream, v8, fabric, idle …) |
+| `internal` | schedules, triggers, startup loops |
+
+UI hosts add the **surface** and **trigger** in a header on the calls they make:
+
+```
+X-Vera-Surface: <desk|dashboard|panel:<id>|chat|lhm>; trigger=<auto|person>
+```
+
+A WebSocket, which cannot set headers, may pass `?surface=…&trigger=…`. The
+`vera/caller_context.py` middleware reads it into `CALLER_SURFACE`. An unknown
+surface reads `other`; calls without the header read `-`.
+
+`caps.usage(days=7, cap?, surface?, trigger?, actor?, limit=100)` (`GET /caps/usage`) sums the
+day hashes (and the not-yet-flushed counts). It returns `rows` (cap, actor, surface, trigger, count)
+and `by_cap`, which ranks capabilities by **person-triggered** calls first, so a screen's
+auto-refresh does not read as interest. Filters match a prefix (`surface=panel` matches
+`panel:markets`). Counting is observation only: nothing is allowed or refused by it. It is the
+first slice of the backbone's B0.11 caller context; the policy side rides Capability Contract v2
+([45](./45-capability-policy.md)).
 
 ### Named streams
 

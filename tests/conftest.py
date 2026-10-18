@@ -19,6 +19,8 @@ _CRITICAL_MODULES = {
     "test_terminal_ws_tickets",  # the terminal routes refuse a foreign Origin and a missing ticket (2026-10-17)
     "test_money_guard_core",  # a loop or widget could place a real broker order by name (2026-10-17)
     "test_money_tag_dispatch",  # the dispatcher refuses money caps except from their own route (2026-10-17)
+    "test_caller_context_core",  # "order by usage" counted screen refresh as interest; no actor or surface (2026-10-18)
+    "test_caller_usage_dispatch",  # every call counted with its actor and surface; flush never loses a batch (2026-10-18)
     "test_sandbox_idle_plan",  # sleep the container you judged, never an alias's target (2026-09-12)
     "test_operator_session_sweep",  # a cancelled run must not leak its browser context (2026-09-16)
     "test_gpu_residency",  # media models must not sit on the LLM's GPU while idle (2026-09-16)
