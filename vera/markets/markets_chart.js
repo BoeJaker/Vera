@@ -168,6 +168,68 @@
   /* a read that did not reach the server (or the server failing: 5xx) is `failed` - tried again; an answer that says why is not */
   const api = async (path, body) => { try { const r = await fetch(path, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {}); if (r.status >= 500) return { error: 'HTTP ' + r.status, failed: true }; return await r.json(); } catch (e) { return { error: String(e), failed: true }; } };
 
+
+  /* ── <vera-mkt-lookup placeholder limit> - THE asset search (one implementation: the Markets panel's header and the desk chart) ──
+     Owner 2026-10-18: "the market chart: the ability for the user to search through other assets and navigate a bit deeper"; the
+     redesign plan: elements derived from the panels, one implementation. The Markets panel's own header lookup moved here unchanged:
+     /markets/lookup (debounced 250 ms, 8 results), arrow keys / Enter / Escape, a click outside closes it, the asset class and
+     "tracked" shown. A pick is told as a 'mkt-pick' event: detail {key, provider, symbol, item}; a host's extra row as 'mkt-extra'. */
+  class VeraMktLookup extends HTMLElement {
+    constructor() { super(); this.attachShadow({ mode: 'open' }); this._items = []; this._act = -1; this._t = 0; }
+    connectedCallback() {
+      if (this._built) return; this._built = true;
+      const ph = this.getAttribute('placeholder') || 'Search assets…';
+      this.shadowRoot.innerHTML = `<style>
+        :host{display:inline-block;position:relative;min-width:150px;font:inherit}
+        .mag{position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--dim2,#8a7e70);font-size:11px;pointer-events:none}
+        input{width:100%;box-sizing:border-box;background:var(--bg0,#101215);border:1px solid var(--border,var(--bd,rgba(127,127,127,.25)));color:var(--text,var(--t1,#e8e0d4));padding:var(--lk-pad,3px 8px 3px 24px);border-radius:var(--radius,6px);font:inherit;font-size:var(--lk-size,11px)}
+        input:focus{outline:none;border-color:var(--acc,#5a9e8f)}
+        .dd{position:absolute;left:0;min-width:100%;width:max-content;max-width:min(420px,90vw);top:calc(100% + 3px);z-index:60;background:var(--bg2,#1d2026);border:1px solid var(--border2,var(--bd,rgba(127,127,127,.3)));border-radius:var(--radius-sm,5px);max-height:320px;overflow-y:auto;display:none;box-shadow:0 6px 18px rgba(0,0,0,.35)}   /* z-local: above the element's own siblings only */
+        .it{padding:6px 9px;font-size:11.5px;cursor:pointer;display:flex;align-items:center;gap:8px;color:var(--text,var(--t1,#e8e0d4))}
+        .it:hover,.it.active{background:var(--bg3,rgba(127,127,127,.14))}
+        .it.muted{color:var(--dim2,#8a7e70);cursor:default}
+        .cls{font-size:9px;padding:1px 6px;border-radius:8px;background:var(--bg0,#101215);color:var(--dim2,#8a7e70);border:1px solid var(--border,rgba(127,127,127,.25));text-transform:uppercase;letter-spacing:.4px;flex-shrink:0}
+        .nm{color:var(--dim2,#8a7e70);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .track{margin-left:auto;font-size:9px;color:var(--acc2,var(--acc,#5a9e8f))}
+      </style><span class="mag">⌕</span><input autocomplete="off" spellcheck="false" placeholder="${esc(ph)}" aria-label="${esc(ph)}"><div class="dd" role="listbox"></div>`;
+      const inp = this.shadowRoot.querySelector('input');
+      inp.addEventListener('input', () => this._query()); inp.addEventListener('focus', () => this._query());
+      inp.addEventListener('keydown', (e) => this._key(e));
+      document.addEventListener('click', this._out = (e) => { if (!(e.composedPath ? e.composedPath() : []).includes(this)) this._hide(); });
+    }
+    disconnectedCallback() { document.removeEventListener('click', this._out); this._built = false; clearTimeout(this._t); }
+    focus() { const i = this.shadowRoot && this.shadowRoot.querySelector('input'); if (i) i.focus(); }
+    _query() { clearTimeout(this._t); this._t = setTimeout(async () => {
+      const inp = this.shadowRoot.querySelector('input'); const q = (inp.value || '').trim(); if (q.length < 1) { this._hide(); return; }
+      const lim = parseInt(this.getAttribute('limit') || '8', 10) || 8;
+      const r = await api('/markets/lookup?query=' + encodeURIComponent(q) + '&limit=' + lim); if (!r || r.error) return;
+      if ((inp.value || '').trim() !== q) return;   /* typed on since: the newer query draws */
+      this._extra = (typeof this.extra === 'function' ? (this.extra(q) || []) : []).slice(0, 8);
+      this._items = r.results || []; this._act = -1; this._draw(); }, 250); }
+    /* the rows: a host's extra rows first (the Studio's metrics: .extra = (q) => [{cls, label, sub, value}]), then the assets */
+    _rows() { return (this._extra || []).map((x) => ({ x })).concat(this._items.map((it) => ({ it }))); }
+    _draw() { const dd = this.shadowRoot.querySelector('.dd'); const rows = this._rows();
+      if (!rows.length) { dd.innerHTML = '<div class="it muted">no matches</div>'; dd.style.display = 'block'; return; }
+      dd.innerHTML = rows.map((r, i) => r.x
+        ? `<div class="it${i === this._act ? ' active' : ''}" data-r="${i}" role="option"><span class="cls">${esc(r.x.cls || 'more')}</span><b>${esc(r.x.label || '')}</b><span class="nm">${esc(r.x.sub || '')}</span></div>`
+        : `<div class="it${i === this._act ? ' active' : ''}" data-r="${i}" role="option"><span class="cls">${esc(String(r.it.asset_class || '?').replace('_', ' '))}</span><b>${esc(r.it.symbol)}</b><span class="nm">${esc(r.it.name || '')}</span>${r.it.tracked ? '<span class="track">tracked</span>' : ''}</div>`).join('');
+      dd.style.display = 'block';
+      dd.querySelectorAll('.it[data-r]').forEach((d) => { d.onmousedown = (e) => { e.preventDefault(); this._pick(parseInt(d.dataset.r, 10)); }; }); }
+    _hide() { const dd = this.shadowRoot && this.shadowRoot.querySelector('.dd'); if (dd) dd.style.display = 'none'; }
+    _key(e) { const dd = this.shadowRoot.querySelector('.dd'); if (dd.style.display === 'none') return;
+      if (e.key === 'ArrowDown') { this._act = Math.min(this._rows().length - 1, this._act + 1); this._draw(); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { this._act = Math.max(0, this._act - 1); this._draw(); e.preventDefault(); }
+      else if (e.key === 'Enter' && this._act >= 0) { this._pick(this._act); e.preventDefault(); }
+      else if (e.key === 'Escape') this._hide(); }
+    _pick(i) { const r = this._rows()[i]; if (!r) return; this._hide(); this.shadowRoot.querySelector('input').value = '';
+      if (r.x) { this.dispatchEvent(new CustomEvent('mkt-extra', { bubbles: true, composed: true, detail: r.x })); return; }
+      const it = r.it;
+      const key = String(it.key || ((it.provider || it.exchange || 'yahoo') + ':' + it.symbol)); const k = key.indexOf(':');
+      this.dispatchEvent(new CustomEvent('mkt-pick', { bubbles: true, composed: true, detail: { key, provider: k > 0 ? key.slice(0, k) : 'yahoo', symbol: k > 0 ? key.slice(k + 1) : key, item: it } })); }
+  }
+  M.Lookup = VeraMktLookup;
+  if (root.customElements && !root.customElements.get('vera-mkt-lookup')) root.customElements.define('vera-mkt-lookup', VeraMktLookup);
+
   class VeraMktChart extends HTMLElement {
     static get observedAttributes() { return ['symbol', 'provider', 'tf']; }
     constructor() { super(); this.attachShadow({ mode: 'open' }); this._subs = []; this._overlays = []; this._seq = 0; }
@@ -182,6 +244,8 @@
         .hd{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;padding:2px 2px 3px}
         .note{color:var(--dim,#6c645a);font-size:9px}
         .hd b{color:var(--t1,#e8e0d4);font-size:12px}
+        .hd .lk{flex:0 1 190px;--lk-size:10px;--lk-pad:1px 6px 1px 20px}
+        .hd .bk{font:inherit;font-size:11px;padding:0 5px;border-radius:5px;border:1px solid var(--bd,rgba(127,127,127,.25));background:transparent;color:var(--dim2,#8a7e70);cursor:pointer}
         .px{color:var(--t1,#e8e0d4)} .up{color:var(--ok,#3fd0a4)} .dn{color:var(--err,#e0705a)}
         .rd{color:var(--dim2,#8a7e70);flex:1 0 100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}
         .bar{display:flex;gap:3px;flex-wrap:wrap;align-items:center;padding:0 2px 4px}
@@ -193,10 +257,11 @@
         .pl{position:absolute;left:4px;top:2px;z-index:3;font-size:9.5px;color:var(--dim2,#8a7e70);pointer-events:none}
         .msg{padding:12px;color:var(--dim2,#8a7e70)}
       </style>
-      <div class="wrap"><div class="hd"><b class="sym"></b><span class="px"></span><span class="ch"></span><span class="rd"></span></div>
+      <div class="wrap"><div class="hd"><button class="bk" data-a="back" title="Back to the asset before" hidden>←</button><b class="sym"></b><vera-mkt-lookup class="lk" placeholder="Search assets…"></vera-mkt-lookup><span class="px"></span><span class="ch"></span><span class="rd"></span></div>
       <div class="bar"><span class="tfs"></span><span class="sp"></span><span class="inds"></span><span class="sp"></span><button data-a="vol" title="Volume under the candles">Vol</button><button data-a="fit" title="Fit the whole history">Fit</button><span class="note"></span></div>
       <div class="stack"><div class="pane main"></div></div></div>`;
       this.shadowRoot.addEventListener('click', (ev) => { const b = ev.target.closest && ev.target.closest('button[data-a]'); if (!b) return; ev.stopPropagation(); this._act(b.dataset.a, b.dataset.v); });
+      this.shadowRoot.addEventListener('mkt-pick', (ev) => { ev.stopPropagation(); const d = ev.detail || {}; if (!d.symbol) return; this._go(d.provider, d.symbol, true); });
       /* live only while seen: a chart scrolled away, behind a tab or in a pill does not poll */
       this._io = new IntersectionObserver((es) => { this._seen = es.some((e) => e.isIntersecting); this._livePlan(); }); this._io.observe(this);
       /* grown past (or shrunk under) the size that has room for the panes: drawn again for it */
@@ -208,7 +273,14 @@
     attributeChangedCallback(name) { if (name !== 'tf') this._tfsOf = null; if (this._built) this._load(true); }
     get _sym() { return this.getAttribute('symbol') || ''; } get _prov() { return this.getAttribute('provider') || 'yahoo'; }
     get _tf() { return this.getAttribute('tf') || '1d'; }
+    /* another asset in this chart (the search, or Back): history kept; the host hears 'mkt-symbol' {provider, symbol} so it may keep it */
+    _go(prov, sym, push) { if (!sym || (sym === this._sym && prov === this._prov)) return;
+      if (push) (this._hist = this._hist || []).push({ provider: this._prov, symbol: this._sym });
+      this._tfsOf = null; this._mkt = null; this.setAttribute('provider', prov || 'yahoo'); this.setAttribute('symbol', sym);
+      const bk = this.shadowRoot.querySelector('.bk'); if (bk) bk.hidden = !(this._hist && this._hist.length);
+      this.dispatchEvent(new CustomEvent('mkt-symbol', { bubbles: true, composed: true, detail: { provider: prov, symbol: sym } })); }
     _act(a, v) {
+      if (a === 'back') { const h = (this._hist || []).pop(); if (h) this._go(h.provider, h.symbol, false); return; }
       if (a === 'tf') { this.setAttribute('tf', v); return; }
       if (a === 'ind') { if (this._on.has(v)) this._on.delete(v); else this._on.add(v); try { localStorage.setItem(ON_KEY, JSON.stringify([...this._on])); } catch (e) { /* this page only */ } this._draw(false); return; }
       if (a === 'vol') { this._vol = !this._vol; this._draw(false); return; }
@@ -324,7 +396,8 @@
     async _mktLoad(seq) {
       const B = this._B; if (!B || !this._candle) return; const id = this._prov + ':' + this._sym + ':' + this._tf;
       if (!this._mkt || this._mkt.id !== id || Date.now() - this._mkt.at > 60000) {
-        const call = async (name, args) => { try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
+        const surf = (() => { try { const h = this.getRootNode && this.getRootNode().host; return h && /^VERA-CANVAS$/i.test(h.tagName) ? (h.deskAlign && h.deskAlign() ? 'desk' : 'panel:canvas') : 'panel:markets'; } catch (e) { return 'panel:markets'; } })();
+        const call = async (name, args) => { try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vera-Surface': surf + '; trigger=' + (root.navigator && root.navigator.userActivation && root.navigator.userActivation.isActive ? 'person' : 'auto') }, body: JSON.stringify({ name, arguments: args || {} }) });
           const j = await r.json(); return j && j.type === 'tool_result' ? j.content : j; } catch (e) { return null; } };
         let got = null; try { got = await M.marketMarkers(call, this._prov, this._sym, B.t.slice()); } catch (e) { got = null; }
         if (seq !== this._seq || !got) return; this._mkt = Object.assign({ id, at: Date.now() }, got); }

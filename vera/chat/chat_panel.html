@@ -6,6 +6,32 @@
   var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
   var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
   if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<script>/* WHERE A CALL CAME FROM (DO-0.5; vera-c7's usage counter, B0.11 R0): this page's own calls to Vera's API carry
+   X-Vera-Surface: <surface>; trigger=<person|auto>. Only same-origin API paths, only when the call has not said its surface
+   already (the desk and the market chart say "desk" themselves). trigger=person while the browser's user activation is live. */
+(function () { try {
+  var f0 = window.fetch; if (!f0 || f0._veraSurf) return;
+  var SURF = (/[?&]only=menu\b/.test(location.search) ? 'lhm' : 'chat');
+  var STATIC = /\.(js|css|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|map|html?)$/i;
+  var wrapped = function (input, init) {
+    try {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var u = new URL(url, location.href);
+      if (u.origin === location.origin && !STATIC.test(u.pathname) && u.pathname.indexOf('/ui/') !== 0) {
+        init = Object.assign({}, init || {});
+        var h = new Headers(init.headers || (typeof input !== 'string' && input && input.headers) || {});
+        if (!h.has('X-Vera-Surface')) {
+          var act = navigator.userActivation && navigator.userActivation.isActive;
+          h.set('X-Vera-Surface', SURF + '; trigger=' + (act ? 'person' : 'auto'));
+        }
+        init.headers = h;
+      }
+    } catch (e) { /* the call goes out as it was */ }
+    return f0.call(this, input, init);
+  };
+  wrapped._veraSurf = true; window.fetch = wrapped;
+} catch (e) { /* no fetch to wrap */ } })();
+</script>
 <meta charset="UTF-8">
 <title>Vera Chat</title>
 <style>
@@ -3773,7 +3799,7 @@ const CH = (() => {
 
   const api = async (path,method='GET',body=null) => {
     try{
-      const o={method,headers:{'Content-Type':'application/json'}};
+      const o={method,headers:{'Content-Type':'application/json','X-Vera-Surface':'chat; trigger='+(navigator.userActivation&&navigator.userActivation.isActive?'person':'auto')}};   /* DO-0.5: where the call came from */
       if(body)o.body=JSON.stringify(body);
       const r=await fetch(BASE+path,o);
       if(!r.ok)return null;

@@ -13,6 +13,7 @@
 <link rel="stylesheet" href="/ui/vera-panel.css">
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/elements/vera_markdown.js"></script>
+<script src="/markets/chart.js"></script>   <!-- the shared <vera-mkt-lookup> (and the chart pieces) -->
 <style>
 /* ═══════════ Quant Studio — design tokens ═══════════
    vera-ui.js paints the active Vera theme by setting the ORCHESTRATOR vars
@@ -331,8 +332,7 @@ table.tbl tr:hover td{background:color-mix(in srgb, var(--acc) 5%, transparent)}
     <div id="topbar">
       <span class="title" id="tbTitle">Charts</span>
       <div id="gsearch">
-        <input id="gsIn" placeholder="search any asset — stocks, crypto, ETFs…" autocomplete="off">
-        <div class="dd" id="gsDd"></div>
+        <vera-mkt-lookup id="gsEl" placeholder="search any asset — stocks, crypto, ETFs…" style="display:block;width:270px;--lk-size:12px;--lk-pad:6px 10px 6px 28px"></vera-mkt-lookup>
       </div>
       <span class="sp" style="flex:1"></span>
       <span id="tbStatus" class="muted" style="font-size:11px"></span>
@@ -1431,7 +1431,7 @@ function addTile(key,tf){
     Object.values(TILES).forEach(o=>{ if(o!==t) o.chart.setCross(tt); }); };
   el.addEventListener('mousedown',()=>{S.activeTile=id;});
   const q=sel=>el.querySelector(sel);
-  q('.sym').onclick=()=>{$('gsIn').focus();};
+  q('.sym').onclick=()=>{$('gsEl').focus();};
   q('.bX').onclick=()=>removeTile(id);
   q('.bMax').onclick=()=>{el.classList.toggle('max'); setTimeout(()=>chart._resize(),60);};
   q('.bStyle').onclick=()=>{ t.style=t.style==='candles'?'line':t.style==='line'?'area':'candles';
@@ -1928,29 +1928,12 @@ function metricMatches(q){
               sub:'reddit mentions ranking',fetched:null});
   return out.slice(0,5);
 }
-$('gsIn').addEventListener('input',debounce(async()=>{
-  const q=$('gsIn').value.trim();
-  if(!q){$('gsDd').style.display='none';return;}
-  const mets=q.length>=3?metricMatches(q):[];
-  const r=await api('/markets/lookup?query='+encodeURIComponent(q)+'&limit=8');
-  _gsItems=(r&&r.results)||[]; _gsAct=-1;
-  $('gsDd').innerHTML=
-    mets.map((m2,i)=>
-      `<div class="it" data-m="${i}"><span class="cls">📊 metric</span>
-       <b>${esc(m2.label)}</b><span class="nm">${esc(m2.sub||'')}</span></div>`).join('')+
-    (_gsItems.map((it,i)=>
-    `<div class="it" data-i="${i}"><span class="cls">${esc((it.asset_class||'?').replace('_',' '))}</span>
-     <b>${esc(it.symbol)}</b><span class="nm">${esc(it.name||'')}</span>
-     ${it.tracked?'<span class="chip on">tracked</span>':''}</div>`).join('')
-    ||(mets.length?'':'<div class="it"><span class="nm">no matches</span></div>'));
-  $('gsDd').style.display='block';
-  $('gsDd').querySelectorAll('.it[data-i]').forEach(d=>d.onmousedown=e=>{
-    e.preventDefault(); pickSearch(+d.dataset.i); });
-  $('gsDd').querySelectorAll('.it[data-m]').forEach(d=>d.onmousedown=e=>{
-    e.preventDefault(); pickMetric(mets[+d.dataset.m]); });
-},260));
+/* the search is the shared <vera-mkt-lookup> (markets/chart.js; the desk chart and the Markets page use the same one): the metrics
+   above the assets as its extra rows, a pick handled here as before */
+$('gsEl').extra = (q) => q.length >= 3 ? metricMatches(q).map((m2) => ({ cls: '📊 metric', label: m2.label, sub: m2.sub || '', value: m2 })) : [];
+$('gsEl').addEventListener('mkt-extra', (e) => { if (e.detail && e.detail.value) pickMetric(e.detail.value); });
+$('gsEl').addEventListener('mkt-pick', (e) => { const d = e.detail || {}; if (d.item) pickSearchItem(d.item); });
 async function pickMetric(m2){
-  $('gsDd').style.display='none'; $('gsIn').value='';
   if(S.view!=='charts') switchView('charts');
   if(m2.metric==='macro'){
     if(!m2.fetched){
@@ -1974,20 +1957,8 @@ async function pickMetric(m2){
     if(typeof wsbScan==='function') wsbScan();
   }
 }
-$('gsIn').addEventListener('keydown',e=>{
-  if($('gsDd').style.display!=='block')return;
-  if(e.key==='ArrowDown'){_gsAct=Math.min(_gsItems.length-1,_gsAct+1);}
-  else if(e.key==='ArrowUp'){_gsAct=Math.max(0,_gsAct-1);}
-  else if(e.key==='Enter'&&_gsAct>=0){pickSearch(_gsAct);e.preventDefault();return;}
-  else if(e.key==='Escape'){$('gsDd').style.display='none';return;}
-  else return;
-  e.preventDefault();
-  $('gsDd').querySelectorAll('.it').forEach((d,i)=>d.classList.toggle('act',i===_gsAct));
-});
-document.addEventListener('click',e=>{ if(!e.target.closest('#gsearch'))$('gsDd').style.display='none';});
-async function pickSearch(i){
-  const it=_gsItems[i]; if(!it)return;
-  $('gsDd').style.display='none'; $('gsIn').value='';
+async function pickSearchItem(it){
+  if(!it)return;
   if(!it.tracked){
     toast('adding '+esc(it.symbol)+' to the watchlist + backfilling…');
     const [prov,sym]=keySplit(it.key);
