@@ -47,7 +47,19 @@ MAX_PROJECTED_EVENTS = 600
 
 COLORS = {"census": "#c9a35a", "suite": "#6db87a", "task": "#8fb87a",
           "pipeline": "#7aa2f7", "board": "#a78bfa", "loop": "#f472b6", "tests": "#38bdf8",
-          "cap": "#9aa0a6", "claude_session": "#e0a458"}
+          "cap": "#9aa0a6", "claude_session": "#e0a458",
+          # a scheduled background window (evolve.background.window) shows as its own kind (owner 18 Oct 2026:
+          # "really clear from the UI what each slot is doing")
+          "background": "#2dd4bf"}
+
+BACKGROUND_CAP = "evolve.background.window"
+
+
+def display_kind(kind: Any, target: Any) -> str:
+    """The kind the calendar shows: a cap schedule running the background window is 'background'."""
+    if kind == "cap" and isinstance(target, dict) and target.get("name") == BACKGROUND_CAP:
+        return "background"
+    return str(kind or "")
 
 # The calendar's layers: what an event is, so a viewer can switch each on and off. A board item's schedule is its own
 # layer - the work a board item asked for, whatever kind it is.
@@ -727,8 +739,8 @@ def project_events(schedules: Iterable[Dict[str, Any]], start: datetime, end: da
                 "title": rec.get("title") or rec["id"],
                 "start": iso(w[0]), "end": iso(w[1]), "all_day": False,
                 "source": "loop-lab", "read_only": True,
-                "color": COLORS.get(rec.get("kind"), COLORS["cap"]),
-                "kind": rec.get("kind"), "schedule_id": rec["id"],
+                "color": COLORS.get(display_kind(rec.get("kind"), rec.get("target")), COLORS["cap"]),
+                "kind": display_kind(rec.get("kind"), rec.get("target")), "schedule_id": rec["id"],
                 "enabled": bool(rec.get("enabled", True)),
                 "repeat": rec.get("repeat"), "label": _default_title(rec["kind"], rec["target"]),
                 "board_id": rec.get("board_id", ""),
@@ -754,8 +766,9 @@ def history_events(runs: Iterable[Dict[str, Any]], start: datetime, end: datetim
                      + (f" · {r['result']}" if r.get("result") else ""),
             "start": iso(s), "end": iso(f), "all_day": False,
             "source": "loop-lab-run", "read_only": True,
-            "color": COLORS.get(r.get("kind"), COLORS["cap"]),
-            "kind": r.get("kind"), "schedule_id": r.get("schedule_id"),
+            "color": COLORS.get(display_kind(r.get("kind"), r.get("target")), COLORS["cap"]),
+            "kind": display_kind(r.get("kind"), r.get("target")), "schedule_id": r.get("schedule_id"),
+            "run_id": r.get("id", ""), "running": not r.get("finished_at"),
             "result": r.get("result", ""), "detail": r.get("detail", ""),
             "board_id": r.get("board_id", ""),
         })

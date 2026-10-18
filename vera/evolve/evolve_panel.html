@@ -1099,8 +1099,8 @@ if(window.VeraPanelBridge) VeraPanelBridge.registerNav([
 // the page; what it shows is a set of LAYERS the viewer switches: the windows (faint bands - when work MAY run), the
 // runs the scheduler started, the results of every census run and suite (solid, by pass rate), the board items' work,
 // and Vera's own calendar (the Comms panel's).
-const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',loop:'Agent loop',tests:'Unit tests',cap:'Capability',claude_session:'Claude session'};
-const SCH_KIND_COL={census:'#c9a35a',suite:'#6db87a',task:'#8fb87a',pipeline:'#7aa2f7',board:'#a78bfa',loop:'#f472b6',tests:'#38bdf8',cap:'#9aa0a6',claude_session:'#e0a458'};
+const SCH_KIND_LABEL={census:'Census',suite:'Suite',task:'Task',pipeline:'Pipeline',board:'Board item',loop:'Agent loop',tests:'Unit tests',cap:'Capability',claude_session:'Claude session',background:'Background work'};
+const SCH_KIND_COL={census:'#c9a35a',suite:'#6db87a',task:'#8fb87a',pipeline:'#7aa2f7',board:'#a78bfa',loop:'#f472b6',tests:'#38bdf8',cap:'#9aa0a6',claude_session:'#e0a458',background:'#2dd4bf'};
 const SCH_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 const SCH_LAYERS=[
   {k:'windows',label:'Windows',col:'#c9a35a',tip:'when each schedule may run - faint bands behind the rest'},
@@ -1111,9 +1111,11 @@ const SCH_LAYERS=[
   {k:'agents',label:'Agents',col:'#e0a458',tip:'Claude sessions - their registered timers and the work scheduled for them (agents.work)'}];
 // Owner 18 Oct 2026: "the schedule ui is hard to read there is so much stuff on it" - every layer on at once
 // stacked ~200 events in one week. Default: what ran and the sessions' work; the rest is one click away.
-const SCH_DEFAULT_LAYERS=['runs','agents'];
+// windows on too (owner 18 Oct 2026: "really clear from the UI what each slot is doing") - only enabled
+// schedules draw them, and skipped runs are not drawn, which is what made the week unreadable
+const SCH_DEFAULT_LAYERS=['windows','runs','agents'];
 let _schOn=new Set(SCH_DEFAULT_LAYERS), _schCounts={}, _schBoardItems=[], _schProfiles=[];
-try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers.v2')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
+try{const v=JSON.parse(localStorage.getItem('loop-lab.sch.layers.v3')||'null');if(Array.isArray(v))_schOn=new Set(v)}catch(_){}
 let _schShowOff=false; try{_schShowOff=localStorage.getItem('loop-lab.sch.showoff')==='1'}catch(_){}
 let _schCache={schedules:[],next:{},state:{},config:{}};
 async function loadSchedule(){
@@ -1158,13 +1160,15 @@ function schList(){
       +'<button class="btn sm" onclick="schDelete(\''+s.id+'\')" title="delete">✕</button></div></div>';
   }).join('');
 }
+async function schStopRun(id){const d=await api('/evolve/schedule/stop_run',{method:'POST',body:JSON.stringify({run_id:id})});toast(d&&d.ok?'stopped':'not stopped: '+((d&&d.error)||'?'));closeModal();loadSchedule()}
 async function schRuns(){
   const d=await api('/evolve/schedule/history?limit=60'); const R=(d&&d.runs)||[];
   const col=r=>/green|done|started|resumed/.test(r.result||'')?'#4ade80':/red|error|failed|dropped/.test(r.result||'')?'#f87171':'#9aa0a6';
   $('sch-runs').innerHTML=R.length?R.map(r=>'<div class="sch-row" onclick="schOpen(\''+esc(r.schedule_id||'')+'\')" style="cursor:pointer"><span class="sch-dot" style="background:'+col(r)+'"></span><div style="flex:1;min-width:0">'
     +'<div class="t">'+esc(r.title||r.kind)+' <span style="color:'+col(r)+'">'+esc(r.result||'')+'</span></div>'
     +'<div class="m">'+esc(String(r.started_at).replace('T',' ').slice(5,16))+(r.finished_at?' → '+esc(String(r.finished_at).replace('T',' ').slice(11,16)):' · running')+(r.detail?' · '+esc(String(r.detail).slice(0,90)):'')+'</div>'
-    +(r.board_id?'<div class="m">'+schBoardTag(r.board_id)+'</div>':'')+'</div></div>').join(''):'nothing yet';
+    +(r.board_id?'<div class="m">'+schBoardTag(r.board_id)+'</div>':'')+'</div>'
+    +(!r.finished_at&&r.kind!=='census'&&r.id?'<button class="btn sm" onclick="event.stopPropagation();schStopRun(\''+esc(r.id)+'\')" title="stop (yield) this run">■</button>':'')+'</div>').join(''):'nothing yet';
 }
 // The central cron view (looplab-control B1): every scheduled thing on the box, by source. A Claude session's
 // trigger or a request for one can be cancelled here; the rest are read-only (edit them where they live).
@@ -1344,7 +1348,7 @@ function schMode(){
   const g=$('sch-gran'); const gran=g?(g.checked?'goals':'runs'):schGran();
   const res=_schOn.has('results'), sch=_schOn.has('windows')||_schOn.has('runs')||_schOn.has('board');
   const mode=res?(sch?'both':'results'):'windows';
-  try{localStorage.setItem('loop-lab.sch.layers.v2',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
+  try{localStorage.setItem('loop-lab.sch.layers.v3',JSON.stringify([..._schOn]));localStorage.setItem('loop-lab.sch.gran',gran)}catch(_){}
   const src='/evolve/schedule/events?mode='+mode+'&granularity='+gran+(_schOn.has('calendar')?'&include_calendar=1':'');
   if(cal.getAttribute('src')!==src)cal.setAttribute('src',src);
   cal.filter=ev=>_schOn.has(schLayerOf(ev));
@@ -1364,7 +1368,7 @@ function schRunModal(ev){
   openModal('<div class="card-h"><span class="card-t">'+esc(ev.title||'run')+'</span><button class="btn sm" onclick="closeModal()">✕</button></div>'
     +'<div class="hint" style="margin-bottom:6px">'+esc(SCH_KIND_LABEL[ev.kind]||ev.kind||'')+' · '+esc(String(ev.start||'').replace('T',' ').slice(0,16))+' → '+esc(String(ev.end||'').replace('T',' ').slice(11,16))+(ev.result?' · <b>'+esc(ev.result)+'</b>':'')+'</div>'
     +(ev.detail?'<div style="background:var(--bg1);border-radius:6px;padding:8px;font-size:12.5px;white-space:pre-wrap;margin:6px 0">'+esc(ev.detail)+'</div>':'')
-    +'<div class="row" style="gap:6px;margin-top:8px">'+(ev.schedule_id?'<button class="btn sm" onclick="schOpen(\''+esc(ev.schedule_id)+'\')">✎ its schedule</button><button class="btn sm" onclick="closeModal();schRunNow(\''+esc(ev.schedule_id)+'\')">▶ run again</button>':'')
+    +'<div class="row" style="gap:6px;margin-top:8px">'+(ev.running&&ev.run_id&&ev.kind!=='census'?'<button class="btn sm err-btn" onclick="schStopRun(\''+esc(ev.run_id)+'\')" title="stop it now - a background window stops starting jobs and hands the queue back">■ stop (yield)</button>':'')+(ev.schedule_id?'<button class="btn sm" onclick="schOpen(\''+esc(ev.schedule_id)+'\')">✎ its schedule</button><button class="btn sm" onclick="closeModal();schRunNow(\''+esc(ev.schedule_id)+'\')">▶ run again</button>':'')
     +(ev.board_id?'<button class="btn sm" onclick="openBoardItem(\''+esc(ev.board_id)+'\')">▣ its board item</button>':'')+'</div>');
 }
 // Opened from elsewhere - the Comms calendar's Loop Lab layer leaves a hint (same origin) and asks the shell to open
