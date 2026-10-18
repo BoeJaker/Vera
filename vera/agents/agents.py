@@ -898,6 +898,8 @@ class AgentRegistry:
                     raw = await r.hgetall(k)
                 except Exception:
                     continue   # skip non-hash keys sharing the prefix (e.g. a cache-version counter)
+                if raw and not (raw.get(b"id") or raw.get("id")):
+                    continue   # another feature's hash under this prefix (vera:agents:contacts / :work) - not an agent; it drew a blank one
                 if raw:
                     rec = self._from_redis(raw)
                     if not include_archived and rec.archived:
