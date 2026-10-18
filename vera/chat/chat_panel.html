@@ -3929,12 +3929,41 @@ const CH = (() => {
 
   /* Quick clipboard copy of a single message's content. Used by the
      hover-revealed "Copy" button on every message row. */
+  /* COPY AND PASTE CARRIES WHERE TEXT CAME FROM (WSU-63; owner 2026-10-18, D5: "build"). Text copied from a Vera reply - a selection
+     inside one reply, or its Copy button - carries a hidden marker in the clipboard's HTML: the turn (mN), the session and the turn's
+     time. Plain text is unchanged, so a paste anywhere else is ordinary text. Pasted back into this chat it goes into the message as a
+     quote headed with where it came from: "Vera, m12" in this chat, "Vera, an earlier chat (11:20)" from another one or after a reload
+     (turn numbers are per page). */
+  function _vprovHtml(mid, txt){
+    const w=document.querySelector('#msgs .mwrap[data-mid="'+mid+'"]'); const ts=(w&&w.dataset.ts)||'';
+    return '<div data-vera-mid="'+esc(mid)+'" data-vera-sid="'+esc(SID||'')+'" data-vera-ts="'+esc(ts)+'">'+esc(txt).replace(/\n/g,'<br>')+'</div>';
+  }
+  function _vprovRead(html){
+    if(!html||html.indexOf('data-vera-mid')<0) return null;
+    try{ const el=new DOMParser().parseFromString(html,'text/html').querySelector('[data-vera-mid]'); if(!el) return null;
+      return {mid:el.getAttribute('data-vera-mid')||'', sid:el.getAttribute('data-vera-sid')||'', ts:el.getAttribute('data-vera-ts')||''}; }catch(_){ return null; }
+  }
+  function _vprovQuote(p, text){
+    const here=p.sid&&p.sid===(SID||'')&&!!document.querySelector('#msgs .mwrap.a[data-mid="'+p.mid+'"][data-ts="'+p.ts+'"]');
+    let when=''; try{ if(p.ts) when=new Date(+p.ts).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}); }catch(_){}
+    const label=here?('Vera, '+p.mid):('Vera, an earlier chat'+(when?' ('+when+')':''));
+    return '> **'+label+'**\n'+String(text).replace(/\r/g,'').split('\n').map(l=>'> '+l).join('\n')+'\n\n';
+  }
+  document.addEventListener('copy', e=>{ try{
+    const s=window.getSelection(); if(!s||s.isCollapsed||!e.clipboardData) return;
+    const el=n=>n&&(n.nodeType===1?n:n.parentElement); const wrapOf=n=>{ const x=el(n); return x&&x.closest('#msgs .mwrap.a[data-mid]'); };
+    const a=wrapOf(s.anchorNode); if(!a||a!==wrapOf(s.focusNode)) return;   /* inside ONE Vera reply only */
+    const txt=s.toString(); if(!txt.trim()) return;
+    e.clipboardData.setData('text/plain', txt); e.clipboardData.setData('text/html', _vprovHtml(a.dataset.mid, txt)); e.preventDefault();
+  }catch(_){} });
   function _msgCopy(mid, btn){
     const rec = _MSG_REGISTRY[mid]; if(!rec){ return; }
     const txt = rec.getContent();
     const orig = btn ? btn.textContent : '';
     try{
-      navigator.clipboard.writeText(txt);
+      if(rec.role!=='user'&&window.ClipboardItem&&navigator.clipboard.write){
+        navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([txt],{type:'text/plain'}), 'text/html':new Blob([_vprovHtml(mid, txt)],{type:'text/html'})})]).catch(()=>navigator.clipboard.writeText(txt));
+      } else navigator.clipboard.writeText(txt);
       if(btn){ btn.textContent='Copied'; btn.classList.add('ok'); }
     }catch(_){
       if(btn){ btn.textContent='Failed'; btn.classList.add('err'); }
@@ -11444,7 +11473,7 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
         const appId=match.groups[0], appArgs=_cvAppArgsOf(match.groups[1]);
         placeholder.className='cap-inline';
         placeholder.innerHTML=`<div class="cap-inline-header"><span style="color:var(--acc)">&#9636; opening app</span> <code style="color:var(--acc2);font-family:var(--mono)">${esc(appId)}</code>${Object.keys(appArgs).length?' <span style="color:var(--dim)">'+esc(Object.keys(appArgs).map(k=>k+'='+appArgs[k]).join(' '))+'</span>':''}</div>`;
-        _cvOpenApp(appId, appArgs).catch(()=>{});
+        _cvOpenApp(appId, appArgs).then(r=>placeholder.classList.add(r===false?'error':'done')).catch(()=>placeholder.classList.add('error'));   /* the line stops animating when the open ends */
 
       }else if(match.type==='panel'){
         // LLM emitted [[panel:name]] — open the panel inline. Render an
@@ -11456,8 +11485,10 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
           <span style="color:var(--acc)">&#9635; opening panel</span>
           <code style="color:var(--acc2);font-family:var(--mono)">${esc(panelName)}</code>
         </div>`;
-        // Fire and forget — _llmOpenPanel logs a sys message on failure.
-        _llmOpenPanel(panelName).catch(()=>{});
+        // _llmOpenPanel logs a sys message on failure. The line ends when the open does (owner 2026-10-18: "the opening panel placeholder
+        // in the chat doesnt stop the loading animation after the panel loads" - a cap-inline line runs its animation until .done / .error)
+        const _endPh=(ok)=>{ placeholder.classList.add(ok?'done':'error'); const s=placeholder.querySelector('.cap-inline-header > span'); if(s) s.innerHTML=ok?'&#9635; opened panel':'&#9635; panel not opened'; };
+        _llmOpenPanel(panelName).then(r=>_endPh(r!==false)).catch(()=>_endPh(false));
 
       }else if(match.type==='loop'){
         // LLM decided the request needs the full agentic loop. Defer the goal
@@ -20745,6 +20776,10 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
     const files=[...(cd.files||[])]; const items=[...(cd.items||[])].filter(it=>it.kind==='file');
     if(files.length||items.length){ e.preventDefault(); (files.length?files:items.map(it=>it.getAsFile()).filter(Boolean)).forEach(f=>_attUpload(f)); return; }
     const text=cd.getData('text/plain')||cd.getData('text')||''; const html=cd.getData('text/html')||'';
+    /* text copied from a Vera reply goes in as a quote of where it came from (WSU-63) - before the paste guard, which would make it a document */
+    const prov=_vprovRead(html);
+    if(prov&&text.trim()&&e.target&&typeof e.target.setRangeText==='function'){ e.preventDefault(); const ta=e.target;
+      ta.setRangeText(_vprovQuote(prov, text), ta.selectionStart, ta.selectionEnd, 'end'); ta.dispatchEvent(new Event('input', {bubbles:true})); return; }
     if(_paIngestText(text, html)) e.preventDefault();
   }
   // drop anywhere on the chat: the band shows while something is dragged over; files upload, text pastes
