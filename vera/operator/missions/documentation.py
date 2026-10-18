@@ -118,9 +118,14 @@ def _safe_name(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", str(s or "panel")).strip("-") or "panel"
 
 
+# /mcp/tools is the whole catalogue with schemas (several MB, streamed): 15 s missed it on a busy prod.
+CAPS_FETCH_TIMEOUT = 90
+
+
 async def _fetch_json(client: Any, url: str) -> Any:
+    timeout = CAPS_FETCH_TIMEOUT if url.rstrip("/").endswith("/mcp/tools") else 15
     try:
-        r = await client.get(url, timeout=15)
+        r = await client.get(url, timeout=timeout)
         r.raise_for_status()
         return r.json()
     except Exception as e:
@@ -249,6 +254,13 @@ async def run_documentation_mission(params: Dict[str, Any],
     # write_caps=False refreshes only the screenshot blocks and leaves each
     # doc's capability table as it is.
     write_caps = bool(params.get("write_caps", True))
+    caps_note = ""
+    if write_caps and not all_caps:
+        # The catalogue did not come back (timeout, error, empty): writing tables from it would replace every
+        # page's table with "No capabilities resolved" - 33 of 42 pages got that way (S31 / D32-3). Keep them.
+        write_caps = False
+        caps_note = "capability catalogue unavailable - every capability table left as it was"
+        await _emit("warn", caps_note)
 
     docs_dir = os.path.join(repo_root, "documentation")
     assets_dir = os.path.join(docs_dir, "assets")
@@ -444,6 +456,7 @@ async def run_documentation_mission(params: Dict[str, Any],
             "unmapped_panels": sorted(p["id"] for p in panels
                                       if not _dm.domain_for_panel(p)),
             "captured": do_capture, "capture_note": capture_note,
+            "caps_written": bool(write_docs and write_caps), "caps_note": caps_note,
             "docs_written": bool(write_docs), "manifest": "documentation/assets/manifest.json"}
 
 
