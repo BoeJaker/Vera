@@ -578,6 +578,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.unit.list", http_method="GET", http_path="/business/unit/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "units"}, "draw": {"columns": ["title", "sku", "condition", "completeness", "status", "price", "location", "created_at"]}, "empty": "No units"}},
         http_tags=["commerce"], memory="off", silent=True,
         schema=enum_schema(status=UNIT_STATUS),
         description="List physical units (individual copies). Input: product_id (all "

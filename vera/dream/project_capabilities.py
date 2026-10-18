@@ -643,6 +643,7 @@ async def project_plan_advance(slug: str = "", portion_id: str = "", status: str
 
 @capability(
     "project.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "projects"}, "draw": {"columns": ["name", "status", "dream_count", "last_dream_at", "updated_at", "slug"]}, "empty": "No projects"}},
     http_method="GET", http_path="/dream/projects/list", http_tags=["project"],
     description="List all projects with their summary metadata.",
 )

@@ -873,6 +873,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.ml.list", http_method="GET", http_path="/markets/ml/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "models"}, "draw": {"columns": ["name", "task", "model_kind", "status", "dataset_id", "horizon", "trained_at"]}, "empty": "No ML tools"}},
         http_tags=["markets"], memory="off", silent=True,
         description="List ML predictive tools with status and validation metrics. "
                     "Output: {models:[{id,name,dataset_id,task,horizon,features,model_kind,"
@@ -1692,6 +1693,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.strategy.list", http_method="GET", http_path="/markets/strategy/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "strategies"}, "draw": {"columns": ["name", "kind", "status", "updated_at", "id"]}, "empty": "No saved strategies"}},
         http_tags=["markets"], memory="off", silent=True,
         description="List saved strategies. Output: {strategies:[{id,name,spec,updated_at}]}.",
     )
@@ -2001,6 +2003,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.backtest.list", http_method="GET", http_path="/markets/backtest/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "backtests"}, "draw": {"columns": ["name", "dataset_id", "created_at", "strategy_id", "id"]}, "empty": "No stored backtests"}},
         http_tags=["markets"], memory="off", silent=True,
         description="List stored backtest results (stats only). Input: dataset_id (str — "
                     "filter), limit (int=30). Output: {backtests:[{id,name,dataset_id,"
@@ -2630,6 +2633,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.monitor.status", http_method="GET", http_path="/markets/monitor/status",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "monitors"}, "draw": {"columns": ["name", "kind", "enabled", "dataset_id", "interval_min", "sim_pct"]}, "empty": "No live monitors"}},
         http_tags=["markets"], memory="off", silent=True,
         description="Live-monitoring dashboard: every accepted strategy with its monitor "
                     "config, virtual position, last check/signal and recent alerts. "
@@ -2767,6 +2771,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.portfolio.tx_list", http_method="GET",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "transactions"}, "draw": {"columns": ["ts", "side", "name", "qty", "price", "fees", "currency"]}, "empty": "No portfolio transactions"}},
         http_path="/markets/portfolio/tx_list", http_tags=["markets"],
         memory="off", silent=True,
         description="List portfolio transactions. Input: symbol_key (str — filter), "
@@ -2854,6 +2859,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.portfolio.positions", http_method="GET",
+        contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "map": {"rows": "positions"}, "title": "Positions", "form": "table", "draw": {"columns": ["name", "qty", "avg_cost", "last", "market_value", "unrealized_pnl", "unrealized_pct", "allocation_pct"]}}, {"kind": "kv", "map": {"fields": "totals"}, "title": "Totals"}]}},
         http_path="/markets/portfolio/positions", http_tags=["markets"],
         memory="off", silent=True,
         description="Current portfolio: open positions with live valuation from stored "
@@ -3030,6 +3036,7 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     @capability(
         "markets.portfolio.history", http_method="GET",
+        contract={"presentation": {"kind": "series", "form": "lines", "map": {"pick": {"value": "value", "cost": "cost"}}, "title": "Portfolio value vs cost", "empty": "No portfolio history"}},
         http_path="/markets/portfolio/history", http_tags=["markets"],
         memory="off", silent=True,
         description="Daily portfolio value time series (positions replayed against stored "

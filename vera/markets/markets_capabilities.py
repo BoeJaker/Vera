@@ -958,6 +958,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "markets.watchlist.list", http_method="GET", http_path="/markets/watchlist",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "watchlist"}, "draw": {"columns": ["symbol", "exchange", "last_status", "last_update", "auto_update", "update_interval_min", "live_track"]}, "empty": "The watchlist is empty"}},
         http_tags=["markets"], memory="off", silent=True,
         description="List watched assets with config, stored bar counts and last update. "
                     "Output: {watchlist:[{id,exchange,symbol,timeframes,auto_update,"

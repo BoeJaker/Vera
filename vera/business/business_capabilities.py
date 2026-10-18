@@ -728,6 +728,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.stream.list", http_method="GET", http_path="/business/stream/list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "streams"}, "draw": {"columns": ["name", "kind", "platform", "status", "goal_monthly", "currency", "created_at"]}, "empty": "No income streams"}},
         http_tags=["business"], memory="off", silent=True,
         schema=enum_schema(status=STREAM_STATUS, kind=STREAM_KINDS),
         description="List income streams. Input: status (str), kind (str), "
@@ -1398,6 +1399,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.dashboard", http_method="GET", http_path="/business/dashboard",
+        contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "Business"}, {"kind": "table", "map": {"rows": "streams"}, "title": "Income streams", "form": "table", "draw": {"columns": ["name", "kind", "status", "revenue_30d", "expense_30d", "net_30d", "goal_monthly", "goal_pct"]}}]}},
         http_tags=["business"], memory="off", silent=True,
         description="State of the business: per-stream 30-day revenue/expense/net "
                     "vs goal, cash balance, open gigs, content pipeline, open "
@@ -1490,6 +1492,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "business.graph", http_method="GET", http_path="/business/graph",
+        contract={"presentation": {"kind": "graph", "map": {"nodes": "nodes", "edges": "edges", "node_id": "id", "edge_from": "source", "edge_to": "target", "label": "label", "type": "type"}}},
         http_tags=["business"], memory="off", silent=True,
         description="Business network graph (streams ↔ accounts ↔ gigs ↔ content ↔ "
                     "bounties ↔ social ↔ campaigns ↔ platforms) for the panel graph "

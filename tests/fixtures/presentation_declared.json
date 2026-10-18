@@ -145,9 +145,342 @@
   "form": "ci-board",
   "kind": "status"
  },
+ "business.catalog.products": {
+  "draw": {
+   "columns": [
+    "title",
+    "console",
+    "cib",
+    "market",
+    "rarity",
+    "sold_count",
+    "stale",
+    "updated_at"
+   ]
+  },
+  "empty": "The product catalog is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "products"
+  }
+ },
+ "business.dashboard": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Business"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "kind",
+      "status",
+      "revenue_30d",
+      "expense_30d",
+      "net_30d",
+      "goal_monthly",
+      "goal_pct"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "streams"
+    },
+    "title": "Income streams"
+   }
+  ]
+ },
+ "business.graph": {
+  "kind": "graph",
+  "map": {
+   "edge_from": "source",
+   "edge_to": "target",
+   "edges": "edges",
+   "label": "label",
+   "node_id": "id",
+   "nodes": "nodes",
+   "type": "type"
+  }
+ },
+ "business.listing.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "platform",
+    "status",
+    "price",
+    "currency",
+    "condition",
+    "updated_at"
+   ]
+  },
+  "empty": "No listings",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "listings"
+  }
+ },
+ "business.product.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "sku",
+    "category",
+    "qty_on_hand",
+    "price",
+    "cost",
+    "reorder_point",
+    "updated_at"
+   ]
+  },
+  "empty": "No products",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "products"
+  }
+ },
+ "business.product.low_stock": {
+  "draw": {
+   "columns": [
+    "name",
+    "sku",
+    "qty_on_hand",
+    "reorder_point",
+    "reorder_qty",
+    "supplier"
+   ]
+  },
+  "empty": "No products are low on stock",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "products"
+  }
+ },
+ "business.ship.carriers": {
+  "draw": {
+   "columns": [
+    "carrier",
+    "service",
+    "format",
+    "tracked",
+    "signed",
+    "comp"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "services"
+  }
+ },
+ "business.sim.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "run"
+    },
+    "title": "Run"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "totals"
+    },
+    "title": "Totals"
+   }
+  ]
+ },
+ "business.store.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "platform",
+    "status",
+    "product_count",
+    "inventory_retail",
+    "listings_live",
+    "open_orders",
+    "net_30d"
+   ]
+  },
+  "empty": "No stores",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "stores"
+  }
+ },
+ "business.store.master": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "platform",
+      "product_count",
+      "inventory_retail",
+      "listings_live",
+      "open_orders",
+      "net_30d",
+      "net_all"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "stores"
+    },
+    "title": "Stores"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "totals"
+    },
+    "title": "Totals"
+   }
+  ]
+ },
+ "business.stream.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "platform",
+    "status",
+    "goal_monthly",
+    "currency",
+    "created_at"
+   ]
+  },
+  "empty": "No income streams",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "streams"
+  }
+ },
+ "business.tax.summary": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Tax year"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "income"
+    },
+    "title": "Income"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "expenses"
+    },
+    "title": "Expenses"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "vat"
+    },
+    "title": "VAT"
+   }
+  ]
+ },
+ "business.unit.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "sku",
+    "condition",
+    "completeness",
+    "status",
+    "price",
+    "location",
+    "created_at"
+   ]
+  },
+  "empty": "No units",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "units"
+  }
+ },
  "cal.events.list": {
   "form": "schedule",
   "kind": "calendar"
+ },
+ "cal.notes.list": {
+  "draw": {
+   "columns": [
+    "title",
+    "remind_at",
+    "updated",
+    "body"
+   ]
+  },
+  "empty": "No notes",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "notes"
+  }
+ },
+ "cal.sources.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "type",
+    "enabled",
+    "last_sync",
+    "has_refresh_token",
+    "color"
+   ]
+  },
+  "empty": "No calendar sources",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sources"
+  }
+ },
+ "cal.sync.status": {
+  "draw": {
+   "columns": [
+    "label",
+    "added",
+    "updated",
+    "errors",
+    "error",
+    "ts"
+   ]
+  },
+  "empty": "No sync has run yet",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "results"
+  }
  },
  "catalog.browse.index": {
   "kind": "composite",
@@ -1108,10 +1441,152 @@
   "form": "status",
   "kind": "status"
  },
+ "ide.agent.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "name",
+    "model",
+    "temperature",
+    "prefer_gpu",
+    "registered"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "agents"
+  }
+ },
+ "ide.claude_sessions.list_sessions": {
+  "draw": {
+   "columns": [
+    "title",
+    "agent",
+    "turns",
+    "last_ts",
+    "last_role",
+    "project_dir",
+    "claude_session_id"
+   ]
+  },
+  "empty": "No Claude Code sessions ingested",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sessions"
+  }
+ },
+ "ide.fs.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "size",
+    "mtime",
+    "readable"
+   ]
+  },
+  "empty": "The directory is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "entries"
+  }
+ },
+ "ide.fs.roots": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "path"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "roots"
+  }
+ },
  "ide.git.diff": {
   "kind": "diff",
   "map": {
    "diff": "diff"
+  }
+ },
+ "ide.instances": {
+  "draw": {
+   "columns": [
+    "label",
+    "status",
+    "tier",
+    "backend",
+    "has_gpu",
+    "latency_ms",
+    "in_use",
+    "url"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "instances"
+  }
+ },
+ "ide.models": {
+  "draw": {
+   "columns": [
+    "name",
+    "instances"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "models"
+  }
+ },
+ "ide.remote.instances": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "status",
+    "last_seen",
+    "auth_pool",
+    "workdir"
+   ]
+  },
+  "empty": "No remote IDE instances",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "instances"
+  }
+ },
+ "ide.remote.queue.list": {
+  "draw": {
+   "columns": [
+    "task",
+    "status",
+    "engine",
+    "agent",
+    "summary",
+    "created_at",
+    "finished_at"
+   ]
+  },
+  "empty": "The work queue is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "items"
+  }
+ },
+ "ide.vscode.central.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
   }
  },
  "identity.group.list": {
@@ -1274,11 +1749,127 @@
    "text": "message"
   }
  },
+ "markets.backtest.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "dataset_id",
+    "created_at",
+    "strategy_id",
+    "id"
+   ]
+  },
+  "empty": "No stored backtests",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "backtests"
+  }
+ },
+ "markets.baseline.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "symbol",
+    "group",
+    "provider",
+    "tracked",
+    "last_bar"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "assets"
+  }
+ },
  "markets.chart": {
   "form": "candles",
   "kind": "series",
   "map": {
    "bars": "bars"
+  }
+ },
+ "markets.evolve.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "metric",
+      "ts",
+      "strategy_id"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "leaderboard"
+    },
+    "title": "Leaderboard"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "config"
+    },
+    "title": "Config"
+   }
+  ]
+ },
+ "markets.macro.catalog": {
+  "draw": {
+   "columns": [
+    "name",
+    "group",
+    "unit",
+    "source",
+    "last",
+    "fetched"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "series"
+  }
+ },
+ "markets.ml.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "task",
+    "model_kind",
+    "status",
+    "dataset_id",
+    "horizon",
+    "trained_at"
+   ]
+  },
+  "empty": "No ML tools",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "models"
+  }
+ },
+ "markets.monitor.status": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "enabled",
+    "dataset_id",
+    "interval_min",
+    "sim_pct"
+   ]
+  },
+  "empty": "No live monitors",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "monitors"
   }
  },
  "markets.overview": {
@@ -1287,6 +1878,180 @@
    "name": "name",
    "rows": "groups",
    "value": "median_1d"
+  }
+ },
+ "markets.portfolio.history": {
+  "empty": "No portfolio history",
+  "form": "lines",
+  "kind": "series",
+  "map": {
+   "pick": {
+    "cost": "cost",
+    "value": "value"
+   }
+  },
+  "title": "Portfolio value vs cost"
+ },
+ "markets.portfolio.positions": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "qty",
+      "avg_cost",
+      "last",
+      "market_value",
+      "unrealized_pnl",
+      "unrealized_pct",
+      "allocation_pct"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "positions"
+    },
+    "title": "Positions"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "totals"
+    },
+    "title": "Totals"
+   }
+  ]
+ },
+ "markets.portfolio.tx_list": {
+  "draw": {
+   "columns": [
+    "ts",
+    "side",
+    "name",
+    "qty",
+    "price",
+    "fees",
+    "currency"
+   ]
+  },
+  "empty": "No portfolio transactions",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "transactions"
+  }
+ },
+ "markets.quotes": {
+  "draw": {
+   "columns": [
+    "symbol",
+    "exchange",
+    "last",
+    "change_pct",
+    "live",
+    "ts"
+   ]
+  },
+  "empty": "No watched assets",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "quotes"
+  }
+ },
+ "markets.sentiment.map": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "label",
+      "score",
+      "confidence",
+      "summary",
+      "created_at"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "benchmarks"
+    },
+    "title": "Benchmarks"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "label",
+      "score",
+      "key"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "tracked"
+    },
+    "title": "Tracked assets"
+   }
+  ]
+ },
+ "markets.sim.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "value",
+    "cash",
+    "ret_pct",
+    "start_cash",
+    "currency"
+   ]
+  },
+  "empty": "No sim accounts",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "accounts"
+  }
+ },
+ "markets.strategy.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "kind",
+    "status",
+    "updated_at",
+    "id"
+   ]
+  },
+  "empty": "No saved strategies",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "strategies"
+  }
+ },
+ "markets.watchlist.list": {
+  "draw": {
+   "columns": [
+    "symbol",
+    "exchange",
+    "last_status",
+    "last_update",
+    "auto_update",
+    "update_interval_min",
+    "live_track"
+   ]
+  },
+  "empty": "The watchlist is empty",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "watchlist"
   }
  },
  "memory.backends": {
@@ -1798,6 +2563,24 @@
    "reverse": true,
    "value": "stalled_ms",
    "values": "events"
+  }
+ },
+ "project.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "status",
+    "dream_count",
+    "last_dream_at",
+    "updated_at",
+    "slug"
+   ]
+  },
+  "empty": "No projects",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "projects"
   }
  },
  "pxstore.backend.status": {

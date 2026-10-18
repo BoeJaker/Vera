@@ -641,6 +641,7 @@ async def cap_todo_delete(id: str = "", trace_id=None):
 
 @capability(
     "cal.notes.list", http_method="GET", http_path="/cal/notes",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "notes"}, "draw": {"columns": ["title", "remind_at", "updated", "body"]}, "empty": "No notes"}},
     http_tags=["calendar"], memory="off", silent=True,
     description="List notes / reminders. Output: {notes:[{id,title,body,remind_at}]}.",
 )
@@ -924,6 +925,7 @@ async def _save_source(src: Dict):
 
 @capability(
     "cal.sources.list", http_method="GET", http_path="/cal/sources",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sources"}, "draw": {"columns": ["label", "type", "enabled", "last_sync", "has_refresh_token", "color"]}, "empty": "No calendar sources"}},
     http_tags=["calendar"], memory="off", silent=True,
     description="List configured cloud calendar sources (REDACTED — secrets "
                 "are never returned, only has_* flags). "
@@ -1296,6 +1298,7 @@ async def cap_sync_run(source: str = "", trace_id=None):
 
 @capability(
     "cal.sync.status", http_method="GET", http_path="/cal/sync/status",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "results"}, "draw": {"columns": ["label", "added", "updated", "errors", "error", "ts"]}, "empty": "No sync has run yet"}},
     http_tags=["calendar"], memory="off", silent=True,
     description="Last sync run status. Output: {ts, results:[...]}.",
 )
