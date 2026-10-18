@@ -16017,7 +16017,12 @@ async def dream_config_set(
     "dream.history", memory="off", silent=True,
     http_method="GET", http_path="/dream/history", http_tags=["dream"],
     description="Recent dream cycle records (newest first). Supports filtering by "
-                "trigger name, keyword search in report/title/themes, and pagination.", contract={"presentation": {'kind': 'table', 'form': 'table', 'map': {'rows': 'history'}, 'draw': {'columns': ['label', 'title', 'started_at', 'signal']}}}
+                "trigger name, keyword search in report/title/themes, and pagination.",
+    # the dream cycles ARE the Activity timeline's dream scope: the panel's own timeline on the desk - each cycle a card with its
+    # report, drill-in and live watch (Wave 1: panel-derived); the table of every field stays a view
+    contract={"presentation": {'kind': 'table', 'form': 'element', 'map': {'rows': 'history'},
+                               'draw': {'tag': 'vera-activity-timeline', 'attrs': {'scope': 'dream', 'auto': '30'}, 'columns': ['label', 'title', 'started_at', 'signal']},
+                               'title': 'Dream cycles'}}
 )
 async def dream_history(
     limit: int = 50,
