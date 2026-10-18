@@ -151,6 +151,7 @@ async def perf_stalls(limit: int = 100, trace_id=None) -> Dict:
 # ── perf.log.tail / perf.log.files ────────────────────────────────────────────
 @capability(
     "perf.log.tail",
+    contract={"presentation": {"kind": "terminal", "form": "terminal", "map": {}}},
     http_method="GET", http_path="/perf/log/tail", http_tags=["monitor", "perf"],
     memory="off", silent=True,
     description="Tail the captured application log. Serves from the in-memory "
@@ -184,6 +185,7 @@ async def perf_log_tail(lines: int = 200, grep: str = "", file: str = "",
 
 @capability(
     "perf.log.files",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "files"}, "draw": {"columns": ["name", "bytes", "modified"]}, "empty": "No log files"}},
     http_method="GET", http_path="/perf/log/files", http_tags=["monitor", "perf"],
     memory="off", silent=True,
     description="List captured log files on disk (the rotating vera.log set). "
@@ -456,6 +458,7 @@ async def perf_scan(trace_id=None) -> Dict:
 # ── perf.gate (M3 perf-gating) ──────────────────────────────────────────────────
 @capability(
     "perf.gate",
+    contract={"presentation": {"kind": "status", "map": {"verdict": "verdict", "checks": "top_findings"}}},
     http_method="GET", http_path="/perf/gate", http_tags=["monitor", "perf"],
     memory="off", silent=True,
     description="Perf-based GATE check (M3 perf-gating): runs perf.scan and reduces "

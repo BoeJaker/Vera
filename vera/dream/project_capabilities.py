@@ -704,6 +704,7 @@ async def _goal_active_loop(r, slug: str):
 
 @capability(
     "goals.list", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "goals"}, "draw": {"columns": ["name", "status", "dream_count", "last_dream_at", "loop_status", "created_at"]}, "empty": "No long-term goals"}},
     http_method="GET", http_path="/dream/goals/list", http_tags=["project", "goals"],
     description="List the LONG-TERM GOALS the system is tracking — strategic goals a broad "
                 "request escalated to, persisted as dream projects (tagged 'strategic'). Each "

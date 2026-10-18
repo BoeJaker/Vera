@@ -232,6 +232,11 @@ _LOOP_SESSION_CV: "contextvars.ContextVar[str]" = contextvars.ContextVar(
 #   controller/ generate+adapt — pinned to a CPU reasoning model so the GPU stays
 #   tier        free for the generative step work.
 #   coder       code generation inside coding steps — a coding model, warmer temp.
+#               Since 12 Oct 2026 the FIXES: parse/runtime repairs, edits, rewrites.
+#   drafter     a file's FIRST draft (code.author's whole-file pass and code-gen tool
+#               calls) - the executor's model ("@executor"), so it runs on the GPU
+#               where the executor is resident (owner, 12 Oct 2026: "GPU 9B drafts,
+#               30b fixes").
 #   writer      long-form prose/report generation — warmest temp.
 LOOP_ROUTING_PROFILE = "loop"
 # Planning/orchestration model. Default is the GPU-resident 9B so every dev
@@ -272,6 +277,10 @@ register_routing_profile(
                        # penalises the legitimate token repetition code is full of);
                        # temp 0.7 matches the chat that writes clean code.
                        "model": "qwen2.5-coder:14b",
+                       "options": {"temperature": 0.7, "top_p": 0.9}},
+        # First drafts on the executor's model (one place to change it: the executor role).
+        # Its own job type, so loop_coder route stats (editor_output_bound) stay the fixer's.
+        "drafter":    {"job_type": "loop_drafter", "prefer_gpu": True, "model": "@executor",
                        "options": {"temperature": 0.7, "top_p": 0.9}},
         "writer":     {"job_type": "loop_writer", "prefer_gpu": True,
                        "options": {"temperature": 0.7, "top_p": 0.9}},
@@ -2591,7 +2600,7 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
                                      model="", instance_id="", prefer_gpu=True,
                                      stream_cb=None, options=None, think=False,
                                      profile="", role="", job_type="", timeout=0,
-                                     request_stage=""):
+                                     request_stage="", stage_role=""):
     """Thinking-model-aware ollama_generate wrapper for dag_workshop callers.
 
     Lazily resolves ollama_generate via the context module so we don't have
@@ -2626,6 +2635,15 @@ async def _safe_ollama_generate_dw(prompt, *, system="", json_mode=True,
     _lsid = _LOOP_SESSION_CV.get()
     if _lsid and await _loop_run_cancelled(_lsid):
         raise asyncio.CancelledError(f"loop {_lsid} cancelled — aborting generation")
+    # A stage with no routing role of its own (gate, verifier, journal, ...) takes the
+    # loop/<stage> role only when THIS run placed it (stage_models -> RUN_ROLE_OVERRIDES),
+    # so an unplaced stage routes exactly as before (role_override_core.STAGE_ROLES).
+    if stage_role and not (profile or role):
+        try:
+            if "%s/%s" % (LOOP_ROUTING_PROFILE, stage_role) in (_orch.RUN_ROLE_OVERRIDES.get() or {}):
+                profile, role = LOOP_ROUTING_PROFILE, stage_role
+        except Exception:
+            pass
     system = _now_context_line() + ("\n\n" + system if system else "")
     import importlib
     try:
@@ -5053,7 +5071,7 @@ async def _attempt_arg_recovery(*, cap_name: str, failed_args: Dict[str, Any],
                 prompt, system=_RECOVERY_SYSTEM_PROMPT,
                 model=model, instance_id=instance_id,
                 prefer_gpu=prefer_gpu, json_mode=True,
-            )
+            stage_role="argfix")
         except Exception as e:
             last_error = f"recovery LLM call failed: {e}"
             attempts.append({"args": last_args, "error": last_error})
@@ -8456,6 +8474,17 @@ def _v5_goal_is_webby(goal: str) -> bool:
     return any(h in g for h in _V5_WEB_GOAL_HINTS)
 
 
+# info-first (owner 10 Oct 2026, compute-roles P1a / intelligence SK-1.4): a goal that needs the
+# outside world gets Vera's front door first - info.seek: dated, numbered evidence from what Vera
+# tracks (it calls intel.lookup itself) + news + web, report-sellers dropped - ahead of the raw
+# web.* chain. Per run (dag.agent_loop_v6 info_first), off by default until
+# measured; a ContextVar so the seeding needs no new argument threaded through.
+_V5_INFO_FIRST_CAPS = ("info.seek",)
+_V5_INFO_FIRST_REPLACES = ("web.research", "web.search")
+_INFO_FIRST_CV: "contextvars.ContextVar[bool]" = contextvars.ContextVar("vera_loop_info_first",
+                                                                         default=False)
+
+
 def _v5_seed_caps_for(goal: str) -> List[str]:
     """Caps to GUARANTEE in the v5 catalog (web research caps only when the goal
     looks like it needs the live web). Keeps web/data/exec avenues always offered
@@ -8467,6 +8496,12 @@ def _v5_seed_caps_for(goal: str) -> List[str]:
         # http.get, so a research plan reached for raw fetches before it ever
         # saw web.research (2026-09-21, census research-report).
         seeds = list(_V5_WEB_RESEARCH_SEED_CAPS) + [c for c in seeds if c not in _V5_WEB_RESEARCH_SEED_CAPS]
+        if _INFO_FIRST_CV.get():
+            # info.seek REPLACES the search front doors (web.research / web.search): first in
+            # line was not enough - the planner kept web.research (I2 probes, 11 Oct). web.fetch
+            # stays for reading a named page.
+            seeds = list(_V5_INFO_FIRST_CAPS) + [c for c in seeds
+                                                 if c not in _V5_INFO_FIRST_CAPS + _V5_INFO_FIRST_REPLACES]
     # A goal whose OWN text asks for UI/HTML verification ("...then verify it
     # actually works by clicking the button...") never matches the research-y
     # web hints above, so operator.run/browser.navigate were never guaranteed
@@ -8796,6 +8831,16 @@ def _v5_prompt_file_refs(text: str) -> List[str]:
     return out[:6]
 
 
+_V5_FIX_PROMPT_RE = re.compile(r"\b(fix|fixes|fixing|repair|debug|refactor|patch)\b", re.I)
+
+
+def _v5_code_role(args: Dict[str, Any]) -> str:
+    """`drafter` for a first draft, `coder` for a fix (owner, 12 Oct 2026: the GPU 9B drafts,
+    the 30b coder fixes)."""
+    blob = (str(args.get("prompt") or "") + "\n" + str(args.get("system") or ""))[:2000]
+    return "coder" if _V5_FIX_PROMPT_RE.search(blob) else "drafter"
+
+
 def _v5_apply_code_routing(tool: str, args: Any) -> bool:
     """Route a code-authoring generative call to the coding cohort: drop any pinned
     run model (so the `coder` role routes the model), stamp profile/role, AND attach
@@ -8804,9 +8849,9 @@ def _v5_apply_code_routing(tool: str, args: Any) -> bool:
     returns True when applied."""
     if not (_LOOP_CODE_ROLE_ON and isinstance(args, dict) and _v5_is_code_gen(tool, args)):
         return False
-    args.pop("model", None)                 # let the coder role route the model
-    args["profile"] = LOOP_ROUTING_PROFILE   # role carries job_type=loop_coder + temp
-    args["role"] = "coder"
+    args.pop("model", None)                 # let the role route the model
+    args["profile"] = LOOP_ROUTING_PROFILE   # role carries job_type + temp
+    args["role"] = _v5_code_role(args)
     # An output_format meant for DATA or prose turns a code request into that
     # shape — `output_format="json"` on "write a Python script" made the model
     # return {"script": "import json\\n…"}: escaped code inside a JSON envelope,
@@ -8984,7 +9029,8 @@ def _v5_resolve_tool_name(tool: str, allowed: List[str], catalog: set) -> str:
 
 # Caps that look up NEW / EXTERNAL knowledge — a "research" unit of work.
 _V5_RESEARCH_CAPS = {"web.research", "web.crawl", "web.search", "web.fetch",
-                     "research.quick_search", "fabric.discover.crawl", "web.search_and_crawl"}
+                     "research.quick_search", "fabric.discover.crawl", "web.search_and_crawl",
+                     "info.seek", "intel.lookup"}
 # Caps that PRODUCE or RUN something — a "build / execute" unit of work.
 _V5_BUILD_CAPS = {"llm.generate", "code.author", "code.edit", "prose.author",
                   "exec.python.run", "exec.bash.run",
@@ -9648,7 +9694,7 @@ async def _v5_condense_output(raw_text: str, tool: str, step_goal: str, *,
         # is the documented precedence.
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False, job_type="summarize")
+            prefer_gpu=prefer_gpu, json_mode=False, job_type="summarize", stage_role="condense")
         clean = _strip_think(out or "")[0].strip()
         if clean:
             clean = clean[:max_out]
@@ -10779,11 +10825,24 @@ def _v5_js_syntax_error(html: str) -> str:
     silently doesn't run in the browser — the exact broken-app mode seen on the
     pomodoro and pokedex builds. This catches it so it routes into the repair loop.
     Skips <script src=…> (external) and non-JS <script type> (JSON/templates).
-    Degrades to "" when esprima isn't installed — no false failure."""
+    Without esprima it falls back to `node --check` (panel_check): prod's venv has no esprima
+    while the gate image does, so on prod this check was silently skipped and a timer.html with
+    unbalanced braces passed (compute-roles, 11 Oct 2026). "" only when neither can run."""
     try:
         import esprima                                  # optional dep
     except Exception:
-        return ""
+        esprima = None
+    _node = None
+    if esprima is None:
+        import importlib
+        for _mod in ("Vera.vera.evolve.panel_check", "vera.evolve.panel_check"):
+            try:
+                _node = importlib.import_module(_mod)
+                break
+            except Exception:
+                continue
+        if _node is None or not _node.node_available():
+            return ""
     for m in re.finditer(r"<script\b([^>]*)>(.*?)</script\s*>", html, re.I | re.S):
         attrs, body = m.group(1) or "", m.group(2) or ""
         if re.search(r"\bsrc\s*=", attrs, re.I):
@@ -10794,6 +10853,13 @@ def _v5_js_syntax_error(html: str) -> str:
                                  "module", "text/babel", "text/jsx"):
             continue                                    # e.g. application/json — not JS
         if not body.strip():
+            continue
+        if esprima is None:
+            if _typ in ("text/babel", "text/jsx"):
+                continue                                # node cannot parse JSX
+            _err = _node._node_check(body, module=(_typ == "module"))
+            if _err:
+                return f"<script> JS: {_err}"
             continue
         try:
             (esprima.parseModule if _typ == "module" else esprima.parseScript)(body)
@@ -11294,8 +11360,9 @@ async def cap_code_author(task: str = "", path: str = "", context_files=None,
         _last_result_stream_at = time.perf_counter()
 
     try:
+        # the first draft: the drafter (executor's model, GPU); every repair below is the coder's
         res = await fn(prompt=prompt, system=sys_prompt, output_format="code",
-                       profile=LOOP_ROUTING_PROFILE, role="coder",
+                       profile=LOOP_ROUTING_PROFILE, role="drafter",
                        # Sampling passed at the CALL so it applies even when the coder
                        # role options are overridden empty on the Model Routing page
                        # (which they are in prod). Aligned to the chat/aide config —
@@ -11963,6 +12030,8 @@ async def cap_prose_author(task: str = "", path: str = "", context_files=None,
             "path": saved.get("path", path), "fs_path": saved.get("fs_path", ""),
             "version": saved.get("version"), "bytes": saved.get("bytes"),
             "lang": saved.get("lang", lang), "chars": len(content),
+            # the length a "200-word" goal asks about, so nobody counts it again (11 Oct 2026)
+            "words": len(content.split()),
             "truncated": truncated,
             "grounded": not ungrounded,
             "ungrounded_refs": ungrounded,
@@ -14351,6 +14420,54 @@ except Exception:                                     # pragma: no cover
 _ENTITY_NER_TIMEOUT_S = 20.0
 
 
+try:
+    from Vera.vera.dag import goal_constraints_core as _goal_cons_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import goal_constraints_core as _goal_cons_core
+
+
+# plan.goal_frame=writer (R-B2): the goal's constraints ride on every authoring call's task in this run; set by the
+# loop once it has them, read where the executor invokes a tool. A context var, so child tasks of the run see it
+# and other runs never do.
+import contextvars as _cv_gw
+_GOAL_WRITER_CONS: "_cv_gw.ContextVar[Optional[List[Dict[str, Any]]]]" = _cv_gw.ContextVar(
+    "vera_goal_writer_cons", default=None)
+
+
+def _goal_frame_mode() -> str:
+    """Switch plan.goal_frame: off (default) | on (done_when + gate) | writer (R-B2: constraints to the writer)."""
+    try:
+        return str(_minds_core.mode_of("plan.goal_frame") or "off") if _minds_core is not None else "off"
+    except Exception:
+        return "off"
+
+
+def _writer_constraints_apply(tool: str, args: Any) -> Any:
+    """In writer mode, an authoring call (code.author / prose.author ...) gets the goal's constraints appended to
+    its `task`. Any other call, or a task that is not a string, is returned untouched."""
+    try:
+        cons = _GOAL_WRITER_CONS.get()
+        if not cons or tool not in _V5_AUTHORING_CAPS or not isinstance(args, dict):
+            return args
+        task = args.get("task")
+        if not isinstance(task, str) or not task.strip():
+            return args
+        blk = _goal_cons_core.writer_block(cons)
+        if not blk or blk in task:
+            return args
+        return dict(args, task=task.rstrip() + "\n\n" + blk)
+    except Exception:
+        return args
+
+
+def _goal_frame_on() -> bool:
+    """Switch plan.goal_frame (four-minds FM-1.3 / compute-roles B2), off by default."""
+    try:
+        return _minds_core is not None and _minds_core.mode_of("plan.goal_frame") == "on"
+    except Exception:
+        return False
+
+
 async def _v6_goal_entities(goal: str) -> List[Dict[str, str]]:
     """The goal's checkable entities (entity_coverage_core.goal_entities) from
     nlp.ner, or [] when NER is unavailable or slow. Calls the cap's raw
@@ -14371,6 +14488,190 @@ async def _v6_goal_entities(goal: str) -> List[Dict[str, str]]:
     return _entity_cov.goal_entities(res)
 
 
+# NLI claim check (compute-roles P3, 11 Oct 2026): the answer's dated/numeric claims paired with
+# the run's evidence and scored by nlp.nli on a node; per-run claim_nli = off | shadow | hint.
+try:
+    from Vera.vera.dag import claim_nli_core as _claim_nli
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import claim_nli_core as _claim_nli
+    except Exception:
+        _claim_nli = None
+_CLAIM_NLI_TIMEOUT_S = 90.0
+_CLAIM_NLI_CANDIDATES = 8
+
+
+async def _v6_claim_nli(final: str, evidence: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """claim_nli_core over the answer: each claim's candidate windows reranked by nlp.rerank,
+    the best three per claim scored by nlp.nli. {claims, supported, contradicted, unsupported,
+    flagged, elapsed_s} or {} when the nodes cannot answer. Raw cap functions (a check must not
+    write memories); bounded by _CLAIM_NLI_TIMEOUT_S; never raises."""
+    if _claim_nli is None or not str(final or "").strip() or not evidence:
+        return {}
+    nli = (CAPABILITY_REGISTRY.get("nlp.nli") or {})
+    nli_fn = nli.get("raw") or nli.get("func")
+    rr = (CAPABILITY_REGISTRY.get("nlp.rerank") or {})
+    rr_fn = rr.get("raw") or rr.get("func")
+    if not nli_fn:
+        return {}
+    t0 = time.monotonic()
+
+    async def run() -> Dict[str, Any]:
+        claims = _claim_nli.claims(final)
+        if not claims:
+            return {"claims": 0, "supported": 0, "contradicted": 0, "unsupported": 0, "flagged": []}
+        wins = _claim_nli.windows(evidence)
+        cands = {c["i"]: _claim_nli.candidates(c, wins, limit=_CLAIM_NLI_CANDIDATES) for c in claims}
+
+        async def order(c):
+            cand = cands.get(c["i"]) or []
+            if not cand or not rr_fn:
+                return c["i"], cand
+            try:
+                res = await rr_fn(query=c["text"], documents=[wins[k]["text"] for k in cand])
+                idx = [int(x["index"]) for x in (res or {}).get("ranked") or []
+                       if int(x["index"]) < len(cand)]
+                return c["i"], ([cand[j] for j in idx] or cand)
+            except Exception:
+                return c["i"], cand
+        ranked = dict(await asyncio.gather(*(order(c) for c in claims)))
+        prs = _claim_nli.pairs(claims, evidence, ranked=ranked)
+        if not prs:
+            return _claim_nli.summary(_claim_nli.verdicts(claims, [], []))
+        res = await nli_fn(pairs=[{"premise": p["premise"], "hypothesis": claims[p["claim"]]["text"]}
+                                  for p in prs])
+        scores = (res or {}).get("results") if isinstance(res, dict) else None
+        if not isinstance(scores, list) or len(scores) != len(prs):
+            return {}
+        return _claim_nli.summary(_claim_nli.verdicts(claims, prs, scores))
+    try:
+        out = await asyncio.wait_for(run(), timeout=_CLAIM_NLI_TIMEOUT_S)
+    except Exception as e:
+        log.debug("claim NLI unavailable: %s", e)
+        return {}
+    if out:
+        out["elapsed_s"] = round(time.monotonic() - t0, 1)
+    return out
+
+
+# Known dated facts before planning (compute-roles P1b, per-run intel_prefacts; rules agreed with
+# the intelligence unit 11 Oct 2026 - see intel_prefacts_core).
+try:
+    from Vera.vera.dag import intel_prefacts_core as _prefacts_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import intel_prefacts_core as _prefacts_core
+    except Exception:
+        _prefacts_core = None
+_PREFACTS_TIMEOUT_S = 8.0
+
+
+async def _v6_intel_prefacts(goal: str, *, sid: str, stream_id: str) -> str:
+    """intel.lookup on the goal; a tracked topic's dated signals go into the run's evidence ledger
+    and come back as the planner's KNOWN block ("" when nothing is tracked or the lookup is slow).
+    Raw cap function (no memories written); never raises."""
+    cap = CAPABILITY_REGISTRY.get("intel.lookup") or {}
+    fn = cap.get("raw") or cap.get("func")
+    if not fn or _prefacts_core is None:
+        return ""
+    latest = _prefacts_core.is_latest(goal)
+    try:
+        view = await asyncio.wait_for(
+            fn(query=str(goal)[:300], since=_prefacts_core.since_for(goal), limit=8),
+            timeout=_PREFACTS_TIMEOUT_S)
+    except Exception as e:
+        log.debug("intel prefacts: intel.lookup unavailable: %s", e)
+        return ""
+    its = _prefacts_core.items(view, latest)
+    assess = _prefacts_core.assessment(view) if isinstance(view, dict) and view.get("tracked") is True else None
+    if its:
+        try:
+            _evidence_core.add(sid, {"items": its, "need": "intel_prefacts"})
+        except Exception as e:
+            log.debug("intel prefacts: ledger add failed: %s", e)
+    topic = str(((view or {}).get("topic") or {}).get("name") or "") if isinstance(view, dict) else ""
+    try:
+        await emit_event({"type": "agent_loop_v6.intel_prefacts", "session_id": sid,
+                          "stream_id": stream_id, "tracked": bool(isinstance(view, dict) and view.get("tracked")),
+                          "topic": topic, "items": len(its), "latest": latest,
+                          "assessment_shown": bool(assess)})
+    except Exception:
+        pass
+    return _prefacts_core.block(its, topic=topic, assess=assess)
+
+
+# Plan critique (roadmap A3, per-run plan_critique): the long-horizon CPU model reviews the whole
+# plan beside the run; its findings reach the adaptive controller once, as advice.
+try:
+    from Vera.vera.dag import plan_critique_core as _plan_crit_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import plan_critique_core as _plan_crit_core
+    except Exception:
+        _plan_crit_core = None
+
+
+async def _v6_plan_critique(goal: str, done_when: str, steps: Sequence[Dict[str, Any]], *,
+                            sid: str, stream_id: str) -> List[Dict[str, Any]]:
+    """One review of the merged plan by the enrich role (the CPU node's 35B), never waited on by
+    the run. [] on any failure; emits agent_loop_v6.plan_critique when it lands."""
+    t0 = time.monotonic()
+    findings: List[Dict[str, Any]] = []
+    err = ""
+    try:
+        raw = await _safe_ollama_generate_dw(
+            _plan_crit_core.prompt(goal, done_when, steps), system=_plan_crit_core.SYSTEM,
+            json_mode=True, model="", instance_id="", prefer_gpu=False, think=False,
+            profile="planning_style",
+            role=(getattr(_plan_styles, "ENRICH_ROLE", "") if _plan_styles is not None else "") or "enrich",
+            request_stage="plan_critique", timeout=900)
+        findings = _plan_crit_core.parse(_strip_think(raw or "")[0], [s.get("id") for s in steps])
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}"[:160]
+    try:
+        await emit_event({"type": "agent_loop_v6.plan_critique", "session_id": sid,
+                          "stream_id": stream_id, "findings": findings, "error": err,
+                          "elapsed_s": round(time.monotonic() - t0, 1)})
+    except Exception:
+        pass
+    return findings
+
+
+# Step-result entities into the journal (roadmap B3, per-run journal_ner): node NER, beside the run.
+try:
+    from Vera.vera.dag import journal_ner_core as _jner_core
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.dag import journal_ner_core as _jner_core
+    except Exception:
+        _jner_core = None
+
+
+async def _v6_journal_ner(entry: Dict[str, Any], res: Dict[str, Any], *, sid: str,
+                          stream_id: str, step_id: Any) -> None:
+    """nlp.ner over the step's own result text; new names merged into the journal entry in place
+    (the next digest shows them). Raw cap function (no memories written); never raises."""
+    if _jner_core is None:
+        return
+    cap = CAPABILITY_REGISTRY.get("nlp.ner") or {}
+    fn = cap.get("raw") or cap.get("func")
+    text = _jner_core.text_of(res)
+    if not fn or len(text) < 40:
+        return
+    try:
+        ner = await asyncio.wait_for(fn(text=text), timeout=_ENTITY_NER_TIMEOUT_S)
+        new = _jner_core.pick(ner, entry.get("entities") or [])
+        added = _jner_core.merge(entry, new)
+        if added:
+            await emit_event({"type": "agent_loop_v6.journal_ner", "session_id": sid,
+                              "stream_id": stream_id, "step_id": step_id,
+                              "added": entry["entities"][-added:]})
+    except Exception as e:
+        log.debug("journal NER skipped: %s", e)
+
+
 # Zero-shot intent (roadmap B1): what an NLP node would call the goal's intent,
 # recorded beside the intent the run used. Measured - nothing reads it back.
 try:
@@ -14389,6 +14690,12 @@ except ImportError:                                   # pragma: no cover
         from vera.minds import switchboard_core as _minds_core
     except ImportError:
         _minds_core = None
+
+# Precedent for the planner (four-minds FM-4.2): pure wrapping of what the planner reads.
+try:
+    from Vera.vera.minds import precedent_core as _precedent_core
+except ImportError:                                   # pragma: no cover
+    from vera.minds import precedent_core as _precedent_core
 
 # The System 1 student (four-minds FM-2.5): a pre-trained small model answering a live decision
 # in-band, per the switchboard (decide.student.step_verify) - see vera/minds/student.py.
@@ -14413,13 +14720,17 @@ class _StudentHook:
         self._task = None
 
     @classmethod
-    async def start(cls, question_id: str, system: str, prompt: str) -> "_StudentHook":
+    async def start(cls, question_id: str, system: str, prompt: str,
+                    inputs: Optional[Dict[str, Any]] = None) -> "_StudentHook":
         h = cls()
         try:
             mode = _student.mode(question_id) if _student is not None else "off"
             if mode != "shadow" and not _student.is_first(mode):
                 return h
-            call = _student.ask(question_id, _judge_core.student_system(system, question_id), prompt)
+            # inputs: the decision's own inputs (as the ledger stores them), so a kNN student embeds the text its
+            # index was built from (four-minds FM-2.5, every question)
+            call = _student.ask(question_id, _judge_core.student_system(system, question_id), prompt,
+                                inputs=inputs)
             if _student.is_first(mode):
                 h._answer = await call
                 if _student.decides(question_id, h._answer, mode):
@@ -14468,6 +14779,17 @@ except Exception:                                     # pragma: no cover
     from vera.dag import operator_url_core as _operator_url_core
 
 # What a step already fetched, handed to the writer (live 3 Oct: research never reached it).
+try:
+    from Vera.vera.dag import evidence_ledger_core as _evidence_core
+except Exception:                                     # pragma: no cover
+    from vera.dag import evidence_ledger_core as _evidence_core
+try:
+    from Vera.vera.agents import grounding_rules as _grounding_rules
+except Exception:                                     # pragma: no cover
+    try:
+        from vera.agents import grounding_rules as _grounding_rules
+    except Exception:
+        _grounding_rules = None
 try:
     from Vera.vera.dag import research_sources_core as _research_sources_core
 except Exception:                                     # pragma: no cover
@@ -14535,8 +14857,10 @@ except Exception:                                     # pragma: no cover
 # When a final-gate follow-up is redundant (census 2026-09-30: edits were skipped).
 try:
     from Vera.vera.dag import follow_up_core as _follow_up_core
+    from Vera.vera.dag import gate_actions_core as _gate_actions
 except Exception:                                     # pragma: no cover
     from vera.dag import follow_up_core as _follow_up_core
+    from vera.dag import gate_actions_core as _gate_actions
 
 
 async def _v6_zeroshot_intent(goal: str) -> Tuple[Optional[str], Dict[str, float]]:
@@ -14569,7 +14893,10 @@ def _tool_shortlist_step(sid: str, step: Dict[str, Any], res: Dict[str, Any], or
             _tsm = importlib.import_module("vera.minds.tool_shortlist")
         used = sorted({h.get("tool") for h in (res.get("history") or [])
                        if isinstance(h, dict) and h.get("tool") and h.get("ok") is not False})
-        _tsm.on_step(sid, step.get("id"), str(step.get("title") or ""), used, origin=origin)
+        # FM-3.5: a call that failed is a negative label for the tool ranking
+        failed = sorted({h.get("tool") for h in (res.get("history") or [])
+                         if isinstance(h, dict) and h.get("tool") and h.get("ok") is False})
+        _tsm.on_step(sid, step.get("id"), str(step.get("title") or ""), used, origin=origin, failed=failed)
     except Exception as e:
         log.debug("tool shortlist step: %s", e)
 
@@ -14777,7 +15104,8 @@ async def _v6_deliverable_review(goal: str, done_when: str, history: Sequence[Di
 
 async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
                            results: Sequence[Dict[str, Any]], final: str,
-                           unmet: Optional[Sequence[Any]], sid: str) -> Dict[str, Any]:
+                           unmet: Optional[Sequence[Any]], sid: str,
+                           claim_nli: str = "off") -> Dict[str, Any]:
     """The large CPU model (the enrich role) checks the FINAL answer against the files the
     run wrote and the verifier findings it left unresolved, and corrects it
     (planner_styles.ANSWER_CHECK_SYSTEM). {answer ('' = keep the original), fixes, files,
@@ -14794,10 +15122,42 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
     except Exception as e:
         log.debug("answer check files: %s", e)
     findings = PSx.unresolved_findings(results, unmet)
+    # The run's dated evidence (info.seek items) + the deterministic grounding floor
+    # (intelligence's grounding_rules.check: bad [n] citations, figures no source contains).
+    evidence = _evidence_core.items(sid)
+    ev_packs = _evidence_core.packs(sid)
+    grounding: Dict[str, Any] = {}
+    if evidence and _grounding_rules is not None:
+        try:
+            _ci = _evidence_core.check_items(sid)
+            if re.search(r"\[E\d+", final or ""):
+                # the writer cited run-wide E numbers (writer_sources): exact across packs
+                grounding = dict(_grounding_rules.check(final, evidence, id_key="e"))
+            else:
+                grounding = dict(_grounding_rules.check(final, _ci))
+            if not re.search(r"\[E\d+", final or "") and any(i.get("n") is None for i in _ci):
+                # several packs: an [n] is ambiguous, so only figures/dates count (vera-03 review)
+                grounding["bad_citations"] = []
+                grounding["citations_unchecked"] = len(ev_packs)   # not "clean": unchecked (N packs)
+                grounding["ok"] = not grounding.get("uncited_numbers")
+        except Exception as e:
+            log.debug("grounding check failed: %s", e)
+    g_text = ""
+    if evidence or ev_packs:
+        g_text = PSx.grounding_block(
+            _evidence_core.block(evidence, packs_info=ev_packs), grounding,
+            _grounding_rules.text("loop") if _grounding_rules is not None else "")
+    # NLI claim check (per-run claim_nli, compute-roles P3): shadow = recorded beside the LLM
+    # check; hint = the not-entailed claims also go to the checker as "verify these".
+    nli_sum: Dict[str, Any] = {}
+    if claim_nli in ("shadow", "hint") and evidence:
+        nli_sum = await _v6_claim_nli(final, evidence)
+        if claim_nli == "hint" and nli_sum.get("flagged") and _claim_nli is not None:
+            g_text = (g_text + chr(10) + chr(10) if g_text else "") + _claim_nli.hint_block(nli_sum["flagged"])
     answer, fixes, err = "", "", ""
     try:
         raw = await _safe_ollama_generate_dw(
-            PSx.answer_check_prompt(goal, files, final, findings),
+            PSx.answer_check_prompt(goal, files, final, findings, grounding_text=g_text),
             system=PSx.ANSWER_CHECK_SYSTEM, json_mode=False, model="", instance_id="",
             prefer_gpu=False, think=False, profile="planning_style", role=PSx.ENRICH_ROLE,
             request_stage="answer_check", timeout=600)
@@ -14807,7 +15167,15 @@ async def _v6_answer_check(goal: str, history: Sequence[Dict[str, Any]],
     except Exception as e:
         err = f"{type(e).__name__}: {e}"[:160]
     return {"answer": answer, "fixes": fixes[:1200], "files": [p for p, _ in files],
-            "findings": findings, "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
+            "findings": findings, "evidence_items": len(evidence),
+            "grounding": ({k: grounding.get(k) for k in ("ok", "bad_citations", "uncited_numbers",
+                                                          "citations_unchecked")}
+                          if grounding else {}),
+            "claim_nli": ({"mode": claim_nli, **{k: nli_sum.get(k) for k in (
+                "claims", "supported", "contradicted", "unsupported", "flagged", "elapsed_s")}}
+                          if nli_sum else ({"mode": claim_nli, "unavailable": True}
+                                           if claim_nli in ("shadow", "hint") and evidence else {})),
+            "elapsed_s": round(time.monotonic() - t1, 1), "error": err}
 
 
 async def _v6_entity_coverage(task: Any, output: str, *, sid: str, stream_id: str) -> None:
@@ -16752,6 +17120,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             elif _h_url_cached and "_url_cache_value" in _h_url_cached:
                 invoke = {"ok": True, "result": _h_url_cached["_url_cache_value"]}
             else:
+                h_args = _writer_constraints_apply(hop_tool, h_args)   # plan.goal_frame=writer (R-B2)
                 _hstream = _v5_make_tool_stream_cb(stream_id, step_id, cur, hop_tool, sid)
                 try:
                     invoke = await call_tool(hop_tool, h_args, session_id=sid, trace_id=trace_id or "",
@@ -16911,6 +17280,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
             history.append({"tool": hop_tool, "ok": entry_ok, "preview": preview[:_budget],
                             "args": h_args, "ms": elapsed})
             _research_sources_core.remember(sid, history[-1])
+            if entry_ok and hop_tool in _evidence_core.EVIDENCE_TOOLS:   # the run's evidence
+                _evidence_core.add(sid, invoke.get("result"))
             # A call that can write and names a registered file: forget its cached copy.
             _registry_stale_core.forget_named(artifacts, hop_tool, h_args)
             await emit_event({"type": "agent_loop_v5.tool_done", "stream_id": stream_id,
@@ -16987,10 +17358,19 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         # steps. Cheap: formatting an in-memory list, no LLM call.
         _journal_live = ""
         if journal:
-            _jdig = _v6_journal_digest(journal)
-            if _jdig:
-                _journal_live = ("\n\nRUN JOURNAL (live — reuse, don't re-derive):\n"
-                                  + _jdig[:1200])
+            # journal_delta (roadmap A6): the step goal already holds the digest frozen at step
+            # start, so the live block shows only entries added since - one view, not two.
+            _jfrom = step.get("_journal_from")
+            if isinstance(_jfrom, int):
+                _jdig = _v6_journal_digest(journal[_jfrom:]) if len(journal) > _jfrom else ""
+                if _jdig:
+                    _journal_live = ("\n\nRUN JOURNAL - new during this step (earlier entries are in "
+                                     "the step goal; reuse, don't re-derive):\n" + _jdig[:1200])
+            else:
+                _jdig = _v6_journal_digest(journal)
+                if _jdig:
+                    _journal_live = ("\n\nRUN JOURNAL (live — reuse, don't re-derive):\n"
+                                      + _jdig[:1200])
         user_msg = (f"STEP GOAL: {step['goal']}\n\nYour results so far:\n{obs}{_think_back}{_rep_hint}{_note}{_grant_block}{_journal_live}\n\n"
                     "Reply with ONE JSON action, or a `done` summary if the step goal is met.")
 
@@ -17739,7 +18119,9 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                     args.get("context_files"), args.get("sources"),
                     known=list(workdir_files or []) + list(saved_run_files or {})):
             # The run's research too - it is usually an EARLIER step (probe 3 Oct, 1e84cf1d).
-            _srcs = _research_sources_core.sources_block(
+            # The evidence ledger first: E-numbered, dated, every pack (info.seek, web.research,
+            # web.fetch) - the writer cites [E<n>], which the answer check can verify exactly.
+            _srcs = _evidence_core.writer_sources(sid) or _research_sources_core.sources_block(
                 _research_sources_core.recall(sid) + list(history))
             if _srcs:
                 # Keep what the executor named (a URL, a title) in front of the material.
@@ -18620,6 +19002,11 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                               "cycle": cur_cycle, "step_id": step_id, "tool": tool,
                               "url": str(args.get("url") or ""), "session_id": sid})
 
+        # info.seek need=deep also starts research.run in the background - a job loops never
+        # spawn (_RESEARCH_JOB_CAPS). Loops get the overview pack instead (vera-03, 10 Oct 2026,
+        # until info.seek takes start_report=False).
+        if tool == "info.seek" and isinstance(args, dict) and str(args.get("need") or "").strip().lower() == "deep":
+            args = dict(args, need="overview")
         await emit_event({"type": "agent_loop_v5.tool_call", "stream_id": stream_id,
                           "cycle": cur_cycle, "step_id": step_id, "tool": tool, "args": args,
                           "thought": thought, "session_id": sid})
@@ -18640,6 +19027,7 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         elif _url_cached and "_url_cache_value" in _url_cached:
             invoke = {"ok": True, "result": _url_cached["_url_cache_value"]}
         else:
+            args = _writer_constraints_apply(tool, args)   # plan.goal_frame=writer (R-B2)
             _tstream = _v5_make_tool_stream_cb(stream_id, step_id, cur_cycle, tool, sid)
             try:
                 invoke = await call_tool(tool, args, session_id=sid, trace_id=trace_id or "",
@@ -19316,6 +19704,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
         history.append({"tool": tool, "ok": entry_ok, "preview": preview[:_budget],
                         "args": args, "ms": elapsed})
         _research_sources_core.remember(sid, history[-1])
+        if entry_ok and tool in _evidence_core.EVIDENCE_TOOLS:   # the run's evidence (evidence_ledger_core)
+            _evidence_core.add(sid, invoke.get("result"))
         # A call that can write and names a registered file: forget its cached copy, so
         # the next read goes to disk (registry_stale_core; probe 3 Oct, a stale report.md).
         _registry_stale_core.forget_named(artifacts, tool, args)
@@ -19374,7 +19764,8 @@ async def _v5_run_step_inner(step: Dict[str, Any], *, goal: str,
                 _ans, _why = _author_done.step_is_answered(
                     step.get("caps") or caps, f"{step.get('title') or ''}\n{step.get('goal') or ''}", tool,
                     (invoke or {}).get("result"),
-                    has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1)
+                    has_seam=lambda g: len(_V5_COMPOUND_SEAM_RE.split(g, maxsplit=1)) > 1,
+                    allow_gather=bool(step.get("_author_gather")))
             except Exception as _e:
                 _ans, _why = False, ""
                 log.debug("author_done check failed: %s", _e)
@@ -20290,7 +20681,7 @@ async def _v5_synthesize_final(goal: str, results: List[Dict[str, Any]], *,
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="synth")
         out = _strip_think(raw or "")[0].strip()
         if out:
             return out[:8000]
@@ -21335,10 +21726,15 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
         "Judge the artifact that WAS produced, not an idealised one.\n"
         "A FILE DELIVERABLE IS SETTLED BY THE FILE REGISTER. Read the FILE REGISTER below: if "
         "the file is listed it EXISTS, and if it is marked VERIFIED a real parser passed it. "
-        "That settles created / valid / complete — so when DONE WHEN asks for a created, valid "
+        "That settles created / valid — so when DONE WHEN asks only for a created, valid "
         "or working file and the register shows it, the goal is MET: complete it, and do NOT "
         "add a follow-up step to re-read, re-parse or re-run the file to prove what the "
         "register already states.\n"
+        "The register does NOT settle what the goal asks the file to CONTAIN or what it asks to be "
+        "DONE with it: named functions or sections, citations / sources, 'then run the tests', "
+        "'open it in a browser and report'. Each of those needs evidence in the ledger (the content "
+        "shown in an output, or a step that did it); without that evidence the goal is NOT complete - "
+        "name what is missing.\n"
         "The ONE thing the register cannot show is a page's live BEHAVIOUR. If the goal "
         "explicitly asked for that and it was never checked, the only follow-up worth adding "
         "is an `operator.run` step (a real headless browser against the sandbox-served file). "
@@ -21373,7 +21769,7 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
             log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True, request_stage="gate")
+            prefer_gpu=prefer_gpu, json_mode=True, request_stage="gate", stage_role="gate")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 final gate failed: %s", e)
@@ -21558,6 +21954,16 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
                                 "directory containing the report described by the goal."),
                 })
 
+    # ── Override 4: an ACTION the goal asks for that no step performed ──────
+    # "then run the tests", "open it in a browser" - checked against the calls the run made
+    # (gate_actions_core), not the judge's opinion. 16-18 Oct census: both were waved through
+    # because the file register showed the file.
+    try:
+        for _m in _gate_actions.missing(_grounding_goal, results):
+            _fire_override(_m["reason"], _m["step"])
+    except Exception as _ge:                                        # pragma: no cover
+        log.debug("gate actions check skipped: %s", _ge)
+
     # ── Give the forced verdict teeth. The overrides above can flip
     # `complete` to False, but `obj["follow_up"]` was built by the judge back
     # when IT still believed complete=True — so it's empty, and a forced-False
@@ -21583,7 +21989,8 @@ async def _v6_final_gate(goal: str, done_when: str, results: List[Dict[str, Any]
             _fu_text = f"{(_fu or {}).get('title', '')} {(_fu or {}).get('goal', '')}" \
                 if isinstance(_fu, dict) else str(_fu or "")
             _fu_files = _v6_extract_paths(_fu_text)
-            if _fu_files and not any(f in _goal_files_fu for f in _fu_files):
+            if (_fu_files and not _v6_claim_grounded(_fu_files, _goal_files_fu)
+                    and not _v6_test_claim(_fu_files, _grounding_goal)):
                 log.info("v6 gate: dropped a hallucinated follow-up step not grounded "
                          "in the goal: %r", _fu_text[:200])
                 continue
@@ -21680,6 +22087,73 @@ def _v6_extract_paths(text: str, *, include_bare: bool = True) -> List[str]:
     return out[:12]
 
 
+def _v6_missing_fix_step(missing: List[str], goal: str) -> Dict[str, Any]:
+    """One follow-up step that does what the completion gate said is missing."""
+    items = "\n".join("- %s" % str(m)[:300] for m in (missing or [])[:8])
+    return {
+        "title": "Finish what the completion gate found missing",
+        "goal": ("The completion gate checked the run against the goal and found the items "
+                 "below still missing. Do exactly these, in the existing files/answer - do not "
+                 "start over, and do not add anything the goal does not ask for.\n"
+                 "MISSING:\n%s\nGOAL: %s" % (items, goal)),
+        "success": "Every item the completion gate named as missing is done.",
+    }
+
+
+def _v6_needs_missing_fix(gate: Dict[str, Any], follow_up: List[Any], steps_left: int,
+                          already: bool) -> bool:
+    """The gate said NOT complete, gave real reasons, and left nothing to run - the loop used
+    to stop there and record the goal done (16 Oct 2026, operator-family-run34). Once per run,
+    never for a bounded failure (the run already gave up on that on purpose)."""
+    return bool(not follow_up and not already and steps_left > 0 and not gate.get("bounded")
+                and not gate.get("complete") and [m for m in (gate.get("missing") or []) if str(m).strip()])
+
+
+def _v6_path_norm(p: str) -> str:
+    """A path as the goal and a claim can both write it: no /workspace/ root, no ./ or
+    leading slash, no trailing slash."""
+    p = str(p or "").strip().replace("\\", "/")
+    for pre in ("/workspace/", "workspace/", "./"):
+        if p.startswith(pre):
+            p = p[len(pre):]
+    return p.strip("/")
+
+
+_V6_TEST_FILE_RE = re.compile(r"(^|/)(test_[\w.-]+\.py|[\w.-]+_test\.py|[\w.-]+\.(test|spec)\.[jt]sx?)$")
+
+
+def _v6_test_claim(claimed: List[str], goal_text: str) -> bool:
+    """A claim naming a TEST file is grounded when the goal asks for tests at all - "plus a test file" names
+    no file, so `test_stats.py` was dropped as invented while the gap was real (mirror A/B, 17 Oct 2026)."""
+    if not re.search(r"\btests?\b|\btest file|\bunit tests?\b", str(goal_text or ""), re.I):
+        return False
+    return any(_V6_TEST_FILE_RE.search(_v6_path_norm(c)) for c in (claimed or ()))
+
+
+def _v6_claim_grounded(claimed: List[str], goal_files: Any) -> bool:
+    """Does any claimed path name a file or folder the GOAL names? Compared as the same file,
+    not the same string (16 Oct 2026, census: the goal's `/workspace/statkit` with `stats.py`
+    made the gate's real `statkit/stats.py` gap read as invented and flipped the verdict to
+    complete; an `operator.run` follow-up for `/workspace/hello.html` written as
+    `localhost:9001/hello.html` was dropped and the run ended without its browser check).
+    Grounded: the same normalised path, the same file name, or a path inside a folder the
+    goal names. A file the goal never names (the `toggle.html` for `lightswitch.html` case)
+    still is not."""
+    goal_norm = {n for n in (_v6_path_norm(g) for g in (goal_files or ())) if n}
+    goal_names = {n.rsplit("/", 1)[-1] for n in goal_norm if "." in n.rsplit("/", 1)[-1]}
+    goal_dirs = {n for n in goal_norm if "." not in n.rsplit("/", 1)[-1]}
+    for c in claimed or ():
+        n = _v6_path_norm(c)
+        if not n:
+            continue
+        if n in goal_norm or n.rsplit("/", 1)[-1] in goal_names:
+            return True
+        parent = "/" + n.rsplit("/", 1)[0] + "/" if "/" in n else ""
+        if parent and any(("/" + d + "/") in parent for d in goal_dirs):
+            return True
+    return False
+
+
 def _v6_ground_missing_claims(items: List[str], goal_text: str) -> Tuple[List[str], List[str]]:
     """Strip a completion-gate `missing`/`follow_up` claim that names a
     specific file NOT actually present anywhere in the real goal text —
@@ -21701,7 +22175,7 @@ def _v6_ground_missing_claims(items: List[str], goal_text: str) -> Tuple[List[st
     dropped: List[str] = []
     for item in items:
         claimed = _v6_extract_paths(str(item or ""))
-        if claimed and not any(c in goal_files for c in claimed):
+        if claimed and not _v6_claim_grounded(claimed, goal_files) and not _v6_test_claim(claimed, goal_text):
             dropped.append(item)
         else:
             kept.append(item)
@@ -22126,7 +22600,7 @@ async def _v6_verify_step(step: Dict[str, Any], res: Dict[str, Any], *,
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT,
-            request_stage="critic")
+            request_stage="critic", stage_role="verifier")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         if isinstance(obj, dict) and "met" in obj:
             _reason = str(obj.get("reason") or "")
@@ -22257,7 +22731,7 @@ async def _v6_finalize_step(step: Dict[str, Any], res: Dict[str, Any], goal: str
     try:
         out = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=bool(with_journal), timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=bool(with_journal), timeout=_V5_UTILITY_TIMEOUT, stage_role="finalize")
         out = _strip_think(out or "")[0].strip()
         if with_journal:
             obj = _extract_json(out) or {}
@@ -22470,7 +22944,7 @@ async def _v6_adjust_step(failed_step: Dict[str, Any], failed_res: Dict[str, Any
             log.debug("stage-context emit skipped: %s", _ae)
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="adjust")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 adjust step failed: %s", e)
@@ -22634,7 +23108,7 @@ async def _v6_journal_extract(step: Dict[str, Any], res: Dict[str, Any], goal: s
         try:
             raw = await _safe_ollama_generate_dw(
                 prompt, system=sys, model=model, instance_id=instance_id,
-                prefer_gpu=prefer_gpu, json_mode=True)
+                prefer_gpu=prefer_gpu, json_mode=True, stage_role="journal")
             obj = _extract_json(_strip_think(raw or "")[0]) or {}
         except Exception as e:
             log.debug("v6 journal extract failed: %s", e)
@@ -22839,7 +23313,7 @@ async def _v6_branch_strategist(goal: str, failed_step: Dict[str, Any],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="strategist")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v6 branch strategist failed: %s", e)
@@ -22925,8 +23399,14 @@ def _v7_tier_rank(t: str) -> int:
         return 1
 
 
-def _v7_tier_heuristic(goal: str) -> str:
-    """Cheap, deterministic tier floor from the goal text alone — no LLM call."""
+def _v7_tier_heuristic(goal: str, lower: bool = False) -> str:
+    """Cheap, deterministic tier floor from the goal text alone — no LLM call.
+
+    `lower` (switch plan.tier_lower, four-minds FM-4.3, off by default): a goal that the
+    floor would call 'complex' ONLY because of its conjunction count - no complex hint, under
+    60 words - falls through to the length rules instead. Measured 11 Oct (tier_share.py):
+    73% of finished complex-tier census runs executed <= 2 steps, 36 of 37 at quality >= 0.9.
+    The LLM pre-pass can still raise the tier."""
     g = (goal or "").lower().strip()
     if not g:
         return "simple"
@@ -22934,7 +23414,8 @@ def _v7_tier_heuristic(goal: str) -> str:
     conj = g.count(" and ") + g.count(" then ") + g.count(";") + g.count("\n") + g.count(", ")
     if any(h in g for h in _V7_STRATEGIC_HINTS) or _V7_STRATEGIC_RE.search(g):
         return "strategic"
-    if any(h in g for h in _V7_COMPLEX_HINTS) or conj >= 3 or words >= 60:
+    hinted = any(h in g for h in _V7_COMPLEX_HINTS)
+    if hinted or words >= 60 or (conj >= 3 and not lower):
         return "complex"
     if words <= 12 and conj == 0 and any(h in g for h in _V7_SIMPLE_HINTS):
         return "single"
@@ -22977,6 +23458,16 @@ async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, 
               f"A cheap heuristic suggests: {heuristic_tier}.\n"
               f"AVAILABLE CAPABILITIES (sample):\n{catalog_brief[:1400]}\n\n"
               "Which tier best fits this goal?")
+    # ── The System 1 student for loop.tier (switchboard decide.student.tier; four-minds request, compute-roles
+    # 18 Oct 2026). inputs = what the ledger records for this decision, so a kNN student embeds the text its
+    # index was built from. 'first': a confident answer stands (the heuristic floor in _v7_decide_tier still
+    # applies to it); 'shadow': it runs beside the model and is recorded as the decision's shadow.
+    _stu_hook = await _StudentHook.start("loop.tier", sys, prompt, inputs={"goal": goal})
+    _stu = _stu_hook.decided
+    if _stu is not None and str(_stu.get("answer") or "").strip().lower() in _V7_TIERS:
+        return {"tier": str(_stu["answer"]).strip().lower(), "by": "student", "student": _stu,
+                "reason": "the student (%s) classed the goal at confidence %.3f"
+                          % (_stu.get("model") or "System 1", float(_stu.get("confidence") or 0))}
     try:
         try:
             await _emit_stage_context(
@@ -22993,10 +23484,11 @@ async def _v7_classify_tier(goal: str, heuristic_tier: str, catalog_brief: str, 
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         tier = str(obj.get("tier") or "").strip().lower()
         if tier in _V7_TIERS:
-            return {"tier": tier, "reason": str(obj.get("reason") or "")[:300]}
+            return {"tier": tier, "reason": str(obj.get("reason") or "")[:300], "by": "llm",
+                    "student": await _stu_hook.result()}
     except Exception as e:
         log.debug("v7 tier classify failed: %s", e)
-    return {"tier": heuristic_tier, "reason": ""}
+    return {"tier": heuristic_tier, "reason": "", "by": "rule", "student": await _stu_hook.result()}
 
 
 async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
@@ -23012,14 +23504,24 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
     if forced in _V7_TIERS:
         return {"tier": forced, "suggested": forced, "heuristic": forced, "llm": "",
                 "reason": "forced by plan_tier", "escalation_suppressed": False}
-    heur = _v7_tier_heuristic(goal)
+    _lower = False
+    try:
+        _lower = _minds_core is not None and _minds_core.mode_of("plan.tier_lower") == "on"
+    except Exception:
+        _lower = False
+    heur = _v7_tier_heuristic(goal, lower=_lower)
+    # Whether the lowered floor CHANGED this goal's tier (12 Oct 2026: a census arm with the switch on
+    # never fired once - its goals have no conjunction-only 'complex' - and nothing said so).
+    _lower_applied = bool(_lower) and heur != _v7_tier_heuristic(goal)
     llm = ""
     reason = ""
+    _by, _student_ans = "rule", None
     if use_llm:
         c = await _v7_classify_tier(goal, heur, catalog_brief, model=model,
                                     instance_id=instance_id, prefer_gpu=prefer_gpu,
                                     session_id=session_id)
         llm = c["tier"]; reason = c["reason"]
+        _by, _student_ans = c.get("by") or "llm", c.get("student")
     suggested = heur if _v7_tier_rank(heur) >= _v7_tier_rank(llm or heur) else llm
     tier = suggested
     suppressed = False
@@ -23027,7 +23529,8 @@ async def _v7_decide_tier(goal: str, catalog_brief: str, *, plan_tier: str,
         tier = "complex"
         suppressed = True
     return {"tier": tier, "suggested": suggested, "heuristic": heur, "llm": llm,
-            "reason": reason, "escalation_suppressed": suppressed}
+            "reason": reason, "escalation_suppressed": suppressed, "tier_lower": _lower,
+            "tier_lower_applied": _lower_applied, "by": _by, "student": _student_ans}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -23566,7 +24069,7 @@ async def _v7_single_cap_shortcut(goal: str, catalog_names: List[str], *, call_t
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="fastpath")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
     except Exception as e:
         log.debug("v7 single-cap pick failed: %s", e)
@@ -23618,7 +24121,7 @@ async def _v7_generate_clarifications(goal: str, done_when: str, tier: str, *, m
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True)
+            prefer_gpu=prefer_gpu, json_mode=True, stage_role="prestep")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         qs = obj.get("questions") if isinstance(obj, dict) else None
         if isinstance(qs, list):
@@ -23829,7 +24332,7 @@ async def _v7_assume_answers(goal: str, questions: List[str], tier: str, *,
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="prestep")
         return _strip_think(raw or "")[0].strip()[:1600]
     except Exception as e:
         log.debug("v7 assume answers failed: %s", e)
@@ -24074,7 +24577,7 @@ async def _v7_prestep_info(step: Dict[str, Any], results: List[Dict[str, Any]],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT)
+            prefer_gpu=prefer_gpu, json_mode=True, timeout=_V5_UTILITY_TIMEOUT, stage_role="prestep")
         obj = _extract_json(_strip_think(raw or "")[0]) or {}
         gaps = obj.get("gaps") if isinstance(obj, dict) else None
         gaps = [str(g).strip() for g in gaps if str(g).strip()][:5] if isinstance(gaps, list) else []
@@ -24257,7 +24760,7 @@ async def _v6_deliver(goal: str, done_when: str, results: List[Dict[str, Any]],
     try:
         raw = await _safe_ollama_generate_dw(
             prompt, system=sys, model=model, instance_id=instance_id,
-            prefer_gpu=prefer_gpu, json_mode=False)
+            prefer_gpu=prefer_gpu, json_mode=False, stage_role="deliver")
         md = _strip_think(raw or "")[0].strip()[:_V6_DELIVER_OUT_MAX]
         if md and _deliverable is not None:
             md, _notes = _deliverable.finish(
@@ -24433,6 +24936,21 @@ async def cap_dag_agent_loop_v6(
     # deliverable adversarially ONCE; real defects become one fix step (user 2026-10-04).
     deliverable_review: bool = False,
     answer_check: bool = False,
+    # A step that gathers then writes ends at its author call too (author_done_core.GATHER_CAPS).
+    author_gather: bool = False,
+    # Roadmap B3: node NER over each step's result, new names merged into its journal entry.
+    journal_ner: bool = False,
+    # Roadmap A6: the executor's live journal block shows only entries new since the step-start
+    # digest (which the step goal already carries) - the same notes no longer appear twice.
+    journal_delta: bool = False,
+    # Known dated facts from intel.lookup before planning (compute-roles P1b, 11 Oct 2026).
+    intel_prefacts: bool = False,
+    # A large CPU model reviews the whole plan beside the run; findings reach the controller once
+    # (roadmap A3, compute-roles 11 Oct 2026).
+    plan_critique: bool = False,
+    # With answer_check: the NLI claim check (compute-roles P3) - 'off' | 'shadow' (recorded) |
+    # 'hint' (not-entailed claims handed to the checker to verify).
+    claim_nli: str = "off",
     # BROAD only: the model the long-horizon CPU node writes stream briefs with
     # ('' = the planning_style/enrich route's model). The route keeps whichever
     # model it runs warm.
@@ -24466,6 +24984,13 @@ async def cap_dag_agent_loop_v6(
     # or a specialised agentic model driving the loop. CPU-slow - chosen, never defaulted.
     controller_model:   str  = "",
     controller_node:    str  = "auto",
+    # info-first: info.seek leads the catalogue for a goal that needs the outside
+    # world (_V5_INFO_FIRST_CAPS). Off by default until measured.
+    info_first:         bool = False,
+    # The loop's other LLM stages on chosen models/nodes, e.g. the CPU MoE for the verifier
+    # and the final gate: "verifier=qwen3.6:35b-a3b@cpu-246,gate=..." or a dict
+    # (role_override_core.parse_stage_models / STAGE_ROLES). Unplaced stages are unchanged.
+    stage_models:       Any  = "",
     effort:             str  = "standard",
     auto_escalate:      bool = True,
     enable_fast_path:   bool = False,      # V7-defining; v7 turns on ('single' tier shortcut)
@@ -24589,11 +25114,12 @@ async def cap_dag_agent_loop_v6(
             executor_model=executor_model, executor_node=executor_node,
             coder_model=coder_model, coder_node=coder_node, effort=effort,
             plan_style=plan_style, controller_model=controller_model,
-            controller_node=controller_node)
+            controller_node=controller_node, stage_models=stage_models)
         if _effort_adj.get("plan_style"):
             plan_style = _effort_adj["plan_style"]
         if _effort_adj.get("critic_route"):
             critic_route = _effort_adj["critic_route"]
+    _INFO_FIRST_CV.set(bool(info_first))   # every run sets it, so none leaks into the next
     try:
         _orch.RUN_ROLE_OVERRIDES.set(_role_overrides or None)
     except Exception as _roe:                          # pragma: no cover
@@ -24814,6 +25340,25 @@ async def cap_dag_agent_loop_v6(
     except Exception as e:
         log.debug("v6 memory context inject failed: %s", e)
 
+    # ── Precedent (four-minds FM-4.2, switch plan.precedent): how similar past goals went, as reference in
+    # what the planner reads - never in `goal` itself. Bounded; a failure or a miss changes nothing.
+    try:
+        if _minds_core is not None and _minds_core.mode_of("plan.precedent") == "on":
+            _pc_cap = (CAPABILITY_REGISTRY.get("plan.precedent") or {})
+            _pc_fn = _pc_cap.get("raw") or _pc_cap.get("func")
+            if _pc_fn:
+                _pc = await asyncio.wait_for(_pc_fn(goal=_orig_goal, exclude_run=sid,
+                                                    origin=getattr(_dl, "origin", "user") if _dl is not None else "user"),
+                                             timeout=4)
+                if isinstance(_pc, dict) and _pc.get("block"):
+                    plan_goal = _precedent_core.wrap(plan_goal, _orig_goal, _pc["block"])
+                    await emit_event({"type": "agent_loop_v6.precedent", "session_id": sid,
+                                      "runs": [p.get("run") for p in _pc.get("precedents") or []],
+                                      "outcomes": [p.get("outcome") for p in _pc.get("precedents") or []],
+                                      "node": _pc.get("node")})
+    except Exception as e:
+        log.debug("v6 precedent inject skipped: %s", e)
+
     # ── Catalog (identical construction to v5) ────────────────────────────────
     # category="other"/keywords=[] are NOT placeholders for "not triaged
     # yet" — v6/v7 never runs real triage classification at all, by design
@@ -24991,9 +25536,12 @@ async def cap_dag_agent_loop_v6(
                           "heuristic": tier_info.get("heuristic", ""),
                           "llm": tier_info.get("llm", ""),
                           "reason": tier_info.get("reason", ""),
-                          "escalation_suppressed": tier_info.get("escalation_suppressed", False)})
+                          "escalation_suppressed": tier_info.get("escalation_suppressed", False),
+                          "tier_lower": bool(tier_info.get("tier_lower")),
+                          "tier_lower_applied": bool(tier_info.get("tier_lower_applied"))})
         if _dl is not None:
-            _dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal})
+            _dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal},
+                     by=str(tier_info.get("by") or ""), student=tier_info.get("student"))
         # GOAL INTENT (build/research/action/mixed) — the KIND of work, which
         # drives the plan SHAPE (direct-authoring vs research-first) and the
         # phase/HITL tuning below. Same cheap LLM budget as the tier pass.
@@ -25279,6 +25827,13 @@ async def cap_dag_agent_loop_v6(
     # runs only as the fallback when it yields no steps (four-minds Q2 #4: the structured plan
     # used to be made first and then replaced, a whole planning call per strategic run thrown
     # away). A goal the planner self-labels 'extreme' still needs the structured plan to know.
+    # P1b: known dated facts before planning - only when the run asks (intel_prefacts), so the
+    # default planner prompts stay byte-identical (the golden prompts hold).
+    if intel_prefacts and _prefacts_core is not None and (
+            str(intent or "").lower() == "research" or _prefacts_core.is_latest(goal)):
+        _pf_block = await _v6_intel_prefacts(goal, sid=sid, stream_id=stream_id)
+        if _pf_block:
+            _style_note = (_pf_block + "\n\n" + _style_note) if _style_note else _pf_block
     _master_ran = False
     _master_ok = enable_master_planner and bool(_pstyle.get("master_plan", True))
     _mp_first: Optional[Dict[str, Any]] = None
@@ -25471,6 +26026,22 @@ async def cap_dag_agent_loop_v6(
     except Exception:
         pass
 
+    # Goal constraints (plan.goal_frame, B2): dates, versions and numeric limits from the goal
+    # text become done_when items and the final gate's must-cover list (goal_constraints_core).
+    _goal_cons: List[Dict[str, Any]] = []
+    _goal_writer_cons: List[Dict[str, Any]] = []          # writer mode (R-B2): to the authoring calls only
+    _gf_mode = _goal_frame_mode()
+    if _gf_mode in ("on", "writer"):
+        _found = _goal_cons_core.extract(goal)
+        if _found and _gf_mode == "on":
+            _goal_cons = _found
+            done_when = (done_when + "\n" if done_when else "") + _goal_cons_core.block(_goal_cons)
+        elif _found:
+            _goal_writer_cons = _found
+            _GOAL_WRITER_CONS.set(_goal_writer_cons)
+        if _found:
+            await emit_event({"type": "agent_loop_v6.goal_constraints", "session_id": sid,
+                              "stream_id": stream_id, "constraints": _found, "mode": _gf_mode})
     steps = plan.get("steps") or []
     if not steps:
         # Every planning stage failed (structured plan, minimal-schema retry,
@@ -25644,6 +26215,21 @@ async def cap_dag_agent_loop_v6(
                       "reason": plan.get("reason", ""),
                       "complexity": plan.get("complexity", ""),
                       "done_when": done_when})
+    # Plan critique (A3): started now, beside the first steps; delivered by _plan_crit_take().
+    _plan_crit_task = None
+    _plan_crit_state: Dict[str, Any] = {"delivered_after": None}
+    if plan_critique and _plan_crit_core is not None and _plan_crit_core.worth(steps):
+        _plan_crit_task = asyncio.create_task(
+            _v6_plan_critique(goal, done_when, list(steps), sid=sid, stream_id=stream_id))
+
+    def _plan_crit_take(after_step: Any) -> str:
+        """The plan review for the controller, once, as soon as it has landed; "" otherwise."""
+        t = _plan_crit_task
+        if t is None or _plan_crit_state["delivered_after"] is not None or not t.done() \
+                or t.cancelled() or t.exception() is not None:
+            return ""
+        _plan_crit_state["delivered_after"] = after_step
+        return ("\n\n" + _plan_crit_core.block(t.result())) if t.result() else ""
     # Which planning style this run asked for and which it actually used (they
     # differ when a style falls back, e.g. detailed with no lens answering). The
     # trace digest and census rows read this event.
@@ -25712,6 +26298,8 @@ async def cap_dag_agent_loop_v6(
             allowed_phases=allowed_phases, model=model, instance_id=instance_id,
             prefer_gpu=prefer_gpu, session_id=sid)
 
+    _jner_tasks: List[Any] = []
+
     async def _journal_step(step, res):
         """Fold a finished step into the structured journal (complex/long-term
         runs only): extract its record, persist to the fabric + JSON mirror, and
@@ -25723,6 +26311,9 @@ async def cap_dag_agent_loop_v6(
                 step, res, goal, session_id=sid, model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu)
             journal.append(entry)
+            if journal_ner:        # B3: the result's own named entities, beside the run
+                _jner_tasks.append(asyncio.create_task(_v6_journal_ner(
+                    entry, res, sid=sid, stream_id=stream_id, step_id=step.get("id"))))
             await emit_event({"type": "agent_loop_v6.journal", "session_id": sid,
                               "stream_id": stream_id, "step_id": step.get("id"),
                               "entry": entry, "count": len(journal)})
@@ -26129,6 +26720,8 @@ async def cap_dag_agent_loop_v6(
                               "count": len(user_updates)})
         if user_updates:
             step["goal"] = _user_updates_block(user_updates) + "\n\n" + str(step.get("goal", ""))
+        if author_gather:      # gather-then-write steps end at their author call (author_done_core)
+            step["_author_gather"] = True
         # ── Structured journal → step context: fold the run's accumulated
         #    structured record (key outputs, files/paths, entities) into this
         #    step's goal so the ephemeral specialist reuses what the run already
@@ -26141,6 +26734,8 @@ async def cap_dag_agent_loop_v6(
                     "\n\nRUN JOURNAL (structured context already produced by earlier steps — "
                     "reuse these outputs, files, and findings; do NOT re-derive them):\n" + _jdig)
             step["_journal_injected"] = True
+            if journal_delta:
+                step["_journal_from"] = len(journal)
         # ── Pre-step info gathering: identify the concrete info this step needs
         #    that earlier steps did NOT already collect, and fold both the gaps and
         #    a digest of what's already known into the step goal — so the step
@@ -26288,7 +26883,8 @@ async def cap_dag_agent_loop_v6(
                 base_id=max_id, steps_left=steps_left, model=model,
                 instance_id=instance_id, prefer_gpu=prefer_gpu, session_id=sid,
                 file_register=lambda _d: _v6_file_register_block(artifacts, _d),
-                style_note=_ctrl_style_note + (_critic.new_block() if _critic is not None else ""))
+                style_note=_ctrl_style_note + (_critic.new_block() if _critic is not None else "")
+                + _plan_crit_take(step.get("id")))
             await emit_event({"type": "agent_loop_v6.assess", "session_id": sid,
                               "stream_id": stream_id, "after_step": step["id"],
                               "assessment": ctrl.get("assessment", ""),
@@ -26350,12 +26946,15 @@ async def cap_dag_agent_loop_v6(
     _gate_rounds = 0
     _MAX_GATE_ROUNDS = 3
     _review_done = False                 # deliverable_review runs once per run
+    _missing_fix_done = False            # one step from the gate's own missing list per run
     _gate_last: Dict[str, Any] = {}      # the last verdict, carried to the end
     _gate_ran_after = 0                  # follow-up steps run since that verdict
     while enable_final_gate and executed < hard_cap and _gate_rounds < _MAX_GATE_ROUNDS:
         _gate_rounds += 1
         _gate_goal = (goal + "\n\n" + _user_updates_block(user_updates)
                       if user_updates else goal)
+        if _goal_cons:                                   # plan.goal_frame: the must-cover list
+            _gate_goal = _gate_goal + "\n\n" + _goal_cons_core.block(_goal_cons)
         # stepwise-reviewed: the critic's latest notes are evidence for the gate
         # (what it found missing is exactly what the gate must not wave through).
         if _critic is not None:
@@ -26395,6 +26994,14 @@ async def cap_dag_agent_loop_v6(
                 follow_up = _v6_coerce_control_steps(
                     [_plan_styles.review_fix_step(_rv.get("note") or "", goal)], max_id, goal,
                     catalog_names, valid_skill_ids)
+        if _v6_needs_missing_fix(gate, follow_up, hard_cap - executed, _missing_fix_done):
+            _missing_fix_done = True
+            follow_up = _v6_coerce_control_steps(
+                [_v6_missing_fix_step(gate.get("missing") or [], goal)], max_id, goal,
+                catalog_names, valid_skill_ids)
+            await emit_event({"type": "agent_loop_v6.gate_missing_fix", "session_id": sid,
+                              "stream_id": stream_id, "missing": gate.get("missing") or [],
+                              "steps": len(follow_up)})
         if not follow_up:
             # Either complete, or the judge/overrides had nothing actionable
             # to add — no follow_up means no more work THIS gate call can
@@ -26444,6 +27051,8 @@ async def cap_dag_agent_loop_v6(
                                   "count": len(user_updates)})
             if user_updates:
                 step["goal"] = _user_updates_block(user_updates) + "\n\n" + str(step.get("goal", ""))
+            if author_gather:
+                step["_author_gather"] = True
             if journal_on and journal and not step.get("_journal_injected"):
                 _jdig = _v6_journal_digest(journal)
                 if _jdig:
@@ -26452,6 +27061,8 @@ async def cap_dag_agent_loop_v6(
                         "\n\nRUN JOURNAL (structured context already produced by earlier steps — "
                         "reuse these outputs, files, and findings; do NOT re-derive them):\n" + _jdig)
                 step["_journal_injected"] = True
+                if journal_delta:
+                    step["_journal_from"] = len(journal)
             pre_bb = dict(blackboard)
             res = await _run_one(step, gcycle)
             res["success"] = step.get("success", "")
@@ -26541,11 +27152,14 @@ async def cap_dag_agent_loop_v6(
             await emit_event({"type": "agent_loop_v6.stage_start", "stream_id": stream_id,
                               "session_id": sid, "stage": "answer_check", "key": "final",
                               "label": "\U0001f50e Checking the answer against the files\u2026"})
-        _ac = await _v6_answer_check(goal, flat_history, results, final, _unmet, sid)
+        _ac = await _v6_answer_check(goal, flat_history, results, final, _unmet, sid,
+                                     claim_nli=claim_nli)
         await emit_event({"type": "agent_loop_v6.answer_check", "session_id": sid,
                           "stream_id": stream_id, "changed": bool(_ac.get("answer")),
                           "fixes": _ac.get("fixes"), "files": _ac.get("files"),
                           "findings": _ac.get("findings"), "elapsed_s": _ac.get("elapsed_s"),
+                          "evidence_items": _ac.get("evidence_items"), "grounding": _ac.get("grounding"),
+                          "claim_nli": _ac.get("claim_nli"),
                           "error": _ac.get("error")})
         if _ac.get("answer"):
             final = _ac["answer"]
@@ -26601,6 +27215,15 @@ async def cap_dag_agent_loop_v6(
     # Before .done, so the trace digest and the Loop Lab record include it.
     await _v6_entity_coverage(_goal_ents_task, deliverable or final, sid=sid,
                               stream_id=stream_id)
+    if _goal_cons or _goal_writer_cons:                  # plan.goal_frame: what the answer met (a shadow signal)
+        try:
+            await emit_event({"type": "agent_loop_v6.goal_constraint_coverage", "session_id": sid,
+                              "stream_id": stream_id, "mode": _gf_mode,
+                              **_goal_cons_core.coverage(_goal_cons or _goal_writer_cons, deliverable or final)})
+        except Exception:
+            pass
+        if _goal_writer_cons:
+            _GOAL_WRITER_CONS.set(None)
     _zs_rec = await _v6_intent_measure(_intent_zs_task, _intent_info, intent, sid=sid,
                                        stream_id=stream_id)
     if _dl is not None and _zs_rec:
@@ -26627,6 +27250,21 @@ async def cap_dag_agent_loop_v6(
     # stepwise-reviewed: a critique still running when the run is over informs nothing.
     if _critic is not None:
         _critic.cancel()
+    # B3: entity passes still running inform no later step.
+    for _t in _jner_tasks:
+        if not _t.done():
+            _t.cancel()
+    # A3: a plan review that never landed informs nothing either; record what it did.
+    if _plan_crit_task is not None:
+        _landed = _plan_crit_task.done() and not _plan_crit_task.cancelled()
+        if not _plan_crit_task.done():
+            _plan_crit_task.cancel()
+        try:
+            await emit_event({"type": "agent_loop_v6.plan_critique_outcome", "session_id": sid,
+                              "stream_id": stream_id, "landed": bool(_landed),
+                              "delivered_after_step": _plan_crit_state["delivered_after"]})
+        except Exception:
+            pass
     return {
         "goal": goal, "steps": results,
         "blackboard": {str(k): v for k, v in blackboard.items()},
@@ -26948,6 +27586,14 @@ async def workshop_agent_loop_stream(request: Request):
     v6_plan_style_defaulted = bool(_v7_default and not str(body.get("plan_style") or "").strip())
     v6_deliverable_review = bool(body.get("deliverable_review", False))
     v6_answer_check = bool(body.get("answer_check", False))
+    v6_author_gather = bool(body.get("author_gather", False))
+    v6_journal_ner = bool(body.get("journal_ner", False))
+    v6_journal_delta = bool(body.get("journal_delta", False))
+    v6_intel_prefacts = bool(body.get("intel_prefacts", False))
+    v6_plan_critique = bool(body.get("plan_critique", False))
+    v6_claim_nli = (body.get("claim_nli", "off") or "off").strip().lower()
+    if v6_claim_nli not in ("off", "shadow", "hint"):
+        v6_claim_nli = "off"
     v6_enrich_model      = (body.get("enrich_model", "") or "").strip()
     v6_critic_route      = (body.get("critic_route", "cpu") or "cpu").strip().lower()
     v6_intent_core       = (body.get("intent_core", "off") or "off").strip().lower()
@@ -26958,6 +27604,8 @@ async def workshop_agent_loop_stream(request: Request):
     v6_coder_node        = (body.get("coder_node", "auto") or "auto").strip().lower()
     v6_controller_model  = (body.get("controller_model", "") or "").strip()
     v6_controller_node   = (body.get("controller_node", "auto") or "auto").strip().lower()
+    v6_info_first        = bool(body.get("info_first", False))
+    v6_stage_models      = body.get("stage_models", "") or ""
     v6_effort            = (body.get("effort", "standard") or "standard").strip().lower()
     v6_auto_escalate     = bool(body.get("auto_escalate", True))
     v6_enable_fast_path  = bool(body.get("enable_fast_path", _v7_default))
@@ -27110,6 +27758,12 @@ async def workshop_agent_loop_stream(request: Request):
             plan_style_defaulted=v6_plan_style_defaulted,
             deliverable_review=v6_deliverable_review,
             answer_check=v6_answer_check,
+            author_gather=v6_author_gather,
+            journal_ner=v6_journal_ner,
+            journal_delta=v6_journal_delta,
+            intel_prefacts=v6_intel_prefacts,
+            plan_critique=v6_plan_critique,
+            claim_nli=v6_claim_nli,
             enrich_model=v6_enrich_model,
             critic_route=v6_critic_route,
             intent_core=v6_intent_core,
@@ -27117,6 +27771,8 @@ async def workshop_agent_loop_stream(request: Request):
             executor_model=v6_executor_model, executor_node=v6_executor_node,
             coder_model=v6_coder_model, coder_node=v6_coder_node, effort=v6_effort,
             controller_model=v6_controller_model, controller_node=v6_controller_node,
+            info_first=v6_info_first,
+            stage_models=v6_stage_models,
             auto_escalate=v6_auto_escalate,
             enable_fast_path=v6_enable_fast_path,
             clarify_level=v6_clarify_level,

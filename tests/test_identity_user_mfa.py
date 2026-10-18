@@ -15,6 +15,22 @@ sys.path.insert(0, ROOT)
 
 pytestmark = pytest.mark.critical
 SRC = os.path.join(ROOT, "vera", "provisioning", "identity_capabilities.py")
+_FAKED = ("Vera", "Vera.vera", "Vera.vera.security", "Vera.vera.security.secret_service_core",
+          "Vera.vera.security.secrets_capabilities")
+
+
+@pytest.fixture(autouse=True)
+def _restore_faked_modules():
+    """cap() fakes the security modules in sys.modules; put the real ones back after each test, or every later test
+    in the same pytest process that imports Vera.vera.* fails (seen 10 Oct: a gate shard that ran this file before
+    test_structured_generation)."""
+    saved = {k: sys.modules.get(k) for k in _FAKED}
+    yield
+    for k, v in saved.items():
+        if v is None:
+            sys.modules.pop(k, None)
+        else:
+            sys.modules[k] = v
 
 
 def cap(calls, drop_ok=True):

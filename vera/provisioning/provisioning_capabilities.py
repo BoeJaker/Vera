@@ -53,6 +53,7 @@ from Vera.vera.capability_orchestration import (
     APP, capability, emit_event, now_iso, register_ui,
 )
 from Vera.vera.security import secrets as vsecrets
+from Vera.vera.security import secret_reads as _secret_reads
 
 log = logging.getLogger("vera.provisioning")
 
@@ -234,6 +235,7 @@ async def cap_config_save(
 
 @capability(
     "prov.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "openbao"}, "title": "OpenBao"}, {"kind": "kv", "map": {"fields": "stepca"}, "title": "step-ca"}]}},
     http_method="GET", http_path="/provisioning/status", http_tags=["provisioning"],
     memory="off", silent=True,
     description="Aggregate health of the suite. Output: {openbao:{configured,"
@@ -399,17 +401,12 @@ async def cap_kv_put(path: str = "", data: Optional[Dict] = None,
     return {"ok": True, "version": (res.get("data") or {}).get("version")}
 
 
-@capability(
-    "secstore.kv.get",
-    http_method="POST", http_path="/provisioning/secstore/kv/get",
-    http_tags=["provisioning"], memory="off",
-    # Every result is otherwise cached in Redis for 5 minutes
-    # (vera:cap:result:<name>) - a secret read here sat there in plaintext.
-    redact_result=True,
-    description="Read a secret from OpenBao KV v2. Input: path (str!). "
-                "Output: {ok, data} or {ok:false} if missing.",
-)
-async def cap_kv_get(path: str = "", trace_id=None) -> Dict:
+async def kv_read(path: str) -> Dict:
+    """Read a KV v2 secret IN PROCESS: {ok, data} | {ok: False} | {error}.
+
+    Not a capability: every capability is reachable over the open API, and the
+    vault now holds every module credential. Vera's own modules read values
+    through `Vera.vera.security.secret_reads.read`, which this module backs."""
     if not path:
         return {"error": "path required"}
     st = await _state_opened()
@@ -420,6 +417,26 @@ async def cap_kv_get(path: str = "", trace_id=None) -> Dict:
     if res.get("_status") == 404:
         return {"ok": False}
     return {"ok": True, "data": (res.get("data") or {}).get("data", {})}
+
+
+_secret_reads.set_reader(kv_read)
+
+
+@capability(
+    "secstore.kv.get",
+    http_method="POST", http_path="/provisioning/secstore/kv/get",
+    http_tags=["provisioning"], memory="off",
+    description="Whether a secret exists in OpenBao KV v2, and the names of its fields - never the "
+                "values (this capability is reachable over the API; Vera's own modules read values "
+                "in process). Input: path (str!). Output: {ok, present, keys} or {ok:false} if missing.",
+)
+async def cap_kv_get(path: str = "", trace_id=None) -> Dict:
+    res = await kv_read(path)
+    if not res.get("ok"):
+        return res
+    data = res.get("data") or {}
+    return {"ok": True, "present": True,
+            "keys": sorted(str(k) for k in data) if isinstance(data, dict) else []}
 
 
 @capability(
@@ -599,7 +616,7 @@ async def cap_cert_list(trace_id=None) -> Dict:
     listing = await cap_kv_list(path=PKI_KV_PREFIX)
     certs = []
     for name in listing.get("keys", []):
-        g = await cap_kv_get(path=f"{PKI_KV_PREFIX}/{name.rstrip('/')}")
+        g = await kv_read(f"{PKI_KV_PREFIX}/{name.rstrip('/')}")
         if g.get("ok"):
             d = g["data"]
             certs.append({"fqdn": d.get("fqdn", name), "issued_at": d.get("issued_at"),

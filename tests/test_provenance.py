@@ -97,3 +97,56 @@ def test_from_file_absent_returns_empty(tmp_path):
         assert prov._from_file() == {}
     finally:
         prov._PROV_FILE = saved
+
+
+def test_required_identity_can_refresh_an_early_unresolved_cache(monkeypatch):
+    attempts = iter(({}, {
+        "git_sha": "abcdef1234567890", "git_sha_short": "abcdef1234",
+        "branch": "main", "dirty": False, "source": "git",
+    }))
+    monkeypatch.setattr(prov, "_CACHE", {})
+    monkeypatch.setattr(prov, "_from_env", lambda: {})
+    monkeypatch.setattr(prov, "_from_git", lambda: next(attempts))
+    monkeypatch.setattr(prov, "_from_file", lambda: {})
+    monkeypatch.setattr(prov, "_persist", lambda core: None)
+
+    assert prov.get_provenance()["source"] == "none"
+    # Ordinary reads remain cheap and keep the boot result.
+    assert prov.get_provenance()["source"] == "none"
+    refreshed = prov.get_provenance(refresh_unresolved=True)
+    assert refreshed["git_sha"] == "abcdef1234567890"
+    assert refreshed["source"] == "git"
+    # Once resolved, even a refresh request preserves the process identity.
+    assert prov.get_provenance(refresh_unresolved=True) == refreshed
+
+
+def test_supported_import_names_share_one_boot_identity(monkeypatch):
+    """A late alias import cannot claim a worktree commit loaded after boot."""
+    import builtins
+    import importlib.util
+
+    shared = {}
+    monkeypatch.setattr(builtins, prov._PROCESS_CACHE_KEY, shared, raising=False)
+    monkeypatch.setattr(prov, "_CACHE", shared)
+    monkeypatch.setattr(prov, "_from_env", lambda: {})
+    monkeypatch.setattr(prov, "_from_git", lambda: {
+        "git_sha": "boot1234567890", "git_sha_short": "boot123456",
+        "branch": "bleeding-edge", "dirty": False, "source": "git",
+    })
+    monkeypatch.setattr(prov, "_persist", lambda core: None)
+
+    boot = prov.get_provenance()
+    spec = importlib.util.spec_from_file_location(
+        "vera_test_alternate_provenance", prov.__file__)
+    assert spec is not None and spec.loader is not None
+    alternate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(alternate)
+    monkeypatch.setattr(alternate, "_from_env", lambda: {})
+    monkeypatch.setattr(alternate, "_from_git", lambda: {
+        "git_sha": "later0987654321", "git_sha_short": "later09876",
+        "branch": "moved-worktree", "dirty": True, "source": "git",
+    })
+
+    assert alternate._CACHE is shared
+    assert alternate.get_provenance(refresh_unresolved=True) == boot
+    assert alternate.get_provenance()["git_sha"] == "boot1234567890"

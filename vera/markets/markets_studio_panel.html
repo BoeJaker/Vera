@@ -8898,8 +8898,18 @@ async function renderConnections(){
   host.querySelectorAll('[data-trade]').forEach(b=>b.onclick=async()=>{
     const a=accts.find(x=>x.id===b.dataset.trade); const turnOn=!a.can_trade;
     if(turnOn&&!confirm('Enable REAL order placement for "'+a.label+'"? Orders will use real funds.')) return;
-    const r2=await api('/markets/broker/set_trading','POST',{id:b.dataset.trade,enabled:turnOn});
-    if(r2&&r2.ok){ toast(turnOn?'trading ENABLED':'trading disabled',turnOn?'err':'ok'); renderConnections(); }
+    const body={id:b.dataset.trade,enabled:turnOn};
+    if(turnOn){
+      // Arming: the code goes out of band (Telegram, or a file on the Vera host); it is never returned here.
+      const ar=await api('/markets/broker/arm','POST',{id:b.dataset.trade});
+      if(!ar||!ar.ok) return toast(esc((ar&&ar.error)||'arming failed'),'err');
+      const code=prompt('Enter the 6-digit arm code sent to '+(ar.sent_to||[]).join(' / ')+' (valid 10 minutes):');
+      if(!code) return;
+      body.arm_code=code.trim(); body.hours=8;
+    }
+    const r2=await api('/markets/broker/set_trading','POST',body);
+    if(r2&&r2.ok){ toast(turnOn?('trading ENABLED until '+esc(r2.trade_until||'')):'trading disabled',turnOn?'err':'ok'); renderConnections(); }
+    else toast(esc((r2&&r2.error)||'failed'),'err');
   });
   host.querySelectorAll('[data-unlink]').forEach(b=>b.onclick=async()=>{
     if(!confirm('unlink this account and delete its keys?')) return;
@@ -8925,7 +8935,8 @@ function wireOrderTicket(box,id){
     if(!sym||!amt) return toast('symbol and amount required','err');
     if(!box.querySelector('.oConfirm').checked) return toast('tick the confirmation box','err');
     const body={id:id,symbol:sym,side:box.querySelector('.oSide').value,type:box.querySelector('.oType').value,
-      amount:amt,price:+box.querySelector('.oPrice').value||0,confirm:true};
+      amount:amt,price:+box.querySelector('.oPrice').value||0,confirm:true,
+      client_order_id:(self.crypto&&crypto.randomUUID?crypto.randomUUID():String(Date.now())+Math.random().toString(16).slice(2))};
     if(!confirm('PLACE REAL '+body.side.toUpperCase()+' '+amt+' '+sym+'? This uses real funds.')) return;
     const r=await api('/markets/broker/order','POST',body,60000);
     if(r&&r.ok){ toast('order placed: '+esc(r.order.id||''),'ok'); }

@@ -105,6 +105,27 @@ def _redis():
     return getattr(_orch, "REDIS", None)
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+async def _adopt(dry_run: bool):
+    """Move Proxmox credentials still sealed here into the Platforms store (platform.secrets.adopt)."""
+    return await _pa().adopt_json_hash(_orch.CAPABILITY_REGISTRY, _redis(), KEY_CLUSTERS, ('token', 'console_password'), "proxmox", dry_run, "Proxmox")
+
+
+_pa().register_adopter("proxmox", _adopt)
+
+
 def _cap(name: str):
     """Resolve another capability's function by name (decoupled cross-module calls)."""
     c = _orch.CAPABILITY_REGISTRY.get(name)
@@ -129,7 +150,7 @@ def _open(rec: Dict) -> Dict:
     """Copy with secret fields decrypted (server-side use only)."""
     out = dict(rec)
     for f in _SECRET_FIELDS:
-        out[f] = vsecrets.open_secret(rec.get(f, ""))
+        out[f] = _pa().open_any_sync(_orch.CAPABILITY_REGISTRY, rec.get(f, ""))
     return out
 
 
@@ -155,6 +176,8 @@ async def _get_cluster(cluster_id: str, opened: bool = False) -> Optional[Dict]:
         rec = json.loads(raw)
     except Exception:
         return None
+    if opened:
+        await _pa().prime(_orch.CAPABILITY_REGISTRY, *(rec.get(f) for f in _SECRET_FIELDS))
     return _open(rec) if opened else rec
 
 
@@ -265,9 +288,12 @@ async def cap_cluster_save(
     # Seal secrets only when a (truthy) new value is provided; else keep existing.
     try:
         if token:
-            rec["token"] = vsecrets.seal(token)
+            rec["token"] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("proxmox", rec.get("id"), "token"), token,
+                                           f"Proxmox {rec.get('label') or rec.get('id')} API token")
         if console_password:
-            rec["console_password"] = vsecrets.seal(console_password)
+            rec["console_password"] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("proxmox", rec.get("id"), "console"),
+                                                      console_password,
+                                                      f"Proxmox {rec.get('label') or rec.get('id')} console")
     except RuntimeError as e:
         return {"error": str(e)}
     rec["updated"] = now_iso()

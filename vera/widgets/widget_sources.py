@@ -957,6 +957,7 @@ def _s(v: Any) -> Any:
 
 
 @capability("redis.info", memory="off", silent=True, http_method="GET", http_path="/ui/widgets/redis/info", http_tags=["redis", "widgets"],
+            contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "Server"}, {"kind": "parts", "map": {"parts": "dbs"}, "title": "Keys by database"}]}},
             description="Redis server info as a widget source (values): clients, memory, keys per db, ops/s, uptime. Read-only. "
                         "Output: {ok, connected_clients, used_memory, used_memory_human, total_keys, ops_per_sec, uptime_s, version, dbs:{db: keys}}.")
 async def redis_info(trace_id=None):
@@ -974,6 +975,7 @@ async def redis_info(trace_id=None):
 
 
 @capability("redis.keys", memory="off", silent=True, http_method="GET", http_path="/ui/widgets/redis/keys", http_tags=["redis", "widgets"],
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "keys"}, "draw": {"columns": ["key", "type", "len", "ttl"]}, "empty": "No keys match"}},
             description="Keys matching a pattern with their type and size, as a widget source (items). Inputs: pattern (str, default "
                         "'vera:*'), limit (int, 200). Read-only, SCAN-based. Output: {ok, keys:[{key, type, len, ttl}], count, pattern}.")
 async def redis_keys(pattern: str = "vera:*", limit: int = 200, trace_id=None):

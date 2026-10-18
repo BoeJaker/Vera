@@ -477,7 +477,8 @@
         if (x.workflow_id) nativeQ.push('workflow_id=' + encodeURIComponent(x.workflow_id));
         if (x.trace_id) nativeQ.push('trace_id=' + encodeURIComponent(x.trace_id));
         acts.push('<button class="a" data-open="' + esc(ui.native_url) +
-          (nativeQ.length ? '?' + nativeQ.join('&amp;') : '') + '">⇗ Native DAG workshop</button>');
+          (nativeQ.length ? '?' + nativeQ.join('&amp;') : '') + '">⇗ ' +
+          esc(ui.native_label || 'Native runtime') + '</button>');
       }
       // External associated UI (fabric graph, netmap, …) opens the real panel.
       if (ui.url) acts.push('<button class="a" data-open="' + esc(ui.url) + '">⇗ ' + esc(ui.label || 'Open') + '</button>');

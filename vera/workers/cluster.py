@@ -1017,6 +1017,7 @@ async def _ollama_proxy_get_v1(path: str, req: Request):
 
 @capability(
     "cluster.mimic.status", memory="off", silent=True,
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["routing", "current_target", "paused", "online_nodes", "active", "queue_depth", "queue_max", "max_concurrency", "queue_timeout"]}}},
     http_method="GET", http_path="/cluster/mimic/status", http_tags=["cluster"],
     description="Live status of the Ollama mimic proxy: routing mode, the node a "
                 "request would route to right now, online nodes, paused state, "
@@ -1320,6 +1321,7 @@ async def obs_cluster(trace_id=None):
 
 @capability(
     "obs.proxy_log", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "log"}, "draw": {"columns": ["ts", "instance", "model", "path", "type"]}, "empty": "No proxied requests"}},
     http_method="GET", http_path="/cluster/proxy_log", http_tags=["obs"],
     description="Recent requests through the local Ollama proxy.",
 )

@@ -26,10 +26,17 @@ import uuid
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-KINDS = ("census", "suite", "task", "pipeline", "board", "loop", "tests", "cap")
+KINDS = ("census", "suite", "task", "pipeline", "board", "loop", "tests", "cap",
+         # looplab-control B3 (17 Oct 2026): work the owner schedules FOR a Claude session - written as an
+         # agents.work request when due; the session picks it up at its own check (live sessions only, D2)
+         "claude_session")
 # Kinds whose work outlives the tick that started it: run in the background, the run record closed when it ends,
 # and the next start held while one is still going.
 BACKGROUND_KINDS = ("loop", "tests")
+#: Every kind but census now starts in the background (DEEP-21 D21-1): a run still going holds the
+#: schedule's next start back, whatever the kind. BACKGROUND_KINDS keeps its narrower meaning for the
+#: `continuous` repeat rule (cooldown vs interval) so existing schedules keep their cadence.
+RUN_TRACKED_KINDS = ("suite", "task", "pipeline", "board", "loop", "tests", "cap", "claude_session")
 STILL_RUNNING_HOURS = 6                 # a background run older than this no longer holds the next one back
 REPEATS = ("continuous", "once_per_window", "every")
 WINDOW_END = ("finish", "yield", "drop")
@@ -40,17 +47,35 @@ MAX_PROJECTED_EVENTS = 600
 
 COLORS = {"census": "#c9a35a", "suite": "#6db87a", "task": "#8fb87a",
           "pipeline": "#7aa2f7", "board": "#a78bfa", "loop": "#f472b6", "tests": "#38bdf8",
-          "cap": "#9aa0a6"}
+          "cap": "#9aa0a6", "claude_session": "#e0a458",
+          # a scheduled background window (evolve.background.window) shows as its own kind (owner 18 Oct 2026:
+          # "really clear from the UI what each slot is doing")
+          "background": "#2dd4bf"}
+
+BACKGROUND_CAP = "evolve.background.window"
+
+
+def display_kind(kind: Any, target: Any) -> str:
+    """The kind the calendar shows: a cap schedule running the background window is 'background'."""
+    if kind == "cap" and isinstance(target, dict) and target.get("name") == BACKGROUND_CAP:
+        return "background"
+    return str(kind or "")
 
 # The calendar's layers: what an event is, so a viewer can switch each on and off. A board item's schedule is its own
 # layer - the work a board item asked for, whatever kind it is.
-LAYERS = ("windows", "runs", "results", "board", "calendar")
+LAYERS = ("windows", "runs", "results", "board", "calendar", "agents", "host", "releases")
 
 
 def layer_of(ev: Dict[str, Any]) -> str:
     src = ev.get("source") or ""
     if src == "results":
         return "results"
+    if src == "agents-work":
+        return "agents"
+    if src == "releases":
+        return "releases"                     # promotions to bleeding-edge and releases to prod (18 Oct 2026)                       # B1: Claude sessions' triggers and requests
+    if src in ("host-cron", "host-timer", "in-process"):
+        return "host"
     if src in ("loop-lab", "loop-lab-run"):
         if ev.get("board_id") or ev.get("kind") == "board":
             return "board"
@@ -71,7 +96,125 @@ CAP_DENY_PREFIXES = ("sys.", "background.", "evolve.bleeding_edge.", "evolve.sch
                      "evolve.sandbox.up", "evolve.pipeline.promote",
                      "cluster.job.stop", "jobs.purge_pending")
 
+#: DEEP-21 D21-2 (11 Oct 2026): a `cap` schedule may run only these families - read, measure, report and
+#: model-training work. Anything else (release, exec, sandbox, secrets, autonomous...) is refused at save
+#: AND at start; the deny-list above still wins inside an allowed family. Add a family here, with a reason,
+#: when a new kind of scheduled job is wanted.
+CAP_ALLOW_PREFIXES = ("decide.", "obs.", "evolve.suite.", "chat.corpus.", "worldview.", "intel.", "bench.", "census.",
+                      "nlp.", "info.seek", "memory.seek", "memory.map", "caps.shortlist.",
+                      "perf.", "evolve.loop.record", "evolve.result.", "agents.work.",
+                      # four-minds FM-7.9 (17 Oct 2026): the memory census - the frozen known-item set through
+                      # memory.seek on four-minds nights; read-only on memory, a row in its own table
+                      "memory.perf.probe",
+                      # looplab-control A4 (17 Oct 2026): every test family can be scheduled - ML Workshop
+                      # training/eval and sweeps (never export or delete), memory retrieval evals, a dream
+                      # trigger's cycle (A5: the nightly QA suite), the student nightly pass, and the
+                      # allow-listed scripts (probes, TTS round-trip) through evolve.script.run
+                      "ml.train", "ml.sweep", "retrieval.eval", "retrieval.known_items.run",
+                      "dream.cycle.run", "evolve.script.run",
+                      # owner 18 Oct 2026: background work runs in scheduled windows, not in a quiet hour
+                      "evolve.background.window",
+                      # four-minds 18 Oct 2026 (owner: every test on the Loop Lab schedule, no in-code timers): the
+                      # precedent index and the claims harvest (decide.*, caps.shortlist.* are allowed above)
+                      "plan.precedent.index", "output.claims.harvest")
+
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+#: looplab-control A1 (17 Oct 2026): capabilities that start their work in the background and return at
+#: once. The scheduler recorded them as finished the moment they returned, freed the exclusive slot and let a
+#: census start beside work that was still running. Each says how to ask whether its job has ended:
+#:   status - the status capability; id_key - the start result's field that names the job (passed to the
+#:   status capability as id_arg); how - which reading of the status result applies (follow_state).
+FOLLOW = {
+    "evolve.suite.start": {"status": "evolve.suite.status", "id_key": "", "id_arg": "", "how": "running"},
+    "chat.corpus.run": {"status": "chat.corpus.last", "id_key": "", "id_arg": "", "how": "running"},
+    "dream.cycle.run": {"status": "dream.cycle.progress", "id_key": "", "id_arg": "", "how": "running"},
+    "bench.run.start": {"status": "bench.status", "id_key": "run_id", "id_arg": "run_id", "how": "rows"},
+    "bench.matrix.start": {"status": "bench.matrix.status", "id_key": "run_id", "id_arg": "run_id",
+                           "how": "state"},
+    "evolve.script.run": {"status": "evolve.script.status", "id_key": "job_id", "id_arg": "job_id",
+                          "how": "state"},
+    # B3: a claude_session run lasts until the session settles the request it wrote
+    "agents.work.request": {"status": "agents.work.get", "id_key": "id", "id_arg": "id", "how": "state"},
+}
+FOLLOW_POLL_S = 30
+_ENDED = ("done", "error", "failed", "cancelled", "canceled", "finished", "stopped", "exited",
+          "declined", "expired")
+
+
+def follow_args(cap: str, res: Any) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """(status capability, its arguments) when `cap` started a background job that is still to finish,
+    else None (not a background starter, or it failed to start)."""
+    spec = FOLLOW.get((cap or "").strip())
+    if not spec or not isinstance(res, dict) or res.get("error") or res.get("ok") is False:
+        return None
+    args: Dict[str, Any] = {}
+    if spec["id_key"]:
+        jid = res.get(spec["id_key"])
+        if not jid:
+            return None
+        args[spec["id_arg"]] = jid
+    return spec["status"], args
+
+
+def follow_state(cap: str, st: Any) -> Tuple[bool, str, str]:
+    """(ended, result word, detail) from a status capability's answer. An unreadable status is NOT the
+    end: the follower keeps asking until STILL_RUNNING_HOURS."""
+    spec = FOLLOW.get((cap or "").strip()) or {}
+    if not isinstance(st, dict) or (st.get("error") and not st.get("state") and "running" not in st):
+        return False, "", ""            # unreadable (no state at all)
+    how = spec.get("how")
+    if how == "running":
+        if st.get("running"):
+            return False, "", ""
+        sst = st.get("status") if isinstance(st.get("status"), dict) else {}
+        summ = st.get("summary") or sst.get("avg_combined") or ""
+        if isinstance(summ, dict):
+            summ = " · ".join("%s %s" % (k, summ[k]) for k in list(summ)[:6])
+        return True, "done", str(summ)[:200]
+    row = st
+    if how == "rows":
+        rows = st.get("runs") or st.get("rows") or st.get("items") or []
+        row = rows[0] if rows and isinstance(rows[0], dict) else {}
+    state = str(row.get("state") or "").lower()
+    if state in _ENDED:
+        word = ("error" if (state in ("error", "failed") or row.get("error"))
+                else state if state in ("declined", "expired", "cancelled") else "done")
+        return True, word, str(row.get("error") or row.get("summary") or state)[:200]
+    return False, "", ""
+
+
+# ── A2: quiet windows (OFF by default) ───────────────────────────────────────
+#: Owner, 18 Oct 2026: "there is no such thing as a quiet hour - the system needs time where nothing is
+#: processing to do processing - this stuff should just be scheduled". Background work gets SCHEDULED
+#: windows (evolve.background.window) instead; a quiet window only exists if someone sets one in config.
+DEFAULT_QUIET: List[Dict[str, Any]] = []
+
+
+def in_quiet(now: datetime, quiet: Optional[List[Dict[str, Any]]], tz_name: str = DEFAULT_TZ) -> str:
+    """The quiet window `now` falls in ("04:00-05:00"), or ""."""
+    tz = resolve_tz(tz_name or DEFAULT_TZ)
+    local = now.astimezone(tz)
+    for q in (quiet if quiet is not None else DEFAULT_QUIET) or []:
+        try:
+            a, b = parse_hhmm(q.get("start")), parse_hhmm(q.get("end"))
+        except Exception:
+            continue
+        t = local.time().replace(second=0, microsecond=0)
+        inside = (a <= t < b) if a < b else (t >= a or t < b)
+        if inside:
+            return "%s-%s" % (a.strftime("%H:%M"), b.strftime("%H:%M"))
+    return ""
+
+
+def window_end_stop(rec: Dict[str, Any], now: datetime) -> bool:
+    """A3: a NON-census run whose window has closed and whose schedule asked to stop it (at_window_end
+    drop or yield - a capability cannot be parked, so yield stops it too)."""
+    if rec.get("kind") == "census" or rec.get("once_at"):
+        return False
+    if rec.get("at_window_end", "finish") == "finish":
+        return False
+    return current_window(rec, now) is None
 
 
 # ── time helpers ─────────────────────────────────────────────────────────────
@@ -166,8 +309,9 @@ def normalize(rec: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[st
             raise ValueError("days must be weekday numbers 0 (Mon) .. 6 (Sun)")
         r["days"] = days
         start, end = parse_hhmm(r.get("start") or "05:00"), parse_hhmm(r.get("end") or "17:00")
-        if start >= end:
-            raise ValueError("the window must end after it starts (overnight windows are not supported)")
+        if start == end:
+            raise ValueError("the window must not start and end at the same time")
+        # A6 (17 Oct 2026): end before start = an overnight window, ending the next day (22:00-02:00)
         r["start"], r["end"] = start.strftime("%H:%M"), end.strftime("%H:%M")
     repeat = str(r.get("repeat") or ("continuous" if kind == "census" else "once_per_window"))
     if repeat not in REPEATS:
@@ -181,9 +325,19 @@ def normalize(rec: Dict[str, Any], *, now: Optional[datetime] = None) -> Dict[st
     if awe not in WINDOW_END:
         raise ValueError(f"at_window_end must be one of {', '.join(WINDOW_END)}")
     r["at_window_end"] = awe
-    r["exclusive"] = bool(r.get("exclusive", True))
+    # a claude_session request does not hold the box (the session's own work declares itself)
+    r["exclusive"] = bool(r.get("exclusive", kind != "claude_session"))
     r["cooldown_minutes"] = max(0, int(r.get("cooldown_minutes") or 2))
     r["notes"] = str(r.get("notes") or "")
+    r["quiet_ok"] = bool(r.get("quiet_ok", False))           # A2: may start in a quiet hour
+    # Recover and protect (owner, 18 Oct 2026: tests "can recover if vera restarts and can be properly gated and
+    # protected like the censuses are"). Both off unless the entry sets them.
+    r["recover"] = bool(r.get("recover", False))             # re-run a run a restart killed
+    r["max_recoveries"] = max(0, int(r.get("max_recoveries") if r.get("max_recoveries") is not None else 2))
+    r["recoveries"] = max(0, int(r.get("recoveries") or 0))
+    r["recover_due"] = str(r.get("recover_due") or "")
+    r["protect"] = bool(r.get("protect", False))             # a running run holds a restarting release
+    r["protect_minutes"] = max(1, int(r.get("protect_minutes") or 120))
     # The board item this work is for: a board-kind schedule's own item, or any schedule linked to one (a census run
     # for an item that asked for one, a loop working an item's goal). The scheduler notes each start on the item.
     r["board_id"] = str(r.get("board_id") or (r["target"].get("id") if kind == "board" else "") or "").strip()
@@ -261,6 +415,17 @@ def _normalize_target(kind: str, t: Dict[str, Any]) -> Dict[str, Any]:
         t["paths"] = str(t.get("paths") or "tests").strip()
         t["markers"] = str(t.get("markers") or "").strip()
         t["repo"] = str(t.get("repo") or "").strip()
+    elif kind == "claude_session":
+        sess = str(t.get("session") or "").strip()
+        if not sess:
+            raise ValueError("a claude_session schedule needs target.session (a session name, or 'any')")
+        if not str(t.get("what") or "").strip():
+            raise ValueError("a claude_session schedule needs target.what (the brief)")
+        t["session"] = sess[:80]
+        t["what"] = str(t["what"]).strip()[:2000]
+        t["title"] = str(t.get("title") or "").strip()[:160]
+        items = t.get("board_items") or []
+        t["board_items"] = [str(x).strip() for x in (items if isinstance(items, list) else [items]) if str(x).strip()][:20]
     elif kind == "cap":
         name = str(t.get("name") or "").strip()
         if not name:
@@ -334,9 +499,17 @@ def census_plan_styles() -> List[str]:
     return list(_ps.LOOP_STYLES.keys())
 
 
-def cap_denied(name: str) -> bool:
+def cap_allowed(name: str) -> bool:
+    """Whether a schedule may run this capability: an allowed family and not a denied one."""
     n = (name or "").strip()
-    return any(n == p.rstrip(".") or n.startswith(p) for p in CAP_DENY_PREFIXES)
+    if not n or any(n == p.rstrip(".") or n.startswith(p) for p in CAP_DENY_PREFIXES):
+        return False
+    return any(n == p.rstrip(".") or n.startswith(p) for p in CAP_ALLOW_PREFIXES)
+
+
+def cap_denied(name: str) -> bool:
+    """A schedule may NOT run this capability (allow-list, D21-2; was a deny-list only)."""
+    return not cap_allowed(name)
 
 
 def _default_title(kind: str, t: Dict[str, Any]) -> str:
@@ -350,7 +523,8 @@ def _default_title(kind: str, t: Dict[str, Any]) -> str:
             "board": f"Board · {t.get('id', '')}",
             "loop": f"Loop · {str(t.get('goal', ''))[:48]}",
             "tests": f"Tests · {t.get('branch', '')}" + (f" · {t['markers']}" if t.get("markers") else ""),
-            "cap": f"Cap · {t.get('name', '')}"}[kind]
+            "cap": f"Cap · {t.get('name', '')}",
+            "claude_session": f"Session · {t.get('session', '')} · {t.get('title') or str(t.get('what', ''))[:40]}"}[kind]
 
 
 # ── windows ──────────────────────────────────────────────────────────────────
@@ -372,6 +546,8 @@ def window_on(rec: Dict[str, Any], day: date) -> Optional[Tuple[datetime, dateti
     tz = resolve_tz(rec.get("timezone") or DEFAULT_TZ)
     start = datetime.combine(day, parse_hhmm(rec.get("start") or "05:00"), tzinfo=tz)
     end = datetime.combine(day, parse_hhmm(rec.get("end") or "17:00"), tzinfo=tz)
+    if end <= start:                                   # A6: an overnight window ends the next day
+        end = datetime.combine(day + timedelta(days=1), parse_hhmm(rec.get("end") or "17:00"), tzinfo=tz)
     return start, end
 
 
@@ -380,9 +556,11 @@ def current_window(rec: Dict[str, Any], now: datetime) -> Optional[Tuple[datetim
     if rec.get("once_at"):
         return None
     tz = resolve_tz(rec.get("timezone") or DEFAULT_TZ)
-    w = window_on(rec, now.astimezone(tz).date())
-    if w and w[0] <= now < w[1]:
-        return w
+    today = now.astimezone(tz).date()
+    for d in (today, today - timedelta(days=1)):      # yesterday's overnight window may still be open
+        w = window_on(rec, d)
+        if w and w[0] <= now < w[1]:
+            return w
     return None
 
 
@@ -411,7 +589,15 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
         return False, "disabled"
     kind = rec.get("kind")
     last_started = parse_iso(rec.get("last_started_at") or "")
-    if rec.get("once_at"):
+    # a protected entry does not start while a release is waiting to restart prod (it would be killed)
+    if rec.get("protect") and state.get("release_draining"):
+        return False, "a release is waiting - protected runs hold until it is out"
+    # a run a restart killed, on an entry that recovers: due again whatever its window says - the box rules
+    # below still apply, so a recovery never jumps a census, a loop or an exclusive run
+    recovering = bool(rec.get("recover_due"))
+    if recovering:
+        pass
+    elif rec.get("once_at"):
         at = parse_iso(rec["once_at"])
         if at is None or now < at:
             return False, "not yet"
@@ -430,7 +616,7 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
             every = timedelta(minutes=int(rec.get("every_minutes") or 60))
             if last_started and now - last_started < every:
                 return False, "interval not elapsed"
-        if kind in BACKGROUND_KINDS and last_started:
+        if kind in RUN_TRACKED_KINDS and last_started:
             last_fin = parse_iso(rec.get("last_finished_at") or "")
             if (not last_fin or last_fin < last_started) and now - last_started < timedelta(hours=STILL_RUNNING_HOURS):
                 return False, "previous run still going"
@@ -453,6 +639,12 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
                 every = timedelta(minutes=int(rec.get("every_minutes") or 60))
                 if last_started and now - last_started < every:
                     return False, "interval not elapsed"
+    # A2: nothing starts in the quiet hour (NIGHT-BOOKINGS) unless the schedule says quiet_ok.
+    if state.get("quiet") and not rec.get("quiet_ok"):
+        return False, "quiet hour %s (background queue)" % state["quiet"]
+    # A2: a declared activity (a probe, a manual benchmark) holds the box like a loop does.
+    if (kind == "census" or rec.get("exclusive", True)) and state.get("declared_busy"):
+        return False, "declared activity: %s" % state["declared_busy"]
     # Box gating. A census is one loop on prod's GPU; nothing else may run
     # beside it (HANDOVER §4.1-4.2), and a census needs the box to itself.
     if kind == "census":
@@ -472,11 +664,61 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
             return False, "census in flight"
         if int(state.get("loops_running") or 0) > 0:
             return False, "an agent loop is running"
+        if int(state.get("exclusive_running") or 0) > 0:
+            return False, "an exclusive scheduled cap is running"      # RF-09
         if state.get("harness_blocked"):
             return False, str(state["harness_blocked"])
     elif rec.get("exclusive", True) and state.get("census_running"):
         return False, "census in flight"
-    return True, "due"
+    elif kind == "cap" and rec.get("exclusive", True) and int(state.get("loops_running") or 0) > 0:
+        return False, "an agent loop is running"                      # RF-09: caps wait for loops
+    elif rec.get("exclusive", True) and int(state.get("exclusive_running") or 0) > 0:
+        return False, "another exclusive scheduled run is going"      # A3: one exclusive run at a time
+    return True, ("recover" if recovering else "due")
+
+
+def recover_after_interrupt(rec: Dict[str, Any], when: str) -> bool:
+    """A restart killed a run of `rec`: stamp it to run again if it recovers and has recoveries left (counted,
+    so a run that itself kills prod cannot loop). Mutates rec; True when a recovery was stamped."""
+    if not rec.get("recover"):
+        return False
+    if int(rec.get("recoveries") or 0) >= int(rec.get("max_recoveries") if rec.get("max_recoveries") is not None else 2):
+        return False
+    rec["recover_due"] = str(when or "now")
+    rec["recoveries"] = int(rec.get("recoveries") or 0) + 1
+    return True
+
+
+def protected_runs(runs: Iterable[Dict[str, Any]], schedules: Dict[str, Dict[str, Any]],
+                   now: datetime) -> List[Dict[str, Any]]:
+    """Open runs of protected entries a restart would kill: not census (a census has its own yield), not
+    finished, started within the entry's protect_minutes (so a lost run cannot hold a release for ever)."""
+    out = []
+    for r in runs or []:
+        if not isinstance(r, dict) or r.get("finished_at") or r.get("kind") == "census":
+            continue
+        rec = schedules.get(str(r.get("schedule_id") or "")) or {}
+        if not rec.get("protect"):
+            continue
+        st = parse_iso(r.get("started_at") or "")
+        if st is None or now - st > timedelta(minutes=int(rec.get("protect_minutes") or 120)):
+            continue
+        out.append({"run_id": r.get("id"), "schedule_id": rec.get("id"), "title": rec.get("title") or "",
+                    "started_at": r.get("started_at")})
+    return out
+
+
+def interrupted_runs(runs: List[Dict[str, Any]], process_started: datetime) -> List[Dict[str, Any]]:
+    """Background runs a restart killed (DEEP-21 D21-5): not census, no finished_at, started before
+    this process - nothing is left alive to close them, and each holds its schedule back."""
+    out = []
+    for r in runs or []:
+        if not isinstance(r, dict) or r.get("kind") == "census" or r.get("finished_at"):
+            continue
+        st = parse_iso(r.get("started_at") or "")
+        if st is not None and st < process_started:
+            out.append(r)
+    return out
 
 
 def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[str, Any],
@@ -499,6 +741,8 @@ def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[st
             continue
         out.append({"schedule_id": rec["id"], "kind": rec["kind"], "target": rec["target"],
                     "title": rec.get("title", ""), "reason": why})
+        if rec.get("kind") != "census" and rec.get("exclusive", True):
+            st["exclusive_running"] = int(st.get("exclusive_running") or 0) + 1   # A3: one per tick too
         if rec.get("kind") == "census":
             census_taken = True
             st["census_running"] = True     # exclusive kinds see the census we just planned
@@ -547,8 +791,8 @@ def project_events(schedules: Iterable[Dict[str, Any]], start: datetime, end: da
                 "title": rec.get("title") or rec["id"],
                 "start": iso(w[0]), "end": iso(w[1]), "all_day": False,
                 "source": "loop-lab", "read_only": True,
-                "color": COLORS.get(rec.get("kind"), COLORS["cap"]),
-                "kind": rec.get("kind"), "schedule_id": rec["id"],
+                "color": COLORS.get(display_kind(rec.get("kind"), rec.get("target")), COLORS["cap"]),
+                "kind": display_kind(rec.get("kind"), rec.get("target")), "schedule_id": rec["id"],
                 "enabled": bool(rec.get("enabled", True)),
                 "repeat": rec.get("repeat"), "label": _default_title(rec["kind"], rec["target"]),
                 "board_id": rec.get("board_id", ""),
@@ -574,8 +818,9 @@ def history_events(runs: Iterable[Dict[str, Any]], start: datetime, end: datetim
                      + (f" · {r['result']}" if r.get("result") else ""),
             "start": iso(s), "end": iso(f), "all_day": False,
             "source": "loop-lab-run", "read_only": True,
-            "color": COLORS.get(r.get("kind"), COLORS["cap"]),
-            "kind": r.get("kind"), "schedule_id": r.get("schedule_id"),
+            "color": COLORS.get(display_kind(r.get("kind"), r.get("target")), COLORS["cap"]),
+            "kind": display_kind(r.get("kind"), r.get("target")), "schedule_id": r.get("schedule_id"),
+            "run_id": r.get("id", ""), "running": not r.get("finished_at"),
             "result": r.get("result", ""), "detail": r.get("detail", ""),
             "board_id": r.get("board_id", ""),
         })
@@ -671,4 +916,44 @@ def results_events(suites: Iterable[Dict[str, Any]], start: datetime, end: datet
         if len(out) >= limit:
             break
     out.sort(key=lambda e: e["start"])
+    return out
+
+
+# ── B1: the central view - every scheduled thing in one shape ───────────────
+def central_row(source: str, kind: str, title: str, *, owner: str = "", next_fire: str = "", repeat: str = "",
+                status: str = "", last: str = "", target: Any = None, ref: str = "") -> Dict[str, Any]:
+    return {"source": source, "kind": kind, "title": title, "owner": owner, "next_fire": next_fire,
+            "repeat": repeat, "status": status, "last": last, "target": target or {}, "ref": ref}
+
+
+def parse_crontab(text: str) -> List[Dict[str, Any]]:
+    """Host crontab lines -> rows (schedule + command). Comments, blanks and VAR= lines are skipped."""
+    out = []
+    for line in (text or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", s):
+            continue
+        if s.startswith("@"):
+            spec, _, cmd = s.partition(" ")
+        else:
+            parts = s.split(None, 5)
+            if len(parts) < 6:
+                continue
+            spec, cmd = " ".join(parts[:5]), parts[5]
+        out.append(central_row("host-cron", "cron", cmd.strip()[:160], repeat=spec, status="armed",
+                               owner="crontab"))
+    return out
+
+
+def parse_systemd_timers(text: str) -> List[Dict[str, Any]]:
+    """`systemctl list-timers --all --no-legend --no-pager` -> rows (next fire text + unit)."""
+    out = []
+    for line in (text or "").splitlines():
+        cols = line.split()
+        units = [c for c in cols if c.endswith(".timer")]
+        if not units:
+            continue
+        unit = units[0]
+        nxt = " ".join(cols[:4]) if cols and cols[0] not in ("-", "n/a") else ""
+        out.append(central_row("host-timer", "systemd", unit, next_fire=nxt, status="armed", owner="systemd"))
     return out

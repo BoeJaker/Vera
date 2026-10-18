@@ -355,7 +355,7 @@ async def _record_to_graph(item: dict, category: str, cap_name: str,
             importance=0.7, capability=cap_name,
             metadata={"item_id": item["id"], "item_name": item.get("name", "")},
         )
-        await MEMORY.store(rec)
+        await MEMORY.store(rec, producer_kind="skill")
         await hooks._link_nodes(sess_root, node_id, "SESSION_CONTENT",
                                 {"cap": cap_name, "item_id": item["id"]},
                                 session_id=session_id)
@@ -977,6 +977,7 @@ def _render_skill(skill: dict, variables: dict) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @capability("skills.list", memory="off",
+            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "skills"}, "draw": {"columns": ["name", "type", "description", "tags", "enabled", "updated"]}, "empty": "No skills"}},
             http_method="GET", http_path="/skills", http_tags=["skills"],
             description="List all registered skills. Filter by tag or type.")
 async def skills_list(tag: str = "", type: str = "", enabled_only: bool = False, trace_id=None):

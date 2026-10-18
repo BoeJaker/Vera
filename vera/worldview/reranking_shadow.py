@@ -11,8 +11,8 @@ from dataclasses import dataclass
 import math
 from typing import Any, Sequence
 
-from vera.context_provider import ContextItem
-from vera.worldview.evidence_provider import WorldviewEvidence, evidence_availability
+from ..context_provider import ContextItem
+from .evidence_provider import WorldviewEvidence, evidence_availability
 
 
 RERANKING_SHADOW_SCHEMA = "vera.worldview-reranking-shadow/v1"

@@ -13,6 +13,13 @@ import asyncio
 import json
 import logging
 import os
+import sys
+
+# ONE module object (as data_fabric, 11 Oct 2026): the loader loads this file as `training_state`, while loop_ledger and
+# discovery import `Vera.vera.minds.training_state` - a second copy with its own stats, its own decide.* capabilities
+# registered over the first, and its own retention job. Both names point at this object before anything else runs.
+for _alias in ("training_state", "Vera.vera.minds.training_state"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -103,6 +110,20 @@ def put(decision: Optional[Dict[str, Any]], inputs: Optional[Dict[str, Any]]) ->
         log.debug("training state: %s", e)
 
 
+async def put_now(decision: Optional[Dict[str, Any]], inputs: Optional[Dict[str, Any]]) -> bool:
+    """put(), awaited: for a backfill that writes many rows one after another instead of a task per row.
+    True when the row was written (or already there). Never raises."""
+    try:
+        if not decision or not inputs or not TS.wanted(decision, surfaces()):
+            return False
+        before = _STATS["stored"]
+        await _write(TS.state_row(decision, TS.render(inputs, _cred())))
+        return _STATS["stored"] > before
+    except Exception as e:
+        log.debug("training state: %s", e)
+        return False
+
+
 async def _ensure(conn) -> None:
     global _DDL_DONE
     if _DDL_DONE:
@@ -148,8 +169,15 @@ schedule(_retention_job, interval=86400, name="decide_training_state_retention",
          skip_in_sandbox=True)
 
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import contract_core as _MC
+except Exception:                        # worktree / app-free import
+    from vera.minds import contract_core as _MC  # type: ignore
+
+
 @capability(
     "decide.training_state", http_method="GET", http_path="/decide/training_state", http_tags=["minds"],
+    contract=_MC.contract("decision.inputs.read", effects=["read"], idempotency="idempotent"),
     memory="off", silent=True,
     description="The training store (four-minds FM-0.2): what recorded decisions saw, kept so decision "
                 "models can learn them - redacted, bounded, 90 days, only for enabled surfaces "
@@ -195,6 +223,7 @@ async def cap_decide_training_state(question_id: str = "", samples: int = 3, tra
 
 @capability(
     "decide.purge", http_method="POST", http_path="/decide/purge", http_tags=["minds"],
+    contract=_MC.contract("decision.inputs.purge", effects=["delete"], idempotency="idempotent", approval="confirm_argument"),
     memory="off",
     description="Delete stored decision inputs from the training store (four-minds FM-0.2). Input: surface, "
                 "session_id (str), before (ISO date) - at least one; confirm (bool, default false: count "

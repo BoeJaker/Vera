@@ -87,6 +87,7 @@ async def _read_nlp_inventory() -> tuple[dict[str, Any] | None, dict[str, str]]:
 
 @capability(
     "model.inventory",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "counts"}, "title": "Counts"}, {"kind": "table", "form": "table", "map": {"rows": "candidates"}, "draw": {"columns": ["task", "model", "format", "status", "blockers"]}, "title": "Unresolved candidates", "empty": "No unresolved candidates"}]}},
     http_method="GET",
     http_path="/models/inventory",
     http_tags=["models", "inventory"],
@@ -191,13 +192,15 @@ async def _llm_facts(instances: dict, refresh: bool = False) -> tuple[dict, dict
         "(size, quantisation, context, abilities) and measured tok/s per node, from "
         "which their uses/limits are written. Inputs: task, family, question (str "
         "filters), search (str - in id, uses, model), include_llms (bool=true), "
-        "refresh_facts (bool - re-read every LLM's facts). Output: {ok, count, "
-        "models:[...], sources, errors}."
+        "refresh_facts (bool - re-read every LLM's facts), measure (bool=true - add "
+        "`measured`: calls, p50_s / p95_s, error_rate and nodes over the last 24 h "
+        "from node activity). Output: {ok, count, models:[...], sources, errors}. "
+        "To find the right model for a task described in words, use model.pick."
     ),
 )
 async def model_callable(task: str = "", family: str = "", question: str = "",
                          search: str = "", include_llms: bool = True,
-                         refresh_facts: bool = False,
+                         refresh_facts: bool = False, measure: bool = True,
                          trace_id: str | None = None) -> dict[str, Any]:
     import Vera.vera.capability_orchestration as _orch
     from Vera.vera import model_binding_core as _mb
@@ -234,5 +237,71 @@ async def model_callable(task: str = "", family: str = "", question: str = "",
         q = search.lower()
         rows = [r for r in rows if q in " ".join(
             str(r.get(k) or "") for k in ("id", "uses", "model", "task")).lower()]
+    if measure and rows:
+        recs = []
+        na = (sys.modules.get("node_activity_capabilities")
+              or sys.modules.get("Vera.vera.workers.node_activity_capabilities"))
+        try:
+            recs = await na._records(1500) if na is not None else []
+            sources["measured"] = f"{len(recs)} recent node calls"
+        except Exception as exc:
+            sources["measured"] = f"unavailable: {type(exc).__name__}"
+        _mb.measure(rows, recs)
     return {"ok": True, "count": len(rows), "models": rows, "sources": sources,
             "errors": list(getattr(_orch, "MODEL_BINDING_ERRORS", []) or [])}
+
+
+#: uses text -> MiniLM vector (the rows' texts change only with a release)
+_PICK_VECS: dict[str, list] = {}
+
+
+@capability(
+    "model.pick",
+    http_method="POST",
+    http_path="/models/pick",
+    http_tags=["models", "inventory"],
+    memory="off",
+    description=(
+        "Which model fits a task? Describe the task in words and get the best few "
+        "callable models - specialist models (NER, GLiNER, spaCy, zero-shot, QA, "
+        "sentiment, language id, embeddings, reranker, speech, images, vision ...) "
+        "and LLMs - ranked by how well their stated uses match it (meaning, via "
+        "nlp.embed, plus shared words), minus what their limits rule out, preferring "
+        "models loaded now. Each result says how to call it (cap + selector) and why "
+        "it ranked. Inputs: need (str! - e.g. 'find dates and money in an English "
+        "article'), top_k (int=5), include_llms (bool=true), family / task (str "
+        "filters). Output: {ok, need, picks:[{id, cap, selector, uses, limits, "
+        "score, why, loaded_on, measured}], ranked_by}."
+    ),
+)
+async def model_pick(need: str = "", top_k: int = 5, include_llms: bool = True,
+                     family: str = "", task: str = "",
+                     trace_id: str | None = None) -> dict[str, Any]:
+    import Vera.vera.capability_orchestration as _orch
+    from Vera.vera import model_binding_core as _mb
+
+    if not str(need or "").strip():
+        return {"ok": False, "error": "need is required: describe the task in words"}
+    view = await model_callable(task=task, family=family, include_llms=include_llms)
+    rows = view.get("models") or []
+    need_vec, row_vecs, ranked_by = None, {}, "words"
+    embed = (_orch.CAPABILITY_REGISTRY.get("nlp.embed") or {}).get("func")
+    if embed is not None and rows:
+        texts = {r["id"]: f"{r.get('uses', '')} {r.get('task', '')}" for r in rows}
+        todo = [t for t in dict.fromkeys(texts.values()) if t not in _PICK_VECS]
+        try:
+            res = await embed(texts=[need] + todo)
+            vecs = (res or {}).get("embeddings") or []
+            if len(vecs) == 1 + len(todo):
+                need_vec = vecs[0]
+                for t, v in zip(todo, vecs[1:]):
+                    _PICK_VECS[t] = v
+                row_vecs = {i: _PICK_VECS[t] for i, t in texts.items() if t in _PICK_VECS}
+                ranked_by = "meaning (nlp.embed) + words"
+        except Exception:
+            need_vec = None
+    picks = _mb.pick(rows, need, top_k=top_k, need_vec=need_vec, row_vecs=row_vecs)
+    keep = ("id", "cap", "selector", "task", "family", "model", "uses", "limits", "io",
+            "placement", "loaded_on", "measured", "score", "why")
+    return {"ok": True, "need": need, "ranked_by": ranked_by,
+            "picks": [{k: p.get(k) for k in keep} for p in picks]}

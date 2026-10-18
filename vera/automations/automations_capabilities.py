@@ -61,6 +61,7 @@ def _count(v: Any) -> int:
 
 @capability(
     "automations.overview", http_method="GET", http_path="/automations/overview",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "sections"}, "draw": {"columns": ["label", "stat", "detail", "severity"]}, "empty": "No automation sources"}},
     http_tags=["automations"], memory="off",
     description="One answer to 'what is running, and is any of it broken?' "
                 "across DAGs, n8n workflows, the action list and the OpenClaw "

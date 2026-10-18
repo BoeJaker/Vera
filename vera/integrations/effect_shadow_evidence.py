@@ -10,8 +10,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
+from .effect_observation_context import current_source, normalise_source
 
-SCHEMA = "vera.external-effect-shadow-evidence/v1"
+
+SCHEMA = "vera.external-effect-shadow-evidence/v2"
 _LOCK = threading.RLock()
 READINESS_THRESHOLDS = {
     "minimum_observations": 100,
@@ -22,7 +24,8 @@ READINESS_THRESHOLDS = {
     "minimum_replay_suppressions": 1,
 }
 EVIDENCE_FAMILIES = frozenset({
-    "integration_api", "telegram", "email", "commerce", "infrastructure"})
+    "integration_api", "telegram", "email", "commerce", "infrastructure",
+    "homeassistant", "n8n", "repository", "printing"})
 
 
 def evaluate_enforcement_readiness(summary: Mapping[str, Any]) -> dict[str, Any]:
@@ -76,7 +79,13 @@ class ExternalEffectShadowEvidence:
                 "plan_id TEXT NOT NULL, connection_sha256 TEXT NOT NULL, "
                 "classification TEXT NOT NULL, method TEXT NOT NULL, "
                 "would_admit INTEGER NOT NULL, would_execute INTEGER NOT NULL, "
-                "would_suppress INTEGER NOT NULL, reasons_json TEXT NOT NULL)")
+                "would_suppress INTEGER NOT NULL, reasons_json TEXT NOT NULL, "
+                "source TEXT NOT NULL DEFAULT '')")
+            columns = {row[1] for row in conn.execute(
+                "PRAGMA table_info(external_effect_shadow_evidence)").fetchall()}
+            if "source" not in columns:
+                conn.execute("ALTER TABLE external_effect_shadow_evidence "
+                             "ADD COLUMN source TEXT NOT NULL DEFAULT ''")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path, timeout=30)
@@ -84,41 +93,49 @@ class ExternalEffectShadowEvidence:
         conn.execute("PRAGMA busy_timeout=30000")
         return conn
 
-    def record(self, shadow: Mapping[str, Any], *, observed_at: str = "") -> None:
+    def record(self, shadow: Mapping[str, Any], *, observed_at: str = "",
+               source: str | None = None) -> None:
         decision = shadow.get("decision") or {}
         plan = shadow.get("plan") or {}
         replay = shadow.get("replay") or {}
         reasons = sorted({str(x)[:80] for x in decision.get("reasons", []) if str(x)})
         timestamp = observed_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         connection = (plan.get("connection") or {}).get("id", "")
+        source_id = normalise_source(current_source() if source is None else source)
         values = (
             timestamp, str(plan.get("plan_id") or ""), _digest(str(connection)),
             str(plan.get("classification") or "unknown")[:80],
             str(plan.get("method") or "")[:16], bool(decision.get("would_admit")),
             bool(decision.get("would_execute")), bool(replay.get("would_suppress")),
-            json.dumps(reasons, separators=(",", ":")),
+            json.dumps(reasons, separators=(",", ":")), source_id,
         )
         with _LOCK, self._connect() as conn:
             conn.execute("INSERT INTO external_effect_shadow_evidence "
                          "(observed_at,plan_id,connection_sha256,classification,method,"
-                         "would_admit,would_execute,would_suppress,reasons_json) "
-                         "VALUES (?,?,?,?,?,?,?,?,?)", values)
+                         "would_admit,would_execute,would_suppress,reasons_json,source) "
+                         "VALUES (?,?,?,?,?,?,?,?,?,?)", values)
             conn.commit()
 
-    def summary(self, *, limit: int = 50) -> dict[str, Any]:
+    def summary(self, *, limit: int = 50, source: str = "") -> dict[str, Any]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200")
+        source = normalise_source(source)
+        where, params = (" WHERE source = ?", (source,)) if source else ("", ())
         with _LOCK, self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM external_effect_shadow_evidence ORDER BY id DESC LIMIT ?",
-                (limit,)).fetchall()
+                "SELECT * FROM external_effect_shadow_evidence" + where +
+                " ORDER BY id DESC LIMIT ?", params + (limit,)).fetchall()
             total = conn.execute(
                 "SELECT COUNT(*) AS observations, SUM(would_admit) AS admitted, "
                 "SUM(would_execute) AS executable, SUM(would_suppress) AS suppressed "
-                "FROM external_effect_shadow_evidence").fetchone()
+                "FROM external_effect_shadow_evidence" + where, params).fetchone()
             classes = conn.execute(
                 "SELECT classification, COUNT(*) AS observations FROM "
-                "external_effect_shadow_evidence GROUP BY classification").fetchall()
+                "external_effect_shadow_evidence" + where +
+                " GROUP BY classification", params).fetchall()
+            sources = conn.execute(
+                "SELECT source, COUNT(*) AS observations FROM external_effect_shadow_evidence "
+                "GROUP BY source").fetchall()
         reason_counts: dict[str, int] = {}
         recent = []
         for row in rows:
@@ -132,6 +149,7 @@ class ExternalEffectShadowEvidence:
                 "would_admit": bool(row["would_admit"]),
                 "would_execute": bool(row["would_execute"]),
                 "would_suppress": bool(row["would_suppress"]), "reasons": reasons,
+                "source": row["source"],
             })
         return {
             "schema": SCHEMA,
@@ -141,6 +159,9 @@ class ExternalEffectShadowEvidence:
                        "would_suppress": total["suppressed"] or 0},
             "classifications": {row["classification"]: row["observations"]
                                 for row in classes},
+            "sources": {(row["source"] or "unattributed"): row["observations"]
+                        for row in sources},
+            "source_filter": source,
             "reasons_in_window": dict(sorted(reason_counts.items())),
             "recent": recent, "window": {"requested": limit, "returned": len(rows)},
             "enforcement": "observe_only", "executes": False, "retries": False,

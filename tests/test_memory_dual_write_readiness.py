@@ -1,4 +1,7 @@
+import asyncio
+import hashlib
 import json
+import sqlite3
 
 import pytest
 
@@ -8,6 +11,7 @@ from vera.fabric.memory_dual_write_readiness import (
 )
 from vera.fabric.memory_dual_write_receipt import create_memory_dual_write_receipt
 from vera.fabric.memory_dual_write_repair_runtime import read_memory_authority_readiness
+from vera.fabric.memory_dual_write_rollback import run_memory_rollback_rehearsal
 from vera.fabric.memory_dual_write_store import (
     MemoryDualWriteReceiptStore,
     MemoryReceiptConflict,
@@ -19,7 +23,8 @@ pytestmark = pytest.mark.critical
 NOW = "2026-01-02T00:00:00Z"
 
 
-def receipt(operation, observed_at="2026-01-01T23:00:00Z", *, neo4j="committed"):
+def receipt(operation, observed_at="2026-01-01T23:00:00Z", *, neo4j="committed",
+            producer_kind="public_capability"):
     revision = create_record_revision(
         namespace="memory.general", record_type="fact", logical_key=f"native-{operation}",
         content="private payload", content_schema={"media_type": "text/plain"},
@@ -30,7 +35,8 @@ def receipt(operation, observed_at="2026-01-01T23:00:00Z", *, neo4j="committed")
         native_content_hash=f"native:{operation}", revision=revision,
         observed_at=observed_at, revision_outcome="committed",
         native_outcomes={"postgres": "committed", "chroma": "committed", "neo4j": neo4j},
-        error_codes={"neo4j": "backend_failed"} if neo4j == "failed" else {})
+        error_codes={"neo4j": "backend_failed"} if neo4j == "failed" else {},
+        producer_kind=producer_kind)
 
 
 def rollback(**changes):
@@ -46,17 +52,18 @@ def rollback(**changes):
 
 def test_exact_bounded_evidence_and_passing_rollback_allow_review_only(tmp_path):
     store = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
-    store.append(receipt("op-1"))
-    store.append(receipt("op-2"))
+    for index, producer in enumerate((
+            "public_capability", "conversation", "capability_activity", "workflow"), 1):
+        store.append(receipt(f"op-{index}", producer_kind=producer))
     stored = store.append_rollback_rehearsal(rollback())
     assert stored["created"] is True
     restarted = MemoryDualWriteReceiptStore(tmp_path / "receipts.sqlite3")
-    evidence = restarted.readiness_evidence(limit=2)
+    evidence = restarted.readiness_evidence(limit=4)
     result = assess_memory_authority_readiness(
         evidence, assessed_at=NOW,
         rollback_receipt=restarted.latest_rollback_rehearsal(),
         expected_source_commit="abcdef12",
-        min_receipts=2, max_evidence_age_seconds=7200)
+        min_receipts=4, max_evidence_age_seconds=7200)
 
     assert result.ready_for_activation_review is True
     assert result.authority_switch_allowed is False
@@ -64,6 +71,36 @@ def test_exact_bounded_evidence_and_passing_rollback_allow_review_only(tmp_path)
     assert result.rollback_receipt_id == rollback().receipt_id
     assert "private payload" not in json.dumps(result.to_dict())
     assert evidence["executes"] is False and evidence["retains_payload"] is False
+
+
+def test_v1_journal_rows_migrate_as_public_capability_evidence(tmp_path):
+    path = tmp_path / "v1.sqlite3"
+    value = receipt("legacy-op")
+    identity = value.identity_dict()
+    identity.pop("producer_kind")
+    identity["schema"] = "vera.memory-dual-write-receipt/v1"
+    legacy_id = "mdwr_" + hashlib.sha256(json.dumps(
+        identity, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    payload = {"receipt_id": legacy_id, **identity}
+    # Reproduce the deployed six-column table before the v2 producer field.
+    with sqlite3.connect(path) as conn:
+        conn.execute("""
+            CREATE TABLE memory_dual_write_receipts (
+                operation_id TEXT PRIMARY KEY, receipt_id TEXT NOT NULL UNIQUE,
+                evidence_json TEXT NOT NULL, authority_state TEXT NOT NULL,
+                requires_reconciliation INTEGER NOT NULL, observed_at TEXT NOT NULL)
+        """)
+        conn.execute(
+            "INSERT INTO memory_dual_write_receipts VALUES (?,?,?,?,?,?)",
+            (value.operation_id, legacy_id,
+             json.dumps(payload, sort_keys=True, separators=(",", ":")),
+             value.authority_state, int(value.requires_reconciliation),
+             value.observed_at))
+
+    migrated = MemoryDualWriteReceiptStore(path)
+    assert migrated.get("legacy-op")["schema"] == "vera.memory-dual-write-receipt/v1"
+    evidence = migrated.readiness_evidence()
+    assert evidence["producer_counts"] == {"public_capability": 1}
 
 
 def test_insufficient_unresolved_and_pending_evidence_fails_closed(tmp_path):
@@ -80,7 +117,7 @@ def test_insufficient_unresolved_and_pending_evidence_fails_closed(tmp_path):
     assert result.ready_for_activation_review is False
     assert set(result.reasons) == {
         "insufficient_receipts", "unresolved_operations", "pending_attempts",
-        "rollback_rehearsal_missing",
+        "rollback_rehearsal_missing", "insufficient_producer_coverage",
     }
     assert result.metrics["truncated"] is True
     assert result.authority_switch_allowed is False
@@ -106,7 +143,7 @@ def test_failed_attempt_and_stale_or_failed_rollback_are_visible(tmp_path):
     assert set(result.reasons) == {
         "unresolved_operations", "failed_attempts", "evidence_stale",
         "rollback_rehearsal_failed", "rollback_rehearsal_source_mismatch",
-        "rollback_rehearsal_stale",
+        "rollback_rehearsal_stale", "insufficient_producer_coverage",
     }
 
 
@@ -143,10 +180,27 @@ def test_readiness_runtime_does_not_create_missing_journal(tmp_path):
     assert path.exists() is False
     assert set(result["reasons"]) == {
         "insufficient_receipts", "evidence_time_missing",
-        "rollback_rehearsal_missing",
+        "rollback_rehearsal_missing", "insufficient_producer_coverage",
     }
     assert result["ready_for_activation_review"] is False
     assert result["authority_switch_allowed"] is False
+
+
+def test_default_rehearsal_and_readiness_share_one_state_journal(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("VERA_STATE_DIR", str(tmp_path / "state"))
+    rehearsal = asyncio.run(run_memory_rollback_rehearsal(
+        rehearsal_id="shared-default", source_commit="abcdef12",
+        completed_at="2026-01-01T23:30:00Z"))
+    assert rehearsal["created"] is True
+
+    result = read_memory_authority_readiness(
+        assessed_at=NOW, expected_source_commit="abcdef12",
+        min_receipts=1, max_evidence_age_seconds=7200)
+    assert result["rollback_receipt_id"] == rehearsal["receipt"]["receipt_id"]
+    assert set(result["reasons"]) == {
+        "insufficient_receipts", "evidence_time_missing",
+        "insufficient_producer_coverage"}
 
 
 @pytest.mark.parametrize("changes,match", [
@@ -178,6 +232,10 @@ def test_evidence_shape_and_runtime_source_identity_fail_closed():
         "total_receipts": 1, "returned_receipts": 1, "truncated": False,
         "unresolved_operations": 0, "pending_attempts": 0,
         "failed_attempts": 0, "latest_observed_at": "2026-01-01T23:00:00Z",
+        "producer_counts": {
+            "public_capability": 1, "conversation": 1,
+            "capability_activity": 1, "workflow": 1,
+        },
     }
     result = assess_memory_authority_readiness(
         evidence, assessed_at=NOW, rollback_receipt=rollback(),

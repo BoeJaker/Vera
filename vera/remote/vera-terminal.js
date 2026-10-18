@@ -11,6 +11,9 @@
  *   // …or programmatically:
  *   t.connect('/remote/docker/term/ws/local/mycontainer?shell=sh');
  *
+ * Before each connect it asks POST /remote/term/ticket for a single-use ticket for that path; the socket refuses
+ * to open without one.
+ *
  * Wire protocol:
  *   client → server : {"d":"<keys>"} to write, {"r":[cols,rows]} to resize
  *   server → client : raw binary output bytes
@@ -103,9 +106,11 @@
       this.term.open(mount);
       this._doFit();
 
+      const path = await this._ticketed(this._wsPath);
+      if (!this.term) return;                       // destroyed while the ticket was minted
       const base = location.origin.replace(/^http/, 'ws');
-      const sep = this._wsPath.includes('?') ? '&' : '?';
-      const url = base + this._wsPath + sep + 'cols=' + this.term.cols + '&rows=' + this.term.rows;
+      const sep = path.includes('?') ? '&' : '?';
+      const url = base + path + sep + 'cols=' + this.term.cols + '&rows=' + this.term.rows;
       const ws = new WebSocket(url);
       ws.binaryType = 'arraybuffer';
       this.ws = ws;
@@ -131,6 +136,21 @@
         this._ro.observe(this);
       }
       window.addEventListener('resize', this._onWinResize = () => this._doFit(true));
+    }
+
+    /* A terminal socket opens only with a single-use ticket (90 s). A path handed in may carry none, or an old one
+       (a saved canvas item, a reopened page), so every connect asks for a fresh one. */
+    async _ticketed(wsPath) {
+      try {
+        const r = await fetch('/remote/term/ticket', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ws_path: wsPath }),
+        });
+        const d = await r.json();
+        if (d && d.ok && d.ws_path) return d.ws_path;
+      } catch (e) {}
+      return wsPath;      // the socket then explains the refusal in the terminal
     }
 
     _readTheme() {

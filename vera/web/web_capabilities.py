@@ -226,6 +226,7 @@ def _note_searxng(body: Optional[Dict[str, Any]], error: str = "") -> None:
 
 @capability(
     "web.engines.health",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["state", "message", "reachable", "unresponsive", "empty_streak", "last_count", "ok_at", "checked_at"]}}},
     http_method="GET", http_path="/web/engines/health",
     http_tags=["web"], memory="off", silent=True,
     description="Is web search getting real results? What the last SearXNG answers looked like: state "
@@ -562,6 +563,13 @@ async def cap_web_search(
                         log.debug("web.search bg fetch %s: %s", u, e)
             _spawn(_bg_fetch())
 
+    try:    # the web map keeps the searches Vera sends (owner, 11 Oct; web-ingress WI-3b) - never on the hot path
+        _ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+        if _ing is not None:
+            _ing.record_query(query, engine=str(used or ""), caller="web.search",
+                              result_urls=[str(r.get("url") or "") for r in results if r.get("url")])
+    except Exception as _e:  # noqa: BLE001
+        log.debug("web.search receipt: %s", _e)
     await emit_event({
         "type":         "web.search.done",
         "query":        query[:100],
@@ -639,7 +647,7 @@ async def cap_web_fetch(
     t0 = time.monotonic()
     # Shared hardened fetch: platform-API switchover → domain rewrite →
     # throttled browser-fingerprint fetch → block detection → reader fallback.
-    fp = await _wc.fetch_page(url, timeout=timeout, max_chars=max_chars)
+    fp = await _wc.fetch_page(url, timeout=timeout, max_chars=max_chars, caller="web.fetch", purpose="page")
     if fp.get("error"):
         await emit_event({"type": "web.fetch.error", "url": url,
                           "error": fp["error"][:120]})
@@ -1282,6 +1290,28 @@ async def _seek_searches(queries: List[str], *, first_slot: int = 0) -> List[Dic
     return list(await asyncio.gather(*[one(i, q) for i, q in enumerate(queries)]))
 
 
+_LAST_SEEK_KEY = "vera:info:last_seek:"
+_LAST_SEEK_TTL = 90 * 86400
+
+
+async def _last_seek(subject: str, set_to: str = "") -> str:
+    """When a 'latest' question about `subject` was last answered (Redis, 90 days), or "" - and record a new time
+    when `set_to` is given. Never raises: without Redis, latest just uses its default window."""
+    r = getattr(_orch, "REDIS", None)
+    key = _LAST_SEEK_KEY + _seek.subject_key(subject)
+    if r is None or key == _LAST_SEEK_KEY:
+        return ""
+    try:
+        if set_to:
+            await r.set(key, set_to, ex=_LAST_SEEK_TTL)
+            return set_to
+        v = await r.get(key)
+        return v.decode() if isinstance(v, (bytes, bytearray)) else str(v or "")
+    except Exception as e:
+        log.debug("info.seek last-seek %s: %s", key, e)
+        return ""
+
+
 def _report_seller(title: str, snippet: str) -> bool:
     """Market-research sellers ("... market size, share, CAGR 2026-2033") are not news; intel's rule, reused."""
     try:
@@ -1338,6 +1368,41 @@ async def _searxng_news(query: str, limit: int = 10, time_range: str = "month") 
     return []
 
 
+async def _feed_hits(subject: str, limit: int = 8) -> List[Dict[str, Any]]:
+    """Recent items from the feeds Vera follows (the trade press, BBC... added as fabric sources through intel) whose
+    title or summary names every content word of the subject - so a subject nobody tracks still gets what those feeds
+    carried (plan SK-3.5). Bounded: at most 12 feeds, 40 items each, 6 s per call."""
+    try:
+        try:
+            from Vera.vera.intel import intel_sources_core as _isrc
+        except Exception:
+            from vera.intel import intel_sources_core as _isrc
+    except Exception:
+        return []
+    # plural words match their stem ("prices" -> "price": "UK house price growth halves" names "house prices")
+    words = [(w[:-1] if len(w) > 4 and w.endswith("s") and not w.endswith("ss") else w)
+             for w in (x.lower() for x in _seek.keywords_of(subject).split()) if len(w) > 2]
+    if not words:
+        return []
+    src = await _seek_call("fabric.sources", 6)
+    feeds = [s for s in (src.get("sources") or []) if str(s.get("id") or "").startswith("intel-src-")
+             and s.get("dataset_id")][:12]
+
+    async def one(s: Dict[str, Any]) -> List[Dict[str, Any]]:
+        r = await _seek_call("fabric.browse", 6, dataset_id=s["dataset_id"], limit=40)
+        out = []
+        for rec in r.get("records") or []:
+            hit = _isrc.record_hit(rec, kind="feed")
+            if not hit or not hit.get("url"):
+                continue
+            text = f"{hit.get('title') or ''} {hit.get('snippet') or ''}".lower()
+            if all(w in text for w in words):
+                out.append(dict(hit, kind="web", engine="feed: " + str(s.get("label") or s.get("name") or s["id"])))
+        return out
+    got = await asyncio.gather(*[one(s) for s in feeds], return_exceptions=True)
+    return [h for g in got if isinstance(g, list) for h in g][:limit]
+
+
 async def _seek_read(items: List[Dict[str, Any]], n: int, chars: int) -> int:
     """Read up to `n` items through the reader (article text, cached), in order, in parallel. A page that cannot be
     read - blocked by an anti-bot challenge, no article - is marked and the next result is read in its place (a
@@ -1357,6 +1422,10 @@ async def _seek_read(items: List[Dict[str, Any]], n: int, chars: int) -> int:
         it["title"] = r.get("title") or it.get("title")
         if r.get("published") and not it.get("published"):
             it["published"] = r["published"]
+        if not it.get("published"):            # the page's own "Updated on ..." line (SK-3.3)
+            d = _seek.labelled_date(md)
+            if d:
+                it["published"] = d.strftime("%Y-%m-%d")
         return 1
     got = 0
     for _ in range(2):                       # the first batch, then one refill for what failed
@@ -1412,13 +1481,15 @@ async def _seek_rerank(subject: str, items: List[Dict[str, Any]]) -> List[Dict[s
                 "overview now plus research.run started in the background for a full report (job_id returned). "
                 "Input: question (str!), need (auto|fact|latest|overview|deep, default auto), since (ISO date: "
                 "what counts as new for latest; default 14 days), topic (the subject when the question is long), "
-                "pages (int, pages to read, default 5, max 8), excerpt_chars (int, per page, default 900). "
+                "pages (int, pages to read, default 5, max 8), excerpt_chars (int, per page, default 900), "
+                "start_report (bool, default true: need=deep starts research.run; loops pass false). "
                 "Output: {need, subject, since, answerable, items:[{n, title, url, site, published, age_days, "
                 "kind (web|intel), read, text}], checked, gaps, guide, tracked?, job_id?, elapsed_ms}. Cite items "
                 "as [n] with their dates; report the gaps instead of guessing.",
 )
 async def cap_info_seek(question: str = "", need: str = "auto", since: str = "", topic: str = "",
-                        pages: int = 5, excerpt_chars: int = 900, trace_id=None) -> Dict[str, Any]:
+                        pages: int = 5, excerpt_chars: int = 900, start_report: bool = True,
+                        trace_id=None) -> Dict[str, Any]:
     question = " ".join(str(question or "").split())
     if not question:
         return {"error": "question required"}
@@ -1456,20 +1527,31 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
     intel_task = asyncio.create_task(_seek_call("intel.lookup", 8, query=subject, since=since))
 
     if need == "latest":
-        since = since or _seek.default_since(now)
+        if not since:
+            sf = _seek.since_for(await _last_seek(subject), now)
+            since = sf["since"]
+            checked.append("new means: " + sf["why"])
+        await _last_seek(subject, now.isoformat(timespec="seconds"))
         queries = _seek.latest_queries(subject, question, now)
         span = "week" if (now - (_seek.parse_date(since) or now)).days <= 8 else "month"
         news_task = asyncio.create_task(_searxng_news(subject, 12, span))
         await step(f"searching: the news of the past {span} and {len(queries)} web searches")
+        feed_task = asyncio.create_task(_feed_hits(subject))
         res = await _seek_searches(queries, first_slot=1)        # the news search has slot 0
         try:
             news = await asyncio.wait_for(news_task, 20)
         except Exception:
             news = []
-        # news first: it is what is current; the general results add depth and the explainers
-        hits = _seek.merge_hits([news] + [r.get("results") or [] for r in res])
+        try:
+            feeds = await asyncio.wait_for(feed_task, 15)
+        except Exception:
+            feeds = []
+        # news first: it is what is current; then the feeds Vera follows; the general results add depth
+        hits = _seek.merge_hits([news, feeds] + [r.get("results") or [] for r in res])
         engines = sorted({r.get("engine_used") for r in res if r.get("engine_used")})
         checked.append(f"news: {len(news)} headlines from the past {span}")
+        if feeds:
+            checked.append(f"feeds Vera follows: {len(feeds)} items naming '{subject}'")
         checked.append(f"web: {len(queries)} searches ({', '.join(engines) or 'no engine answered'}), {len(hits)} results")
         _seek.fill_dates(hits, now)
         dropped = [h for h in hits if _report_seller(h.get("title"), h.get("snippet"))]
@@ -1519,7 +1601,9 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
             checked.append(f"second round '{q3}': {len(more)} results, read {got2}")
         # what was read leads: an unread result is only its snippet
         items = [it for it in items if it.get("text")] + [it for it in items if not it.get("text")]
-        if need == "deep":
+        if need == "deep" and not start_report:
+            checked.append("deep: the overview only - start_report=false (the caller runs no background jobs)")
+        elif need == "deep":
             job = await _seek_call("research.run", 20, query=question, mode="parallel", output_mode="report")
             if job.get("job_id"):
                 extra["job_id"] = job["job_id"]

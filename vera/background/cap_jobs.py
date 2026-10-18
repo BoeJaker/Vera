@@ -278,6 +278,7 @@ async def cap_result(id: str = "", trace_id=None):
 
 @capability(
     "background.cap.list", http_method="GET",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "queued"}, "draw": {"columns": ["name", "state", "title", "waiting_for_s"]}, "title": "Queued", "empty": "No queued"}, {"kind": "table", "form": "table", "map": {"rows": "finished"}, "draw": {"columns": ["name", "state", "elapsed_s", "started"]}, "title": "Finished", "empty": "No finished"}]}},
     http_path="/background/cap/list", http_tags=["obs", "background"],
     memory="off",
     description="Queued and recently finished capability jobs. "

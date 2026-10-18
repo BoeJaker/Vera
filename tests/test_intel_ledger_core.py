@@ -1,6 +1,7 @@
 """Intelligence decisions and outcomes in the frozen four-minds shapes (Decision v0 /
 Outcome v0, ROADMAP §5.1): every field present, pointers not payloads, raw scores never
 passed off as probabilities, outcomes labelled by whether the DECISION was right."""
+import json
 import os
 import sys
 
@@ -58,3 +59,17 @@ def test_cross_site_duplication_is_not_an_outcome():
     src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                             "vera", "intel", "intel_capabilities.py"), encoding="utf-8").read()
     assert "story.confirmed" not in src and "intel.outcomes.backfill" not in src
+
+
+def test_signal_inputs_carry_what_a_rater_needs_and_keep_the_hashed_state():
+    # FM-13.6: the training store gets the topic's name and the text; the ledger row still carries only the hash
+    sig = {"id": "s1", "url": "https://a", "title": "T", "score": 7, "genre": "news", "novelty": 0.4,
+           "snippet": "short", "summary": "s" * 5000, "site": "a.example"}
+    inp = L.signal_inputs(sig, {"id": "t1", "name": "Vendors"})
+    assert {k: inp[k] for k in L.signal_state(sig, "t1")} == L.signal_state(sig, "t1")
+    assert inp["topic_name"] == "Vendors" and inp["source"] == "a.example"
+    assert inp["snippet"] == "s" * L.SNIPPET_CHARS                  # the summary wins over the snippet, bounded
+    assert L.signal_inputs({"snippet": "x"}, {})["snippet"] == "x"
+    d = L.make_decision("intel.signal_relevant", "relevant", state=L.signal_state(sig, "t1"),
+                        state_ref={"kind": "signal", "id": "s1"})
+    assert "snippet" not in json.dumps(d) and d["surface"] == "intel"

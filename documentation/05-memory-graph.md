@@ -356,6 +356,9 @@ instances remain explicitly unobserved and therefore remain pre-cutover gates.
 performing either write. The receipt binds an operation and native
 `MemoryRecord.id` to the exact canonical `record_id`, `revision_id` and content
 hash, plus classified outcomes for the revision, Postgres, Chroma and Neo4j.
+Those three baseline outcomes are always present, while bounded additional
+registered Memory backends are retained instead of making a successful native
+write appear to fail.
 It distinguishes `dual_committed`, `canonical_only`, `native_only` and
 `uncommitted`; partial projection outcomes require reconciliation. Receipts
 contain no memory payload or exception text and always report
@@ -384,18 +387,50 @@ does not advance Fabric heads or projection receipts, and supplies no runtime
 activation switch. Wiring one narrow writer to this seam and proving recovery
 remain outside the enabled path.
 
-The public `memory.store` ingress is now connected to this seam behind
+Unless explicitly overridden, the canonical revision and dual-write evidence
+journals live under `VERA_STATE_DIR/fabric/`. All runtime, readiness,
+reconciliation and rollback-rehearsal paths resolve those same out-of-tree
+files. They are never derived from an importing module's `__file__`: Vera can
+load modules through more than one package topology, and checkout-relative
+machine state could split evidence or dirty the repository.
+
+The complete revision-bound boundary stays on the authoritative Vera host.
+`memory.store`, `memory.dual_write.reconcile`,
+`memory.dual_write.readiness` and `memory.dual_write.rollback_rehearse` are
+host-bound even when node dispatch is fully enabled. The ordinary Memory
+backends are shared, but compute nodes do not share the host's SQLite revision
+and receipt journals; routing any producer or reviewer to a node would create
+split-brain evidence. Other reviewed shared-backend reads, such as
+`memory.search`, remain node-eligible.
+
+The shared `HybridMemoryStore.store` boundary is connected to this seam behind
 `VERA_MEMORY_REVISION_CANARY=1`; the default remains `0`. With the switch off,
-the capability directly awaits the existing native store and does not construct
-a revision, policy, database or receipt sink. The switch affects only that
-public ingress: promoter, hook and internal `HybridMemoryStore` callers retain
-their existing path. When enabled, the native result remains the caller result,
-the canonical write is policy-checked using `FABRIC_REVISION_POLICY`, and
+the store directly awaits the existing native fan-out and does not construct a
+revision, policy, database or receipt sink. Public `memory.store`, conversation
+hooks, capability activity, workflow records, automatic promotion, IDE, skill
+and context-stream writers therefore receive the same observation without
+changing native authority. Exact repair writes remain outside the seam. When
+enabled, the native result remains the caller result, the canonical write is
+policy-checked using `FABRIC_REVISION_POLICY`, and
 revision and evidence journals use `FABRIC_REVISION_SQLITE` and
 `VERA_MEMORY_DUAL_WRITE_RECEIPTS`. The adapter adds no outer timeout around the
 native store or synchronous revision transaction, avoiding cancellation that
 could report a timeout while an irreversible write continues. The switch is
 not enabled by this code change and grants no authority-switch permission.
+Canary setup is fail-open: invalid policy, snapshot or journal configuration
+falls through to the exact native write once. After native success, derived
+keywords and bounded metadata/graph fields are captured in the immutable
+revision; shadow classification or snapshot failure remains evidence failure,
+not a caller-visible native failure. Mutable `updated_at` is excluded from the
+revision identity, and Postgres UTC timestamps are emitted as canonical `Z`
+timestamps rather than the invalid `+00:00Z` form.
+
+Receipt schema `vera.memory-dual-write-receipt/v2` adds only a bounded
+`producer_kind`; it retains no Memory payload. Existing v1 receipts are migrated
+as `public_capability`, the only observed ingress in v1. Readiness requires both
+the receipt threshold and evidence from public capability, conversation,
+capability-activity and workflow producers, preventing repeated writes through
+one path from masquerading as representative compatibility.
 
 Split receipts have a restart-safe reconciliation executor, but it remains an
 injected boundary rather than a live repair worker. An attempt is
@@ -420,7 +455,7 @@ used. Postgres, Chroma and Neo4j writers are injected separately, so one repair
 cannot silently fan out to unrequested backends. Every effect must acknowledge
 the target, native and canonical identities, and the executor's stable
 idempotency key before it is recorded as committed. The adapter retains the
-public ingress fields needed to reproduce native semantics, but stores none of
+bounded record fields needed to reproduce native semantics, but stores none of
 their payloads in reconciliation evidence.
 
 The `memory.dual_write.reconcile` capability binds these contracts to the
@@ -440,16 +475,24 @@ grant deletion permission. Setting the reconciliation switch back to `0`
 removes the concrete effect path while leaving its evidence intact.
 
 `memory.dual_write.readiness` is a read-only view over that evidence. It reports
-bounded receipt counts, unresolved operations, unfinished attempts, failed
-attempts, evidence age and the latest payload-free rollback-rehearsal receipt.
+bounded receipt counts, producer coverage, unresolved operations, unfinished
+attempts, failed attempts, evidence age and the latest payload-free
+rollback-rehearsal receipt.
 The assessment discloses when the bounded sample is truncated and fails closed
-when that sample is too small or stale, reconciliation is unfinished, a repair
-failed, or a recent passing rollback rehearsal is absent. Passing means only
+when that sample is too small or stale, required producer classes are absent,
+reconciliation is unfinished, a repair failed, or a recent passing rollback
+rehearsal is absent. Passing means only
 `ready_for_activation_review`; `authority_switch_allowed` remains false. The
 read does not invoke repair, query a Memory backend or create a missing journal.
 The rehearsal must name the exact commit reported by the running process's
 provenance; a missing identity or stale-code receipt fails closed. Actual
-authority activation remains unavailable.
+authority activation remains unavailable. Identity-required checks retry only
+an unresolved early-startup provenance result; once a commit resolves, that
+process identity remains immutable. Ordinary event stamping continues using the
+cheap cached value and does not repeatedly invoke Git. The cache is shared
+across Vera's supported `Vera.vera` and `vera` import names, so a module loaded
+after a worktree refresh cannot relabel an already-running process with source
+it never booted.
 
 `memory.dual_write.rollback_rehearse` produces the rollback evidence without
 calling a live Memory backend. It invokes the real canary with the canary forced
@@ -903,7 +946,7 @@ routes. All are declared `memory="off"` so retrieval never records itself.
 |---|---|---|
 | `memory.store` | `POST /memory/store` | Persist a record (`text`!, `session_id`, `record_type`, `source_type`, `category`, `tags` csv, `summary`, `full_text`, `human_text`, `ai_output`, `model`, `capability_src`, `importance`, `parent_id`) |
 | `memory.dual_write.reconcile` | `POST /memory/dual-write/reconcile` | When explicitly enabled, retry one exact journalled split write by operation and attempt ID; never scans or schedules work |
-| `memory.dual_write.readiness` | `GET /memory/dual-write/readiness` | Read bounded, payload-free activation-review evidence; never repairs or moves authority |
+| `memory.dual_write.readiness` | `GET /memory/dual-write/readiness` | Read bounded, payload-free activation-review evidence including producer coverage; never repairs or moves authority |
 | `memory.dual_write.rollback_rehearse` | `POST /memory/dual-write/rollback-rehearse` | Run local disabled-gate sentinels and persist provenance-bound rollback evidence; invokes no Memory backend |
 | `memory.get` | `GET /memory/get` | One record by id |
 | `memory.forget` | `POST /memory/forget` | Soft delete (`archived=true`); emits `memory.forgotten` |
@@ -993,9 +1036,9 @@ node and edge routes.
 | `VERA_CHATMEM_DECAY_FACTOR` / `_DECAY_MIN` / `_DECAY_MAX_TURNS` | `0.65` / `0.05` / `6` | Per-turn decay of injected memories |
 | `VERA_CHATMEM_PENDING_TTL_S` / `_ACTIVE_TTL_S` | `300` / `3600` | Redis TTLs for slow-tier delivery and the active set |
 | `VERA_MEMORY_TOOLING` | `canonical` | Fallback tooling mode when none is persisted |
-| `VERA_MEMORY_REVISION_CANARY` | `0` | `1` shadows new public `memory.store` writes into immutable revisions and records paired outcomes |
+| `VERA_MEMORY_REVISION_CANARY` | `0` | `1` shadows writes at the shared hybrid Memory boundary into immutable revisions and records paired outcomes |
 | `VERA_MEMORY_RECONCILIATION_ENABLED` | `0` | `1` permits explicitly requested `memory.dual_write.reconcile` attempts; it does not schedule them |
-| `VERA_MEMORY_DUAL_WRITE_RECEIPTS` | `vera/fabric/memory_dual_write_receipts.db` | Dual-write and reconciliation evidence journal |
+| `VERA_MEMORY_DUAL_WRITE_RECEIPTS` | `VERA_STATE_DIR/fabric/memory-dual-write-receipts.sqlite3` | Dual-write and reconciliation evidence journal |
 | `MEMORY_SEEK_EMBED_WAIT_S` | `10` | `memory.seek` query-vector wait |
 | `FABRIC_SEEK_MIN_SCORE` | `0.28` | `memory.seek` cosine floor |
 | `VERA_SANDBOX_WRITE_GUARD` | `1` (in dev sandboxes) | `0` lets a dev sandbox write to shared stores |

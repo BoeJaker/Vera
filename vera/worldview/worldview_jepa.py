@@ -54,6 +54,7 @@ Capabilities registered
   worldview.rollout                 — multi-step trajectory through concepts
   worldview.counterfactual          — rollout with a concept swap
   worldview.query                   — nearest-neighbour search in latent space
+  worldview.retrieval.rerank.canary — bounded exact-candidate shadow reranking
   worldview.anomalies               — combined reconstruction + likelihood
   worldview.snapshot                — 2D projection for visualisation
   worldview.concepts                — list concepts with labels & populations
@@ -74,9 +75,14 @@ import logging
 import math
 import os
 import random
+import re
 import sqlite3
 import time
 from collections import defaultdict, Counter
+try:                                                   # FM-8.3 curated corpus (pure)
+    from Vera.vera.worldview import worldview_corpus_core as _wv_corpus
+except Exception:                                      # worktree / app-free import
+    from vera.worldview import worldview_corpus_core as _wv_corpus   # type: ignore
 try:                                                   # FM-8.2 held-out evaluation and step cap (pure)
     from Vera.vera.worldview import worldview_eval_core as _wv_eval
 except Exception:                                      # worktree / node / app-free import
@@ -110,7 +116,30 @@ from Vera.vera.capability_orchestration import (
     capability, APP, emit_event, now_iso, schedule, ollama_generate, register_ui,
 )
 from Vera.vera.config import cfg
-from Vera.vera.worldview.retrieval_provenance import JepaRetrievalProvenance
+from Vera.vera.worldview.retrieval_provenance import (
+    JepaRetrievalProvenance,
+    build_index_snapshot_candidate,
+)
+try:
+    from Vera.vera.worldview.canonical_revision_provenance import (
+        enrich_matching_revisions,
+        summarize_provenance,
+    )
+    from Vera.vera.worldview.canonical_corpus_projection import (
+        build_candidates as build_canonical_corpus_candidates,
+        materialize as materialize_canonical_corpus,
+        plan_summary as canonical_corpus_plan_summary,
+    )
+except ImportError:  # supported lower-case package topology
+    from vera.worldview.canonical_revision_provenance import (
+        enrich_matching_revisions,
+        summarize_provenance,
+    )
+    from vera.worldview.canonical_corpus_projection import (
+        build_candidates as build_canonical_corpus_candidates,
+        materialize as materialize_canonical_corpus,
+        plan_summary as canonical_corpus_plan_summary,
+    )
 from Vera.vera.fabric.dataset_provider import DatasetSnapshot
 
 # ── Optional heavy imports (graceful degradation) ─────────────────────────────
@@ -689,6 +718,8 @@ class WorldView:
         self.transition_counts: Dict[Tuple[int, int], int] = {}
         # the last training's held-out next-concept evaluation (worldview_eval_core.verdict) - health reads it
         self.held_out: Dict[str, Any] = {}
+        # the realised mix of the records it was last trained on (worldview_corpus_core.mix) - FM-8.3's exit
+        self.corpus: Dict[str, Any] = {}
         self.last_fabric_persist: str = ""
         self.last_fabric_load:    str = ""
         self._last_revived:       int = 0
@@ -1098,6 +1129,7 @@ class WorldView:
             "transition_counts": {f"{a},{b}": n
                                    for (a, b), n in self.transition_counts.items()},
             "held_out":          dict(self.held_out or {}),
+            "corpus":            dict(self.corpus or {}),
             # when this checkpoint was written: health's checkpoint age survives a restart
             "saved_at":          self.last_fabric_persist or now_iso(),
             "config": {
@@ -1166,6 +1198,7 @@ class WorldView:
         self.record_concepts = ckpt.get("record_concepts", {})
         self.record_meta     = ckpt.get("record_meta", {})
         self.held_out        = dict(ckpt.get("held_out") or {})
+        self.corpus          = dict(ckpt.get("corpus") or {})
         if not self.last_fabric_persist and ckpt.get("saved_at"):
             self.last_fabric_persist = str(ckpt["saved_at"])
         tc = ckpt.get("transition_counts", {})
@@ -1255,6 +1288,7 @@ class WorldView:
             "labelled_concepts": len(self.concept_labels),
             "transitions_observed": len(self.transition_counts),
             "held_out":         dict(self.held_out or {}),
+            "corpus":           dict(self.corpus or {}),
             "last_fabric_persist": self.last_fabric_persist,
             "last_fabric_load":    self.last_fabric_load,
             "active_subview":      _WV_ACTIVE_SUBVIEW,
@@ -1315,6 +1349,27 @@ class WorldViewIndex:
         return [(self._ids[i], float(D[0][n_]))
                 for n_, i in enumerate(I[0])
                 if 0 <= i < len(self._ids)]
+
+    def score_subset(self, vector, record_ids):
+        """Cosine-score an exact bounded subset without widening retrieval."""
+        if not self._available or self._index.ntotal == 0:
+            return []
+        positions = {record_id: index for index, record_id in enumerate(self._ids)}
+        if any(record_id not in positions for record_id in record_ids):
+            return []
+        query = np.asarray(vector, dtype="float32").reshape(-1)
+        norm = np.linalg.norm(query)
+        if norm > 0:
+            query = query / norm
+        scored = []
+        for record_id in record_ids:
+            candidate = np.asarray(
+                self._index.reconstruct(positions[record_id]), dtype="float32").reshape(-1)
+            candidate_norm = np.linalg.norm(candidate)
+            if candidate_norm > 0:
+                candidate = candidate / candidate_norm
+            scored.append((record_id, float(np.dot(query, candidate))))
+        return scored
 
     def get_all_vectors(self):
         if not self._available or self._index.ntotal == 0:
@@ -1431,7 +1486,34 @@ async def _load_loss_history():
 def _get_fabric():
     import sys
     return (sys.modules.get("Vera.vera.fabric.data_fabric") or
-            sys.modules.get("Vera.vera.fabric.data_fabric"))
+            sys.modules.get("vera.fabric.data_fabric"))
+
+
+async def _enrich_canonical_revision_provenance(
+        records: Dict[str, Dict[str, Any]]) -> Dict[str, int]:
+    """Join exact canonical revision IDs onto hash-qualified projections.
+
+    The canonical store is consulted only for records that already carry a
+    projection content hash. A record-ID match alone cannot prove that the
+    Chroma vector represents the current revision, so missing hashes and hash
+    mismatches deliberately remain ineligible for retrieval binding.
+    """
+    fab = _get_fabric()
+    path_factory = getattr(fab, "_canonical_revision_path", None) if fab else None
+    actor_factory = getattr(fab, "_revision_actor", None) if fab else None
+    if not callable(path_factory) or not callable(actor_factory):
+        return {"records": len(records), "authority_unavailable": len(records)}
+
+    def _join() -> Dict[str, int]:
+        try:
+            path = path_factory()
+            actor = actor_factory()
+        except Exception:
+            return {"records": len(records), "authority_unavailable": len(records)}
+        return enrich_matching_revisions(
+            records, lambda record_ids: path.get_many(record_ids, actor=actor))
+
+    return await asyncio.to_thread(_join)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1621,26 +1703,40 @@ async def _fabric_load_checkpoint_meta() -> Dict[str, Any]:
 async def _persist_to_fabric() -> Dict:
     if not MODEL.ready:
         return {"ok": False, "error": "model not ready"}
+    previous_persist = MODEL.last_fabric_persist
+    binding = _verified_retrieval_provenance()
+    # A bound checkpoint is content-addressed evidence. Re-copying that exact
+    # checkpoint must retain its identity; a changed model fails verification
+    # above and receives a fresh persistence timestamp and blob identity.
+    persisted_at = previous_persist if binding is not None and previous_persist \
+        else now_iso()
+    MODEL.last_fabric_persist = persisted_at
     try:
         MODEL.save()
     except Exception:
         pass
     blob = MODEL.serialize_bytes()
     if not blob:
+        MODEL.last_fabric_persist = previous_persist
         return {"ok": False, "error": "serialize failed"}
     meta = {
         "train_steps": MODEL.train_steps, "num_concepts": MODEL.num_concepts,
         "embed_dim": MODEL.embed_dim, "records": len(MODEL.record_concepts),
-        "saved_at": now_iso(),
+        "saved_at": persisted_at,
     }
-    binding = _verified_retrieval_provenance(blob)
+    if binding is not None and not binding.verifies_runtime(
+            checkpoint_blob=blob,
+            indexed_record_ids=_active_index_record_ids()):
+        binding = None
     if binding is not None:
         meta["retrieval_provenance"] = binding.to_dict()
     res = await _fabric_store_checkpoint(blob, meta)
     if res.get("sqlite") or res.get("postgres"):
-        MODEL.last_fabric_persist = now_iso()
+        MODEL.last_fabric_persist = persisted_at
         log.info("worldview: checkpoint persisted to fabric (%s)",
                  ", ".join(k for k in ("sqlite", "postgres") if res.get(k)))
+    else:
+        MODEL.last_fabric_persist = previous_persist
     return {
         "ok": bool(res.get("sqlite") or res.get("postgres")),
         "stores": res, "bytes": res.get("bytes", 0),
@@ -1687,9 +1783,26 @@ async def _worldview_startup_load():
         await _load_loss_history()
         _restore_index_from_cached_latents()
         try:
+            checkpoint_meta = await _fabric_load_checkpoint_meta()
             local_blob = MODEL.serialize_bytes()
-            _restore_retrieval_provenance(
-                await _fabric_load_checkpoint_meta(), local_blob)
+            provenance_ready = _restore_retrieval_provenance(
+                checkpoint_meta, local_blob)
+            # A local checkpoint may predate an explicitly bound Fabric
+            # checkpoint. If its bytes do not match the persisted binding,
+            # restore the exact bound artifact instead of silently discarding
+            # restart-safe retrieval provenance.
+            if not provenance_ready and isinstance(
+                    checkpoint_meta.get("retrieval_provenance"), dict):
+                fabric_blob = await _fabric_load_checkpoint()
+                if fabric_blob and MODEL.load_bytes(fabric_blob):
+                    WV_INDEX.connect()
+                    _restore_index_from_cached_latents()
+                    provenance_ready = _restore_retrieval_provenance(
+                        checkpoint_meta, fabric_blob)
+                    if provenance_ready:
+                        MODEL.last_fabric_load = now_iso()
+                        log.info("worldview: restored exact retrieval-bound "
+                                 "Fabric checkpoint over stale local state")
         except Exception:
             # A legacy local checkpoint remains usable, but not as pinned
             # retrieval-comparison evidence.
@@ -1738,8 +1851,14 @@ def _restore_index_from_cached_latents():
 
 async def _fetch_records_with_embeddings(dataset_id: str = "",
                                           limit: int = MAX_NODES,
-                                          node_ids: list = None):
+                                          node_ids: list = None,
+                                          take=None):
     """Fetch records from Chroma for graph building.
+
+    By id (node_ids), the vectors come in batches of `fetch_batch` (500): one get for tens of thousands of ids
+    outlives the client's 60 s timeout (the first curated training, 11 Oct 2026). A failed batch is skipped (three
+    in a row end the fetch with what came). `take` (worldview_corpus_core.FamilyTake) decides which fetched records
+    join - the curated corpus' per-family quotas - and ends the fetch when it is full.
 
     Returns (rids, embeddings_np, meta_dict) where:
       - rids:          list of record IDs in order
@@ -1764,87 +1883,80 @@ async def _fetch_records_with_embeddings(dataset_id: str = "",
                 col = chroma._col
                 if col is None:
                     return [], None, {}
-                kwargs = {
-                    "include": ["embeddings", "documents", "metadatas"],
-                    "limit":   min(limit, 50000),
-                }
-                if node_ids:
-                    # Train on an explicit set of record IDs (e.g. the exact
-                    # node set of a saved vera-graph), not a whole dataset.
-                    kwargs["ids"] = list(node_ids)[:50000]
-                    kwargs.pop("limit", None)
-                elif dataset_id:
-                    kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
-                res = col.get(**kwargs)
-                ids   = res.get("ids")        if res.get("ids")        is not None else []
-                embs  = res.get("embeddings") if res.get("embeddings") is not None else []
-                docs  = res.get("documents")  if res.get("documents")  is not None else []
-                metas = res.get("metadatas")  if res.get("metadatas")  is not None else []
-                n_ids   = len(ids)
-                n_embs  = len(embs)  if hasattr(embs, "__len__")  else 0
-                n_docs  = len(docs)  if hasattr(docs, "__len__")  else 0
-                n_metas = len(metas) if hasattr(metas, "__len__") else 0
+                from Vera.vera.worldview.legacy_snapshot_provenance import (
+                    legacy_snapshot_provenance,
+                )
+                include = ["embeddings", "documents", "metadatas"]
 
-                # Build rids list, meta dict, and collect valid embedding indices
-                out_rids = []
-                out_meta = {}
-                valid_indices = []
-                for i in range(n_ids):
-                    if i >= n_embs:
-                        continue
-                    emb = embs[i]
-                    if emb is None:
-                        continue
-                    # Quick length check without converting to list
-                    try:
-                        emb_len = len(emb) if hasattr(emb, "__len__") else 0
-                    except Exception:
-                        continue
-                    if emb_len < 10:
-                        continue
-                    rid = ids[i]
-                    meta = metas[i] if i < n_metas else {}
-                    if meta is None:
-                        meta = {}
-                    text = (docs[i] if i < n_docs else "") or ""
-                    tags = meta.get("tags", [])
-                    if isinstance(tags, str):
+                def _rows(res):
+                    """(rids, embedding rows, meta) of one Chroma get - records without a usable vector left out."""
+                    ids   = res.get("ids")        if res.get("ids")        is not None else []
+                    embs  = res.get("embeddings") if res.get("embeddings") is not None else []
+                    docs  = res.get("documents")  if res.get("documents")  is not None else []
+                    metas = res.get("metadatas")  if res.get("metadatas")  is not None else []
+                    n_embs  = len(embs)  if hasattr(embs, "__len__")  else 0
+                    n_docs  = len(docs)  if hasattr(docs, "__len__")  else 0
+                    n_metas = len(metas) if hasattr(metas, "__len__") else 0
+                    out_rids, out_rows, out_meta = [], [], {}
+                    for i in range(len(ids)):
+                        if i >= n_embs:
+                            continue
+                        emb = embs[i]
+                        if emb is None:
+                            continue
+                        # Quick length check without converting to list
                         try:
-                            tags = json.loads(tags)
+                            emb_len = len(emb) if hasattr(emb, "__len__") else 0
                         except Exception:
-                            tags = []
-                    out_rids.append(rid)
-                    valid_indices.append(i)
-                    from Vera.vera.worldview.legacy_snapshot_provenance import (
-                        legacy_snapshot_provenance,
-                    )
-                    out_meta[rid] = {
-                        "dataset_id": meta.get("dataset_id", "") or "",
-                        "text":       (text or "")[:200],
-                        "created_at": meta.get("created_at", "") or "",
-                        "tags":       tags or [],
-                        **legacy_snapshot_provenance(meta),
-                    }
+                            continue
+                        if emb_len < 10:
+                            continue
+                        rid = ids[i]
+                        meta = (metas[i] if i < n_metas else {}) or {}
+                        text = (docs[i] if i < n_docs else "") or ""
+                        tags = meta.get("tags", [])
+                        if isinstance(tags, str):
+                            try:
+                                tags = json.loads(tags)
+                            except Exception:
+                                tags = []
+                        out_rids.append(rid)
+                        out_rows.append(emb)
+                        out_meta[rid] = {
+                            "dataset_id": meta.get("dataset_id", "") or "",
+                            "text":       (text or "")[:200],
+                            "created_at": meta.get("created_at", "") or "",
+                            "tags":       tags or [],
+                            **legacy_snapshot_provenance(meta),
+                        }
+                    return out_rids, out_rows, out_meta
 
-                # Build embeddings numpy array directly from Chroma's array
-                # without converting each row to a Python list first.
-                if valid_indices and hasattr(embs, "__array__"):
-                    # embs is already numpy — slice the valid rows
-                    emb_np = np.array(embs, dtype="float32")
-                    emb_np = emb_np[valid_indices]
-                elif valid_indices:
-                    # embs is a list of lists/arrays
-                    emb_np = np.array([embs[i] for i in valid_indices], dtype="float32")
+                if not node_ids:
+                    kwargs = {"include": include, "limit": min(limit, 50000)}
+                    if dataset_id:
+                        kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
+                    rids, rows, meta = _rows(col.get(**kwargs))
                 else:
-                    emb_np = None
-
-                return out_rids, emb_np, out_meta
+                    # Train on an explicit set of record IDs (a saved vera-graph's node set, or the curated
+                    # corpus), fetched in bounded batches.
+                    def _fail(n, fails, e):
+                        log.warning("worldview: Chroma batch of %d ids failed (%d in a row): %s", n, fails, e)
+                    rids, rows, meta, info = _wv_corpus.fetch_by_ids(
+                        lambda batch: _rows(col.get(ids=batch, include=include)), list(node_ids),
+                        int(_WV_CONFIG.get("fetch_batch", 500) or 500), take=take, on_fail=_fail)
+                    log.info("worldview: %d of %d ids had vectors, %d kept (%d batches, %d failed)",
+                             info["fetched"], len(node_ids), len(rids), info["batches"], info["failed"])
+                # one contiguous float32 array, no Python list of floats per row
+                emb_np = np.asarray(rows, dtype="float32") if rows else None
+                return rids, emb_np, meta
 
             rids, emb_np, meta = await loop.run_in_executor(None, _fetch_chroma)
             log.info("worldview: fetched %d records from Chroma "
                      "(dataset=%s, limit=%d)",
                      len(rids), dataset_id or "*", limit)
             if rids:
+                provenance = await _enrich_canonical_revision_provenance(meta)
+                log.info("worldview: canonical provenance join %s", provenance)
                 return rids, emb_np, meta
         except Exception as e:
             log.warning("worldview: Chroma fetch failed: %s", e)
@@ -2284,7 +2396,7 @@ async def _resolve_graph_node_ids_to_records(
 
 
 async def build_graph(dataset_id: str = "", limit: int = MAX_NODES,
-                      node_ids: list = None) -> Dict:
+                      node_ids: list = None, take=None) -> Dict:
     """Build full training subgraph from resolved FabricRecord IDs.
 
     node_ids, when provided, should already be resolved to Chroma-addressable
@@ -2292,7 +2404,7 @@ async def build_graph(dataset_id: str = "", limit: int = MAX_NODES,
     Pass raw vera-graph node IDs through that function first.
     """
     rids, emb_np, records = await _fetch_records_with_embeddings(
-        dataset_id, limit, node_ids=node_ids)
+        dataset_id, limit, node_ids=node_ids, take=take)
     if not rids or emb_np is None:
         return {"records": {}, "rids": [], "X": None}
 
@@ -2931,6 +3043,8 @@ async def _rebuild_index_from_graph(graph: Dict) -> int:
             "dataset_id":    r["dataset_id"],
             "text":          (r.get("text") or "")[:200],
             "created_at":    r.get("created_at", ""),
+            "revision_id":   r.get("revision_id", ""),
+            "content_hash":  r.get("content_hash", ""),
             "concept":       c,
             "concept_label": MODEL.concept_labels.get(c, ""),
         }
@@ -3050,6 +3164,59 @@ async def _chroma_existing_ids(dataset_id: str = "") -> set:
     except Exception as e:
         log.debug("chroma id scan: %s", e)
         return set()
+
+
+async def _pin_corpus(graph: Dict, curated: bool) -> Dict[str, Any]:
+    """A DatasetSnapshot of the records this training uses (references: id + dataset), written with its id list
+    under the state root (datasets/worldview/<snapshot_id>.json). Returns {snapshot_id, snapshot_path}."""
+    from Vera.vera.state_paths import state_dir
+    recs = _wv_corpus.snapshot_records(graph.get("rids") or [], graph.get("records") or {})
+    snap, _ = DatasetSnapshot.create(
+        dataset_id=_wv_corpus.SNAPSHOT_DATASET, created_at=now_iso(), records=recs,
+        schema=_wv_corpus.SNAPSHOT_SCHEMA,
+        provenance={"curated": bool(curated), "key": WV_BLOB_KEY,
+                    "family_cap": _WV_CONFIG.get("corpus_family_cap"),
+                    "exclude": list(_WV_CONFIG.get("corpus_exclude") or _wv_corpus.SELF_TELEMETRY)})
+
+    def _write():
+        path = state_dir("datasets", "worldview") / f"{snap.snapshot_id}.json"
+        path.write_text(json.dumps({"snapshot": snap.to_dict(), "records": recs}), encoding="utf-8")
+        return str(path)
+    path = await asyncio.get_running_loop().run_in_executor(None, _write)
+    return {"snapshot_id": snap.snapshot_id, "snapshot_path": path}
+
+
+async def _curated_corpus_ids(limit: int) -> Dict[str, Any]:
+    """FM-8.3: record ids for training, stratified by collector family (worldview_corpus_core.plan), from the
+    fabric's SQLite - never a filtered Chroma scan (a where-filter scans the whole collection). Each family's
+    quota is oversampled (not every record has a vector yet); build_graph fetches the vectors by id."""
+    fab = _get_fabric()
+    if not fab:
+        return {"ids": [], "error": "data_fabric not loaded"}
+    exclude = tuple(_WV_CONFIG.get("corpus_exclude") or _wv_corpus.SELF_TELEMETRY)
+    cap = float(_WV_CONFIG.get("corpus_family_cap", _wv_corpus.FAMILY_CAP))
+    over = float(_WV_CONFIG.get("corpus_oversample", 2.0))
+
+    def _pick():
+        conn = fab._sqlite_conn()
+        counts = {r[0]: int(r[1]) for r in conn.execute(
+            "SELECT dataset_id, count(*) FROM fabric_records WHERE text IS NOT NULL AND text != '' "
+            "GROUP BY dataset_id").fetchall() if r[0]}
+        p = _wv_corpus.plan(counts, int(limit), exclude, cap)
+        groups: Dict[str, List[str]] = {}
+        for fam, q in p["quotas"].items():
+            ds = p["datasets"].get(fam) or []
+            if not q or not ds:
+                continue
+            marks = ",".join("?" for _ in ds)
+            groups[fam] = [r[0] for r in conn.execute(
+                f"SELECT id FROM fabric_records WHERE dataset_id IN ({marks}) AND text IS NOT NULL AND text != '' "
+                f"ORDER BY random() LIMIT ?", (*ds, int(q * over))).fetchall()]
+        # interleaved, so the batched fetch can stop early and every family still has its share
+        return {"ids": _wv_corpus.interleave(groups), "quotas": p["quotas"], "excluded": p["excluded"],
+                "eligible": p["eligible"]}
+
+    return await asyncio.get_running_loop().run_in_executor(None, _pick)
 
 
 async def _sqlite_records_for_dataset(dataset_id: str = "",
@@ -3848,7 +4015,34 @@ async def cap_worldview_train(
                                 f"{len(resolved_node_ids)} FabricRecord IDs",
                         original=len(node_ids), resolved=len(resolved_node_ids))
 
-    graph = await build_graph(dataset_id, limit=limit, node_ids=resolved_node_ids)
+    curated_take = None
+    if not dataset_id and not resolved_node_ids and _WV_CONFIG.get("curated_corpus", True):
+        # FM-8.3: "all datasets" is a stratified pick, not the first `limit` vectors in storage order
+        try:
+            cur = await _curated_corpus_ids(limit)
+        except Exception as e:
+            cur = {"ids": [], "error": str(e)}
+        if cur.get("ids"):
+            resolved_node_ids = cur["ids"]
+            curated_take = _wv_corpus.FamilyTake(cur.get("quotas") or {}, limit)
+            await _emit("corpus", families=len(cur.get("quotas") or {}), picked=len(cur["ids"]),
+                        excluded=len(cur.get("excluded") or []),
+                        message=f"Curated corpus: {len(cur['ids'])} records from {len(cur.get('quotas') or {})} "
+                                f"families (<= {int(100 * _WV_CONFIG.get('corpus_family_cap', _wv_corpus.FAMILY_CAP))}% "
+                                f"each), {len(cur.get('excluded') or [])} self-telemetry datasets left out")
+        else:
+            await _emit("corpus", message="Curated corpus unavailable - all datasets in storage order "
+                                          f"({cur.get('error') or 'no eligible records'})")
+    graph = await build_graph(dataset_id, limit=limit, node_ids=resolved_node_ids, take=curated_take)
+    if graph.get("rids"):
+        MODEL.corpus = _wv_corpus.mix((graph.get("records") or {}).get(r, {}).get("dataset_id", "")
+                                      for r in graph["rids"])
+        # FM-8.3: the corpus is pinned - a DatasetSnapshot of the record references, kept off the repo, so the
+        # model's health and the next training can name exactly what it learnt from
+        try:
+            MODEL.corpus.update(await _pin_corpus(graph, curated=bool(resolved_node_ids and not node_ids)))
+        except Exception as e:
+            log.warning("worldview: corpus snapshot not pinned: %s", e)
     if not graph.get("rids"):
         diag = await _diagnose_no_records(dataset_id)
         return {"error": "No records with embeddings found",
@@ -4072,8 +4266,24 @@ async def cap_worldview_rebuild_index(
     return {"ok": True, "indexed": indexed, "duration_s": duration}
 
 
+try:
+    from Vera.vera.model_binding_core import binding as _bind
+except ImportError:  # standalone/test import path
+    from vera.model_binding_core import binding as _bind
+
+_SERVES_WV_ENCODE = _bind(
+    "encode", "jepa", io_in="text", io_out="label", placement="host",
+    uses="Place a text or stored record in the worldview's latent space and name the concept "
+         "cluster it belongs to.",
+    limits="anything the worldview has not been trained on yet (check worldview.health).")
+_SERVES_WV_PREDICT = _bind(
+    "predict", "jepa", io_in="text", io_out="labels", placement="host",
+    uses="Predict which concepts tend to follow a record, concept or text, with probabilities - "
+         "what usually comes next.",
+    limits="facts or reasoning; concepts are clusters, not answers.")
+
 @capability(
-    "worldview.encode",
+    "worldview.encode", serves=_SERVES_WV_ENCODE,
     http_method="POST", http_path="/worldview/encode",
     http_tags=["worldview"], memory="off",
     description="Encode text or record into latent + concept. "
@@ -4123,7 +4333,7 @@ async def cap_worldview_encode(
 
 
 @capability(
-    "worldview.predict",
+    "worldview.predict", serves=_SERVES_WV_PREDICT,
     http_method="POST", http_path="/worldview/predict",
     http_tags=["worldview"], memory="off",
     description="Predict the next concept after a record/concept/text. "
@@ -4401,6 +4611,222 @@ def _dataset_snapshot_from_dict(value: Any) -> DatasetSnapshot:
 
 
 @capability(
+    "worldview.retrieval.corpus.preview",
+    http_method="GET", http_path="/worldview/retrieval/corpus/preview",
+    http_tags=["worldview", "retrieval"], memory="off", silent=True,
+    description="Read a bounded set of JEPA source metadata and report whether "
+                "every record has exact revision/content-hash provenance before "
+                "training. Input: dataset_id (optional), limit (1..20000). "
+                "Returns aggregate counts only; no content, model execution, "
+                "binding, mutation or activation authority.",
+)
+async def cap_worldview_retrieval_corpus_preview(
+        dataset_id: str = "", limit: int = 1000, trace_id=None) -> Dict:
+    limit = max(1, min(int(limit), MAX_NODES, 20000))
+    fab = _get_fabric()
+    chroma = getattr(fab, "FABRIC_CHROMA", None) if fab else None
+    if not chroma or not getattr(chroma, "available", False):
+        return {"ok": False, "eligible": False,
+                "error_code": "chroma_unavailable", "record_count": 0,
+                "retains_content": False, "mutates": False,
+                "activation_authority": False}
+
+    def _fetch_metadata() -> Dict[str, Dict[str, Any]]:
+        col = getattr(chroma, "_col", None)
+        if col is None:
+            return {}
+        kwargs: Dict[str, Any] = {"include": ["metadatas"], "limit": limit}
+        if dataset_id:
+            kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
+        result = col.get(**kwargs)
+        ids = result.get("ids") or []
+        metadatas = result.get("metadatas") or []
+        try:
+            from Vera.vera.worldview.legacy_snapshot_provenance import (
+                legacy_snapshot_provenance,
+            )
+        except ImportError:
+            from vera.worldview.legacy_snapshot_provenance import (
+                legacy_snapshot_provenance,
+            )
+        records: Dict[str, Dict[str, Any]] = {}
+        for index, record_id in enumerate(ids):
+            metadata = (metadatas[index] if index < len(metadatas) else {}) or {}
+            records[str(record_id)] = {
+                "dataset_id": str(metadata.get("dataset_id") or ""),
+                **legacy_snapshot_provenance(metadata),
+            }
+        return records
+
+    try:
+        records = await asyncio.to_thread(_fetch_metadata)
+        enrichment = await _enrich_canonical_revision_provenance(records)
+    except Exception as exc:
+        log.warning("worldview corpus provenance preview failed: %s", exc)
+        return {"ok": False, "eligible": False,
+                "error_code": "metadata_read_failed", "record_count": 0,
+                "retains_content": False, "mutates": False,
+                "activation_authority": False}
+    return {"ok": True, "dataset_id": dataset_id, "limit": limit,
+            **summarize_provenance(records, enrichment=enrichment)}
+
+
+def _canonical_corpus_plan(source_dataset_id: str, target_dataset_id: str,
+                           limit: int):
+    """Read one exact Chroma source set and build a content-free plan."""
+    fab = _get_fabric()
+    chroma = getattr(fab, "FABRIC_CHROMA", None) if fab else None
+    col = getattr(chroma, "_col", None) if chroma else None
+    if not chroma or not getattr(chroma, "available", False) or col is None:
+        raise RuntimeError("chroma_unavailable")
+    result = col.get(
+        where={"dataset_id": {"$eq": source_dataset_id}},
+        include=["documents", "metadatas", "embeddings"], limit=limit)
+    ids = result.get("ids")
+    documents = result.get("documents")
+    metadatas = result.get("metadatas")
+    embeddings = result.get("embeddings")
+    ids = ids if ids is not None else []
+    documents = documents if documents is not None else []
+    metadatas = metadatas if metadatas is not None else []
+    embeddings = embeddings if embeddings is not None else []
+    candidates, skipped = build_canonical_corpus_candidates(
+        source_dataset_id=source_dataset_id,
+        target_dataset_id=target_dataset_id,
+        ids=ids, documents=documents, metadatas=metadatas,
+        embeddings=embeddings)
+    summary = canonical_corpus_plan_summary(
+        source_dataset_id=source_dataset_id,
+        target_dataset_id=target_dataset_id,
+        requested=len(ids), candidates=candidates, skipped=skipped)
+    summary["limit"] = limit
+    return fab, col, candidates, summary
+
+
+@capability(
+    "worldview.corpus.canonical.preview",
+    http_method="GET", http_path="/worldview/corpus/canonical/preview",
+    http_tags=["worldview", "fabric", "provenance"], memory="off", silent=True,
+    description="Preview a bounded, immutable JEPA corpus projection from an "
+                "existing vector dataset. Inputs: source_dataset_id, "
+                "target_dataset_id (a new canonical dataset), limit (1..1000). "
+                "Returns only counts and a source-bound plan digest. It does "
+                "not expose content, write revisions, run a model, bind a "
+                "snapshot or activate retrieval.",
+)
+async def cap_worldview_canonical_corpus_preview(
+        source_dataset_id: str = "", target_dataset_id: str = "",
+        limit: int = 200, trace_id=None) -> Dict:
+    limit = max(1, min(int(limit), 1000))
+    try:
+        _, _, _, summary = await asyncio.to_thread(
+            _canonical_corpus_plan, source_dataset_id,
+            target_dataset_id, limit)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "mutates": False}
+    except Exception as exc:
+        log.warning("canonical corpus preview failed: %s", exc)
+        return {"ok": False, "error_code": "source_read_failed",
+                "mutates": False}
+    return {"ok": True, **summary}
+
+
+@capability(
+    "worldview.corpus.canonical.materialize",
+    http_method="POST", http_path="/worldview/corpus/canonical/materialize",
+    http_tags=["worldview", "fabric", "provenance"], memory="off",
+    description="Materialize a previously previewed, bounded JEPA corpus as "
+                "canonical Fabric revisions with exact Chroma projections. "
+                "Inputs: source_dataset_id, target_dataset_id, limit (1..1000), "
+                "expected_plan_digest, apply (default false). The source is "
+                "re-read and must match the digest. Source records are retained; "
+                "the operation does not train, bind or activate retrieval.",
+)
+async def cap_worldview_canonical_corpus_materialize(
+        source_dataset_id: str = "", target_dataset_id: str = "",
+        limit: int = 200, expected_plan_digest: str = "",
+        apply: bool = False, trace_id=None) -> Dict:
+    limit = max(1, min(int(limit), 1000))
+    if not apply:
+        preview = await cap_worldview_canonical_corpus_preview(
+            source_dataset_id=source_dataset_id,
+            target_dataset_id=target_dataset_id, limit=limit,
+            trace_id=trace_id)
+        return {**preview, "applied": False,
+                "requires_apply": bool(preview.get("ok"))}
+    if not str(expected_plan_digest or "").startswith("sha256:"):
+        return {"ok": False, "error": "expected_plan_digest is required",
+                "applied": False}
+
+    def _apply() -> Dict:
+        fab, col, candidates, summary = _canonical_corpus_plan(
+            source_dataset_id, target_dataset_id, limit)
+        path_factory = getattr(fab, "_canonical_revision_path", None)
+        actor_factory = getattr(fab, "_revision_actor", None)
+        if not callable(path_factory) or not callable(actor_factory):
+            raise RuntimeError("canonical_revision_path_unavailable")
+        result = materialize_canonical_corpus(
+            candidates=candidates,
+            expected_digest=expected_plan_digest,
+            summary=summary,
+            revision_path=path_factory(), actor=actor_factory(),
+            chroma_upsert=col.upsert, occurred_at=now_iso)
+        return {**summary, **result, "applied": True,
+                "mutates": True, "activation_authority": False}
+
+    try:
+        return await asyncio.to_thread(_apply)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "applied": False}
+    except Exception as exc:
+        log.warning("canonical corpus materialization failed: %s", exc)
+        return {"ok": False, "error_code": "materialization_failed",
+                "applied": False}
+
+
+@capability(
+    "worldview.retrieval.snapshot.preview",
+    http_method="GET", http_path="/worldview/retrieval/snapshot/preview",
+    http_tags=["worldview", "retrieval"], memory="off", silent=True,
+    description="Build payload-free DatasetSnapshot binding inputs for the exact "
+                "active JEPA index. Fails closed when an indexed record lacks "
+                "revision/content-hash provenance. It does not persist a binding, "
+                "query the model, or activate retrieval influence.",
+)
+async def cap_worldview_retrieval_snapshot_preview(trace_id=None) -> Dict:
+    if not MODEL.ready or not WV_INDEX.available:
+        return {"ok": True, "eligible": False,
+                "error_code": "worldview_not_ready", "executes": False}
+    indexed_ids = _active_index_record_ids()
+    try:
+        candidate = build_index_snapshot_candidate(
+            indexed_record_ids=indexed_ids,
+            record_metadata=MODEL.record_meta,
+            created_at=now_iso(), provider_revision=WORLDVIEW_PROVIDER_REVISION)
+    except (TypeError, ValueError) as exc:
+        missing = {}
+        match = re.search(
+            r"missing_revision=(\d+), missing_content_hash=(\d+)", str(exc))
+        if match:
+            missing = {"revision_id": int(match.group(1)),
+                       "content_hash": int(match.group(2))}
+        return {
+            "ok": True, "eligible": False,
+            "error_code": "index_provenance_incomplete",
+            "record_count": len(indexed_ids), "missing": missing,
+            "executes": False, "retains_content": False,
+        }
+    value = candidate.to_dict()
+    return {
+        "ok": True, "eligible": True,
+        "snapshot": value["snapshot"], "records": value["records"],
+        "record_count": value["record_count"],
+        "executes": False, "retains_content": False,
+        "activation_authority": False,
+    }
+
+
+@capability(
     "worldview.retrieval.bind",
     http_method="POST", http_path="/worldview/retrieval/bind",
     http_tags=["worldview", "retrieval"], memory="off",
@@ -4435,12 +4861,19 @@ async def cap_worldview_retrieval_bind(
     if not MODEL.ready or not WV_INDEX.available:
         return {"ok": False, "eligible": False,
                 "error_code": "worldview_not_ready"}
+    previous_persist = MODEL.last_fabric_persist
+    binding_saved_at = now_iso()
     try:
         snapshot = _dataset_snapshot_from_dict(
             _bounded_json_input(snapshot_json, "snapshot_json"))
         records = _bounded_json_input(records_json, "records_json")
         if not isinstance(records, list):
             raise ValueError("records_json must contain a list")
+        # ``saved_at`` is part of the serialized checkpoint. Set it before
+        # hashing and storing so an immediate status/query reserialization has
+        # exactly the identity that was bound. Updating it only after the
+        # store made every successful binding invalidate itself immediately.
+        MODEL.last_fabric_persist = binding_saved_at
         blob = await asyncio.to_thread(MODEL.serialize_bytes)
         binding = JepaRetrievalProvenance.create(
             snapshot=snapshot,
@@ -4452,6 +4885,7 @@ async def cap_worldview_retrieval_bind(
             training_run_id=training_run_id,
         )
     except (TypeError, ValueError) as exc:
+        MODEL.last_fabric_persist = previous_persist
         log.info("worldview retrieval provenance rejected: %s", exc)
         return {"ok": False, "eligible": False,
                 "error_code": "provenance_validation_failed"}
@@ -4460,15 +4894,22 @@ async def cap_worldview_retrieval_bind(
         "num_concepts": MODEL.num_concepts,
         "embed_dim": MODEL.embed_dim,
         "records": len(MODEL.record_concepts),
-        "saved_at": now_iso(),
+        "saved_at": binding_saved_at,
         "retrieval_provenance": binding.to_dict(),
     }
     stored = await _fabric_store_checkpoint(blob, meta)
     if not (stored.get("sqlite") or stored.get("postgres")):
+        MODEL.last_fabric_persist = previous_persist
         return {"ok": False, "eligible": False,
                 "error_code": "checkpoint_store_failed"}
+    try:
+        MODEL.save()
+    except Exception:
+        # Fabric is the durable binding store; an unavailable local cache must
+        # not turn a successful exact Fabric write into a false error.
+        pass
     _WV_RETRIEVAL_PROVENANCE = binding
-    MODEL.last_fabric_persist = now_iso()
+    MODEL.last_fabric_persist = binding_saved_at
     return {
         "ok": True,
         "eligible": True,
@@ -4522,8 +4963,13 @@ async def cap_worldview_retrieval_query(
     if snapshot_id and snapshot_id != binding.snapshot.snapshot_id:
         return {"ok": False, "eligible": False,
                 "error_code": "snapshot_mismatch"}
-    result = await cap_worldview_query(
-        text=text, top_k=top_k, dataset_id=binding.snapshot.dataset_id)
+    # The bound snapshot describes the complete active index; its dataset_id is
+    # the snapshot's logical identity, not the source dataset_id stored on each
+    # indexed record.  Filtering the nearest neighbours by that synthetic ID
+    # drops every result from a corpus assembled from one or more real source
+    # datasets.  Exact membership is already enforced above by the verified
+    # checkpoint/index binding and again below when citations are resolved.
+    result = await cap_worldview_query(text=text, top_k=top_k)
     try:
         citations = binding.citations_for_result(result, limit=top_k)
     except (TypeError, ValueError):
@@ -4543,6 +4989,159 @@ async def cap_worldview_retrieval_query(
         "provenance": binding.receipt(),
         "effect": "none",
         "activation_authority": False,
+    }
+
+
+@capability(
+    "worldview.retrieval.rerank.canary",
+    http_method="POST", http_path="/worldview/retrieval/rerank/canary",
+    http_tags=["worldview", "retrieval", "canary"], memory="off",
+    redact_args=["text"],
+    description=(
+        "Run one bounded, non-authoritative JEPA reranking comparison over an "
+        "explicit candidate set. Every candidate must belong to the exact bound "
+        "DatasetSnapshot; the response is payload-free, changes no context, "
+        "registers no ranker, and grants no activation authority. Inputs: text, "
+        "candidates [{id, baseline_score}], optional snapshot_id and weight."
+    ),
+)
+async def cap_worldview_retrieval_rerank_canary(
+    text: str,
+    candidates: List[Dict],
+    snapshot_id: str = "",
+    weight: float = 0.25,
+    trace_id=None,
+) -> Dict:
+    if (not isinstance(text, str) or not text.strip() or
+            len(text.encode("utf-8")) > 20_000):
+        return {"ok": False, "error_code": "query_required"}
+    if not isinstance(candidates, list) or not 1 <= len(candidates) <= 100:
+        return {"ok": False, "error_code": "invalid_candidates"}
+    if (isinstance(weight, bool) or not isinstance(weight, (int, float)) or
+            not math.isfinite(weight) or not 0 <= weight <= 1):
+        return {"ok": False, "error_code": "invalid_weight"}
+    parsed = []
+    seen = set()
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            return {"ok": False, "error_code": "invalid_candidates"}
+        record_id = str(candidate.get("id") or "").strip()
+        score = candidate.get("baseline_score")
+        if (not record_id or len(record_id) > 256 or record_id in seen or
+                isinstance(score, bool) or not isinstance(score, (int, float)) or
+                not math.isfinite(score) or not 0 <= score <= 1):
+            return {"ok": False, "error_code": "invalid_candidates"}
+        seen.add(record_id)
+        parsed.append((record_id, float(score)))
+
+    binding = await asyncio.to_thread(_verified_retrieval_provenance)
+    if binding is None:
+        return {"ok": False, "eligible": False,
+                "error_code": "provenance_unavailable"}
+    if snapshot_id and snapshot_id != binding.snapshot.snapshot_id:
+        return {"ok": False, "eligible": False,
+                "error_code": "snapshot_mismatch"}
+    if not seen.issubset(set(binding.indexed_record_ids)):
+        return {"ok": False, "eligible": False,
+                "error_code": "candidate_outside_snapshot"}
+
+    emb = await _wv_embed(text)
+    if not emb:
+        return {"ok": False, "eligible": False,
+                "error_code": "embedding_failed"}
+    if _dim_mismatch_error(emb):
+        return {"ok": False, "eligible": False,
+                "error_code": "embedding_dimension_mismatch"}
+    latent = MODEL.encode_isolated(emb)
+    if latent is None:
+        return {"ok": False, "eligible": False,
+                "error_code": "encoding_failed"}
+    try:
+        scored = WV_INDEX.score_subset(
+            latent, [record_id for record_id, _ in parsed])
+    except (RuntimeError, TypeError, ValueError):
+        scored = []
+    scored_ids = [record_id for record_id, _ in scored]
+    if (len(scored) != len(parsed) or len(set(scored_ids)) != len(scored_ids) or
+            set(scored_ids) != seen or any(
+                isinstance(score, bool) or not isinstance(score, (int, float)) or
+                not math.isfinite(score) or not -1.00001 <= score <= 1.00001
+                for _, score in scored)):
+        return {"ok": False, "eligible": False,
+                "error_code": "candidate_index_mismatch"}
+    results = []
+    for record_id, score in sorted(scored, key=lambda value: (-value[1], value[0])):
+        meta = _meta_for(record_id)
+        results.append({
+            "id": record_id, "score": round(max(-1.0, min(1.0, score)), 5),
+            "dataset_id": meta.get("dataset_id", ""),
+            "concept": meta.get("concept", -1),
+            "concept_label": meta.get("concept_label", ""),
+        })
+    try:
+        citations = binding.citations_for_result({"results": results}, limit=len(results))
+        from Vera.vera.context_provider import ContextCitation, ContextItem
+        from Vera.vera.worldview.context_ranker import PinnedWorldviewContextRanker
+        from Vera.vera.worldview.evidence_provider import JepaResultProjector
+        result = {
+            "ok": True, "eligible": True,
+            "query_digest": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "results": results,
+            "citations": [item.to_dict() for item in citations],
+            "provenance": binding.receipt(),
+        }
+        evidence = JepaResultProjector().project_bound_reranking(
+            result=result, snapshot=binding.snapshot,
+            retrieval_checkpoint=binding.checkpoint, observed_at=now_iso())
+        citation_by_id = {item.record_id: item for item in citations}
+        items = tuple(ContextItem(
+            item_id=f"canary:{record_id}", text="[redacted canary context]",
+            source=record_id, revision=citation_by_id[record_id].revision_id,
+            provider="worldview.canary", score=score, token_count=1,
+            citations=(ContextCitation(
+                record_id,
+                f"fabric://{record_id}?revision={citation_by_id[record_id].revision_id}"),),
+        ) for record_id, score in parsed)
+        ranker = PinnedWorldviewContextRanker(
+            evidence, expected_snapshot_id=binding.snapshot.snapshot_id,
+            expected_model_package_id=evidence.model_package_id,
+            weight=float(weight))
+        ranked = ranker.rank(items)
+    except (KeyError, TypeError, ValueError):
+        return {"ok": False, "eligible": False,
+                "error_code": "canary_evidence_invalid"}
+
+    def ordered(values):
+        return sorted(values, key=lambda item: (
+            -item.score, item.token_count, item.provider, item.item_id, item.revision))
+    baseline_ranks = {item.source: index + 1
+                      for index, item in enumerate(ordered(items))}
+    canary_ranks = {item.source: index + 1
+                    for index, item in enumerate(ordered(ranked))}
+    ranked_by_id = {item.source: item for item in ranked}
+    rows = []
+    for record_id, baseline_score in parsed:
+        item = ranked_by_id[record_id]
+        ranking = item.ranking_evidence[-1]
+        rows.append({
+            "id": record_id,
+            "revision_id": item.revision,
+            "baseline_rank": baseline_ranks[record_id],
+            "canary_rank": canary_ranks[record_id],
+            "baseline_score": baseline_score,
+            "evidence_score": ranking.score,
+            "hypothetical_score": item.score,
+        })
+    return {
+        "ok": True, "eligible": True,
+        "mode": "shadow", "authoritative": False,
+        "changes_context_selection": False,
+        "candidate_count": len(rows),
+        "changed_positions": sum(
+            row["baseline_rank"] != row["canary_rank"] for row in rows),
+        "weight": float(weight), "evidence_id": evidence.evidence_id,
+        "candidates": rows, "provenance": binding.receipt(),
+        "effect": "none", "activation_authority": False,
     }
 
 
@@ -5441,6 +6040,10 @@ _WV_CONFIG: Dict[str, Any] = {
     "target_ema_decay":   0.996,
     "held_out":           0.2,         # FM-8.2: share of walks held back for the next-concept evaluation
     "label_min_members":  5,           # FM-8.2: no LLM label for a concept with fewer members
+    "curated_corpus":     True,        # FM-8.3: "all datasets" = a stratified pick by collector family
+    "corpus_family_cap":  0.15,        # FM-8.3: no family above this share of the pick
+    "corpus_oversample":  2.0,         # FM-8.3: ids sampled per quota (not every record has a vector)
+    "fetch_batch":        500,         # ids per Chroma get when training on an id set (one get of 40k timed out)
     "auto_label":         True,        # auto-label concepts after training
     "auto_label_k":       50,          # max concepts to auto-label
 }
@@ -5782,6 +6385,9 @@ async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
                     "dataset_id":    meta.get("dataset_id", dataset_id),
                     "text":          text[:200],
                     "created_at":    meta.get("created_at", ""),
+                    "revision_id":   meta.get("revision_id", ""),
+                    "content_hash":  (meta.get("content_hash", "") or
+                                      meta.get("source_content_hash", "")),
                     "concept":       concept,
                     "concept_label": MODEL.concept_labels.get(concept, ""),
                 }

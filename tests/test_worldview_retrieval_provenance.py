@@ -4,7 +4,10 @@ import pytest
 
 from vera.fabric.dataset_provider import DatasetSnapshot
 from vera.models.model_package import model_package_from_dict
-from vera.worldview.retrieval_provenance import JepaRetrievalProvenance
+from vera.worldview.retrieval_provenance import (
+    JepaRetrievalProvenance,
+    build_index_snapshot_candidate,
+)
 
 
 pytestmark = pytest.mark.critical
@@ -112,3 +115,36 @@ def test_binding_rejects_duplicate_record_ids_even_with_different_revisions():
             snapshot=snapshot, snapshot_records=frozen,
             checkpoint_blob=b"checkpoint", indexed_record_ids=("r1",),
             provider_revision="v1")
+
+
+def test_active_index_candidate_is_payload_free_and_reproducible():
+    candidate = build_index_snapshot_candidate(
+        indexed_record_ids=("r2", "r1"),
+        record_metadata={
+            "r1": {"revision_id": "rev-a", "content_hash": "sha256:a",
+                   "dataset_id": "source-a", "text": "must not copy"},
+            "r2": {"revision_id": "rev-b", "content_hash": "sha256:b",
+                   "dataset_id": "source-b", "text": "must not copy"},
+        }, created_at="2026-10-10T20:00:00Z", provider_revision="jepa-v2")
+
+    assert [item["record_id"] for item in candidate.records] == ["r1", "r2"]
+    assert all("text" not in item for item in candidate.records)
+    assert candidate.snapshot.record_count == 2
+    recreated, frozen = DatasetSnapshot.create(
+        dataset_id=candidate.snapshot.dataset_id,
+        created_at=candidate.snapshot.created_at,
+        records=candidate.records, schema=candidate.snapshot.schema,
+        provenance=candidate.snapshot.provenance)
+    assert recreated == candidate.snapshot
+    assert frozen == candidate.records
+
+
+@pytest.mark.parametrize("metadata,reason", [
+    ({"r1": {"content_hash": "sha256:a"}}, "missing_revision=1"),
+    ({"r1": {"revision_id": "rev-a"}}, "missing_content_hash=1"),
+])
+def test_active_index_candidate_rejects_unqualified_legacy_rows(metadata, reason):
+    with pytest.raises(ValueError, match=reason):
+        build_index_snapshot_candidate(
+            indexed_record_ids=("r1",), record_metadata=metadata,
+            created_at="2026-10-10T20:00:00Z", provider_revision="jepa-v2")

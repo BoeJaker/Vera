@@ -89,11 +89,13 @@ CURRENT_PATHS = (
     CompatibilityPath(
         "memory.patch_capability_for_memory", "capability_orchestration.act_enqueue",
         "deprecated_noop", _MEMORY_SOURCE,
-        ("def patch_capability_for_memory():", "patch_capability_for_memory()"),
-        True, "migrate",
-        ("startup_still_calls_noop", "second_wrapper_would_duplicate_activity"),
-        ("remove_internal_startup_call_first", "complete_external_consumer_inventory",
-         "retain_import_shim")),
+        ("def patch_capability_for_memory():",
+         "DEPRECATED — kept as a no-op."),
+        False, "insufficient_evidence",
+        ("internal_startup_call_migrated", "external_import_coverage_missing",
+         "second_wrapper_would_duplicate_activity"),
+        ("complete_external_consumer_inventory", "retain_import_shim",
+         "observe_two_normal_zero_use_cycles")),
     CompatibilityPath(
         "memory.patch_new_cap", "capability_orchestration.capability_decorator",
         "deprecated_noop", _MEMORY_SOURCE,
@@ -194,3 +196,50 @@ def build_compatibility_path_review_set(
         "bulk_removal_authority": False, "executes": False, "mutates": False,
     }
     return {"review_set_id": _identity("cprset_", payload), **payload}
+
+
+def attach_declared_consumer_inventory(
+    review_set: dict[str, Any], inventory: dict[str, Any],
+) -> dict[str, Any]:
+    """Attach bounded declared-root evidence without upgrading removal authority."""
+    if review_set.get("schema") != "vera.compatibility-path-review-set/v1":
+        raise ValueError("unsupported compatibility review set")
+    if inventory.get("schema") != "vera.compatibility-consumer-inventory/v1":
+        raise ValueError("unsupported consumer inventory")
+    symbols = set(inventory.get("symbols") or ())
+    roots = inventory.get("declared_roots")
+    if not symbols or not isinstance(roots, list) or not roots:
+        raise ValueError("consumer inventory is incomplete")
+    if any(not root.get("scan_complete") for root in roots):
+        raise ValueError("consumer inventory contains an incomplete root")
+
+    result = json.loads(_canonical(review_set))
+    known = {item["name"] for item in result["reviews"]}
+    if not symbols <= known:
+        raise ValueError("consumer inventory contains an unknown compatibility path")
+    for review in result["reviews"]:
+        if review["name"] not in symbols:
+            continue
+        matches = []
+        for root in roots:
+            for match in root.get("matches", {}).get(review["name"], ()):
+                matches.append({"root": root["label"], **match})
+        evidence = {
+            "inventory_id": inventory.get("inventory_id", ""),
+            "scope": inventory.get("scope"),
+            "global_external_coverage": False,
+            "declared_roots": [root["label"] for root in roots],
+            "match_count": len(matches),
+            "matches": matches,
+        }
+        review["coverage"]["external_consumers"] = "declared_roots_examined"
+        review["external_consumer_evidence"] = evidence
+        review_payload = {key: value for key, value in review.items() if key != "review_id"}
+        review["review_id"] = _identity("cprev_", review_payload)
+    result["reviews"] = sorted(result["reviews"], key=lambda item: item["candidate_id"])
+    result["conclusion"] = "declared_roots_examined_no_removal_authority"
+    result["removal_candidates"] = []
+    result["bulk_removal_authority"] = False
+    payload = {key: value for key, value in result.items() if key != "review_set_id"}
+    result["review_set_id"] = _identity("cprset_", payload)
+    return result

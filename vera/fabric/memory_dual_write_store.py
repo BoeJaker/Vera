@@ -81,7 +81,8 @@ class MemoryDualWriteReceiptStore:
                     evidence_json TEXT NOT NULL,
                     authority_state TEXT NOT NULL,
                     requires_reconciliation INTEGER NOT NULL,
-                    observed_at TEXT NOT NULL
+                    observed_at TEXT NOT NULL,
+                    producer_kind TEXT NOT NULL DEFAULT 'public_capability'
                 );
                 CREATE INDEX IF NOT EXISTS idx_mdwr_reconcile
                     ON memory_dual_write_receipts
@@ -117,6 +118,16 @@ class MemoryDualWriteReceiptStore:
                     completed_at TEXT NOT NULL
                 );
             """)
+            columns = {
+                str(row[1]) for row in conn.execute(
+                    "PRAGMA table_info(memory_dual_write_receipts)").fetchall()
+            }
+            if "producer_kind" not in columns:
+                # Existing v1 receipts were all produced by the only seam that
+                # existed at the time: the public memory.store capability.
+                conn.execute(
+                    "ALTER TABLE memory_dual_write_receipts ADD COLUMN "
+                    "producer_kind TEXT NOT NULL DEFAULT 'public_capability'")
 
     def append(self, receipt: MemoryDualWriteReceipt) -> dict[str, Any]:
         if not isinstance(receipt, MemoryDualWriteReceipt):
@@ -135,10 +146,13 @@ class MemoryDualWriteReceiptStore:
                 conn.commit()
                 return {"created": False, "receipt": _verify(json.loads(encoded))}
             conn.execute(
-                "INSERT INTO memory_dual_write_receipts VALUES (?,?,?,?,?,?)",
+                "INSERT INTO memory_dual_write_receipts "
+                "(operation_id,receipt_id,evidence_json,authority_state,"
+                "requires_reconciliation,observed_at,producer_kind) "
+                "VALUES (?,?,?,?,?,?,?)",
                 (receipt.operation_id, receipt.receipt_id, encoded,
                  receipt.authority_state, int(receipt.requires_reconciliation),
-                 receipt.observed_at),
+                 receipt.observed_at, receipt.producer_kind),
             )
             conn.commit()
         except Exception:
@@ -428,6 +442,10 @@ class MemoryDualWriteReceiptStore:
                 "WHERE a.state='completed' AND NOT EXISTS ("
                 "SELECT 1 FROM memory_dual_write_reconciliation_resolutions r "
                 "WHERE r.operation_id=a.operation_id)").fetchall()
+            producer_rows = conn.execute(
+                "SELECT producer_kind,COUNT(*) AS n "
+                "FROM memory_dual_write_receipts GROUP BY producer_kind "
+                "ORDER BY producer_kind").fetchall()
         failed_attempts = sum(
             any(outcome != "committed" for outcome in json.loads(row["outcomes_json"]).values())
             for row in completed
@@ -440,6 +458,10 @@ class MemoryDualWriteReceiptStore:
             "pending_attempts": pending,
             "failed_attempts": failed_attempts,
             "latest_observed_at": rows[0]["observed_at"] if rows else "",
+            "producer_counts": {
+                str(row["producer_kind"]): int(row["n"])
+                for row in producer_rows
+            },
             "retains_payload": False,
             "executes": False,
             "authority_switch_allowed": False,

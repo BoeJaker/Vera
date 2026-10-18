@@ -12,6 +12,11 @@
  *           Read over SSH, so it loads when opened and on "reload" only.
  * nlp       where nlp.* runs, each node's NLP server (version, models loaded),
  *           and the three switches.
+ * callable  every model Vera can call and what each is for (model.callable):
+ *           specialist models from the capabilities that serve them, the LLMs
+ *           the routing system can pick, where each is loaded and what calls
+ *           to it took; and "which model for this task?" (model.pick).
+ *           Loaded when opened and on reload only (it reads node activity).
  *
  * Data: ollama.warm.status|set|apply, nodes.ollama.settings|set, nlp.nodes,
  *       nlp.config.get|set, fabric.nlp.get|set.
@@ -65,12 +70,13 @@
       this._root.addEventListener('change', (e) => this._change(e));
     }
     get base() { return this.getAttribute('api-base') || ''; }
-    get section() { const s = this.getAttribute('section') || 'warm'; return ['warm', 'settings', 'nlp', 'training'].indexOf(s) >= 0 ? s : 'warm'; }
+    get section() { const s = this.getAttribute('section') || 'warm'; return ['warm', 'settings', 'nlp', 'training', 'callable'].indexOf(s) >= 0 ? s : 'warm'; }
     connectedCallback() {
       this.load();
       const n = Math.max(5, parseInt(this.getAttribute('refresh') || '15', 10));
-      // node settings are an SSH read per node: never on a timer
-      this._t = setInterval(() => { if (!this._edit && !document.hidden && this.section !== 'settings') this.load(true); }, n * 1000);
+      // node settings are an SSH read per node, callable models read node
+      // activity and every NLP node: neither on a timer
+      this._t = setInterval(() => { if (!this._edit && !document.hidden && this.section !== 'settings' && this.section !== 'callable') this.load(true); }, n * 1000);
     }
     disconnectedCallback() { clearInterval(this._t); }
 
@@ -95,6 +101,9 @@
       } else if (sec === 'training') {
         const [c, t, pp] = await Promise.all([this._get('/compute/status'), this._get('/evolve/test_pool/status'), this._get('/nodes/parity/status')]);
         this._comp = c; this._pool = t; this._parity = pp;
+      } else if (sec === 'callable') {
+        this._cmBusy = 'load'; this.render();
+        this._calls = await this._get('/models/callable'); this._cmBusy = '';
       } else if (sec === 'settings' && !this._settings) {
         this._setBusy = 'load'; this.render();
         this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = '';
@@ -138,6 +147,10 @@
         h = '<div class="hdr"><span class="t">Node settings</span>' + msg + '</div>' + this._settingsHtml();
       } else if (sec === 'training') {
         h = '<div class="hdr"><span class="t">Node jobs</span>' + msg + '</div>' + this._trainHtml();
+      } else if (sec === 'callable') {
+        h = '<div class="hdr"><span class="t">Callable models</span>' + msg
+          + '<button data-a="cm-reload"' + (this._cmBusy ? ' disabled' : '') + '>' + (this._cmBusy === 'load' ? 'loading...' : 'reload') + '</button></div>'
+          + this._callableHtml();
       } else {
         h = '<div class="hdr"><span class="t">NLP</span>' + msg + '</div>' + this._nlpHtml();
       }
@@ -305,6 +318,70 @@
 
     /* Model training on the nodes (compute.status): which workers take it and
        with what, where each trainer would run now, the switches, recent jobs. */
+    _callableHtml() {
+      const c = this._calls;
+      const pr = this._pickRes;
+      const ms = (v) => v == null ? '' : v < 1 ? Math.round(v * 1000) + ' ms' : (Math.round(v * 10) / 10) + ' s';
+      const call = (r) => {
+        const sel = r.selector || {}; const k = Object.keys(sel);
+        return '<span class="mono">' + esc(r.cap) + (k.length ? ' ' + k.map((x) => esc(x) + '=' + esc(sel[x])).join(' ') : '') + '</span>';
+      };
+      const meas = (r) => {
+        const m = r.measured || {};
+        if (!m.calls) return '<span class="muted" title="no calls in the last 24 h">-</span>';
+        return esc(ms(m.p50_s)) + ' / ' + esc(ms(m.p95_s)) + ' <span class="muted">(' + esc(m.calls) + ' calls'
+          + (m.error_rate ? ', <span class="bad">' + Math.round(m.error_rate * 100) + '% errors</span>' : '')
+          + (m.scope && m.scope !== 'model' ? ', ' + esc(m.scope) : '') + ')</span>';
+      };
+      const where = (r) => (r.loaded_on && r.loaded_on.length) ? '<span class="badge ok">' + esc(r.loaded_on.join(', ')) + '</span>'
+        : (r.present_on && r.present_on.length) ? '<span class="badge warn" title="present, not loaded">' + esc(r.present_on.join(', ')) + '</span>'
+        : '<span class="muted">' + esc(r.placement || '') + '</span>';
+      let h = '<div class="panel"><div class="sec">Which model for a task?</div>'
+        + '<div class="row"><input id="cm-need" data-a="cm-need" placeholder="describe the task, e.g. find dates and money in an English article" style="flex:1;min-width:240px" value="' + esc(this._cmNeed || '') + '">'
+        + '<button data-a="cm-pick"' + (this._cmBusy ? ' disabled' : '') + '>' + (this._cmBusy === 'pick' ? 'picking...' : 'pick') + '</button></div>';
+      if (pr && pr.error) h += '<div class="bad">' + esc(pr.error) + '</div>';
+      if (pr && pr.picks) {
+        h += '<table><tr><th>model</th><th>call</th><th>why</th><th>score</th></tr>' + pr.picks.map((r, i) =>
+          '<tr><td><b>' + (i + 1) + '. ' + esc(r.id) + '</b><div class="muted">' + esc(r.uses || '') + '</div></td>'
+          + '<td>' + call(r) + '</td><td class="muted">' + esc(r.why || '') + '</td><td class="mono">' + esc(r.score) + '</td></tr>').join('')
+          + '</table><div class="muted">ranked by ' + esc(pr.ranked_by || '') + '</div>';
+      }
+      h += '</div>';
+      if (!c) return h + '<div class="muted">' + (this._cmBusy === 'load' ? 'loading...' : 'not loaded') + '</div>';
+      if (c.ok === false || c.error) return h + '<div class="bad">' + esc(c.error || 'model.callable failed') + '</div>';
+      const rows = c.models || [];
+      const fams = Array.from(new Set(rows.map((r) => r.family))).sort();
+      const q = String(this._cmQ || '').toLowerCase(), fam = this._cmFam || '';
+      const keep = (r) => (!fam || r.family === fam) && (!q || ((r.id || '') + ' ' + (r.uses || '') + ' ' + (r.model || '')).toLowerCase().indexOf(q) >= 0);
+      const spec = rows.filter((r) => r.cap !== 'llm.generate' && keep(r));
+      const llms = rows.filter((r) => r.cap === 'llm.generate' && keep(r));
+      const src = c.sources || {};
+      h += '<div class="row"><select data-a="cm-fam"><option value="">every family</option>'
+        + fams.map((f) => '<option value="' + esc(f) + '"' + (f === fam ? ' selected' : '') + '>' + esc(f) + '</option>').join('') + '</select>'
+        + '<input data-a="cm-q" placeholder="filter" value="' + esc(this._cmQ || '') + '" style="width:180px">'
+        + '<span class="sp"></span><span class="muted">' + esc(rows.length) + ' models · NLP nodes: ' + esc(src.nlp_nodes || '?')
+        + (src.measured ? ' · ' + esc(src.measured) : '') + '</span></div>';
+      if ((c.errors || []).length) h += '<div class="panel"><div class="sec bad">Binding errors</div>' + c.errors.map((e) => '<div class="mono bad">' + esc(e) + '</div>').join('') + '</div>';
+      h += '<div class="panel"><div class="sec">Specialist models (' + spec.length + ')</div><div data-keep-scroll style="overflow:auto">'
+        + '<table><tr><th>model</th><th>for</th><th>runs</th><th>loaded</th><th style="white-space:nowrap">p50 / p95</th></tr>'
+        + spec.map((r) => '<tr><td><b>' + esc(r.id) + '</b>' + (Object.keys(r.selector || {}).length ? '<div>' + call(r) + '</div>' : '') + '<div class="muted">' + esc(r.family) + (r.tier ? ' · tier ' + esc(r.tier) : '') + (r.questions && r.questions.length ? ' · ' + esc(r.questions.length) + ' questions' : '') + '</div></td>'
+          + '<td>' + esc(r.uses || '') + (r.limits ? '<div class="muted">Not for: ' + esc(r.limits) + '</div>' : '') + '</td>'
+          + '<td class="mono" style="overflow-wrap:anywhere">' + esc(r.model || (r.note || '')) + (r.installable ? '<div class="muted">catalog: ' + esc(r.installable) + '</div>' : '') + '</td>'
+          + '<td>' + where(r) + '</td><td>' + meas(r) + '</td></tr>').join('')
+        + (spec.length ? '' : '<tr><td colspan="5" class="muted">none match</td></tr>') + '</table></div></div>';
+      const lf = src.llm_facts || {};
+      h += '<div class="panel"><div class="sec">LLMs - routed by model= (' + llms.length + ')</div>'
+        + '<div class="muted">Described from each model\'s facts (Ollama), measured speed and your purpose tags (Model Routing). '
+        + (lf.still_to_fetch ? esc(lf.still_to_fetch) + ' more models get their facts on the next reloads.' : '') + '</div>'
+        + '<div data-keep-scroll style="overflow:auto"><table><tr><th>model</th><th>for</th><th>not for</th><th>loaded</th><th>tok/s</th><th style="white-space:nowrap">p50 / p95</th></tr>'
+        + llms.map((r) => { const t = r.tps || {}; const best = Object.keys(t).sort((a, b) => t[b] - t[a])[0];
+            return '<tr><td class="mono" style="overflow-wrap:anywhere"><b>' + esc(r.model) + '</b></td><td>' + esc(r.uses || '') + '</td>'
+              + '<td class="muted">' + esc(r.limits || '') + '</td><td>' + where(r) + '</td>'
+              + '<td>' + (best ? esc(Math.round(t[best])) + ' <span class="muted">' + esc(best) + '</span>' : '') + '</td><td>' + meas(r) + '</td></tr>'; }).join('')
+        + (llms.length ? '' : '<tr><td colspan="6" class="muted">none match</td></tr>') + '</table></div></div>';
+      return h;
+    }
+
     _trainHtml() {
       const c = this._comp;
       if (!c) return '<div class="muted">loading...</div>';
@@ -363,6 +440,15 @@
       const b = e.target.closest('[data-a]'); if (!b || b.tagName === 'INPUT' || b.tagName === 'SELECT') return;
       const a = b.dataset.a, k = b.dataset.k;
       if (a === 'refresh') return this.load();
+      if (a === 'cm-reload') { return this.load(); }
+      if (a === 'cm-pick') {
+        const need = (this._root.getElementById('cm-need') || {}).value || '';
+        this._cmNeed = need;
+        if (!need.trim()) { this._pickRes = { error: 'describe the task first' }; return this.render(); }
+        this._cmBusy = 'pick'; this.render();
+        this._pickRes = await this._post('/models/pick', { need: need, top_k: 5 }); this._cmBusy = '';
+        return this.render();
+      }
       if (a === 'set-load') {
         this._setBusy = 'load'; this.render();
         this._settings = await this._get('/nodes/ollama/settings'); this._setBusy = ''; return this.render();
@@ -430,6 +516,9 @@
     }
     async _change(e) {
       const t = e.target; const a = t.dataset && t.dataset.a; if (!a) return;
+      if (a === 'cm-fam') { this._cmFam = t.value; return this.render(); }
+      if (a === 'cm-q') { this._cmQ = t.value; return this.render(); }
+      if (a === 'cm-need') { this._cmNeed = t.value; return; }
       let r = null;
       if (a === 'sc-enable') r = await this._post('/ollama/warm/set', { scenario_enabled: { [t.dataset.k]: t.checked } });
       if (a === 'nlp-local') {

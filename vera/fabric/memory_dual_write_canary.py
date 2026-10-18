@@ -23,6 +23,7 @@ from .record_revision import RecordRevision
 
 NativeWriter = Callable[[], Awaitable[Mapping[str, bool | str]]]
 RevisionWriter = Callable[[RecordRevision], Awaitable[Any]]
+RevisionFactory = Callable[[], RecordRevision]
 
 
 class ReceiptSink(Protocol):
@@ -45,11 +46,14 @@ class MemoryDualWriteCanaryResult:
 def _classify_native(result: Mapping[str, bool | str]) -> dict[str, str]:
     if not isinstance(result, Mapping):
         raise TypeError("native writer must return a backend outcome mapping")
-    unknown = set(result) - set(NATIVE_BACKENDS)
-    if unknown:
-        raise ValueError("native writer returned an unknown backend")
+    if len(result) > 32:
+        raise ValueError("native writer exceeded the bounded backend limit")
     classified: dict[str, str] = {}
-    for backend in NATIVE_BACKENDS:
+    for backend in sorted({*NATIVE_BACKENDS, *result}):
+        if (not isinstance(backend, str) or not backend
+                or len(backend) > 256
+                or any(not (char.isalnum() or char in "_.:-") for char in backend)):
+            raise ValueError("native writer returned an invalid backend name")
         value = result.get(backend, "skipped")
         if value is True:
             value = "committed"
@@ -83,6 +87,8 @@ async def execute_memory_dual_write_canary(
     native_write: NativeWriter, revision_write: RevisionWriter,
     receipt_sink: ReceiptSink, native_timeout_s: float | None = 30.0,
     revision_timeout_s: float | None = 10.0,
+    revision_factory: RevisionFactory | None = None,
+    producer_kind: str = "internal",
 ) -> MemoryDualWriteCanaryResult:
     """Run the native write once and optionally observe a canonical shadow write.
 
@@ -99,7 +105,6 @@ async def execute_memory_dual_write_canary(
     try:
         raw_native = (await native_write() if native_timeout_s is None else
                       await asyncio.wait_for(native_write(), timeout=native_timeout_s))
-        native_outcomes = _classify_native(raw_native)
     except asyncio.CancelledError:
         if enabled:
             native_outcomes, errors = _native_error("native_cancelled", "cancelled")
@@ -107,7 +112,8 @@ async def execute_memory_dual_write_canary(
                 operation_id=operation_id, native_memory_id=native_memory_id,
                 native_content_hash=native_content_hash, revision=revision,
                 observed_at=observed_at, revision_outcome="skipped",
-                native_outcomes=native_outcomes, error_codes=errors)
+                native_outcomes=native_outcomes, error_codes=errors,
+                producer_kind=producer_kind)
             _persist(receipt_sink, receipt)
         raise
     except TimeoutError:
@@ -117,7 +123,8 @@ async def execute_memory_dual_write_canary(
                 operation_id=operation_id, native_memory_id=native_memory_id,
                 native_content_hash=native_content_hash, revision=revision,
                 observed_at=observed_at, revision_outcome="skipped",
-                native_outcomes=native_outcomes, error_codes=errors)
+                native_outcomes=native_outcomes, error_codes=errors,
+                producer_kind=producer_kind)
             _persist(receipt_sink, receipt)
         raise
     except Exception:
@@ -127,14 +134,39 @@ async def execute_memory_dual_write_canary(
                 operation_id=operation_id, native_memory_id=native_memory_id,
                 native_content_hash=native_content_hash, revision=revision,
                 observed_at=observed_at, revision_outcome="skipped",
-                native_outcomes=native_outcomes, error_codes=errors)
+                native_outcomes=native_outcomes, error_codes=errors,
+                producer_kind=producer_kind)
             _persist(receipt_sink, receipt)
         raise
+
+    try:
+        native_outcomes = _classify_native(raw_native)
+    except Exception:
+        # Classification is shadow evidence, not part of the authoritative
+        # backend contract.  Once the native call returned successfully its
+        # exact result must remain caller-visible even if evidence is malformed.
+        return MemoryDualWriteCanaryResult(
+            native_result=raw_native, enabled=enabled, revision_attempted=False,
+            receipt=None, evidence_persisted=False,
+            evidence_error_code="native_outcome_classification_failed")
 
     if not enabled:
         return MemoryDualWriteCanaryResult(
             native_result=raw_native, enabled=False, revision_attempted=False,
             receipt=None, evidence_persisted=False, evidence_error_code="")
+
+    revision_factory_error = False
+    if revision_factory is not None:
+        try:
+            refreshed = revision_factory()
+            if not isinstance(refreshed, RecordRevision):
+                raise TypeError("revision_factory must return a RecordRevision")
+            revision = refreshed
+        except Exception:
+            # Native authority has already committed.  A shadow snapshot
+            # refresh must therefore degrade to explicit evidence, never turn
+            # the caller's successful write into an error.
+            revision_factory_error = True
 
     errors = {
         backend: "native_write_failed"
@@ -146,14 +178,17 @@ async def execute_memory_dual_write_canary(
         for backend, outcome in native_outcomes.items()
         if outcome in {"timed_out", "cancelled"}
     })
-    revision_outcome = "committed"
+    revision_outcome = "failed" if revision_factory_error else "committed"
+    if revision_factory_error:
+        errors["revision"] = "revision_snapshot_failed"
     try:
-        result = (await revision_write(revision) if revision_timeout_s is None else
-                  await asyncio.wait_for(
-                      revision_write(revision), timeout=revision_timeout_s))
-        if not isinstance(result, Mapping) or result.get("authority_commit") != "committed":
-            revision_outcome = "failed"
-            errors["revision"] = "revision_not_committed"
+        if not revision_factory_error:
+            result = (await revision_write(revision) if revision_timeout_s is None else
+                      await asyncio.wait_for(
+                          revision_write(revision), timeout=revision_timeout_s))
+            if not isinstance(result, Mapping) or result.get("authority_commit") != "committed":
+                revision_outcome = "failed"
+                errors["revision"] = "revision_not_committed"
     except asyncio.CancelledError:
         revision_outcome = "cancelled"
         errors["revision"] = "revision_cancelled"
@@ -161,7 +196,8 @@ async def execute_memory_dual_write_canary(
             operation_id=operation_id, native_memory_id=native_memory_id,
             native_content_hash=native_content_hash, revision=revision,
             observed_at=observed_at, revision_outcome=revision_outcome,
-            native_outcomes=native_outcomes, error_codes=errors)
+            native_outcomes=native_outcomes, error_codes=errors,
+            producer_kind=producer_kind)
         _persist(receipt_sink, receipt)
         raise
     except TimeoutError:
@@ -175,7 +211,8 @@ async def execute_memory_dual_write_canary(
         operation_id=operation_id, native_memory_id=native_memory_id,
         native_content_hash=native_content_hash, revision=revision,
         observed_at=observed_at, revision_outcome=revision_outcome,
-        native_outcomes=native_outcomes, error_codes=errors)
+        native_outcomes=native_outcomes, error_codes=errors,
+        producer_kind=producer_kind)
     persisted, evidence_error = _persist(receipt_sink, receipt)
     return MemoryDualWriteCanaryResult(
         native_result=raw_native, enabled=True, revision_attempted=True,

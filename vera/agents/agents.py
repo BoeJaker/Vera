@@ -96,8 +96,10 @@ except Exception:                       # worktree / app-free import
     from vera.agents import agent_patch_core as _agent_patch
 try:
     from Vera.vera.agents import turn_needs_core as _turn_needs
+    from Vera.vera.agents import info_miss_core as _info_miss
 except Exception:                       # worktree / app-free import
     from vera.agents import turn_needs_core as _turn_needs
+    from vera.agents import info_miss_core as _info_miss
 
 
 async def _switch_mode(feature_id: str, minds: Any = None, default: str = "off") -> str:
@@ -117,6 +119,39 @@ try:
     from Vera.vera.agents import turn_phases_core as _phases
 except Exception:                       # worktree / app-free import
     from vera.agents import turn_phases_core as _phases
+try:
+    from Vera.vera.minds import chat_tools_core as _chat_tools
+except Exception:                       # worktree / app-free import
+    from vera.minds import chat_tools_core as _chat_tools
+
+CHAT_TOOLS_SHADOW_KEY = "vera:chat:tools:shadow"
+CHAT_TOOLS_SHADOW_CAP = 2000
+
+
+async def _record_tools_shadow(session_id: str, query: str, message: str, reply: str, task) -> None:
+    """FM-3.2/3.3 (switch tools.shortlist.chat=shadow): one row per chat turn - the page's offered capabilities (from
+    the message's manifest), the server's caps.shortlist on the user's words, and what the reply used. Background,
+    after the stream; never raises."""
+    from datetime import datetime
+    try:
+        try:
+            res = await asyncio.wait_for(asyncio.shield(task), 5.0)
+        except Exception:
+            res = None
+        server = [t.get("name") for t in ((res or {}).get("tools") or []) if isinstance(t, dict) and t.get("name")]
+        r = getattr(_orch, "REDIS", None)
+        if r is None:
+            return
+        row = _chat_tools.row(session_id, query, _chat_tools.offered(message), server, _chat_tools.used(reply),
+                              ts=datetime.utcnow().isoformat(timespec="seconds") + "Z")
+        await r.lpush(CHAT_TOOLS_SHADOW_KEY, json.dumps(row))
+        await r.ltrim(CHAT_TOOLS_SHADOW_KEY, 0, CHAT_TOOLS_SHADOW_CAP - 1)
+        # FM-3.5: the same turn on the ledger as a ranking decision, so the tool-ranking set covers chat
+        _tsm = sys.modules.get("tool_shortlist") or sys.modules.get("Vera.vera.minds.tool_shortlist")
+        if _tsm is not None and hasattr(_tsm, "on_chat_turn"):
+            _tsm.on_chat_turn(session_id, row.get("ts") or "", query, server, list(row.get("used") or []))
+    except Exception as e:
+        log.debug("chat tools shadow: %s", e)
 try:
     from Vera.vera.fabric import fusion_core as _fusion
 except Exception:                       # worktree / app-free import
@@ -1752,6 +1787,10 @@ async def agent_chat_stream_endpoint(request: Request):
     session_id = body.get("session_id", "") or str(uuid.uuid4())
     try:    history = json.loads(body.get("history", "[]"))
     except: history = []
+    # four-minds FM-0.3: the exact request body, kept only when chat.replay_capture is on (background, never waits)
+    _replay = sys.modules.get("chat_replay") or sys.modules.get("Vera.vera.minds.chat_replay")
+    if _replay is not None:
+        _replay.capture(body, session_id)
 
     # ── Set session_id into syslog context var so all downstream caps
     # (ide.fs.write, research.*, etc.) can read it from get_trigger_chain().
@@ -2063,6 +2102,23 @@ async def agent_chat_stream_endpoint(request: Request):
                 log.debug("chat deep memory failed: %s", _e)
                 return {"text": "", "hits": 0, "vector": False, "ms": 0.0, "error": str(_e)}
         _mem_task = asyncio.create_task(_run_mem_deep())
+    # FM-1.2 the chat PRE frame (switch sense.chat_pre, default off): sense.frame for the message, started at once and
+    # NEVER awaited before the model - its phase frame says when it landed, so the turn record shows how often a frame
+    # is ready before the first token (what its consumers - the chat shortlist, the canvas curator - can rely on)
+    _frame_task = None
+    if _bare_q.strip() and await _switch_mode("sense.chat_pre", body.get("minds")) == "on":
+        _sf = CAPABILITY_REGISTRY.get("sense.frame") or {}
+        _sf_fn = _sf.get("raw") or _sf.get("func")
+        if _sf_fn:
+            _frame_task = asyncio.create_task(_sf_fn(text=_bare_q, kind="chat"))
+    # FM-3.2/3.3 the tool shortlist in shadow (switch tools.shortlist.chat, default legacy): caps.shortlist on the
+    # user's words beside the page's own list - started with the turn, never awaited before the model, recorded after
+    _sl_task = None
+    if _bare_q.strip() and await _switch_mode("tools.shortlist.chat", body.get("minds"), default="legacy") in ("shadow", "on"):
+        _sl = CAPABILITY_REGISTRY.get("caps.shortlist") or {}
+        _sl_fn = _sl.get("raw") or _sl.get("func")
+        if _sl_fn:
+            _sl_task = asyncio.create_task(_sl_fn(text=_bare_q, k=28))
 
     def _format_web_context(res) -> str:
         """Render web.search results into a system-prompt fragment."""
@@ -2078,12 +2134,16 @@ async def agent_chat_stream_endpoint(request: Request):
             url   = (r.get("url") or "").strip()
             snip  = " ".join((r.get("snippet") or "").split())[:400]
             lines.append(f"[{i}] {title}\n{url}\n{snip}")
+        # owner 2026-10-11: the model calls info.seek itself - nothing heavier runs before the answer. These quick
+        # snippets are a head start, not the evidence: pages unread, mostly undated (info-seeking plan SK-2.4).
         lines.append(
-            "\nGround your answer in these results and cite sources as [n] where "
-            "relevant. If they don't cover the question, say so rather than guessing.")
+            "\nThese are search SNIPPETS only - the pages were not read and most carry no date. Use them for what "
+            "they plainly state, cited as [n]. For anything current, a figure, a date or 'the latest' on something, "
+            "call info.seek before answering: it reads the pages and returns numbered, dated evidence. Never fill "
+            "a gap from memory or a guess.")
         if _web_auto:
             lines.append("This search was run for you before you answered; do not call web.search again for the "
-                         "same thing.")
+                         "same thing (info.seek is the next step, not another web.search).")
         return "\n".join(lines)
 
     async def _safe_gen():
@@ -2104,6 +2164,25 @@ async def agent_chat_stream_endpoint(request: Request):
                                         "query": _web_query[:200]}) + "\n\n").encode())
         _web_phase = None
         _mem_phase = None
+        _frame_phase = None
+
+        async def _frame_phase_done():
+            # the PRE frame's phase: done with its domain (or degraded) and its own time, whenever it lands
+            try:
+                _fr = await asyncio.wait_for(asyncio.shield(_frame_task), 5.0)
+            except Exception:
+                _fr = None
+            _ok = isinstance(_fr, dict) and not _fr.get("error")
+            _det = ((_fr or {}).get("domain") or ("degraded" if (_fr or {}).get("degraded") else "")) if _ok else ""
+            _fms = ((_fr or {}).get("ms") or {}).get("total") if _ok else None
+            try:
+                _bytes = _ph.sse("sense", "frame", "reading the message", "done" if _ok else "fail",
+                                 ms=_fms if _fms is not None else 0, detail=_det)
+                if _bytes:
+                    await _q.put(_bytes)
+            except Exception as _e:
+                log.debug("frame phase skipped: %s", _e)
+
         _MEM_LABEL = "searching earlier conversations (all sessions)"
         _model_t0 = _time.monotonic()
         # the answer's model slot already taken as it starts: say "waiting for the GPU" until the first word, not
@@ -2137,6 +2216,8 @@ async def agent_chat_stream_endpoint(request: Request):
                 for _f in _phases.from_marks(_ph, _ep_marks):
                     if not _ph.silent:
                         await _q.put(_ph.raw(_f))
+                if _frame_task is not None:
+                    _frame_phase = asyncio.create_task(_frame_phase_done())
                 if _needs is not None and _web_rules:
                     _wn = _needs["web"]
                     await _q.put(_ph.sse("needs", "web", "deciding whether to search the web",
@@ -2475,11 +2556,15 @@ async def agent_chat_stream_endpoint(request: Request):
         finally:
             # Tear down the merge plumbing — an opener still in flight after
             # the main stream finished (or the client vanished) is pointless.
-            for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase, _mem_task, _mem_phase):
+            for _t in (_op_pump, _opener_task, _main_pump, _web_task, _web_phase, _mem_task, _mem_phase,
+                       _frame_task, _frame_phase):
                 if _t is not None and not _t.done():
                     _t.cancel()
             elapsed_ms = round((_time.monotonic() - _stream_t0) * 1000)
             _record_chat_turn(_ph, agent.name, elapsed_ms, _resp_chars, session_id)
+            if _sl_task is not None:
+                asyncio.ensure_future(_record_tools_shadow(session_id, _bare_q, message, "".join(_resp_head), _sl_task))
+            _note_info_miss(session_id, _bare_q, "".join(_resp_head), _web_auto)
             # a stream that ended early (client gone, error) still counts its memory use, in the background
             if _usage_t is None:
                 _usage_start()
@@ -4058,8 +4143,10 @@ AIDE_PROMPT = (
     "in milliseconds. Use web.fetch for one known URL, http.get/http.post for APIs. "
     "research.run is a BACKGROUND report job (5-30 minutes) — only when the user "
     "asks for a report or deep dive (info.seek need=deep starts it for you).\n"
-    "• What Vera already knows about the user → memory.recall / memory.search / "
-    "memory.session_history and context.assemble / context.recall. Persist a "
+    "• What Vera already knows about the user → memory.seek (one search over every "
+    "store), then memory.read for a full record by id - the same pair the agent "
+    "loop uses; memory.session_history for this conversation; memory.recall / "
+    "memory.search and context.assemble / context.recall still work. Persist a "
     "durable fact with memory.store.\n"
     "• Memories and session notes are dated records of what was said or seen, not "
     "proof the world is still that way. Use them for the user's own preferences and "
@@ -4120,6 +4207,7 @@ AIDE_PROMPT = (
 _AIDE_PRIOR_PROMPTS = {
     "7a9ac80b6a8c4023d1cca601ae12610412a31fb3",   # to 2026-10-10 (before the info-seeking grounding rules)
     "68b6c2325f754d4be4b354004fbb02956eab2088",   # 2026-10-10 evening (web.research first, before info.seek)
+    "b99329fc86df0e71ed4d6f4fe7da18a21d9c89a7",   # 2026-10-11 (info.seek first, before memory.seek / memory.read)
 }
 _AIDE_RETIRED_CAPS = ("research.quick_search",)
 
@@ -4170,7 +4258,9 @@ DEFAULT_AGENTS = [
             # Babblefish protocol translation
             "babblefish.modules", "babblefish.speak",
             "babblefish.listen", "babblefish.decode",
-            # Memory (allowed — deliberately NOT the bare fabric.* caps)
+            # Memory (allowed — deliberately NOT the bare fabric.* caps). memory.seek / memory.read first: the
+            # canonical pair the agent loop uses (info-seeking plan SK-2.6); recall/search kept as older names.
+            "memory.seek", "memory.read",
             "memory.recall", "memory.search", "memory.session_history", "memory.store",
             # Context assembly (allowed)
             "context.assemble", "context.recall",
@@ -5790,6 +5880,7 @@ async def agent_patch(agent_id: str = "", name: str = "", fields: Optional[Dict[
 
 @capability(
     "agent.list", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "agents"}, "draw": {"columns": ["name", "label", "model", "tool_mode", "voice", "memory_enabled", "archived", "updated_at"]}, "empty": "No agents"}},
     http_method="GET", http_path="/agents/list", http_tags=["agents"],
     description="List all registered agents.",
 )
@@ -5982,6 +6073,7 @@ async def agent_chat_voice(
 
 @capability(
     "agent.models", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "instances"}, "draw": {"columns": ["name", "label", "gpu", "models"]}, "empty": "No Ollama instance is online"}},
     http_method="GET", http_path="/agents/models", http_tags=["agents"],
     description="List all models available across all Ollama instances.",
 )
@@ -6788,6 +6880,76 @@ except Exception:                       # worktree / app-free import
     from vera.fabric import retrieval_timing_core as _rtc_chat
 CHAT_TURNS = _rtc_chat.Window(500)
 _CHAT_TURN_TASKS: set = set()     # strong refs to the background posts
+
+
+# ── info-seeking misses in live chat (plan SK-4.3) ───────────────────────────────────────────────────────────────
+_INFO_MISS_KEY = "vera:info:misses:"
+
+
+def _note_info_miss(session_id: str, question: str, reply: str, prefetched: bool) -> None:
+    """At the end of a turn: did a question about the outside world get no lookup, and is the user pushing back?
+    Never raises, never awaits - counting happens in the background."""
+    try:
+        wants = bool((_turn_needs.needs(question or "") or {}).get("web", {}).get("on"))
+        miss = _info_miss.classify(question, reply, wants_web=wants, prefetched=bool(prefetched))
+        pb = _info_miss.pushback(question)
+        kinds = (["web_turns"] if wants else []) + ([miss["kind"]] if miss else []) + (["pushback"] if pb else [])
+        if not kinds:
+            return
+        _t = asyncio.get_running_loop().create_task(_record_info_miss(session_id, question, kinds, miss, pb))
+        _CHAT_TURN_TASKS.add(_t)
+        _t.add_done_callback(_chat_turn_task_done)
+    except Exception as e:
+        log.debug("info miss note: %s", e)
+
+
+async def _record_info_miss(session_id: str, question: str, kinds: List[str], miss: Optional[Dict[str, Any]],
+                            pb: Optional[str]) -> None:
+    from datetime import datetime, timezone
+    r = _redis()
+    if r is not None:
+        key = _INFO_MISS_KEY + datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        for k in kinds:
+            await r.hincrby(key, k, 1)
+        await r.expire(key, 60 * 86400)
+    if miss or pb:
+        await emit_event({"type": "info.miss", "session_id": str(session_id or "")[:80],
+                          "kinds": [k for k in kinds if k != "web_turns"], "question": str(question or "")[:200],
+                          "detail": (miss or {}).get("detail", ""), "pushback": pb or ""})
+
+
+@capability(
+    "info.misses", memory="off", silent=True,
+    http_method="GET", http_path="/info/misses", http_tags=["info", "chat"],
+    description="How often chat answered a question about the outside world without looking it up, and how often "
+                "the user pushed back on an answer's facts - per day (info-seeking plan SK-4.3). Kinds: web_turns "
+                "(turns the rules say want the web), no_lookup (answered with no lookup at all), snippets_only "
+                "(only the pre-answer search snippets, no info.seek), pushback ('that's out of date', 'you made "
+                "that up'). Input: days (int, default 14). Output: {days: [{date, web_turns, no_lookup, "
+                "snippets_only, pushback}], totals, miss_rate}.",
+)
+async def cap_info_misses(days: int = 14, trace_id=None):
+    from datetime import datetime, timedelta, timezone
+    r = _redis()
+    if r is None:
+        return {"error": "redis unavailable"}
+    n = max(1, min(60, int(days or 14)))
+    today = datetime.now(timezone.utc).date()
+    out, totals = [], {"web_turns": 0, "no_lookup": 0, "snippets_only": 0, "pushback": 0}
+    for i in range(n):
+        d = (today - timedelta(days=i)).isoformat()
+        raw = await r.hgetall(_INFO_MISS_KEY + d) or {}
+        raw = {(k.decode() if isinstance(k, (bytes, bytearray)) else str(k)): v for k, v in raw.items()}
+        row = {"date": d}
+        for k in totals:
+            row[k] = int(raw.get(k) or 0)
+            totals[k] += row[k]
+        out.append(row)
+    wt = totals["web_turns"]
+    return {"days": out, "totals": totals,
+            "miss_rate": round((totals["no_lookup"] + totals["snippets_only"]) / wt, 3) if wt else None}
+
+
 
 
 def _chat_turn_task_done(t) -> None:

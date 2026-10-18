@@ -50,6 +50,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.homeassistant import ha_core as core
 from Vera.vera.homeassistant import ha_estate as estate
 from Vera.vera.security import secrets as vsecrets
+from Vera.vera.homeassistant.ha_effects import observe_homeassistant_notification_effect
 
 log = logging.getLogger("vera.homeassistant")
 
@@ -93,11 +94,53 @@ async def _load_config(open_secrets: bool = True) -> Dict[str, Any]:
         for f in _SECRET_FIELDS:
             if cfg.get(f):
                 try:
-                    cfg[f] = vsecrets.open_secret(cfg[f])
+                    cfg[f] = await _pa().open_any(_orch.CAPABILITY_REGISTRY, cfg[f])
                 except Exception:
                     log.warning("ha: could not unseal %s", f)
                     cfg[f] = ""
+        # nothing set here: the Platforms target "homeassistant" holds the same settings (data-connections plan) - use
+        # it for whatever this config leaves empty
+        if not cfg.get("base_url") or any(not cfg.get(f) for f in _SECRET_FIELDS):
+            tf = await _pa().target_fields(_orch.CAPABILITY_REGISTRY, "homeassistant")
+            for f in ("base_url",) + tuple(_SECRET_FIELDS):
+                if not cfg.get(f) and tf.get(f):
+                    cfg[f] = tf[f].rstrip("/") if f == "base_url" else tf[f]
     return cfg
+
+
+def _pa():
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p             # tests in a worktree: the newer copy
+    return _p
+
+
+async def _adopt(dry_run: bool) -> List[Dict[str, str]]:
+    """Move this module's credentials still sealed here into the Platforms store (platform.secrets.adopt)."""
+    r = _redis()
+    if not r:
+        return []
+    raw = await r.hgetall(KEY_CONFIG)
+    vals = {(k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+             for k, v in (raw or {}).items()}
+    moved: List[Dict[str, str]] = []
+    for f in _SECRET_FIELDS:
+        if not _pa().needs_adopting(vals.get(f)):
+            continue
+        key = _pa().key_for("ha", f)
+        moved.append({"record": "ha", "field": f, "key": key})
+        if not dry_run:
+            new = await _pa().adopt_value(_orch.CAPABILITY_REGISTRY, key, vals[f], "Home Assistant " + f)
+            if new != vals[f]:
+                await r.hset(KEY_CONFIG, f, new)
+    return moved
+
+
+_pa().register_adopter("ha", _adopt)
 
 
 def _redact(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,6 +161,7 @@ def _unconfigured() -> Dict[str, Any]:
 
 @capability(
     "ha.config.get", http_method="GET", http_path="/ha/config",
+    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["base_url", "configured", "verify_tls", "updated"]}}},
     http_tags=["homeassistant"], memory="off",
     description="Read the Home Assistant connection config (token redacted). "
                 "Output: {base_url, token, verify_tls, configured}.",
@@ -157,8 +201,9 @@ async def cap_config_set(base_url: str = "", token: str = "",
 
     stored = dict(cur)
     for f in _SECRET_FIELDS:
-        if stored.get(f):
-            stored[f] = vsecrets.seal(stored[f])
+        if stored.get(f):          # into the Platforms credential store; sealed here only without it
+            stored[f] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("ha", f), stored[f],
+                                         "Home Assistant " + f)
     await r.hset(KEY_CONFIG, mapping={
         k: (json.dumps(v) if isinstance(v, (dict, list)) else str(v))
         for k, v in stored.items()})
@@ -229,6 +274,7 @@ async def cap_health(trace_id=None):
 
 @capability(
     "ha.states", http_method="GET", http_path="/ha/states",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "entities"}, "draw": {"columns": ["name", "entity_id", "state", "domain", "available"]}, "empty": "No entities"}},
     http_tags=["homeassistant"], memory="off",
     description="List Home Assistant entities, newest state included. "
                 "Input: domain (str - e.g. light, switch, scene, sensor), "
@@ -274,6 +320,7 @@ async def cap_state(entity: str = "", trace_id=None):
 
 @capability(
     "ha.find", http_method="GET", http_path="/ha/find",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "matches"}, "draw": {"columns": ["name", "entity_id", "state", "domain", "available", "score"]}, "empty": "Nothing matches"}},
     http_tags=["homeassistant"], memory="off",
     description="Rank entities against a human phrase - what 'the bedside "
                 "lamp' actually refers to. "
@@ -294,6 +341,7 @@ async def cap_find(query: str = "", domain: str = "", limit: int = 10,
 
 @capability(
     "ha.summary", http_method="GET", http_path="/ha/summary",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "$"}, "title": "House"}, {"kind": "parts", "map": {"parts": "domains"}, "title": "Entities by domain"}, {"kind": "table", "form": "list", "map": {"rows": "unavailable"}, "title": "Unavailable"}]}},
     http_tags=["homeassistant"], memory="off",
     description="Entity counts per domain and what is currently unreachable - "
                 "the health view of the house. "
@@ -309,6 +357,7 @@ async def cap_summary(trace_id=None):
 
 @capability(
     "ha.services", http_method="GET", http_path="/ha/services",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "services"}, "draw": {"columns": ["domain", "services"]}, "empty": "No services"}},
     http_tags=["homeassistant"], memory="off",
     description="Services Home Assistant exposes, optionally for one domain. "
                 "Input: domain (str). Output: {services, count}.",
@@ -464,14 +513,20 @@ async def cap_scene(scene: str = "", trace_id=None):
 @capability(
     "ha.notify", http_method="POST", http_path="/ha/notify",
     http_tags=["homeassistant"], memory="on",
+    redact_args=["message", "title", "target", "data", "idempotency_key",
+                 "approval_receipt_ref"], redact_result=True,
     description="Push a notification through a Home Assistant notify target - "
                 "a paired phone, say. Target accepts 'notify.smasnug', "
                 "'mobile_app_x' or the bare slug. "
                 "Input: message (str!), title (str), target (str), "
-                "data (dict). Output: {ok, service}.",
+                "data (dict), optional idempotency_key, approval_receipt_ref "
+                "and retry policy evidence. Control references are never sent "
+                "to Home Assistant. Output includes effect_shadow.",
 )
 async def cap_notify(message: str = "", title: str = "",
                      target: str = "", data: Optional[Dict[str, Any]] = None,
+                     idempotency_key: str = "", approval_receipt_ref: str = "",
+                     retry: bool = False,
                      trace_id=None):
     if not message.strip():
         return {"error": "message is required"}
@@ -480,12 +535,17 @@ async def cap_notify(message: str = "", title: str = "",
                          "ha.services(domain='notify')"}
     domain, service = core.notify_service(target)
     payload = core.notify_payload(message, title, data)
+    shadow = observe_homeassistant_notification_effect(
+        target_ref=f"{domain}.{service}", idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     try:
-        return await _do_call(domain, service, payload)
+        result = await _do_call(domain, service, payload)
+        return {**result, "effect_shadow": shadow}
     except RuntimeError as e:
-        return _unconfigured() if "not configured" in str(e) else {"error": str(e)}
+        result = _unconfigured() if "not configured" in str(e) else {"error": str(e)}
+        return {**result, "effect_shadow": shadow}
     except Exception as e:
-        return {"error": str(e)[:300]}
+        return {"error": str(e)[:300], "effect_shadow": shadow}
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -528,6 +588,7 @@ async def _probe(url: str, timeout: float = 4.0) -> bool:
 
 @capability(
     "ha.estate.plan", http_method="GET", http_path="/ha/estate/plan",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "kv", "map": {"fields": "counts"}, "title": "Plan"}, {"kind": "table", "form": "table", "map": {"rows": "update"}, "draw": {"columns": ["label", "entity_id", "kind"]}, "title": "To refresh"}, {"kind": "table", "form": "table", "map": {"rows": "skipped"}, "draw": {"columns": ["label", "reason"]}, "title": "Skipped"}]}},
     http_tags=["homeassistant"], memory="off",
     description="What an estate sync would push into Home Assistant, without "
                 "pushing it. One entity per registered service. Ephemeral "

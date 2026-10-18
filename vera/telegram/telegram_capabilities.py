@@ -138,6 +138,53 @@ def _redis():
     return _orch.REDIS
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+def _reg():
+    import Vera.vera.capability_orchestration as _c
+    return _c.CAPABILITY_REGISTRY
+
+
+async def _adopt(dry_run: bool):
+    """Move the bot tokens still sealed here into the Platforms store (platform.secrets.adopt)."""
+    r = _redis()
+    if not r:
+        return []
+    raw = await r.get(KEY_CONFIG)
+    if not raw:
+        return []
+    data = json.loads(raw)
+    moved, changed = [], False
+    rows = [("default", data, "token")] + [(b.get("id") or str(i), b, "token")
+                                          for i, b in enumerate(data.get("bots") or []) if isinstance(b, dict)]
+    for rid, holder, f in rows:
+        if not _pa().needs_adopting(holder.get(f)):
+            continue
+        key = _pa().key_for("telegram", rid)
+        moved.append({"record": rid, "field": f, "key": key})
+        if not dry_run:
+            new = await _pa().adopt_value(_reg(), key, holder[f], f"Telegram bot {rid}")
+            changed = changed or new != holder[f]
+            holder[f] = new
+    if changed:
+        await r.set(KEY_CONFIG, json.dumps(data))
+    return moved
+
+
+_pa().register_adopter("telegram", _adopt)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG / STATE PERSISTENCE
 # ─────────────────────────────────────────────────────────────────────────────
@@ -156,8 +203,8 @@ async def _get_config() -> Dict[str, Any]:
         # Token is sealed at rest; open it so all callers receive plaintext.
         # open_secret() tolerates legacy plaintext, so pre-encryption tokens
         # keep working until the next save re-seals them.
-        merged["token"] = vsecrets.open_secret(merged.get("token", ""))
-        merged["bots"] = [dict(b, token=vsecrets.open_secret(b.get("token", "")))
+        merged["token"] = await _pa().open_any(_reg(), merged.get("token", ""))
+        merged["bots"] = [dict(b, token=await _pa().open_any(_reg(), b.get("token", "")))
                           for b in (merged.get("bots") or []) if isinstance(b, dict)]
         return merged
     except Exception as e:
@@ -172,9 +219,12 @@ async def _save_config(cfg_data: Dict[str, Any]):
     try:
         # Seal the bot token before it touches Redis (never store plaintext).
         data = {k: v for k, v in cfg_data.items() if not str(k).startswith("_")}
-        data["token"] = vsecrets.seal(cfg_data.get("token", ""))
-        data["bots"] = [dict(b, token=vsecrets.seal(b.get("token", "")))
-                        for b in (cfg_data.get("bots") or []) if isinstance(b, dict)]
+        # into the Platforms credential store (sealed here only without it)
+        data["token"] = await _pa().keep(_reg(), _pa().key_for("telegram", "default"), cfg_data.get("token", ""),
+                                         "Telegram bot (default)")
+        data["bots"] = [dict(b, token=await _pa().keep(_reg(), _pa().key_for("telegram", b.get("id") or i),
+                                                        b.get("token", ""), f"Telegram bot {b.get('id') or i}"))
+                        for i, b in enumerate(cfg_data.get("bots") or []) if isinstance(b, dict)]
         await r.set(KEY_CONFIG, json.dumps(data))
     except Exception as e:
         log.warning("tg config save: %s", e)
@@ -1494,7 +1544,7 @@ async def _startup():
                 try:
                     stored = json.loads(raw)
                     tok = stored.get("token", "")
-                    if tok and not vsecrets.is_sealed(tok):
+                    if tok and not vsecrets.is_sealed(tok) and not _pa().is_ref(tok):
                         await _save_config(await _get_config())
                         log.info("tg: migrated plaintext token to sealed at rest")
                 except Exception as _mig_e:

@@ -182,9 +182,20 @@ def test_receipt_sink_failure_is_visible_but_does_not_retroactively_fail_native(
     assert result.evidence_error_code == "receipt_store_failed"
 
 
-def test_unknown_native_backend_fails_closed_and_is_observed(tmp_path):
+def test_registered_additional_native_backend_is_preserved_in_evidence(tmp_path):
     async def native():
         return {"postgres": True, "mystery": True}
 
-    with pytest.raises(ValueError, match="unknown backend"):
-        run(call(tmp_path, native, revision_ok))
+    result = run(call(tmp_path, native, revision_ok))
+    assert result.native_result == {"postgres": True, "mystery": True}
+    assert result.receipt.native_outcomes["mystery"] == "committed"
+
+
+def test_invalid_native_evidence_cannot_retroactively_fail_native(tmp_path):
+    async def native():
+        return {"postgres": "not-an-outcome"}
+
+    result = run(call(tmp_path, native, revision_ok))
+    assert result.native_result == {"postgres": "not-an-outcome"}
+    assert result.receipt is None
+    assert result.evidence_error_code == "native_outcome_classification_failed"

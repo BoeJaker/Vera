@@ -7,7 +7,7 @@ competes with a person or another agent. Each run's trace is appended to
 census.jsonl; a run that exceeds the wall cap is cancelled and recorded as such,
 because a timeout is data too.
 """
-import json, subprocess, time, sys, os
+import calendar, json, subprocess, threading, time, sys, os
 
 # Which Vera the goals run against, and where the rows go. Defaults are prod and
 # the numbered series' files. CENSUS_BASE points a run at a sandbox (e.g. the
@@ -345,13 +345,37 @@ MAX_RERUNS = 2
 EXIT_DROPPED = 3
 
 
+def _hold_expired(d):
+    """A pause/yield with `until` in the past is over (census.control.set hours=...)."""
+    until = str((d or {}).get("until") or "").strip()
+    if not until or d.get("drop") or not d.get("pause"):
+        return False
+    try:
+        import calendar as _cal
+        return time.time() >= _cal.timegm(time.strptime(until[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return False
+
+
 def read_control():
     try:
         with open(CONTROL_FILE, encoding="utf-8") as fh:
             d = json.load(fh)
-        return d if isinstance(d, dict) else {}
+        d = d if isinstance(d, dict) else {}
     except Exception:
         return {}
+    if _hold_expired(d):
+        log("  hold expired at %s - resuming (it was: %s)" % (d.get("until"), d.get("reason") or "-"))
+        try:
+            with open(CONTROL_FILE, "w", encoding="utf-8") as fh:
+                json.dump({"pause": False, "after_goal": False, "drop": False,
+                           "reason": "hold expired (%s)" % d.get("until"), "by": "harness",
+                           "resume_on_start": False, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())},
+                          fh, indent=1)
+        except Exception:
+            pass
+        return {}
+    return d
 
 
 # -- The census as a driver in Vera's own task system ---------------------------
@@ -380,13 +404,16 @@ def reserve_census_run(template, done_rows):
     return "run%d" % n if t == "default" else "%s-run%d" % (t, n)
 
 
-_INGEST = {"unavailable": False}
+# `pending`: rows whose ingest found prod down (no response - a restart, a release). Roadmap E3
+# (28 Sep, done 11 Oct): one silent prod restart used to switch ingest off for the rest of the
+# census; now such rows are queued and retried after the next good ingest and at the end.
+# Only a prod WITHOUT the capability ("unknown capability") turns ingest off.
+_INGEST = {"unavailable": False, "pending": []}
 
 
-def ingest_row(rec, template, census_run):
-    """Post one finished goal to evolve.result.ingest. Best effort, never raises."""
-    if _INGEST["unavailable"] or not isinstance(rec, dict) or not rec.get("id"):
-        return
+def _ingest_once(rec, template, census_run):
+    """One post. 'ok' | 'down' (no answer - retry later) | 'missing' (prod lacks the cap) |
+    'refused' (prod answered with an error)."""
     try:
         body = json.dumps({"name": "evolve.result.ingest",
                            "arguments": {"template": template, "census_run": census_run, "row": rec},
@@ -396,21 +423,57 @@ def ingest_row(rec, template, census_run):
         resp = json.loads(out) if out else {}
     except Exception as e:
         log("  ingest failed: %s" % e)
-        return
+        return "down"
     res = resp.get("content") if isinstance(resp, dict) else None
     if isinstance(res, dict) and res.get("ok"):
         log("  ingested as run record %s (%s) in %s" % (
             rec.get("session_id") or "-", "added" if res.get("added") else "replaced", census_run))
-        return
+        return "ok"
+    if not resp:
+        return "down"
     # A prod that predates the capability answers {"detail": "Unknown capability"}.
     err = str((res or {}).get("error") if isinstance(res, dict) else
               (resp.get("detail") if isinstance(resp, dict) else "") or "no response")[:160]
     log("  ingest unavailable: %s (rows stay the record; ingest_census.py can post the archive later)" % err)
-    if not resp or "unknown" in err.lower() or "not available" in err.lower() or "not found" in err.lower():
+    if "unknown" in err.lower() or "not available" in err.lower() or "not found" in err.lower():
+        return "missing"
+    return "refused"
+
+
+def flush_pending():
+    """Retry every queued row once; the ones still not taken stay queued."""
+    left = []
+    for rec, template, census_run in list(_INGEST["pending"]):
+        st = _ingest_once(rec, template, census_run)
+        if st == "missing":
+            _INGEST["unavailable"] = True
+            return
+        if st == "down":
+            left.append((rec, template, census_run))
+    _INGEST["pending"] = left
+
+
+def ingest_row(rec, template, census_run):
+    """Post one finished goal to evolve.result.ingest. Best effort, never raises; a row that found
+    prod down is queued and retried (E3)."""
+    if _INGEST["unavailable"] or not isinstance(rec, dict) or not rec.get("id"):
+        return
+    st = _ingest_once(rec, template, census_run)
+    if st == "missing":
         _INGEST["unavailable"] = True
+    elif st == "down":
+        _INGEST["pending"].append((rec, template, census_run))
+        log("  ingest queued (prod did not answer); %d row(s) waiting" % len(_INGEST["pending"]))
+    elif st == "ok" and _INGEST["pending"]:
+        flush_pending()
 
 
 _ACTIVE = {}
+_ACTIVE_LOCK = threading.Lock()
+_HEARTBEAT = {"started": False}
+#: DEEP-21 D21-3: the active file is refreshed this often while running or parked, so a long goal or a
+#: long park never reads as a dead harness (readers call it stale after control.ACTIVE_STALE_S).
+HEARTBEAT_S = 60
 
 
 def write_active(**fields):
@@ -418,16 +481,31 @@ def write_active(**fields):
 
     Rewritten on every state change (goal start, pause, resume, goal end, exit)
     so a reader never has to infer progress from the log."""
-    _ACTIVE.update(fields)
-    _ACTIVE["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    _ACTIVE["pid"] = os.getpid()
-    try:
-        tmp = ACTIVE_FILE + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(_ACTIVE, fh, indent=1)
-        os.replace(tmp, ACTIVE_FILE)
-    except Exception as e:
-        log("  (active file not written: %s)" % e)
+    with _ACTIVE_LOCK:
+        _ACTIVE.update(fields)
+        _ACTIVE["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        _ACTIVE["pid"] = os.getpid()
+        try:
+            tmp = ACTIVE_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(_ACTIVE, fh, indent=1)
+            os.replace(tmp, ACTIVE_FILE)
+        except Exception as e:
+            log("  (active file not written: %s)" % e)
+
+
+def _heartbeat_loop(every=HEARTBEAT_S):
+    while True:
+        time.sleep(every)
+        if _ACTIVE.get("state") in ("running", "paused"):
+            write_active()
+
+
+def start_heartbeat():
+    """A daemon thread that refreshes the active file while the harness runs (D21-3)."""
+    t = threading.Thread(target=_heartbeat_loop, name="census-heartbeat", daemon=True)
+    t.start()
+    return t
 
 
 def prod_healthy():
@@ -595,6 +673,67 @@ def routing_calls(t_start, t_end):
             "spill_calls": spill, "n": len(calls),
             "truncated": bool(oldest and oldest > lo),
             "log_total": d.get("total")}
+
+
+def _epoch(ts):
+    try:
+        return calendar.timegm(time.strptime(str(ts)[:19], "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return None
+
+
+def gate_windows(pipe, now=None):
+    """[(start, end)] epoch seconds of a pipeline's critical tier: its first test-pool (or
+    critical-queue) step to its critical-tests step; still running = until `now`."""
+    steps = pipe.get("steps") or []
+    st = next((_epoch(x.get("ts")) for x in steps
+               if x.get("stage") in ("test-pool", "critical-queue", "critical-tier")), None)
+    if st is None:
+        return []
+    en = next((_epoch(x.get("ts")) for x in steps if x.get("stage") == "critical-tests"), None)
+    if en is None:
+        if str(pipe.get("ended_at") or ""):
+            return []
+        en = now if now is not None else time.time()
+    return [(st, max(st, en))]
+
+
+def overlap_seconds(windows, t0, t1):
+    """Seconds of [t0, t1] covered by any of `windows` (overlapping windows counted once)."""
+    cut = sorted((max(a, t0), min(b, t1)) for a, b in windows if min(b, t1) > max(a, t0))
+    total, cur_a, cur_b = 0, None, None
+    for a, b in cut:
+        if cur_b is None or a > cur_b:
+            if cur_b is not None:
+                total += cur_b - cur_a
+            cur_a, cur_b = a, b
+        else:
+            cur_b = max(cur_b, b)
+    if cur_b is not None:
+        total += cur_b - cur_a
+    return int(total)
+
+
+def gate_overlap(t0, t1):
+    """{gate_overlap_s, gates}: how long a pipeline gate's test tier ran while this goal ran
+    (compute-roles K4, owner 11 Oct 2026). A gate shares the nodes' CPU with the census's
+    inference, so wall-time comparisons flag such rows; quality checks do not depend on it.
+    None when prod could not say."""
+    d = mcp("evolve.pipeline.list", {"limit": 40}, timeout=30) or {}
+    pipes = d.get("pipelines") if isinstance(d, dict) else None
+    if not isinstance(pipes, list):
+        return None
+    wins, ids = [], []
+    for p in pipes:
+        c = _epoch(p.get("created_at"))
+        if c is None or c > t1 or c < t0 - 3600:
+            continue
+        full = (mcp("evolve.pipeline.get", {"id": p.get("id")}, timeout=30) or {}).get("pipeline") or {}
+        w = gate_windows(full, now=t1)
+        if w and overlap_seconds(w, t0, t1):
+            wins += w
+            ids.append(p.get("id"))
+    return {"gate_overlap_s": overlap_seconds(wins, t0, t1), "gates": ids}
 
 
 def box_is_busy():
@@ -794,6 +933,8 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
     log("== %s (%s/%s)%s ==" % (g["id"], g["intent"], g["tier"],
                                 "" if wall_cap == WALL_CAP_S
                                 else "  [cap %ds]" % wall_cap))
+    if not _HEARTBEAT.get("started"):
+        _HEARTBEAT["started"] = bool(start_heartbeat())
     write_active(state="running", current_goal=g["id"], session_id="",
                  goal_started_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                  wall_cap_s=wall_cap)
@@ -1023,7 +1164,16 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
         except Exception:
             _resp_obj = {}
         answer = _answer_text(_resp_obj)
-        quality = _q_eval(g.get("checks"), got, answer)
+        # the tools the run called (trace steps' calls) - for `tool_called` checks
+        _tools = None
+        if any("tool_called" in (c or {}) for c in (g.get("checks") or [])):
+            try:
+                _tr0 = mcp("workshop.agent_loop.trace", {"session_id": sid}, timeout=120) or {}
+                _tools = [str(c.get("tool")) for s in (_tr0.get("steps") or []) for c in (s.get("calls") or [])
+                          if c.get("tool")]
+            except Exception:
+                _tools = None
+        quality = _q_eval(g.get("checks"), got, answer, tools=_tools)
         quality["files_found"] = sorted(got)
         quality["files_missing"] = [f for f in wanted if f not in got]
     except Exception as e:
@@ -1031,6 +1181,10 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
 
     tr = mcp("workshop.agent_loop.trace", {"session_id": sid}, timeout=120)
     co = tr.get("counters", {}) or {}
+    try:
+        _gate_ov = gate_overlap(t0, time.time())
+    except Exception:
+        _gate_ov = None
     rec = {
         "id": g["id"], "session_id": sid, "status": status, "wall_s": wall,
         "cancelled": cancelled,
@@ -1038,6 +1192,9 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
         # across runs needs one, and the archive's mtime is not it.
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t0)),
         "ended_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        # a pipeline gate's tests ran beside this goal for this long (K4): its wall time is
+        # not comparable with a quiet run's; None = unknown
+        "gate_overlap": _gate_ov,
         "intent": g["intent"], "tier": g["tier"], "output": g["output"], "shape": g["shape"],
         "planned": co.get("planned_steps"), "executed": co.get("executed_steps"),
         "inserted": co.get("inserted_steps"), "tool_calls": co.get("tool_calls"),
@@ -1054,6 +1211,10 @@ def _run_goal_once(g, model="", template="", wall_cap_default=0):
         "cycles_per_step": co.get("cycles_per_step"),
         "stage_calls": co.get("stage_calls"),
         "plan_tier": (tr.get("plan") or {}).get("tier"),
+        # plan.tier_lower (FM-4.3): on, and whether it changed this goal's tier - an arm whose goals
+        # never qualify is otherwise blind (12 Oct 2026)
+        "tier_lower": (tr.get("plan") or {}).get("tier_lower"),
+        "tier_lower_applied": (tr.get("plan") or {}).get("tier_lower_applied"),
         "plan_intent": (tr.get("plan") or {}).get("intent"),
         # Planning style: what this census ASKED for, and what the loop says it
         # USED (they differ on a fallback). A row from a loop that predates
@@ -1234,6 +1395,11 @@ def main():
         done.add(g["id"])
         write_active(goals_done=len(done), current_goal="", session_id="")
         ingest_row(rec, series, census_run)
+    if _INGEST["pending"] and not _INGEST["unavailable"]:
+        flush_pending()
+        if _INGEST["pending"]:
+            log("  %d row(s) never ingested (prod down at the end too) - post the archive with "
+                "ingest_census.py" % len(_INGEST["pending"]))
     write_active(state="done", current_goal="", session_id="")
     log("census complete")
 

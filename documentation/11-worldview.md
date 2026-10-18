@@ -74,6 +74,7 @@ treated as interchangeable.
 | `worldview_jepa.py` | Model classes, graph building, training, streaming worker, FAISS index, persistence, all `worldview.*` capabilities, panel route | **Live** |
 | `retrieval_provenance.py` | `JepaRetrievalProvenance`: binds checkpoint bytes and index membership to a `DatasetSnapshot` (backs `worldview.retrieval.*`) | **Live** |
 | `legacy_snapshot_provenance.py` | Copies bounded revision/hash fields from Chroma metadata during record fetch | **Live** |
+| `canonical_corpus_projection.py` | Builds digest-bound canonical revision and Chroma projection plans for immutable JEPA corpora | **Live, explicit write only** |
 | `worldview_panel.html` | WorldView panel, served at `/ui/panels/worldview-panel` inside the Data Fabric panel | **Live** (UI) |
 | `context_ranker.py` | `WorldviewContextRanker` — blends a Worldview score into context items | Tests only; no ranker is registered anywhere |
 | `reranking_shadow.py` | `compare_reranking_shadow` — payload-free "what would the order have been" report | Tests only |
@@ -398,7 +399,7 @@ survey of integration opportunities).
 
 ## 4. Capability reference
 
-All 38 capabilities are registered in `worldview_jepa.py`.
+All 44 capabilities are registered in `worldview_jepa.py`.
 
 | Capability | Route | Key inputs (defaults) | Purpose / notes |
 |---|---|---|---|
@@ -411,6 +412,10 @@ All 38 capabilities are registered in `worldview_jepa.py`.
 | `worldview.rollout` | `POST /worldview/rollout` | start as above, `steps` 8, `temperature` 0.8, `top_k` 20 | Sampled trajectory; each step lists up to 3 member records of that concept (first assigned, not query-specific) |
 | `worldview.counterfactual` | `POST /worldview/counterfactual` | `start_concept`, `swap_at` 1 (0-based generated step to replace; must be `< steps`), `swap_to`, `steps` 8, `temperature` 0.6, `seed` (optional) | Both timelines share the baseline's steps before `swap_at`; after it the baseline's sampled step and `swap_to` are each continued with the same seed. Returns `baseline`, `counterfactual`, `divergence_step` and the `seed` used (random when omitted) |
 | `worldview.query` | `POST /worldview/query` | `text`, `top_k` 10, `dataset_id` | Latent nearest neighbours; `dataset_id` filters after the top-k search |
+| `worldview.retrieval.snapshot.preview` | `GET /worldview/retrieval/snapshot/preview` | — | Build payload-free snapshot/bind inputs for the exact active index, or count missing revision/hash evidence without changing state |
+| `worldview.retrieval.corpus.preview` | `GET /worldview/retrieval/corpus/preview` | `dataset_id`, `limit` (1–20,000) | Count revision/hash eligibility in source metadata before training; returns no record content and changes no state |
+| `worldview.corpus.canonical.preview` | `GET /worldview/corpus/canonical/preview` | `source_dataset_id`, new `target_dataset_id`, `limit` (1–1,000) | Build a content-free, source-vector-bound migration plan and digest without writing anything |
+| `worldview.corpus.canonical.materialize` | `POST /worldview/corpus/canonical/materialize` | preview inputs, `expected_plan_digest`, `apply` false | Re-read the exact source set and, only on digest match plus explicit apply, retain the source while writing canonical revisions and their exact Chroma projections; never trains, binds or activates retrieval |
 | `worldview.retrieval.bind` | `POST /worldview/retrieval/bind` | `snapshot_json`, `records_json`, `provider_revision`, `training_run_id` | Bind checkpoint + complete index to a `DatasetSnapshot` ([§13](#13-provenance-qualified-retrieval)) |
 | `worldview.retrieval.status` | `GET /worldview/retrieval/status` | — | Re-verify the binding |
 | `worldview.retrieval.query` | `POST /worldview/retrieval/query` | `text`, `top_k` 10, `snapshot_id` | Pinned, revision-qualified retrieval |
@@ -679,6 +684,33 @@ The historical `worldview.query` remains the general interactive latent search.
 Its result IDs alone are not enough for a provider comparison: an index can
 outlive or drift from the checkpoint, and it does not identify canonical record
 revisions.
+
+`worldview.retrieval.snapshot.preview` first freezes the exact active index into
+payload-free candidate records containing only record ID, revision ID, content
+hash and source dataset ID. Rebuild and streaming ingestion preserve those
+revision/hash facts from Fabric metadata. During a graph fetch, a record that
+already has a projection content hash but no revision ID may be joined to the
+current canonical Fabric revision only when the record IDs and content hashes
+match exactly. A shared ID by itself is not evidence: records with no projection
+hash, a mismatched hash, unavailable authority or a denied read remain
+ineligible. If even one index member lacks either fact, preview returns
+ineligible with aggregate missing counts; it does not infer a revision from
+text, expose record content, persist state or authorize retrieval influence.
+
+Legacy Chroma datasets generally predate canonical revisions. The canonical
+corpus bridge makes migration explicit rather than blessing those rows in
+place. `worldview.corpus.canonical.preview` reads at most 1,000 source vectors,
+requires a document, usable vector and timestamp for every candidate, and
+returns counts plus a digest bound to the source text, vector and derived
+revision identity. It returns no record IDs, text or vectors. Materialization
+re-reads the source and requires that exact digest plus `apply=true`; it creates
+a separate target dataset whose Chroma rows carry the canonical revision ID and
+content hash, while retaining the original dataset. Each projection has a
+durable applied/failed receipt. A replay is idempotent, source drift fails
+before any write, and the operation neither trains Worldview nor binds or
+activates retrieval. Training and the frozen quality comparison remain separate
+operator actions after the target corpus passes the ordinary provenance
+preview.
 
 `worldview.retrieval.bind` establishes the stricter boundary. It accepts a
 complete record manifest that must reproduce one immutable `DatasetSnapshot`

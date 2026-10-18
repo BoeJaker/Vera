@@ -20,16 +20,24 @@ from canvas to code, verified by a screenshot pair, landed as its own pipeline.
 
 - **The canvas.** An artifact URL, or the working files (`*.dc.html`,
   `canvas.json`, images) if you still have them from the session that drew it.
-- **The plans.** `Notes/37`–`Notes/41`: the rollout, the canvas system, the
-  graph inventory (the must-keep list), the implementation scope (milestones),
-  and the programme log. Read 41 first — it is the live state.
-- **The design's own bleeding edge.** A redesign must NOT land on the shared
-  `bleeding-edge`: it is a long programme, and half a redesign on the shared
-  trunk blocks everyone else's releases. `evolve.bleeding_edge.list` shows the
-  registered edges; the design programme's is normally `bleeding-edge-design`.
-  If it does not exist, create it off `bleeding-edge` and register it
-  (`vera/evolve/edge_registry.py` — add the name, then add it to
-  `tools/hooks/protected-branches`, which a unit test keeps in step).
+- **The plans.** They live in the shared planning area, never in `Notes/`
+  (vera-coordinate §1): `<git-common-dir>/vera-work/shared-planning/<unit>/`,
+  for the desk/canvas programme `context-and-ui/` (ROADMAP, PLAN-WS-U-desk,
+  DESK-BACKLOG, DECISIONS) and the item-contract ADR (backbone-roadmap
+  `deep/DEEP-29-canvas-widgets.md` §11A, accepted 2026-10-16). Older
+  `Notes/37`-`Notes/41` files, if still present, are legacy: read them, don't
+  extend them; agent-ops AO-A.3 migrates them.
+- **Which edge.** This is the owner's call, per programme. Recorded so far:
+  - From 4 Oct, new work branches off and lands on `bleeding-edge`.
+  - On 7 Oct the owner put the WS-U desk redesign on `bleeding-edge-design`.
+
+  Use the edge the programme's unit README names, and ask if it names none.
+  Whatever edge you use, the design edge merges `bleeding-edge` in regularly
+  (backbone B1.3) so the two do not drift. `evolve.bleeding_edge.list` shows the
+  registered edges. A new edge is created only on the owner's say-so, off
+  `bleeding-edge`, and registered (`vera/evolve/edge_registry.py`: add the name,
+  then add it to `tools/hooks/protected-branches`, which a unit test keeps in
+  step).
 
 ---
 
@@ -230,7 +238,7 @@ dependencies) reports the share of pixels that differ beyond a threshold, the
 mean difference, a 4×4 grid of where the change sits, its bounding box, writes
 a diff PNG (design dimmed, differing pixels red) and gates with `--max`. The
 number backs the judgement; it does not replace it. Keep the pair, the diff and
-its json under `Notes/adopt-shots/<slice>/` and record the pair in the state
+its json under the unit's `shots/<slice>/` in the shared planning area and record the pair in the state
 (`adopt-state.mjs set … --pair`). A slice is done when the pair matches on
 layout, tiers, blocks and every must-keep row — not when the code "looks right".
 
@@ -254,7 +262,7 @@ higher-stakes act that needs the user's explicit, unambiguous go-ahead.
 
 ## 10. Log it, then take the next slice
 
-Append to Note 41 §6: the slice, its pipeline id, the screenshot pair, and any
+Append to the programme's log in its shared-planning unit (for the desk: `context-and-ui/DESK-BACKLOG.md`): the slice, its pipeline id, the screenshot pair, and any
 row you parked; then `adopt-state.mjs set <slice> landed --commit <sha>
 --pipeline <id> --pair <path>` and `push`, so the registry says the same. The
 log and the state are what let the next session — or the next model — pick the
@@ -297,8 +305,8 @@ Obey these; each was a correction, not a preference.
   illusion by rising off the plane.
 - Text and iso widgets keep their size under fit and zoom, up to a cap.
 - The chat's left menu is quick access; the deep panels open beside the chat.
-- All code lands on the design's bleeding edge; `main` only on an explicit
-  go-ahead; never push to origin unless asked; no AI co-author trailer; never
+- All code lands on the edge the programme's unit names (see §0); `main` only on an explicit
+  go-ahead or the owner's written release policy; never push to origin unless asked; no AI co-author trailer; never
   kill a process you did not start; never check out inside the primary repo.
 - Report done only with a receipt: the pipeline id, the screenshot pair, the
   check output.

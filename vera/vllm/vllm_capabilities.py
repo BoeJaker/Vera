@@ -1005,6 +1005,7 @@ async def vllm_embed(
 
 @capability(
     name="vllm.status",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "instances"}, "draw": {"columns": ["name", "label", "status", "has_gpu", "latency_ms", "in_use", "errors", "tokens_per_second"]}, "title": "Instances", "empty": "No instances"}, {"kind": "kv", "map": {"fields": "global_config"}, "title": "Config"}]}},
     description="Get a health summary of all configured vLLM instances",
     http_method="GET",
     http_path="/vllm/status",
@@ -1184,6 +1185,7 @@ async def vllm_instances_remove(instance_id: str) -> dict:
 
 @capability(
     name="vllm.models",
+    contract={"presentation": {"kind": "table", "form": "list", "map": {"rows": "all"}, "title": "Models served", "empty": "No vLLM instance is online"}},
     description="List all models served across all vLLM instances",
     http_method="GET",
     http_path="/vllm/models",

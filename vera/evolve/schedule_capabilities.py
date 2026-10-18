@@ -29,6 +29,8 @@ import json
 import logging
 import os
 import subprocess
+import re
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -44,6 +46,10 @@ try:
     from Vera.vera.evolve import schedule_core as core
 except ImportError:                                        # pragma: no cover
     from vera.evolve import schedule_core as core          # type: ignore
+try:
+    from Vera.vera.evolve import releases_view_core as _rvc
+except ImportError:                                        # pragma: no cover
+    from vera.evolve import releases_view_core as _rvc     # type: ignore
 
 try:
     from Vera.vera.census import control as _ctl
@@ -60,7 +66,9 @@ KEY_CONFIG = "vera:evolve:schedule:config"
 KEY_ACTIVE_CENSUS = "vera:evolve:schedule:census"  # the census THIS scheduler started
 MAX_RUNS = 500
 DEFAULT_CONFIG = {"enabled": True, "timezone": core.DEFAULT_TZ,
-                  "max_starts_per_tick": core.MAX_STARTS_PER_TICK}
+                  "max_starts_per_tick": core.MAX_STARTS_PER_TICK,
+                  # A2 (NIGHT-BOOKINGS, owner 17 Oct 2026): no schedule starts in these windows unless quiet_ok
+                  "quiet_windows": list(core.DEFAULT_QUIET)}
 _TICK_S = 60
 _BY = "evolve.schedule"
 
@@ -157,30 +165,32 @@ async def _runs(limit: int = 100) -> List[Dict[str, Any]]:
 
 
 async def _update_run(run_id: str, **fields) -> None:
-    """Patch one run record in place (newest 500 only)."""
+    """Patch one run record in place (newest 500 only) - under WATCH/MULTI, so an LPUSH in between
+    cannot make it overwrite the neighbouring record (DEEP-21 D21-12)."""
     r = _redis()
     if r is None:
         return
     try:
-        raw = await r.lrange(KEY_RUNS, 0, MAX_RUNS - 1)
-        for i, v in enumerate(raw or []):
-            d = json.loads(v if isinstance(v, str) else v.decode())
-            if d.get("id") == run_id:
-                d.update(fields)
-                await r.lset(KEY_RUNS, i, json.dumps(d))
-                return
+        try:
+            from Vera.vera.evolve.redis_list_patch import patch_list_item
+        except ImportError:                                   # pragma: no cover
+            from vera.evolve.redis_list_patch import patch_list_item
+        await patch_list_item(r, KEY_RUNS, lambda d: d.get("id") == run_id,
+                              lambda d: dict(d, **fields), scan=MAX_RUNS)
     except Exception:
         pass
 
 
-async def _call(name: str, **kw) -> Any:
-    cap = CAPABILITY_REGISTRY.get(name)
+async def _call(cap_name: str, /, **kw) -> Any:
+    # positional-only: a scheduled capability may itself take an argument called `name`
+    # (evolve.script.run does) - 18 Oct 2026, the first live run failed with "multiple values for 'name'"
+    cap = CAPABILITY_REGISTRY.get(cap_name)
     if not cap or not cap.get("func"):
-        return {"error": f"capability not available: {name}"}
+        return {"error": f"capability not available: {cap_name}"}
     try:
         return await cap["func"](**kw)
     except Exception as e:
-        return {"error": f"{name}: {e}"}
+        return {"error": f"{cap_name}: {e}"}
 
 
 # ── the box ──────────────────────────────────────────────────────────────────
@@ -280,12 +290,53 @@ async def _set_owner(d: Dict[str, Any]) -> None:
             pass
 
 
+#: A2: declared activity kinds that hold the box (a census declares itself and is read from its own files)
+_DECLARED_HOLD = ("probe", "test", "benchmark", "experiment", "other")
+
+
+async def _declared_busy() -> str:
+    """A2: a sys.activity declaration (a probe batch, a manual benchmark) - one line, or ""."""
+    r = _redis()
+    if r is None:
+        return ""
+    out = []
+    try:
+        async for k in r.scan_iter("vera:activity:declared:*"):
+            raw = await r.get(k)
+            if not raw:
+                continue
+            d = json.loads(raw if isinstance(raw, str) else raw.decode())
+            if str(d.get("kind") or "other") in _DECLARED_HOLD:
+                out.append("%s %s" % (d.get("kind") or "activity", d.get("label") or d.get("id") or ""))
+    except Exception:
+        return ""
+    return ", ".join(out[:3])
+
+
 async def box_state() -> Dict[str, Any]:
     owner = await _owner()
     st = await asyncio.to_thread(_census_state_sync, owner)
     st["loops_running"] = await _loops_running()
     st["census_owner_run"] = owner
+    st["declared_busy"] = await _declared_busy()
+    # a release waiting to restart prod holds this key (release_core.DRAIN_KEY): protected entries do not start
+    try:
+        r = _redis()
+        st["release_draining"] = bool(r is not None and await r.get("vera:evolve:release:drain"))
+    except Exception:
+        st["release_draining"] = False
     return st
+
+
+async def protected_running() -> List[Dict[str, Any]]:
+    """Open runs of protected entries (release_capabilities.census_summary -> release_core.may_release)."""
+    try:
+        runs = await _runs(limit=MAX_RUNS)
+        scheds = {s.get("id"): s for s in await _load_all()}
+        return core.protected_runs(runs, scheds, _now())
+    except Exception as e:
+        log.debug("protected runs: %s", e)
+        return []
 
 
 # ── launchers ────────────────────────────────────────────────────────────────
@@ -303,11 +354,16 @@ def _clear_own_control_sync() -> None:
 
 
 def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = "",
-                        minds: Optional[Dict[str, str]] = None, minds_label: str = "") -> Dict[str, Any]:
+                        minds: Optional[Dict[str, str]] = None, minds_label: str = "",
+                        schedule_id: str = "") -> Dict[str, Any]:
     d = Path(_CENSUS_DIR)
     _clear_own_control_sync()
     env = dict(os.environ)
     env["CENSUS_TEMPLATES"] = template or "default"
+    # who drove it (DEEP-21 D21-14): the scheduler, not a hard-coded Claude session
+    env["CENSUS_OPERATOR"] = "vera-scheduler"
+    env["VERA_CENSUS_TOOL"] = "sched"
+    env["CENSUS_SESSION_ID"] = "sched:%s" % (schedule_id or "unknown")
     # A forced planning style: run_census.py applies it to every goal and
     # reserves the run in its own series (census.<template>-style-<s>-runN),
     # which census_all.sh archives under that reservation. Never inherited from
@@ -347,6 +403,9 @@ def _launch_census_sync(template: str, plan_style: str = "", intent_core: str = 
 # A loop on a goal or a branch's unit tests takes minutes to an hour: the tick starts it and moves on, and the run
 # record is closed (result + detail) when it ends, which also releases the schedule's next start.
 _BG_TASKS: set = set()
+#: RF-09: run id -> schedule id of the EXCLUSIVE background runs (cap schedules) still going. A census
+#: does not start while one runs; the tick passes the count to schedule_core as `exclusive_running`.
+_EXCLUSIVE_BG: Dict[str, str] = {}
 
 
 def _bg_word(res: Any) -> str:
@@ -354,6 +413,8 @@ def _bg_word(res: Any) -> str:
         return "done"
     if res.get("error"):
         return "error"
+    if res.get("skipped"):
+        return "skipped"                  # A1: a guard said not now - not a failure
     if "passed" in res or "summary" in res and "ok" in res:
         return "green" if res.get("ok", res.get("passed")) else "red"
     if res.get("ok") is False:
@@ -364,7 +425,8 @@ def _bg_word(res: Any) -> str:
 def _bg_detail(res: Any) -> str:
     if not isinstance(res, dict):
         return str(res or "")[:200]
-    v = res.get("error") or res.get("summary") or res.get("final") or res.get("deliverable") or ""
+    v = (res.get("error") or res.get("why") or res.get("summary") or res.get("final")
+         or res.get("deliverable") or res.get("state") or "")
     if isinstance(v, dict):
         v = " · ".join(f"{k} {v[k]}" for k in list(v)[:6])
     return str(v)[:200]
@@ -382,17 +444,50 @@ async def _board_note(rec: Dict[str, Any], body: str) -> None:
         pass
 
 
-def _in_background(run_id: str, rec: Dict[str, Any], coro) -> None:
+#: A3: run id -> (task, schedule id) of every background run, so a window end can stop it.
+_RUN_TASKS: Dict[str, Any] = {}
+
+
+async def _follow(cap: str, res: Any, run_id: str) -> Optional[Dict[str, Any]]:
+    """A1: `cap` started a background job - wait for THAT to end (its own status capability), so the run
+    record, the 'previous run still going' hold and the exclusive slot match the real work. None when
+    there is nothing to follow."""
+    spec = core.follow_args(cap, res)
+    if spec is None:
+        return None
+    status_cap, args = spec
+    await _update_run(run_id, detail=f"following {status_cap}"[:200])
+    deadline = time.monotonic() + core.STILL_RUNNING_HOURS * 3600
+    while time.monotonic() < deadline:
+        await asyncio.sleep(core.FOLLOW_POLL_S)
+        ended, word, detail = core.follow_state(cap, await _call(status_cap, **args))
+        if ended:
+            return {"word": word, "detail": detail}
+    return {"word": "error", "detail": f"{cap}: still running after {core.STILL_RUNNING_HOURS} h - no longer followed"}
+
+
+def _in_background(run_id: str, rec: Dict[str, Any], coro, *, exclusive: bool = False,
+                   follow_cap: str = "") -> None:
+    if exclusive:
+        _EXCLUSIVE_BG[run_id] = rec.get("id", "")
+
     async def _go():
         try:
             res = await coro
             word, detail = _bg_word(res), _bg_detail(res)
+            fol = await _follow(follow_cap, res, run_id) if follow_cap else None
+            if fol:
+                word, detail = fol["word"], fol["detail"] or detail
+        except asyncio.CancelledError:
+            word, detail = "stopped", "window ended - stopped by the schedule (at_window_end)"
         except Exception as e:                         # pragma: no cover - the call itself guards
             word, detail = "error", str(e)[:200]
         fin = core.iso(_now())
         await _update_run(run_id, finished_at=fin, result=word, detail=detail)
         cur = await _get(rec["id"]) or rec
         cur["last_finished_at"], cur["last_result"] = fin, word
+        if word not in ("interrupted",):
+            cur["recoveries"] = 0                  # it got through: the next restart may recover it again
         await _save(cur)
         await _board_note(cur, f"{word}" + (f" · {detail}" if detail else ""))
         await emit_event({"type": "evolve.schedule.finished", "schedule_id": rec["id"], "result": word,
@@ -400,6 +495,18 @@ def _in_background(run_id: str, rec: Dict[str, Any], coro) -> None:
     t = asyncio.ensure_future(_go())
     _BG_TASKS.add(t)
     t.add_done_callback(_BG_TASKS.discard)
+    _RUN_TASKS[run_id] = (t, rec.get("id", ""))
+    t.add_done_callback(lambda _t: _RUN_TASKS.pop(run_id, None))
+    if exclusive:
+        t.add_done_callback(lambda _t: _EXCLUSIVE_BG.pop(run_id, None))
+
+
+def _bg(run_id: str, rec: Dict[str, Any], coro, label: str, follow_cap: str = "") -> Dict[str, Any]:
+    """Start `coro` as a background run (DEEP-21 D21-1): the tick never waits on the work it starts - a
+    pipeline gate or a board dispatch ran inline under _TICK_LOCK for minutes and stopped window-end
+    yields. Exclusive schedules keep censuses off the box while they run (RF-09)."""
+    _in_background(run_id, rec, coro, exclusive=bool(rec.get("exclusive", True)), follow_cap=follow_cap)
+    return {"ok": True, "state": f"{label} running", "background": True}
 
 
 async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") -> Dict[str, Any]:
@@ -418,7 +525,8 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                                       str(t.get("plan_style") or ""),
                                       str(t.get("intent_core") or ""),
                                       dict(t.get("minds") or {}),
-                                      str(t.get("minds_label") or ""))
+                                      str(t.get("minds_label") or ""),
+                                      str(rec.get("id") or ""))
         if res.get("ok"):
             await _set_owner({"schedule_id": rec["id"], "started_at": core.iso(_now()),
                               "pid": res.get("pid"), "template": t.get("template", "default"),
@@ -427,37 +535,75 @@ async def _start(action: Dict[str, Any], rec: Dict[str, Any], run_id: str = "") 
                               "minds_label": str(t.get("minds_label") or "")})
         return res
     if kind == "suite":
-        return await _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),
-                           assess=bool(t.get("assess", False)))
+        return _bg(run_id, rec, _call("evolve.suite.start", tag=t.get("tag", ""), profile=t.get("profile", ""),
+                                      assess=bool(t.get("assess", False))), "suite %s" % t.get("tag", ""),
+                   follow_cap="evolve.suite.start")
     if kind == "task":
-        return await _call("evolve.task.run", id=t.get("id", ""), assess=bool(t.get("assess", False)))
+        return _bg(run_id, rec, _call("evolve.task.run", id=t.get("id", ""), assess=bool(t.get("assess", False))),
+                   "task %s" % t.get("id", ""))
     if kind == "pipeline":
         a = t.get("action", "test")
         if a == "test":
-            return await _call("evolve.pipeline.test", id=t.get("id", ""))
+            return _bg(run_id, rec, _call("evolve.pipeline.test", id=t.get("id", "")),
+                       "pipeline test %s" % t.get("id", ""))
         if a == "adopt":
-            return await _call("evolve.pipeline.adopt", branch=t.get("branch", ""), to="bleeding-edge",
-                               title=rec.get("title", ""), summary="scheduled by Loop Lab")
+            return _bg(run_id, rec, _call("evolve.pipeline.adopt", branch=t.get("branch", ""), to="bleeding-edge",
+                                          title=rec.get("title", ""), summary="scheduled by Loop Lab"),
+                       "pipeline adopt %s" % t.get("branch", ""))
         if a == "promote":
-            return await _call("evolve.pipeline.promote", id=t.get("id", ""), to="bleeding-edge")
+            return _bg(run_id, rec, _call("evolve.pipeline.promote", id=t.get("id", ""), to="bleeding-edge"),
+                       "pipeline promote %s" % t.get("id", ""))
         return {"error": f"unknown pipeline action {a!r}"}
     if kind == "board":
-        return await _call("board.dispatch", id=t.get("id", ""), executor=t.get("executor", "deterministic"),
-                           agent=t.get("agent", "orchestrator"))
+        return _bg(run_id, rec, _call("board.dispatch", id=t.get("id", ""),
+                                      executor=t.get("executor", "deterministic"),
+                                      agent=t.get("agent", "orchestrator")), "board %s" % t.get("id", ""))
     if kind == "loop":
         _in_background(run_id, rec, _call("loops.run", profile=t.get("profile") or "coding", goal=t.get("goal", ""),
-                                          model=t.get("model", ""), session_id=f"sched:{rec['id']}:{run_id}"))
+                                          model=t.get("model", ""), session_id=f"sched:{rec['id']}:{run_id}"),
+                       exclusive=bool(rec.get("exclusive", True)))           # A3
         return {"ok": True, "state": f"loop running · session sched:{rec['id']}:{run_id}", "background": True}
     if kind == "tests":
         _in_background(run_id, rec, _call("evolve.unittest.run", branch=t.get("branch", ""),
                                           paths=t.get("paths") or "tests", markers=t.get("markers", ""),
-                                          repo=t.get("repo", "")))
+                                          repo=t.get("repo", "")),
+                       exclusive=bool(rec.get("exclusive", True)))           # A3
         return {"ok": True, "state": f"tests running on {t.get('branch', '')}", "background": True}
+    if kind == "claude_session":
+        return _bg(run_id, rec, _session_request(rec, t), "request for %s" % t.get("session", ""),
+                   follow_cap="agents.work.request")
     if kind == "cap":
         if core.cap_denied(t.get("name", "")):
             return {"error": f"{t.get('name')} may not run from a schedule"}
-        return await _call(t.get("name", ""), **(t.get("arguments") or {}))
+        # RF-09: in the background, not inline in the tick - a long cap held _TICK_LOCK and
+        # stopped all scheduling. An exclusive one keeps censuses off the box while it runs.
+        _in_background(run_id, rec, _call(t.get("name", ""), **(t.get("arguments") or {})),
+                       exclusive=bool(rec.get("exclusive", True)), follow_cap=t.get("name", ""))
+        return {"ok": True, "state": f"cap {t.get('name', '')} running", "background": True}
     return {"error": f"unknown kind {kind!r}"}
+
+
+#: B5: a session with this many unanswered requests gets no more from a schedule until it catches up
+MAX_UNANSWERED = 3
+
+
+async def _session_request(rec: Dict[str, Any], t: Dict[str, Any]) -> Dict[str, Any]:
+    """B3: write the request a claude_session schedule is for. The session picks it up at its own check
+    (agents.work.pending) - Vera never starts or resumes a Claude process (owner D2, 17 Oct 2026)."""
+    lst = await _call("agents.work.list", session=t.get("session", ""), kind="request")
+    waiting = [e for e in ((lst or {}).get("entries") or [])
+               if e.get("view_status") == "pending" and e.get("session") == t.get("session")]
+    if len(waiting) >= MAX_UNANSWERED:
+        return {"ok": True, "skipped": True,
+                "why": "%s has %d unanswered requests - not adding another" % (t.get("session"), len(waiting))}
+    w = core.current_window(rec, _now())
+    res = await _call("agents.work.request", session=t.get("session", ""),
+                      title=t.get("title") or rec.get("title") or "scheduled work",
+                      what=t.get("what", ""), board_items=t.get("board_items") or [],
+                      window_end=core.iso(w[1]) if w else "", owner="loop-lab-schedule:%s" % rec.get("id"))
+    if not (res or {}).get("ok"):
+        return {"error": (res or {}).get("error") or "agents.work.request failed"}
+    return {"ok": True, "id": res["entry"]["id"], "state": "requested"}
 
 
 def _result_word(res: Any) -> str:
@@ -517,6 +663,8 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
     now = now or _now()
     cfg = await _get_config()
     state = await box_state()
+    state["exclusive_running"] = len(_EXCLUSIVE_BG)        # RF-09: exclusive cap runs in flight
+    state["quiet"] = core.in_quiet(now, cfg.get("quiet_windows"), cfg.get("timezone") or core.DEFAULT_TZ)
     await _finalize_census_if_done(state)
     if not state.get("census_running"):
         state["census_owner"] = ""
@@ -534,6 +682,13 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
                 own["window_end_applied"] = act["action"]
                 await _set_owner(own)
                 state["window_end_applied"] = True
+    # A3: a non-census run past its window, on a schedule that asked to stop it there
+    by_id0 = {s["id"]: s for s in scheds}
+    for rid, (task, sid) in list(_RUN_TASKS.items()):
+        rec0 = by_id0.get(sid)
+        if rec0 and not task.done() and core.window_end_stop(rec0, now):
+            task.cancel()
+            controls.append({"schedule_id": sid, "action": "stop", "run_id": rid, "ok": True})
     if not cfg.get("enabled", True) and not force_ids:
         return {"ok": True, "enabled": False, "started": [], "controls": controls, "state": state}
     if force_ids:
@@ -590,6 +745,7 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
         await _append_run(run)
         rec["last_started_at"] = core.iso(now)
         rec["last_result"] = word
+        rec["recover_due"] = ""                    # a recovery, if this was one, is under way
         rec["runs"] = int(rec.get("runs") or 0) + 1
         rec["updated"] = core.iso(now)
         await _save(rec)
@@ -601,6 +757,44 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
     return {"ok": True, "enabled": bool(cfg.get("enabled", True)), "started": started,
             "controls": controls, "skipped": skipped, "considered": len(scheds), "state": state}
 
+
+#: when this process started - a background run begun before it cannot still be running here
+_PROCESS_STARTED = _now()
+
+
+async def _reconcile_runs() -> Dict[str, Any]:
+    """Once at start (DEEP-21 D21-5): close the background runs a restart killed as `interrupted` and
+    release their schedules (last_finished_at), instead of 'previous run still going' for 6 h."""
+    out: Dict[str, Any] = {"closed": []}
+    try:
+        started = _PROCESS_STARTED
+        runs = await _runs(limit=MAX_RUNS)
+        for run in core.interrupted_runs(runs, started):
+            fin = core.iso(_now())
+            await _update_run(run["id"], finished_at=fin, result="interrupted",
+                              detail="prod restarted while it ran")
+            rec = await _get(run.get("schedule_id", ""))
+            if rec and (rec.get("last_finished_at") or "") < (run.get("started_at") or ""):
+                rec["last_finished_at"], rec["last_result"] = fin, "interrupted"
+                # recover (owner, 18 Oct): an entry that recovers runs again once the box allows
+                if core.recover_after_interrupt(rec, fin):
+                    out.setdefault("recovering", []).append(rec.get("id"))
+                await _save(rec)
+            out["closed"].append(run["id"])
+        if out["closed"]:
+            log.info("schedule: closed %d run(s) a restart interrupted: %s",
+                     len(out["closed"]), ", ".join(out["closed"]))
+    except Exception as e:
+        log.debug("schedule reconcile: %s", e)
+    return out
+
+
+async def _reconcile_startup() -> None:
+    await asyncio.sleep(20)
+    await _reconcile_runs()
+
+
+_orch.start_at_import(_reconcile_startup, "schedule_reconcile")
 
 _TICK_LOCK = asyncio.Lock()
 
@@ -747,11 +941,13 @@ async def cap_schedule_tick(trace_id=None) -> Dict[str, Any]:
                         "run and suite as a span coloured by its pass rate (source results; "
                         "granularity=runs|goals); mode=both. Input: start, end (ISO; default this "
                         "week ± 3 days), mode, granularity, include_calendar (bool - Vera's own "
-                        "calendar events beside them, source local/ics/caldav/google). Every event carries "
+                        "calendar events beside them, source local/ics/caldav/google), include_agents (bool, "
+                        "default true - Claude sessions' triggers and requests, layer agents). Every event carries "
                         "`layer` (windows|runs|results|board|calendar) so a viewer can switch each on and off. "
                         "Output: {events[], count, layers{layer: n}}.")
 async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windows",
                               granularity: str = "runs", include_calendar: bool = False,
+                              include_agents: bool = True, include_releases: bool = True,
                               trace_id=None) -> Dict[str, Any]:
     now = _now()
     s = core.parse_iso(start) or (now - __import__("datetime").timedelta(days=3))
@@ -765,6 +961,14 @@ async def cap_schedule_events(start: str = "", end: str = "", mode: str = "windo
         res = await _call("evolve.suites", limit=400)
         suites = (res.get("suites") if isinstance(res, dict) else None) or []
         ev += core.results_events(suites, s, e, granularity=(granularity or "runs").strip().lower())
+    if include_agents in (True, 1, "1", "true", "yes"):
+        ev += await _agent_events(s, e)                    # B1: the agents layer
+    if include_releases in (True, 1, "1", "true", "yes"):
+        try:
+            _rv = await releases_data(days=max(1, min(31, int((e - s).total_seconds() // 86400) + 2)))
+            ev += _rvc.events([c for col in _rv["columns"].values() for c in col], _rv["releases"], s, e)
+        except Exception as _re:
+            log.debug("schedule events: releases layer skipped: %s", _re)
     if include_calendar in (True, 1, "1", "true", "yes"):
         # Vera's calendar (the one the Comms panel shows), without its own Loop Lab overlay - that is this list
         cal = await _call("cal.events.list", start=core.iso(s), end=core.iso(e))
@@ -802,10 +1006,21 @@ async def cap_schedule_config_get(trace_id=None) -> Dict[str, Any]:
 
 @capability("evolve.schedule.config.set", memory="off",
             http_method="POST", http_path="/evolve/schedule/config/set", http_tags=["evolve", "schedule"],
-            description="Set scheduler config fields: enabled (bool), timezone (str), max_starts_per_tick (int).")
+            description="Set scheduler config fields: enabled (bool), timezone (str), max_starts_per_tick (int), "
+                        "quiet_windows (list of {start, end} HH:MM - no schedule starts inside one unless it "
+                        "says quiet_ok; [] turns quiet hours off).")
 async def cap_schedule_config_set(enabled: Optional[bool] = None, timezone: str = "",
-                                  max_starts_per_tick: Optional[int] = None, trace_id=None) -> Dict[str, Any]:
+                                  max_starts_per_tick: Optional[int] = None,
+                                  quiet_windows: Optional[List[Dict[str, Any]]] = None,
+                                  trace_id=None) -> Dict[str, Any]:
     cfg = await _get_config()
+    if quiet_windows is not None:
+        try:
+            cfg["quiet_windows"] = [{"start": core.parse_hhmm(q["start"]).strftime("%H:%M"),
+                                     "end": core.parse_hhmm(q["end"]).strftime("%H:%M")}
+                                    for q in (quiet_windows or [])]
+        except Exception as e:
+            return {"ok": False, "error": f"quiet_windows: {e}"}
     if enabled is not None:
         cfg["enabled"] = bool(enabled)
     if timezone:
@@ -842,3 +1057,332 @@ async def cap_schedule_seed_weekday_census(template: str = "default", start: str
     await emit_event({"type": "evolve.schedule.saved", "schedule_id": rec["id"], "kind": "census",
                       "title": rec["title"]})
     return {"ok": True, "schedule": rec, "existing": False}
+
+
+
+# ── A5: side timers stand down when a schedule covers them ───────────────────
+async def covered(name: str, match: Optional[Dict[str, Any]] = None) -> bool:
+    """Is there an ENABLED `cap` schedule for `name` (and, if given, these argument values)? A side timer
+    (the student nightly pass, the dream nightly QA) checks this and stands down: the schedule owns it."""
+    r = _redis()
+    if r is None:
+        return False
+    try:
+        for raw in (await r.hgetall(KEY_SCHEDULES)).values():
+            rec = json.loads(raw if isinstance(raw, str) else raw.decode())
+            t = rec.get("target") or {}
+            if (rec.get("enabled", True) and rec.get("kind") == "cap" and t.get("name") == name
+                    and all((t.get("arguments") or {}).get(k) == v for k, v in (match or {}).items())):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+@capability("evolve.schedule.covers", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/schedule/covers", http_tags=["evolve", "schedule"],
+            description="Whether an enabled cap schedule runs this capability (looplab-control A5: a side timer "
+                        "stands down when one does). Inputs: name (str!), match (object - argument values that "
+                        "must match). Output: {covered}.")
+async def cap_schedule_covers(name: str = "", match: Optional[Dict[str, Any]] = None, trace_id=None):
+    return {"covered": await covered(name, match or {})}
+
+
+# ── A4: allow-listed scripts as schedulable jobs ─────────────────────────────
+#: Scripts a schedule may start (by name; the path is fixed here, never from the wire). Each runs detached
+#: from the repo root with the prod interpreter; its output goes to a log under the census dir.
+SCRIPTS = {
+    "probe": "tools/loop-census/probes/probe_layout.py",
+    "tts_roundtrip": "tools/tts-roundtrip/roundtrip.py",
+}
+_SCRIPT_ARG = re.compile(r"^[A-Za-z0-9_.:/=@,+-]{1,200}$")
+KEY_SCRIPT_JOBS = "vera:evolve:script_jobs"
+_SCRIPT_PROCS: Dict[str, Any] = {}
+_REPO = Path(__file__).resolve().parents[2]
+
+
+@capability("evolve.script.run", memory="off",
+            http_method="POST", http_path="/evolve/script/run", http_tags=["evolve", "schedule"],
+            description="Start an allow-listed script as a background job (looplab-control A4): name "
+                        "(probe | tts_roundtrip), args (list of plain tokens - letters, digits, _.:/=@,+-). "
+                        "Output: {ok, job_id, pid, log}. Follow it with evolve.script.status.")
+async def cap_script_run(name: str = "", args: Optional[List[str]] = None, trace_id=None):
+    rel = SCRIPTS.get((name or "").strip())
+    if not rel:
+        return {"ok": False, "error": f"unknown script {name!r} - one of {', '.join(SCRIPTS)}"}
+    argv = [str(a) for a in (args or [])]
+    bad = [a for a in argv if not _SCRIPT_ARG.match(a)]
+    if bad:
+        return {"ok": False, "error": f"argument not allowed: {bad[0][:60]!r}"}
+    path = _REPO / rel
+    if not path.is_file():
+        return {"ok": False, "error": f"script missing: {path}"}
+    job_id = uuid.uuid4().hex[:10]
+    logdir = Path(_CENSUS_DIR) / "script-jobs"
+    logdir.mkdir(parents=True, exist_ok=True)
+    logp = logdir / f"{name}-{job_id}.log"
+    try:
+        fh = open(logp, "ab")
+        p = subprocess.Popen([sys.executable, str(path), *argv], cwd=str(_REPO), stdout=fh,
+                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+    except Exception as e:
+        return {"ok": False, "error": f"could not start {name}: {e}"}
+    _SCRIPT_PROCS[job_id] = p
+    rec = {"job_id": job_id, "name": name, "args": argv, "pid": p.pid, "log": str(logp),
+           "started_at": core.iso(_now()), "state": "running"}
+    r = _redis()
+    if r is not None:
+        await r.hset(KEY_SCRIPT_JOBS, job_id, json.dumps(rec))
+    return {"ok": True, **rec}
+
+
+@capability("evolve.script.status", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/script/status", http_tags=["evolve", "schedule"],
+            description="A script job's state (evolve.script.run): job_id (str!). Output: {job_id, name, state "
+                        "(running|done|error|exited), rc, pid, log, started_at}.")
+async def cap_script_status(job_id: str = "", trace_id=None):
+    r = _redis()
+    raw = await r.hget(KEY_SCRIPT_JOBS, job_id) if r is not None else None
+    if not raw:
+        return {"error": f"unknown script job {job_id!r}"}
+    rec = json.loads(raw if isinstance(raw, str) else raw.decode())
+    p = _SCRIPT_PROCS.get(job_id)
+    if p is not None:
+        rc = p.poll()
+        if rc is None:
+            return {**rec, "state": "running"}
+        rec.update(state="done" if rc == 0 else "error", rc=rc)
+    elif rec.get("state") == "running" and not _pid_alive(rec.get("pid") or 0):
+        rec["state"] = "exited"            # started by an earlier process: its exit code is lost
+    if rec.get("state") != "running" and r is not None:
+        await r.hset(KEY_SCRIPT_JOBS, job_id, json.dumps(rec))
+    return rec
+
+
+
+# ── B1: the central cron view (looplab-control, owner 17 Oct 2026) ──────────
+async def _host_rows() -> List[Dict[str, Any]]:
+    """The host's own timers: the prod user's crontab and systemd timers (read-only)."""
+    def _read():
+        out = []
+        try:
+            p = subprocess.run(["crontab", "-l"], capture_output=True, text=True, timeout=10)
+            if p.returncode == 0:
+                out += core.parse_crontab(p.stdout)
+        except Exception:
+            pass
+        try:
+            p = subprocess.run(["systemctl", "list-timers", "--all", "--no-legend", "--no-pager"],
+                               capture_output=True, text=True, timeout=10)
+            if p.returncode == 0:
+                out += core.parse_systemd_timers(p.stdout)
+        except Exception:
+            pass
+        return out
+    return await asyncio.to_thread(_read)
+
+
+def _in_process_rows() -> List[Dict[str, Any]]:
+    """Vera's own periodic jobs (schedule()): name and interval, read-only."""
+    rows = []
+    for t in list(getattr(_orch, "SCHEDULED_TASKS", []) or []):
+        try:
+            rows.append(core.central_row("in-process", "interval", str(t.get("name")),
+                                         repeat="every %ds" % int(t.get("int") or 0), status="armed",
+                                         owner="vera", last=str(t.get("last") or "")))
+        except Exception:
+            continue
+    return rows
+
+
+@capability("evolve.schedule.all", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/schedule/all", http_tags=["evolve", "schedule"],
+            description="The central cron view (looplab-control B1): EVERYTHING scheduled on the box in one shape - "
+                        "Loop Lab schedules (next window), Claude sessions' registered triggers and the owner's "
+                        "requests for them (agents.work), Vera's in-process periodic jobs, and the host crontab and "
+                        "systemd timers. Input: sources (comma list: loop-lab,agents-work,in-process,host; default "
+                        "all), session (filter agents-work by session). Output: {rows[{source, kind, title, owner, "
+                        "next_fire, repeat, status, last, target, ref}], counts}.")
+async def cap_schedule_all(sources: str = "", session: str = "", trace_id=None) -> Dict[str, Any]:
+    want = {s.strip() for s in (sources or "loop-lab,agents-work,in-process,host").split(",") if s.strip()}
+    rows: List[Dict[str, Any]] = []
+    now = _now()
+    if "loop-lab" in want:
+        for s in await _load_all():
+            nw = core.next_window(s, now) if s.get("enabled", True) else None
+            rows.append(core.central_row(
+                "loop-lab", s.get("kind", ""), s.get("title", ""), owner="loop-lab",
+                next_fire=core.iso(nw[0]) if nw else (s.get("once_at") or ""),
+                repeat=s.get("repeat", "") + (" every %dm" % s.get("every_minutes") if s.get("repeat") == "every" else ""),
+                status="enabled" if s.get("enabled", True) else "disabled", last=s.get("last_result", ""),
+                target=s.get("target"), ref=s.get("id", "")))
+    if "agents-work" in want:
+        lst = await _call("agents.work.list", session=session or "", include_done=False)
+        for e in (lst or {}).get("entries") or []:
+            rows.append(core.central_row(
+                "agents-work", e.get("kind", ""), e.get("title", ""), owner=e.get("session", ""),
+                next_fire=e.get("when", ""), repeat=e.get("repeat", ""), status=e.get("view_status", ""),
+                last=e.get("last_fired_at", ""), target={"what": (e.get("what") or "")[:200]}, ref=e.get("id", "")))
+    if "in-process" in want:
+        rows += _in_process_rows()
+    if "host" in want:
+        rows += await _host_rows()
+    counts: Dict[str, int] = {}
+    for r in rows:
+        counts[r["source"]] = counts.get(r["source"], 0) + 1
+    rows.sort(key=lambda r: (r.get("next_fire") or "9999", r["source"], r["title"]))
+    return {"rows": rows, "counts": counts, "count": len(rows)}
+
+
+async def _agent_events(s: datetime, e: datetime) -> List[Dict[str, Any]]:
+    """B1: Claude sessions' triggers and requests as calendar events (layer agents)."""
+    lst = await _call("agents.work.list", include_done=True)
+    out = []
+    for x in (lst or {}).get("entries") or []:
+        st = core.parse_iso(x.get("when") or "")
+        if st is None or not (s <= st <= e):
+            continue
+        en = core.parse_iso(x.get("window_end") or "") or (st + __import__("datetime").timedelta(minutes=30))
+        out.append({"id": "agents:%s" % x.get("id"), "title": "%s · %s" % (x.get("session") or "?", x.get("title")),
+                    "start": core.iso(st), "end": core.iso(en), "source": "agents-work", "read_only": True,
+                    "kind": x.get("kind"), "status": x.get("view_status"), "color": "#e0a458"})
+    return out
+
+
+
+# ── scheduled background work (owner, 18 Oct 2026) ──────────────────────────
+# The idle queue starts a job only after 600 s with nothing running - on a box that runs censuses, probes,
+# gates and loops all day and night that quiet never comes (intel's batch waited six days, 12-17 Oct). The
+# owner: "this stuff should just be scheduled instead of waiting for a quiet period that never comes". A
+# window here RESERVES the queue for every kind that has work waiting (the reservation sets the quiet gate
+# aside for those kinds, as intel.night.run does for intel alone) and drains them one after another until the
+# time is up. As the target of an exclusive Loop Lab schedule it keeps censuses off meanwhile.
+_BG_WINDOW_POLL_S = 15
+
+
+def _idle_svc():
+    for name in ("Vera.vera.idle_queue_service", "vera.idle_queue_service"):
+        mod = sys.modules.get(name)
+        if mod is not None:
+            return mod
+    try:
+        import importlib
+        return importlib.import_module("Vera.vera.idle_queue_service")
+    except Exception:
+        return None
+
+
+@capability("evolve.background.window", memory="off",
+            http_method="POST", http_path="/evolve/background/window", http_tags=["evolve", "schedule", "background"],
+            description="Run the background queue NOW for up to `minutes` (default 90, max 600): reserve it for every "
+                        "kind with work waiting (or only `kinds`, comma list) and drain those jobs one after another, "
+                        "without waiting for the box to go quiet. Meant as the target of an exclusive Loop Lab schedule "
+                        "entry - a scheduled window for background work. Output: {ok, ran, remaining, kinds, minutes, reason}.")
+async def cap_background_window(minutes: int = 90, kinds: str = "", trace_id=None) -> Dict[str, Any]:
+    svc = _idle_svc()
+    if svc is None or not hasattr(svc, "reserve"):
+        return {"ok": False, "error": "the idle queue service is not loaded"}
+    only = {k.strip() for k in (kinds or "").split(",") if k.strip()}
+    budget = max(5, min(int(minutes or 90), 600)) * 60
+    t0 = time.time()
+    ran, reason, seen = 0, "queue empty", set()
+
+    async def _waiting():
+        return [j for j in await svc.load_jobs()
+                if j.get("state") in ("waiting", "running") and (not only or j.get("kind") in only)]
+
+    try:
+        while True:
+            jobs = await _waiting()
+            if not jobs:
+                break
+            if time.time() - t0 >= budget:
+                reason = "time is up"
+                break
+            ks = sorted({str(j.get("kind")) for j in jobs})
+            seen.update(ks)
+            svc.reserve(ks, t0 + budget, by="evolve.background.window")     # refreshed: new kinds join
+            async def _never_busy():
+                return ""
+            r = await svc.drain_once("", _never_busy, time.time())
+            if r.get("action") == "started":
+                ran += 1
+            await asyncio.sleep(_BG_WINDOW_POLL_S)
+    finally:
+        svc.release_reservation("evolve.background.window")
+    left = len([j for j in await _waiting() if j.get("state") == "waiting"])
+    await emit_event({"type": "evolve.background.window", "ran": ran, "remaining": left, "reason": reason})
+    return {"ok": True, "ran": ran, "remaining": left, "kinds": sorted(seen),
+            "minutes": round((time.time() - t0) / 60, 1), "reason": reason,
+            "summary": "ran %d background job(s), %d left (%s)" % (ran, left, reason)}
+
+
+
+@capability("evolve.schedule.stop_run", memory="off",
+            http_method="POST", http_path="/evolve/schedule/stop_run", http_tags=["evolve", "schedule"],
+            description="Stop (yield) one scheduled run that is still going - any kind but census (a census yields with "
+                        "census.control.set). A background window stops starting jobs and gives the queue back. "
+                        "Input: run_id (str!). Output: {ok, run_id}.")
+async def cap_schedule_stop_run(run_id: str = "", trace_id=None) -> Dict[str, Any]:
+    ent = _RUN_TASKS.get((run_id or "").strip())
+    if not ent:
+        return {"ok": False, "error": "run %r is not running in this process" % run_id}
+    task, sid = ent
+    if task.done():
+        return {"ok": False, "error": "run %r has already ended" % run_id}
+    task.cancel()
+    await emit_event({"type": "evolve.schedule.stopped", "schedule_id": sid, "run_id": run_id})
+    return {"ok": True, "run_id": run_id, "schedule_id": sid}
+
+
+
+# ── Releases in Loop Lab (owner, 18 Oct 2026: "better vis over the gating and releases") ──────────
+def _git(*args, timeout: int = 20) -> List[str]:
+    try:
+        p = subprocess.run(["git", "-C", str(_REPO), *args], capture_output=True, text=True, timeout=timeout)
+        return p.stdout.splitlines() if p.returncode == 0 else []
+    except Exception:
+        return []
+
+
+async def releases_data(days: int = 7, limit: int = 60) -> Dict[str, Any]:
+    days = max(1, min(int(days or 7), 60))
+    lst = await _call("evolve.pipeline.list", limit=max(10, min(int(limit or 60), 200)))
+    rows = (lst or {}).get("pipelines") or []
+    cutoff = core.iso(_now() - __import__("datetime").timedelta(days=days))
+    rows = [r for r in rows if str(r.get("created_at") or "") >= cutoff or r.get("live")][:limit]
+    fulls = await asyncio.gather(*[_call("evolve.pipeline.get", id=r["id"]) for r in rows], return_exceptions=True)
+    pipes = []
+    for r, f in zip(rows, fulls):
+        p = (f.get("pipeline") if isinstance(f, dict) else None) or r
+        pipes.append(dict(r, **p))
+    main_shas = await asyncio.to_thread(_git, "log", "main", "--since=%d.days" % (days + 2), "--format=%h", "--abbrev=10")
+    cols = _rvc.board(pipes, main_shas)
+    st = await _call("evolve.release.status") or {}
+    hist = sorted(st.get("history") or [], key=lambda h: str(h.get("requested_at") or ""))
+    rels, prev = [], ""
+    for h in hist:
+        cur = str((h.get("merge") or {}).get("commit") or "")
+        carried = []
+        if cur and prev:
+            carried = _rvc.carried_from_log(await asyncio.to_thread(
+                _git, "log", "--first-parent", "--format=%h %s", "%s..%s" % (prev, cur)))
+        rels.append(_rvc.release_row(h, carried))
+        prev = cur or prev
+    rels.reverse()
+    ahead = await asyncio.to_thread(_git, "rev-list", "--count", "main..bleeding-edge")
+    return {"columns": cols, "releases": rels, "pending": st.get("pending"), "census": st.get("census"),
+            "node_sync": st.get("node_sync"), "edge_ahead": int(ahead[0]) if ahead and ahead[0].isdigit() else None,
+            "counts": {k: len(v) for k, v in cols.items()}}
+
+
+@capability("evolve.releases.view", memory="off", silent=True,
+            http_method="GET", http_path="/evolve/releases/view", http_tags=["evolve", "release"],
+            description="Gating, promotions and releases in one read (Loop Lab Releases section): every pipeline of the "
+                        "last `days` in a column - adopted, gating, edge (on bleeding-edge), released (its merge is on "
+                        "main), failed - with its stages, test result and merge commit; the release in flight; every "
+                        "release with what it waited for and the merges it carried; how far bleeding-edge is ahead of "
+                        "main. Input: days (int=7), limit (int=60). Output: {columns, releases, pending, census, "
+                        "node_sync, edge_ahead, counts}.")
+async def cap_releases_view(days: int = 7, limit: int = 60, trace_id=None) -> Dict[str, Any]:
+    return await releases_data(days=days, limit=limit)

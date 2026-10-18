@@ -57,10 +57,26 @@ from Vera.vera.business.print_transport_core import (
     find_server_device as _find_server_device,
     paced_chunks as _paced_chunks_raw,
 )
+try:
+    from Vera.vera.business import printer_effects
+except ImportError:                            # package imported as lowercase in pure tests
+    try:
+        from vera.business import printer_effects
+    except ImportError:                        # effect evidence must never disable printing
+        printer_effects = None
 
 
 def _paced_chunks(data: bytes):
     return _paced_chunks_raw(data, _CHUNK)
+
+
+def _observe_physical(**arguments):
+    if printer_effects is None:
+        return
+    try:
+        printer_effects.observe_physical_print_effect(**arguments)
+    except Exception:
+        log.exception("physical print effect observation failed")
 
 
 # Raw ESC/POS raster framing lives in the shared, pure, unit-tested escpos_core;
@@ -653,9 +669,13 @@ async def _route(printer: Optional[dict], data: bytes) -> dict:
     result["transport"] = printer.get("transport")
     tr = printer.get("transport")
     if tr == "server_usb":
+        _observe_physical(
+            transport=tr, endpoint_ref=printer.get("port", ""))
         w = await _run(_raw_write, printer.get("port", ""), data)
         result["routed"] = bool(w.get("ok")); result.update(w)
     elif tr == "server_serial":
+        _observe_physical(
+            transport=tr, endpoint_ref=printer.get("port", ""))
         w = await _run(_serial_write, printer.get("port", ""),
                        printer.get("baud", 9600), data)
         result["routed"] = bool(w.get("ok")); result.update(w)
@@ -665,6 +685,8 @@ async def _route(printer: Optional[dict], data: bytes) -> dict:
         node = printer.get("node_id", "")
         if mesh and hasattr(mesh, "cap_mesh_send") and node:
             try:
+                _observe_physical(
+                    transport=tr, endpoint_ref=node)
                 r = await mesh.cap_mesh_send(
                     node_id=node, type="serial_write",
                     payload={"data_b64": b64, "baud": printer.get("baud", 9600)})
@@ -751,6 +773,7 @@ if _CAP_AVAILABLE:
     @capability(
         "print.text", http_method="POST", http_path="/print/text",
         http_tags=["print"],
+        redact_args=["text", "printer_id", "title"], redact_result=True,
         schema=enum_schema(align=["left", "center", "right"]),
         description="Print plain text on a thermal printer. Input: text (str!), "
                     "printer_id (str — omit for default/webserial), title (str — "
