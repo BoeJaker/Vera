@@ -21,4 +21,11 @@ t('<vera-mkt-map> is defined once, in the shared library', C.includes("root.cust
 t('it reads the overview and draws it with the shared map', C.includes("await api('/markets/overview')") && C.includes('M.drawMarketMap(box.querySelector(\'canvas\'), box, P, w, this._st,'));
 t('read again every 60 s only while seen and the page visible', C.includes("this._liveT = setTimeout(() => this._load(), 60000)") && C.includes("if (!this._seen || document.visibilityState === 'hidden') return; this._liveT"));
 t('an asset picked opens its chart in place; ← Map returns', C.includes("const c = document.createElement('vera-mkt-chart');") && C.includes('data-a="map"') && C.includes('_map() {'));
+// the desk: a markets.overview answer is the map
+const CV = R('vera/canvas/canvas_element.js'), MS = R('vera/markets/markets_studio_capabilities.py');
+t('markets.overview declares the treemap form over its groups', MS.includes("contract={\"presentation\": {'kind': 'parts', 'form': 'treemap', 'map': {'parts': 'groups', 'name': 'name', 'value': 'count'},"));
+t('the canvas mounts <vera-mkt-map> for a treemap holding the overview\'s groups of assets (as candles + symbol mount the chart)',
+  CV.includes("if (form === 'treemap' && md && Array.isArray(md.groups) && md.groups.some((g) => g && Array.isArray(g.assets))) {") && CV.includes('data-live="mmap"') &&
+  CV.includes("else if (kind === 'mmap') { inner = document.createElement('vera-mkt-map');") && CV.includes("ensureLib('/markets/chart.js', 'vera-mkt-map')"));
+t('a plain treemap (no groups of assets) stays the treemap form', (() => { const i = CV.indexOf("if (form === 'treemap' && md"); return i > 0 && CV.indexOf("data-live=\"widget\"", i) > i; })());
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);

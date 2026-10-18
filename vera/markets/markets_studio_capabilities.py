@@ -3324,8 +3324,10 @@ if _CAP_AVAILABLE and HAS_NUMPY:
     @capability(
         "markets.overview", http_method="GET", http_path="/markets/overview",
         http_tags=["markets"], memory="off", silent=True,
-        # how its answer is drawn (DA-01e): the groups as a table, ranked by the median day's move
-        contract={"presentation": {'kind': 'table', 'map': {'rows': 'groups', 'name': 'name', 'value': 'median_1d'}}},
+        # how its answer is drawn: the market map (the Quant Studio's Pulse map): the desk mounts <vera-mkt-map> for it; elsewhere the treemap form
+        # draws the groups by their asset count
+        contract={"presentation": {'kind': 'parts', 'form': 'treemap', 'map': {'parts': 'groups', 'name': 'name', 'value': 'count'},
+                                   'title': 'Market map', 'empty': 'no tracked assets in the overview yet'}},
         description="Whole-market / per-sector / per-asset overview computed from "
                     "stored 1d bars for every watched asset (incl. the baseline "
                     "estate): last price, changes over 1d/1w/1m/3m/6m/ytd/1y, 30d "
