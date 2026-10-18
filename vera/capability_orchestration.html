@@ -20,6 +20,32 @@
     d.style.zoom=String(sc);
     d.style.width='calc(100vw / '+sc+')';
     d.style.height='calc(100vh / '+sc+')';}}catch(e){}})();</script>
+<script>/* WHERE A CALL CAME FROM (DO-0.5; vera-c7's usage counter, B0.11 R0): this page's own calls to Vera's API carry
+   X-Vera-Surface: <surface>; trigger=<person|auto>. Only same-origin API paths, only when the call has not said its surface
+   already (the desk and the market chart say "desk" themselves). trigger=person while the browser's user activation is live. */
+(function () { try {
+  var f0 = window.fetch; if (!f0 || f0._veraSurf) return;
+  var SURF = 'lhm';
+  var STATIC = /\.(js|css|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|map|html?)$/i;
+  var wrapped = function (input, init) {
+    try {
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var u = new URL(url, location.href);
+      if (u.origin === location.origin && !STATIC.test(u.pathname) && u.pathname.indexOf('/ui/') !== 0) {
+        init = Object.assign({}, init || {});
+        var h = new Headers(init.headers || (typeof input !== 'string' && input && input.headers) || {});
+        if (!h.has('X-Vera-Surface')) {
+          var act = navigator.userActivation && navigator.userActivation.isActive;
+          h.set('X-Vera-Surface', SURF + '; trigger=' + (act ? 'person' : 'auto'));
+        }
+        init.headers = h;
+      }
+    } catch (e) { /* the call goes out as it was */ }
+    return f0.call(this, input, init);
+  };
+  wrapped._veraSurf = true; window.fetch = wrapped;
+} catch (e) { /* no fetch to wrap */ } })();
+</script>
 <meta charset="UTF-8">
 <title>Vera — Orchestrator Harness</title>
 <!-- PWA: what makes this shell installable as an app. Served by

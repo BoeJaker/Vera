@@ -555,9 +555,12 @@
     }
     /* signals from a backtest or a strategy: entries and exits as unix times */
     setSignals(entries, exits) { this._entries = entries || []; this._exits = exits || []; if (this._candle) this._markers = M.setMarkers(this._candle, this._entries, this._exits, this._markers, this._mkt && this._mkt.markers); }
-    /* a read-only capability through the same /mcp/call the desk uses: the answer's content, or null */
-    async _call(name, args) { try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, arguments: args || {} }) });
-      const j = await r.json(); return j && j.type === 'tool_result' ? j.content : j; } catch (e) { return null; } }
+    /* a read-only capability through the same /mcp/call the desk uses: the answer's content, or null. Tagged with the surface it
+       came from (DO-0.5: the desk, a canvas panel or the Markets page) and whether a person's action started it */
+    async _call(name, args) {
+      const surf = (() => { try { const h = this.getRootNode && this.getRootNode().host; return h && /^VERA-CANVAS$/i.test(h.tagName) ? (h.deskAlign && h.deskAlign() ? 'desk' : 'panel:canvas') : 'panel:markets'; } catch (e) { return 'panel:markets'; } })();
+      try { const r = await fetch('/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vera-Surface': surf + '; trigger=' + (root.navigator && root.navigator.userActivation && root.navigator.userActivation.isActive ? 'person' : 'auto') }, body: JSON.stringify({ name, arguments: args || {} }) });
+        const j = await r.json(); return j && j.type === 'tool_result' ? j.content : j; } catch (e) { return null; } }
     /* GOING DEEPER (owner 2026-10-18: "navigate a bit deeper"; the redesign plan section 4): the asset's news, position, alerts and
        backtests as tabs of the chart. Each is read when its tab is opened or the asset changes under it (never on a timer) and drawn
        by the Markets pages' own rows (M.rows). A backtest picked puts its trades on the candles. */

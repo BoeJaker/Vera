@@ -241,6 +241,11 @@
   /* the surface an item shows, in the curator's terms: the capability or panel behind it, else its type */
   function surfaceOf(b) { const c = (b && b.content) || {}; return String(c.surface || c.cap || c.panel || (b && b.type) || ''); }
 
+  /* WHERE A CALL CAME FROM (DO-0.5, the usage counter of vera-c7's B0.11 R0): every call this element makes says its surface - the
+     desk, or the Canvas tab's held column - and whether a person just acted (the browser's own user activation) or it is a
+     read the element makes by itself. The server counts day x cap x actor x surface x trigger; nothing else reads it. */
+  const surfOf = (el) => { try { return el && el.deskAlign && !el.deskAlign() ? 'panel:canvas' : 'desk'; } catch (e) { return 'desk'; } };   /* never stops a call */
+  const surfHdr = (el) => ({ 'X-Vera-Surface': surfOf(el) + '; trigger=' + (root.navigator && root.navigator.userActivation && root.navigator.userActivation.isActive ? 'person' : 'auto') });
   const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -1815,31 +1820,107 @@
   const KIT_ACTS = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'].map((v) => ({ id: 'vo:' + v, kit: true }));
   const CPREV = { id: 'cprev', label: 'Preview', title: 'Draw it here - a sandboxed frame, no network' };
   const LINK = { id: 'link', label: 'Open in a tab ↗', title: 'a link of its own: open, or download' };
+  /* THE ELEMENT REGISTRY'S FIELDS (DO-0.2, vera_item.js ELEMENT REGISTRY): each kind also says, as it behaves today, what it
+     draws (contract: the presentation kinds present() routes to it, and the item content it reads), its own controls (drawn
+     in its body - a display card's actions stay the head's, above), where it goes deeper (navigation), what keeps it current
+     (live) and its sizes (the canvas's ITEM_SIZES, s-xl, from its minSize). Every body is drawn in every face (the
+     container's), on the desk and the Canvas panel (one <vera-canvas>). */
+  const SZ = (min) => ['s', 'm', 'l', 'xl'].slice(['s', 'm', 'l', 'xl'].indexOf(min || 's'));   /* = ITEM_SIZES (no xs on the canvas) */
+  const bctl = (id, label, when) => (when ? { id, label, when } : { id, label });
   const BODY_SPEC = {
-    code: { views: ['code', 'structure', 'both'], actions: [CPREV].concat(KIT_ACTS) },
-    markdown: { actions: KIT_ACTS },
-    research: { actions: KIT_ACTS },
+    markdown: { actions: KIT_ACTS,
+      contract: [{ kind: 'document', by: 'present', reads: ['body', 'title'], how: 'the body as md' }, { kind: 'markdown', by: 'item', reads: ['md', 'text', 'title'], how: "the shared kit's renderer (VeraOut.render; the canvas's mdx without it)" }],
+      controls: [bctl('mdfind', 'Find in the text', 'a long document'), bctl('mdrail', 'Outline', 'three headings or more'), bctl('mdwidth', 'Reading width / full width', 'a long document'), bctl('prose', 'Copy, Edit, Explode, Send to', 'the kit on the page')],
+      navigation: [{ to: 'item', args: { kind: 'explode', text: '<md>' }, how: 'Explode: a structured diagram of the text, beside it' }] },
+    calendar: { contract: [{ kind: 'calendar', by: 'present', reads: ['events', 'start', 'end', 'title'], how: 'a month, the events as dots, the day listed' }, { kind: 'calendar', by: 'item', reads: ['events', 'month', 'selected'], how: 'events {id, title, start, end, all_day, color, location, read_only}' }],
+      controls: [bctl('month', 'Month before / after / today'), bctl('day', 'A day: its events; double-click to add'), bctl('caladd', '+ add', 'a day selected'), bctl('move', 'Carry an event to another day', 'an event with an id')],
+      live: { cap: 'cal.events.list', how: 'the month buttons and a day press read the diary again; a move or an add is written through it' } },
+    timeline: { contract: [{ kind: 'timeline', by: 'item', reads: ['events', 'when', 'label', 'url'], how: 'dated points on one axis, grouped by year (the declared timeline kind - spans - is the widget gantt)' }],
+      controls: [bctl('brush', 'Range (drag across the axis)', 'two events or more'), bctl('scrub', 'Scrubber', 'two events or more'), bctl('tlclear', 'Clear the range', 'a range picked')],
+      navigation: [{ to: 'url', args: { url: '<event.url>' }, how: 'source ↗ - the page an event came from' }] },
+    source: { contract: [{ kind: 'source', by: 'item', reads: ['url', 'domain', 'title', 'chars', 'snippet', 'text', 'shot', 'reader', 'failed'], how: 'a page the research read: its reading, the names it holds, its picture' }],
+      controls: [bctl('read', 'Read / reader mode'), bctl('shot', 'See the page'), bctl('explode', 'Explode', 'a reading with markdown')],
+      navigation: [{ to: 'url', args: { url: '<url>' }, how: 'the page itself' }, { to: 'item', args: { kind: 'explode', record: '<url>' }, how: 'Explode the page' }],
+      live: { cap: 'reader.page', how: 'its reading (cache first, browser.reader the fallback) and its picture (browser.screenshot) fetched when it is opened, written back into the item' } },
+    code: { views: ['code', 'structure', 'both'], actions: [CPREV].concat(KIT_ACTS),
+      contract: [{ kind: 'code', by: 'present', reads: ['code', 'lang', 'path'], how: "the shared kit's code card" }, { kind: 'diff', by: 'present', reads: ['diff'], how: 'present() names the code element for a diff (its record is the widget diff form)' },
+        { kind: 'code', by: 'item', reads: ['code', 'lang', 'filename', 'path', 'title'], how: "VeraOut.card (a deck, a sheet, a document: VeraOut.fileCard); the canvas's numbered body without the kit" }],
+      navigation: [{ to: 'item', args: { kind: 'explode', binds: '<key>' }, how: 'Explode: the bound explode item, lit by span both ways' }] },
+    explode: { fit: 'fill', minSize: 'm', actions: [{ id: 'xpsync', label: 'Clear the lit spans', title: 'Light the whole of the bound source again' }],
+      contract: [{ kind: 'explode', by: 'item', reads: ['binds', 'path', 'paths', 'depth', 'record', 'ranges', 'mode', 'layers', 'text', 'lang', 'assess', 'title'], how: '<vera-graph-embed renderer="struct"> in the live layer' }],
+      controls: [bctl('zoom', 'Pan and zoom (the graph embed)')],
+      navigation: [{ to: 'item', args: { kind: 'code', key: '<binds>' }, how: 'a card lights and scrolls the bound code; selected lines light the card' }] },
     diagram: { fit: 'fill', actions: [{ id: 'dgedit', label: 'Edit source', title: 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', lead: true, replaces: 'edit' },
       { id: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { id: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' },
-      { id: 'dgsrc', label: 'Source', title: 'Show the source' }].concat(KIT_ACTS) },
-    explode: { fit: 'fill', minSize: 'm', actions: [{ id: 'xpsync', label: 'Clear the lit spans', title: 'Light the whole of the bound source again' }] },
+      { id: 'dgsrc', label: 'Source', title: 'Show the source' }].concat(KIT_ACTS),
+      contract: [{ kind: 'diagram', by: 'item', reads: ['mermaid', 'code', 'source', 'title', 'caption'], how: "<vera-mermaid> in the live layer, in the kit's diagram card (VeraOut.diagram)" }],
+      controls: [bctl('dged', 'The source editor: Save, Cancel', 'Edit source pressed')],
+      navigation: [{ to: 'chat', args: { mermaid: '<mermaid>' }, how: "Open in the chat - the chat's own diagram pop-out" }] },
+    image: { contract: [{ kind: 'media', by: 'present', reads: ['url', 'b64', 'caption'], how: 'present() names the image element for media' }, { kind: 'image', by: 'item', reads: ['url', 'alt', 'caption', 'title'], how: 'a figure, lazy-loaded' }] },
+    note: { contract: [{ kind: 'note', by: 'item', reads: ['text', 'author'], how: 'a line of text, its author' }] },
+    records: { views: ['graph', 'list', 'cards', 'table'],
+      contract: [{ kind: 'records', by: 'present', reads: ['rows', 'id', 'title', 'url', 'snippet', 'when', 'score', 'domain'], how: 'the records browser' }, { kind: 'reading', by: 'present', reads: ['rows', 'text', 'cited'], how: 'the records browser' },
+        { kind: 'records', by: 'item', reads: ['items', 'kind', 'query'], how: 'items {id, title, url, snippet, when, score, domain, meta}' }],
+      controls: [bctl('filter', 'Filter'), bctl('facets', 'Domains'), bctl('sort', 'Sort: as ranked, newest, title'), bctl('page', 'Pages'), bctl('open', 'Open a record in place'), bctl('names', 'The names a page holds')],
+      navigation: [{ to: 'item', args: { kind: 'source', url: '<row.url>' }, how: 'a record lands as its own source item' }, { to: 'url', args: { url: '<row.url>' }, how: 'the page' }],
+      live: { cap: 'browser.content', how: "a page's text opens in place through browser.content, a fabric record's through memory.read (fabric.record.get), in pages" } },
+    table: { views: ['table', 'cards', 'list', 'chart', 'graph'],
+      contract: [{ kind: 'table', by: 'present', reads: ['rows', 'columns', 'name', 'value', 'status', 'time'], how: 'the table, its bar, its views' }, { kind: 'table', by: 'item', reads: ['columns', 'rows', 'caption'], how: 'rows as arrays under named columns' }],
+      controls: [bctl('tblsort', 'Sort'), bctl('tblfilter', 'Filter'), bctl('tblcols', 'Columns'), bctl('tblcopy', 'Copy'), bctl('tblcsv', 'CSV')] },
+    widget: { fit: 'content',
+      contract: ['status', 'metric', 'series', 'graph', 'log', 'progress', 'timeline', 'matrix', 'parts'].map((k) => ({ kind: k, by: 'present', reads: ['form', 'data', 'source'], how: 'a widget record drawn by <vera-widget> (its form); candles that name a symbol by <vera-mkt-chart>' }))
+        .concat([{ kind: 'widget', by: 'item', reads: ['form', 'draw', 'data', 'title', 'source', 'reads', 'record'], how: 'the widget record (or {record}); VeraWidget.draw without the element; its record card without either' }]),
+      controls: [bctl('refresh', 'refresh', 'the record reads a cap')],
+      live: { cap: '<record.reads.cap>', how: 'refresh reads the cap again and writes the answer into the item; <vera-widget> reads its source itself' } },
     session: { fit: 'fill', minSize: 'm', actions: [{ id: 'tattach', label: 'Attach', title: 'Open a shell on this host' }, { id: 'tdetach', label: 'Detach', title: 'Detach — the item keeps its host; Attach opens a new shell' },
-      { id: 'tshare', label: 'Share', title: "Copy the terminal's address" }] },
-    notebook: { actions: [{ id: 'nbrun', label: 'Run', title: "Run the cell through the notebook's exec" }, { id: 'nbopen', label: 'Open the notebook ↗', title: 'Open the notebook at this cell' }] },
+      { id: 'tshare', label: 'Share', title: "Copy the terminal's address" }],
+      contract: [{ kind: 'terminal', by: 'present', reads: ['command', 'stdout', 'stderr', 'rc'], how: 'a command that ran: what, where, its exit code and output' },
+        { kind: 'session', by: 'item', reads: ['host_id', 'host', 'container', 'shell', 'ws', 'attached', 'command', 'output', 'rc', 'cap'], how: '<vera-terminal> over the terminal WebSocket when attached' }],
+      controls: [bctl('tconnect', 'Host, container, shell, Connect', 'not attached'), bctl('thosts', 'Known hosts', 'not attached'), bctl('tagain', 'Run again', 'a command that ran through a cap')],
+      live: { sub: 'the terminal WebSocket (/remote/ssh/term/ws/<host>, /remote/docker/term/ws/<host>/<container>)', how: 'while attached' } },
+    notebook: { actions: [{ id: 'nbrun', label: 'Run', title: "Run the cell through the notebook's exec" }, { id: 'nbopen', label: 'Open the notebook ↗', title: 'Open the notebook at this cell' }],
+      contract: [{ kind: 'notebook', by: 'item', reads: ['notebook_id', 'cell_id', 'cell_type', 'lang', 'content', 'source', 'generated', 'output'], how: 'the cell the notebook holds: its source and output' }],
+      navigation: [{ to: 'panel', args: { panel: 'notebook-panel', notebook_id: '<notebook_id>', cell_id: '<cell_id>' }, how: 'Open the notebook at this cell' }] },
     panel: { fit: 'fill', minSize: 'm', actions: [{ id: 'layer-behind', label: 'Behind', title: 'Fill the free desk, under the other items' }, { id: 'layer-front', label: 'Front', title: 'Fill the free desk, over the other items' },
       { id: 'prefresh', label: 'Refresh', title: 'Reload the panel' }, { id: 'pquery', label: 'Query', title: 'panel.query - what the panel holds' },
-      { id: 'pdispatch', label: 'Dispatch', title: 'panel.dispatch - drive it' }, { id: 'pstand', label: 'Standalone ↗', title: 'Open it in a tab of its own' }] },
+      { id: 'pdispatch', label: 'Dispatch', title: 'panel.dispatch - drive it' }, { id: 'pstand', label: 'Standalone ↗', title: 'Open it in a tab of its own' }],
+      contract: [{ kind: 'panel', by: 'item', reads: ['panel', 'id', 'src', 'title'], how: 'the panel page itself in its frame, driven over the one bridge (panel.query, panel.dispatch)' }],
+      controls: [bctl('psend', 'The bridge: action, payload, Send', 'Dispatch pressed')],
+      navigation: [{ to: 'tab', args: { url: '<src>' }, how: 'Standalone ↗' }] },
+    loop: { contract: [{ kind: 'loop', by: 'item', reads: ['goal', 'title', 'status', 'steps', 'run'], how: 'a run: its goal, status and steps (the capability each ran, its time)' }] },
+    activity: { contract: [{ kind: 'activity', by: 'item', reads: ['calls', 'cap', 'status', 'started', 'ms', 'args', 'peek'], how: 'the capabilities a turn runs, each as it runs' }],
+      live: { sub: 'the chat writes it as the calls start and end', how: 'written into the item' } },
+    research: { actions: KIT_ACTS,
+      contract: [{ kind: 'research', by: 'item', reads: ['status', 'query', 'step', 'plan', 'outline', 'items', 'cites', 'report', 'live', 'writing', 'secs', 'job', 'error'], how: "the run whole: Report, Method, Pages (the records browser), Sources - the canvas's own body, not <vera-research-card>" }],
+      controls: [bctl('rrtab', 'Report / Method / Pages / Sources'), bctl('rrlay', 'Second pane beside or below')],
+      navigation: [{ to: 'url', args: { url: '<cite.url>' }, how: 'a cited source' }, { to: 'item', args: { kind: 'source', url: '<row.url>' }, how: 'a page it read, as its own source item' }],
+      live: { sub: "the chat writes it from the research card's state as the run streams", how: 'kept, so a reload shows the run as it ended' } },
+    entities: { views: ['chips', 'list', 'graph'],
+      contract: [{ kind: 'entities', by: 'present', reads: ['groups', 'entities'], how: 'chips in their groups' }, { kind: 'entities', by: 'item', reads: ['groups', 'group', 'entities', 'text', 'type', 'count', 'sentences'], how: "turn.understand's answer" }],
+      controls: [bctl('entopen', 'A name: the sentences it was named in')],
+      navigation: [{ to: 'item', args: { kind: 'records', cap: 'turn.entity.look', name: '<entity.text>' }, how: "look it up: the fabric's records and a web search for it, beside this item" }] },
+    json: { views: ['tree', 'flat', 'validate'],
+      contract: [{ kind: 'json', by: 'item', reads: ['data'], how: 'the JSON lens: tree, flat, validate; a path breadcrumb; an array of objects as a table' }],
+      controls: [bctl('jsel', 'A path'), bctl('jtab', 'As a table', 'an array of objects'), bctl('jcopy', 'Copy')] },
+    kv: { views: ['fields', 'graph'],
+      contract: [{ kind: 'kv', by: 'present', reads: ['fields'], how: 'name beside value; tiles when wide' }, { kind: 'kv', by: 'item', reads: ['fields', 'data'], how: 'an object or [name, value] rows' }],
+      controls: [bctl('kvedit', 'Edit a field', 'the item says how a field is written')] },
+    chat: { contract: [{ kind: 'chat', by: 'item', reads: ['messages', 'role', 'name', 'text', 'content', 'title'], how: 'an exchange: who asked, who answered (the last 40)' }] },
+    result: { contract: [{ kind: 'result', by: 'item', reads: ['cap', 'args', 'result', 'ok', 'error', 'ms', 'running', 'run'], how: 'the capability that ran, and its answer drawn as the kind that fits it (resultView)' }],
+      live: { cap: '<content.cap>', how: "the container's Refresh runs it again with the same arguments; the item is keyed by the cap and its arguments" } },
     app: { views: ['table', 'cards', 'drawn'], actions: [{ id: 'appread', label: 'Refresh', title: 'Read it again now' }, { id: 'appact', label: 'an action of the app', title: "one of the app manifest's actions" },
-      { id: 'appcsv', label: 'Copy CSV', title: 'Copy the rows shown, as CSV' }, { id: 'appopen', label: 'Open the panel ↗', title: 'Open the page this app comes from' }] },
-    html: { actions: [CPREV, LINK] },
-    records: { views: ['graph', 'list', 'cards', 'table'] },
-    table: { views: ['table', 'cards', 'list', 'chart', 'graph'] },
-    entities: { views: ['chips', 'list', 'graph'] },
-    json: { views: ['tree', 'flat', 'validate'] },
-    kv: { views: ['fields', 'graph'] },
-    widget: { fit: 'content' },
+      { id: 'appcsv', label: 'Copy CSV', title: 'Copy the rows shown, as CSV' }, { id: 'appopen', label: 'Open the panel ↗', title: 'Open the page this app comes from' }],
+      contract: [{ kind: 'app', by: 'item', reads: ['app', 'args'], how: 'a manifest (vera/apps/*.json) resolved through ui.apps.get, its read called, the answer drawn as a result is; a composite manifest draws its parts (DA-07a)' }],
+      controls: [bctl('filter', 'Filter ( / )', 'an answer of rows'), bctl('sort', "Sort by a column's head", 'an answer of rows'), bctl('row', 'A row in a drawer (Enter, Esc)', 'an answer of rows')],
+      navigation: [{ to: 'panel', args: { panel: '<manifest.panel>' }, how: 'Open the panel ↗ - the page this app comes from' }],
+      live: { cap: '<manifest.read.cap>', every_s: '<manifest.every_s>', how: "on the manifest's every_s only while it is seen on the desk, or on Refresh; one read in flight" } },
+    schedule: { contract: [{ kind: 'schedule', by: 'item', reads: ['when', 'what'], how: 'a line: when, what' }] },
+    html: { actions: [CPREV, LINK],
+      contract: [{ kind: 'html', by: 'item', reads: ['html', 'url', 'download_url', 'title'], how: 'a sandboxed frame (allow-scripts only), or the source; a delivered report by its address' }],
+      navigation: [{ to: 'tab', args: { url: '<url>' }, how: 'Open in a tab ↗ - a delivered report' }] },
   };
-  if (VI) Object.keys(BLOCK).filter((k) => k[0] !== '_').forEach((k) => VI.registerBody(k, Object.assign({ natural: NATURAL[k] || NATURAL._ }, BODY_SPEC[k] || {})));
+  /* one registration per kind, in the one call (the registry's only call on this page) */
+  if (VI) Object.keys(BLOCK).filter((k) => k[0] !== '_').forEach((k) => VI.registerBody(k, Object.assign({ natural: NATURAL[k] || NATURAL._, role: 'body', surfaces: ['desk', 'panel:canvas'] }, BODY_SPEC[k] || {}, { sizes: SZ((BODY_SPEC[k] || {}).minSize) })));
   /* a declared action with what its kind registered for it filled in (what it declares now wins) */
   const actOf = (kind, a) => { if (!a || !a.act || !VI) return a; const s = VI.action(kind, a.act); if (!s) return a; const o = Object.assign({}, s, a); delete o.id; return o; };
   const declActs = (kind, d) => ((d && d.acts) || []).map((a) => actOf(kind, a));
@@ -4412,7 +4493,7 @@
            field is sent again a field at a time: only the field the record refuses is lost, never a place or lock queued
            beside it, and the refusal is told on the console, not swallowed */
         const id = this.canvasId;
-        const send = (k, f) => fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        const send = (k, f) => fetch(base + '/mcp/call', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)),
           body: JSON.stringify({ name: 'canvas.item.set', arguments: Object.assign({ id, key: k }, f) }) })
           .then((r) => r.json()).then((j) => { const a = unwrap(j); return a && typeof a === 'object' && a.ok === false ? a : null; })
           .catch(() => null /* unreachable: the cache keeps it */);
@@ -5745,7 +5826,7 @@
       let doc;
       try {
         const r = await fetch(`/canvas/get?id=${encodeURIComponent(id)}`,
-                              { headers: { Accept: 'application/json' } });
+                              { headers: Object.assign({ Accept: 'application/json' }, surfHdr(this)) });   /* the desk's own poll: trigger auto unless a person just acted */
         const j = await r.json();
         doc = (j && j.content !== undefined) ? j.content : j;
         if (doc && doc.canvas) doc = doc.canvas;
@@ -7408,7 +7489,7 @@
       if (act === 'tagainok') { const c = this._contentOf(key) || {}; (this._ranAsk = this._ranAsk || {})[key] = false; if (!c.cap) return;
         (this._ranBusy = this._ranBusy || {})[key] = true; if (this._doc) this.render(this._doc);
         const base = (window._veraBase || '').replace(/\/$/, '');
-        (async () => { let a = null; try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: c.cap, arguments: c.args || {} }) }); const j = await r.json(); a = j && j.type === 'tool_result' ? j.content : j; } catch (e) { a = { stderr: String(e && e.message || e), rc: -1 }; }
+        (async () => { let a = null; try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)), body: JSON.stringify({ name: c.cap, arguments: c.args || {} }) }); const j = await r.json(); a = j && j.type === 'tool_result' ? j.content : j; } catch (e) { a = { stderr: String(e && e.message || e), rc: -1 }; }
           const out = a && typeof a === 'object' ? [String(a.stdout || a.output || ''), String(a.stderr || '')].filter((x) => x.trim()).join('\n') : String(a == null ? '' : a);
           const rc = a && typeof a === 'object' ? (a.rc != null ? a.rc : a.returncode != null ? a.returncode : a.exit_code) : null;
           this._ranBusy[key] = false;
@@ -8075,7 +8156,7 @@
     }
     async callResult(name, args, opts) {
       const base = (window._veraBase || '').replace(/\/$/, '');
-      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name, arguments: args || {} }, opts && opts.trace ? { trace_id: opts.trace } : {})) }); const j = await r.json(); return unwrap(j); }
+      try { const r = await fetch(base + '/mcp/call', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)), body: JSON.stringify(Object.assign({ name, arguments: args || {} }, opts && opts.trace ? { trace_id: opts.trace } : {})) }); const j = await r.json(); return unwrap(j); }
       catch (e) { return { ok: false, error: String(e && e.message || e) }; }
     }
     /* A MODEL DIVE, PICKED (DA-09; MODEL_DIVES): its card goes up at once saying it is running, the cap is called once with
@@ -8879,7 +8960,7 @@
       this._engT = 0; const q = this._engQ || []; this._engQ = []; if (!q.length) return;
       const base = (window._veraBase || '').replace(/\/$/, '');
       try {
-        fetch(base + '/mcp/call', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' },
+        fetch(base + '/mcp/call', { method: 'POST', keepalive: true, headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)),
           body: JSON.stringify({ name: 'canvas.engagement.record', arguments: { events: q } }) }).catch(() => {});
       } catch (e) { /* dropped */ }
     }
@@ -8888,7 +8969,7 @@
     async call(name, args, opts) {
       const base = (window._veraBase || '').replace(/\/$/, '');
       try {
-        await fetch(base + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        await fetch(base + '/mcp/call', { method: 'POST', headers: Object.assign({ 'Content-Type': 'application/json' }, surfHdr(this)),
           body: JSON.stringify(Object.assign({ name, arguments: Object.assign({ id: this.canvasId }, args || {}) }, opts && opts.trace ? { trace_id: opts.trace } : {})) });
       } catch (e) { /* the poll shows whatever state the backend has */ }
       this._rev = null;

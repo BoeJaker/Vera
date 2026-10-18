@@ -1,0 +1,1235 @@
+{
+ "base": "bleeding-edge-design 14017f87 (before DO-0.2)",
+ "kinds": {
+  "markdown": {
+   "digest": "5b30622a4078342e659e6b1802fd849948b389d8ff207e1fd2ce7aaeea66fca2",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": [
+     {
+      "id": "vo:copy",
+      "kit": true
+     },
+     {
+      "id": "vo:run",
+      "kit": true
+     },
+     {
+      "id": "vo:edit",
+      "kit": true
+     },
+     {
+      "id": "vo:preview",
+      "kit": true
+     },
+     {
+      "id": "vo:dsrc",
+      "kit": true
+     },
+     {
+      "id": "vo:present",
+      "kit": true
+     },
+     {
+      "id": "vo:outline",
+      "kit": true
+     },
+     {
+      "id": "vo:fpop",
+      "kit": true
+     },
+     {
+      "id": "vo:pop",
+      "kit": true
+     },
+     {
+      "id": "vo:dpop",
+      "kit": true
+     },
+     {
+      "id": "vo:save",
+      "kit": true
+     },
+     {
+      "id": "vo:dsvg",
+      "kit": true
+     },
+     {
+      "id": "vo:dpng",
+      "kit": true
+     }
+    ]
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "vo:copy",
+    "vo:run",
+    "vo:edit",
+    "vo:preview",
+    "vo:dsrc",
+    "vo:present",
+    "vo:outline",
+    "vo:fpop",
+    "vo:pop",
+    "vo:dpop",
+    "vo:save",
+    "vo:dsvg",
+    "vo:dpng"
+   ]
+  },
+  "calendar": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "timeline": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "source": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "code": {
+   "digest": "ccc502e8459eab647a7eafd17b8ba9773bcb7a2309cbc98370eff9c7f01e461d",
+   "body": {
+    "views": [
+     "code",
+     "structure",
+     "both"
+    ],
+    "fit": "content",
+    "minSize": "s",
+    "actions": [
+     {
+      "id": "cprev",
+      "label": "Preview",
+      "title": "Draw it here - a sandboxed frame, no network"
+     },
+     {
+      "id": "vo:copy",
+      "kit": true
+     },
+     {
+      "id": "vo:run",
+      "kit": true
+     },
+     {
+      "id": "vo:edit",
+      "kit": true
+     },
+     {
+      "id": "vo:preview",
+      "kit": true
+     },
+     {
+      "id": "vo:dsrc",
+      "kit": true
+     },
+     {
+      "id": "vo:present",
+      "kit": true
+     },
+     {
+      "id": "vo:outline",
+      "kit": true
+     },
+     {
+      "id": "vo:fpop",
+      "kit": true
+     },
+     {
+      "id": "vo:pop",
+      "kit": true
+     },
+     {
+      "id": "vo:dpop",
+      "kit": true
+     },
+     {
+      "id": "vo:save",
+      "kit": true
+     },
+     {
+      "id": "vo:dsvg",
+      "kit": true
+     },
+     {
+      "id": "vo:dpng",
+      "kit": true
+     }
+    ]
+   },
+   "controls0": [
+    "view",
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "cprev",
+    "vo:copy",
+    "vo:run",
+    "vo:edit",
+    "vo:preview",
+    "vo:dsrc",
+    "vo:present",
+    "vo:outline",
+    "vo:fpop",
+    "vo:pop",
+    "vo:dpop",
+    "vo:save",
+    "vo:dsvg",
+    "vo:dpng"
+   ]
+  },
+  "explode": {
+   "digest": "0175d90b7a00a1651343b50e380a4ef4ecce813256d1ae180517b9bea83ffb49",
+   "body": {
+    "views": [],
+    "fit": "fill",
+    "minSize": "m",
+    "actions": [
+     {
+      "id": "xpsync",
+      "label": "Clear the lit spans",
+      "title": "Light the whole of the bound source again"
+     }
+    ]
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "xpsync"
+   ]
+  },
+  "diagram": {
+   "digest": "0933591f41332b27d60aaacf8b16f95c923dd977ced6ea7da6d71821292ac24f",
+   "body": {
+    "views": [],
+    "fit": "fill",
+    "minSize": "s",
+    "actions": [
+     {
+      "id": "dgedit",
+      "label": "Edit source",
+      "title": "Edit the mermaid source beside the drawing - it redraws as you type; Save writes it",
+      "lead": true,
+      "replaces": "edit"
+     },
+     {
+      "id": "dgopen",
+      "label": "Open in the chat ↗",
+      "title": "Open it in the chat — the chat's own diagram pop-out"
+     },
+     {
+      "id": "dgcopy",
+      "label": "Copy",
+      "title": "Copy the mermaid source"
+     },
+     {
+      "id": "dgsrc",
+      "label": "Source",
+      "title": "Show the source"
+     },
+     {
+      "id": "vo:copy",
+      "kit": true
+     },
+     {
+      "id": "vo:run",
+      "kit": true
+     },
+     {
+      "id": "vo:edit",
+      "kit": true
+     },
+     {
+      "id": "vo:preview",
+      "kit": true
+     },
+     {
+      "id": "vo:dsrc",
+      "kit": true
+     },
+     {
+      "id": "vo:present",
+      "kit": true
+     },
+     {
+      "id": "vo:outline",
+      "kit": true
+     },
+     {
+      "id": "vo:fpop",
+      "kit": true
+     },
+     {
+      "id": "vo:pop",
+      "kit": true
+     },
+     {
+      "id": "vo:dpop",
+      "kit": true
+     },
+     {
+      "id": "vo:save",
+      "kit": true
+     },
+     {
+      "id": "vo:dsvg",
+      "kit": true
+     },
+     {
+      "id": "vo:dpng",
+      "kit": true
+     }
+    ]
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "dgedit",
+    "dgopen",
+    "dgcopy",
+    "dgsrc",
+    "vo:copy",
+    "vo:run",
+    "vo:edit",
+    "vo:preview",
+    "vo:dsrc",
+    "vo:present",
+    "vo:outline",
+    "vo:fpop",
+    "vo:pop",
+    "vo:dpop",
+    "vo:save",
+    "vo:dsvg",
+    "vo:dpng"
+   ]
+  },
+  "image": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "note": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "records": {
+   "digest": "5506880e84dd1fae9ee243fb3380d369cd5e3f45062964e26c18d9ca15c45ced",
+   "body": {
+    "views": [
+     "graph",
+     "list",
+     "cards",
+     "table"
+    ],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "view",
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "table": {
+   "digest": "b35db148b89b62b3a083c4da4ebdbd8c15d1d500617771dd52be1375bae5fcc7",
+   "body": {
+    "views": [
+     "table",
+     "cards",
+     "list",
+     "chart",
+     "graph"
+    ],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "view",
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "widget": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "session": {
+   "digest": "429e74d283281c3756f71da565b06ed271091e18137b2ccaefcdd1dfea55a8d4",
+   "body": {
+    "views": [],
+    "fit": "fill",
+    "minSize": "m",
+    "actions": [
+     {
+      "id": "tattach",
+      "label": "Attach",
+      "title": "Open a shell on this host"
+     },
+     {
+      "id": "tdetach",
+      "label": "Detach",
+      "title": "Detach — the item keeps its host; Attach opens a new shell"
+     },
+     {
+      "id": "tshare",
+      "label": "Share",
+      "title": "Copy the terminal's address"
+     }
+    ]
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "tattach",
+    "tdetach",
+    "tshare"
+   ]
+  },
+  "notebook": {
+   "digest": "cebfda15ec2002d970519c26aac8fe081fa795207829ec81b50e1a5cdfd1bac1",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": [
+     {
+      "id": "nbrun",
+      "label": "Run",
+      "title": "Run the cell through the notebook's exec"
+     },
+     {
+      "id": "nbopen",
+      "label": "Open the notebook ↗",
+      "title": "Open the notebook at this cell"
+     }
+    ]
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "nbrun",
+    "nbopen"
+   ]
+  },
+  "panel": {
+   "digest": "11044678107f9098b57ebbd3737bf1d62d82aa0d7992fb5523f45ca22a77d88a",
+   "body": {
+    "views": [],
+    "fit": "fill",
+    "minSize": "m",
+    "actions": [
+     {
+      "id": "layer-behind",
+      "label": "Behind",
+      "title": "Fill the free desk, under the other items"
+     },
+     {
+      "id": "layer-front",
+      "label": "Front",
+      "title": "Fill the free desk, over the other items"
+     },
+     {
+      "id": "prefresh",
+      "label": "Refresh",
+      "title": "Reload the panel"
+     },
+     {
+      "id": "pquery",
+      "label": "Query",
+      "title": "panel.query - what the panel holds"
+     },
+     {
+      "id": "pdispatch",
+      "label": "Dispatch",
+      "title": "panel.dispatch - drive it"
+     },
+     {
+      "id": "pstand",
+      "label": "Standalone ↗",
+      "title": "Open it in a tab of its own"
+     }
+    ]
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "layer-behind",
+    "layer-front",
+    "prefresh",
+    "pquery",
+    "pdispatch",
+    "pstand"
+   ]
+  },
+  "loop": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "activity": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "research": {
+   "digest": "5b30622a4078342e659e6b1802fd849948b389d8ff207e1fd2ce7aaeea66fca2",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": [
+     {
+      "id": "vo:copy",
+      "kit": true
+     },
+     {
+      "id": "vo:run",
+      "kit": true
+     },
+     {
+      "id": "vo:edit",
+      "kit": true
+     },
+     {
+      "id": "vo:preview",
+      "kit": true
+     },
+     {
+      "id": "vo:dsrc",
+      "kit": true
+     },
+     {
+      "id": "vo:present",
+      "kit": true
+     },
+     {
+      "id": "vo:outline",
+      "kit": true
+     },
+     {
+      "id": "vo:fpop",
+      "kit": true
+     },
+     {
+      "id": "vo:pop",
+      "kit": true
+     },
+     {
+      "id": "vo:dpop",
+      "kit": true
+     },
+     {
+      "id": "vo:save",
+      "kit": true
+     },
+     {
+      "id": "vo:dsvg",
+      "kit": true
+     },
+     {
+      "id": "vo:dpng",
+      "kit": true
+     }
+    ]
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "vo:copy",
+    "vo:run",
+    "vo:edit",
+    "vo:preview",
+    "vo:dsrc",
+    "vo:present",
+    "vo:outline",
+    "vo:fpop",
+    "vo:pop",
+    "vo:dpop",
+    "vo:save",
+    "vo:dsvg",
+    "vo:dpng"
+   ]
+  },
+  "entities": {
+   "digest": "708a6ed8d630c8b6c15a8dc9f9995994eb86b270cea272d53742a03c6a65f601",
+   "body": {
+    "views": [
+     "chips",
+     "list",
+     "graph"
+    ],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "view",
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "json": {
+   "digest": "d28884958a5e81630dab319368cb00c57a02bd9238f3a3123507c7c7789e44e0",
+   "body": {
+    "views": [
+     "tree",
+     "flat",
+     "validate"
+    ],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "view",
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "kv": {
+   "digest": "82c88016461dcbc8ac42279e2c9d6b32c2462ae6f1e7bb41e787a367658bd81e",
+   "body": {
+    "views": [
+     "fields",
+     "graph"
+    ],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "view",
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "chat": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "result": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "app": {
+   "digest": "c240622569c65de6f0e3afb1ad034ebb8cf3399ee6201431b2a9c20327beefd9",
+   "body": {
+    "views": [
+     "table",
+     "cards",
+     "drawn"
+    ],
+    "fit": "content",
+    "minSize": "s",
+    "actions": [
+     {
+      "id": "appread",
+      "label": "Refresh",
+      "title": "Read it again now"
+     },
+     {
+      "id": "appact",
+      "label": "an action of the app",
+      "title": "one of the app manifest's actions"
+     },
+     {
+      "id": "appcsv",
+      "label": "Copy CSV",
+      "title": "Copy the rows shown, as CSV"
+     },
+     {
+      "id": "appopen",
+      "label": "Open the panel ↗",
+      "title": "Open the page this app comes from"
+     }
+    ]
+   },
+   "controls0": [
+    "view",
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "appread",
+    "appact",
+    "appcsv",
+    "appopen"
+   ]
+  },
+  "schedule": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  },
+  "html": {
+   "digest": "3529a1ffef1d22ee5b6b4a02b5a2e6f2483bb3c910b000093cdf1252f77467d1",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": [
+     {
+      "id": "cprev",
+      "label": "Preview",
+      "title": "Draw it here - a sandboxed frame, no network"
+     },
+     {
+      "id": "link",
+      "label": "Open in a tab ↗",
+      "title": "a link of its own: open, or download"
+     }
+    ]
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy",
+    "cprev",
+    "link"
+   ]
+  },
+  "mystery": {
+   "digest": "ed37944e24f8de924bcc0c3c977cad0e3b2d4856992348c48cd533b5f2e7e1b5",
+   "body": {
+    "views": [],
+    "fit": "content",
+    "minSize": "s",
+    "actions": []
+   },
+   "controls0": [
+    "lock",
+    "pill",
+    "max",
+    "more",
+    "drop"
+   ],
+   "menu0": [
+    "park",
+    "size",
+    "arrange",
+    "fold",
+    "group",
+    "explode",
+    "edit",
+    "context",
+    "dive",
+    "open",
+    "copy"
+   ]
+  }
+ }
+}
