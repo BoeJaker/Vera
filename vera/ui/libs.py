@@ -12,6 +12,7 @@ from the same copy.
   /ui/menus.js  -> vera/ui/menus.js  window.MENUS     every context menu
   /ui/vera-timeline.js -> vera/ui/vera_timeline.js  window.VeraTimeline + <vera-timeline>: THE timeline
                                                        (lanes are records; looplab-control §9 K1)
+  /ui/vera-matrix.js -> vera/ui/vera_matrix.js  window.VeraMatrix + <vera-matrix>: THE matrix (K2)
   /ui/routes.js -> vera/ui/routes.js window.VeraRoutes the run routers: the exploded
                                                        scene's cards and iso runs, the
                                                        structured graph's channels
@@ -61,6 +62,11 @@ async def _serve_iso_lattice_js():
 @APP.get("/ui/vera-timeline.js", include_in_schema=False)
 async def _serve_vera_timeline_js():
     return _script("vera_timeline.js")
+
+
+@APP.get("/ui/vera-matrix.js", include_in_schema=False)
+async def _serve_vera_matrix_js():
+    return _script("vera_matrix.js")
 
 
 @APP.get("/ui/menus.js", include_in_schema=False)
