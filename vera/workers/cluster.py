@@ -1066,7 +1066,10 @@ async def _ollama_proxy_get_v1(path: str, req: Request):
 
 @capability(
     "cluster.mimic.status", memory="off", silent=True,
-    contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["routing", "current_target", "paused", "online_nodes", "active", "queue_depth", "queue_max", "max_concurrency", "queue_timeout"]}}},
+    # the main dashboard's Mimic strip (state, routing, target, nodes, active / limit, the queue, rate, last requests) on the desk -
+    # <vera-mimic-status>, seeded with the answer (Wave 1: panel-derived); the key-value list stays a view of it
+    contract={"presentation": {"kind": "kv", "form": "element", "map": {"keys": ["routing", "current_target", "paused", "online_nodes", "active", "queue_depth", "queue_max", "max_concurrency", "queue_timeout"]},
+                               "draw": {"tag": "vera-mimic-status"}, "title": "Mimic proxy"}},
     http_method="GET", http_path="/cluster/mimic/status", http_tags=["cluster"],
     description="Live status of the Ollama mimic proxy: routing mode, the node a "
                 "request would route to right now, online nodes, paused state, "
@@ -1175,6 +1178,19 @@ async def cap_mimic_requests_clear(trace_id=None) -> Dict:
 
 
 _MIMIC_PANEL_PATH = os.path.join(os.path.dirname(__file__), "ollama_mimic_panel.html")
+_MIMIC_STATUS_EL = os.path.join(os.path.dirname(__file__), "mimic_status_element.js")
+
+
+@APP.get("/ui/elements/mimic_status.js", include_in_schema=False)
+async def _mimic_status_js():
+    """<vera-mimic-status>: the main dashboard's Mimic strip, shared with the desk."""
+    from fastapi.responses import Response
+    try:
+        with open(_MIMIC_STATUS_EL, encoding="utf-8") as fh:
+            body = fh.read()
+    except OSError:
+        body = "console.error('mimic_status_element.js not found')"
+    return Response(body, media_type="application/javascript")
 
 
 @APP.get("/cluster/mimic/panel", include_in_schema=False)

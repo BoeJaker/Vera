@@ -1,0 +1,86 @@
+{
+ "cases": [
+  {
+   "status": {
+    "mounted": true,
+    "paused": false,
+    "routing": "least_busy",
+    "current_target": "gpu-250",
+    "online_nodes": [
+     "gpu-250",
+     "cpu-246"
+    ],
+    "active": 1,
+    "max_concurrency": 4
+   },
+   "reqs": {
+    "total": 42,
+    "entries": [
+     {
+      "ts": "2026-10-19T00:10:00Z",
+      "instance": "gpu-250",
+      "model": "qwen3:9b"
+     },
+     {
+      "ts": "2026-10-19T00:06:00Z",
+      "instance": "cpu-246",
+      "model": "qwen3:1.7b"
+     },
+     {
+      "ts": "2026-10-19T00:01:00Z",
+      "instance": "gpu-250",
+      "model": "x"
+     },
+     {
+      "ts": "2026-10-19T00:00:00Z"
+     }
+    ]
+   }
+  },
+  {
+   "status": {
+    "mounted": true,
+    "paused": true,
+    "online_nodes": []
+   },
+   "reqs": {
+    "entries": []
+   }
+  },
+  {
+   "status": {
+    "mounted": false
+   },
+   "reqs": null
+  },
+  {
+   "status": null,
+   "reqs": null
+  },
+  {
+   "status": {
+    "mounted": true,
+    "routing": "gpu_first",
+    "current_target": "cpu-247",
+    "online_nodes": [
+     "a"
+    ],
+    "active": 0,
+    "max_concurrency": 2,
+    "queue_depth": 3,
+    "queue_max": 16,
+    "queue_timeout": 120
+   },
+   "reqs": {
+    "entries": []
+   }
+  }
+ ],
+ "html": [
+  "\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\" style=\"font-size:16px;color:var(--ok)\">running</div><div class=\"cluster-stat-l\">State</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">least_busy</div><div class=\"cluster-stat-l\">Routing</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">gpu-250</div><div class=\"cluster-stat-l\">Current target</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">2</div><div class=\"cluster-stat-l\">Nodes online</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">1/4</div><div class=\"cluster-stat-l\">Active/limit</div></div><div class=\"cluster-stat\"><div class=\"cluster-stat-v\">0.4/min</div><div class=\"cluster-stat-l\">Recent rate (42 total)</div></div><div style=\"width:100%;font-size:9px;color:var(--dim2);font-family:var(--mono);margin-top:4px\">00:10:00 · gpu-250 · qwen3:9b<br>00:06:00 · cpu-246 · qwen3:1.7b<br>00:01:00 · gpu-250 · x</div>",
+  "\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\" style=\"font-size:16px;color:var(--warn)\">paused</div><div class=\"cluster-stat-l\">State</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">—</div><div class=\"cluster-stat-l\">Routing</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">—</div><div class=\"cluster-stat-l\">Current target</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">0</div><div class=\"cluster-stat-l\">Nodes online</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">0/—</div><div class=\"cluster-stat-l\">Active/limit</div></div>",
+  "\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\" style=\"font-size:16px;color:var(--dim2)\">not mounted</div><div class=\"cluster-stat-l\">State</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">—</div><div class=\"cluster-stat-l\">Routing</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">—</div><div class=\"cluster-stat-l\">Current target</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">0</div><div class=\"cluster-stat-l\">Nodes online</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">0/—</div><div class=\"cluster-stat-l\">Active/limit</div></div>",
+  "<span style=\"color:var(--dim2)\">unavailable</span>",
+  "\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\" style=\"font-size:16px;color:var(--ok)\">running</div><div class=\"cluster-stat-l\">State</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">gpu_first</div><div class=\"cluster-stat-l\">Routing</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">cpu-247</div><div class=\"cluster-stat-l\">Current target</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">1</div><div class=\"cluster-stat-l\">Nodes online</div></div>\n    <div class=\"cluster-stat\"><div class=\"cluster-stat-v\">0/2</div><div class=\"cluster-stat-l\">Active/limit</div></div>"
+ ]
+}

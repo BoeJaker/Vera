@@ -6756,29 +6756,13 @@ async function loadMimicSummary(){
     api('/cluster/jobs?limit=20'),
   ]);
   _renderActiveRouting(jobs, reqs);
+  /* the strip is the shared element <vera-mimic-status> (vera/workers/mimic_status_element.js): the desk draws the same (Wave 1) */
   const el = document.getElementById('mimicSummary');
   if(!el) return;
-  if(!status){ el.innerHTML = '<span style="color:var(--dim2)">unavailable</span>'; return; }
-  const stateColor = !status.mounted ? 'var(--dim2)' : (status.paused ? 'var(--warn)' : 'var(--ok)');
-  const stateLbl = !status.mounted ? 'not mounted' : (status.paused ? 'paused' : 'running');
-  const online = status.online_nodes||[];
-  let html = `
-    <div class="cluster-stat"><div class="cluster-stat-v" style="font-size:16px;color:${stateColor}">${stateLbl}</div><div class="cluster-stat-l">State</div></div>
-    <div class="cluster-stat"><div class="cluster-stat-v">${status.routing||'—'}</div><div class="cluster-stat-l">Routing</div></div>
-    <div class="cluster-stat"><div class="cluster-stat-v">${status.current_target||'—'}</div><div class="cluster-stat-l">Current target</div></div>
-    <div class="cluster-stat"><div class="cluster-stat-v">${online.length}</div><div class="cluster-stat-l">Nodes online</div></div>
-    <div class="cluster-stat"><div class="cluster-stat-v">${status.active??0}/${status.max_concurrency??'—'}</div><div class="cluster-stat-l">Active/limit</div></div>`;
-  const entries = (reqs&&reqs.entries)||[];
-  if(entries.length){
-    const newest = entries[0], oldest = entries[entries.length-1];
-    const spanMin = Math.max(1, (Date.parse(newest.ts)-Date.parse(oldest.ts))/60000);
-    const rate = (entries.length/spanMin).toFixed(1);
-    html += `<div class="cluster-stat"><div class="cluster-stat-v">${rate}/min</div><div class="cluster-stat-l">Recent rate (${reqs.total??entries.length} total)</div></div>`;
-    html += `<div style="width:100%;font-size:9px;color:var(--dim2);font-family:var(--mono);margin-top:4px">` +
-      entries.slice(0,3).map(e=>`${(e.ts||'').slice(11,19)} · ${e.instance||'?'} · ${e.model||'?'}`).join('<br>') +
-      `</div>`;
-  }
-  el.innerHTML = html;
+  let w = el.querySelector('vera-mimic-status');
+  if(!w){ el.innerHTML = ''; w = document.createElement('vera-mimic-status'); w.setAttribute('refresh', '0'); w.style.width = '100%'; el.appendChild(w); }
+  const give = () => w.seed({ status: status || null, requests: reqs || { entries: [] } });
+  if(typeof w.seed === 'function') give(); else if(window.customElements) customElements.whenDefined('vera-mimic-status').then(give);
 }
 
 // "What's running now, and where" — real routing, not aggregate counts:
@@ -8877,6 +8861,8 @@ function _dashEnhancePop(){
 <script src="/ui/elements/topology_map.js"></script>
 <!-- <vera-docker-top> - the busiest containers (the Docker tile, shared with the desk) -->
 <script src="/ui/elements/docker_top.js"></script>
+<!-- <vera-mimic-status> - the Mimic proxy strip (shared with the desk) -->
+<script src="/ui/elements/mimic_status.js"></script>
 
 <!-- Floating activity overlay — self-mounting top-bar ticker + filterable feed
      (narrator / dreams / loops / v8 programs / Runs), over whatever else is open. -->
