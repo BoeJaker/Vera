@@ -72,7 +72,9 @@ def test_the_page_the_route_and_the_loop_lab_section():
     assert "<button" not in page.split("<main")[1]              # display only: no controls on the page
     ll = open(os.path.join(ROOT, "vera", "evolve", "evolve_panel.html"), encoding="utf-8").read()
     assert 'data-sec="tests" onclick="nav(\'tests\')"' in ll and 'id="sec-tests"' in ll
-    assert 'data-src="/decide/tests"' in ll and "tests:()=>" in ll
+    # the Loop Lab draws the tests itself now (looplab-control §9.4 S2, the four-minds handover); the page reads
+    # decide.tests.status, which stays the data source
+    assert "tests:loadTestsPage," in ll and "VeraDrill.call('decide.tests.status'" in ll
     orch = open(os.path.join(ROOT, "vera", "capability_orchestration.py"), encoding="utf-8").read()
     assert 'os.path.join(_here, "minds/tests_monitor.py")' in orch
 
