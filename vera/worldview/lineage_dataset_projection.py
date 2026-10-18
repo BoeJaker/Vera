@@ -8,7 +8,7 @@ authority, reads a provider, or changes a consumer route.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import json
 import re
@@ -22,6 +22,8 @@ SCHEMA = "vera.worldview-lineage-dataset-projection/v1"
 TARGET_CONTRACT = "vera.dataset-snapshot/v1"
 _REVISION = re.compile(r"^rev_[0-9a-f]{64}$")
 _ARTIFACT = re.compile(r"^artifact_sha256:[0-9a-f]{64}$")
+_PROJECTION = re.compile(r"^wvlproj_[0-9a-f]{64}$")
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _RECORD_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _SOURCE_LINEAGES = {
     "godseye": "godseye.integrated",
@@ -90,6 +92,61 @@ class LineageDatasetProjection:
             "executes": False,
             "runtime_changed": False,
         }
+
+
+def _projection_identity(projection: LineageDatasetProjection) -> dict[str, Any]:
+    return {
+        "schema": SCHEMA,
+        "source_lineage": projection.source_lineage,
+        "source_system": projection.source_system,
+        "source_revision": projection.source_revision,
+        "source_artifact_id": projection.source_artifact_id,
+        "dataset_id": projection.dataset_id,
+        "snapshot_id": projection.snapshot_id,
+        "geospatial_kind": projection.geospatial_kind,
+        "record_revisions": list(projection.record_revisions),
+        "record_content_hashes": list(projection.record_content_hashes),
+        "target_contract": projection.target_contract,
+        "intended_consumer": projection.intended_consumer,
+        "authority": projection.authority,
+    }
+
+
+def verify_lineage_projection(
+        projection: LineageDatasetProjection) -> LineageDatasetProjection:
+    """Fail closed if a manifest was forged outside the verified builder."""
+    if not isinstance(projection, LineageDatasetProjection):
+        raise TypeError("projection must be LineageDatasetProjection")
+    if (_SOURCE_LINEAGES.get(projection.source_system) != projection.source_lineage or
+            projection.geospatial_kind not in KINDS or
+            projection.dataset_id !=
+            f"{projection.source_system}.{projection.geospatial_kind}"):
+        raise ValueError("projection lineage identity does not verify")
+    if (projection.target_contract != TARGET_CONTRACT or
+            projection.intended_consumer != "worldview.jepa" or
+            projection.authority != "candidate_evidence_only"):
+        raise ValueError("projection target or authority does not verify")
+    revisions = tuple(sorted(projection.record_revisions))
+    hashes = tuple(sorted(projection.record_content_hashes))
+    revision_ids = [record_id for record_id, _ in revisions]
+    hash_ids = [record_id for record_id, _ in hashes]
+    if (projection.record_count < 1 or projection.record_count != len(revisions) or
+            len(revision_ids) != len(set(revision_ids)) or
+            revision_ids != hash_ids or revisions != projection.record_revisions or
+            hashes != projection.record_content_hashes):
+        raise ValueError("projection record evidence does not verify")
+    if (any(not _RECORD_ID.fullmatch(record_id) or not _REVISION.fullmatch(revision)
+            for record_id, revision in revisions) or
+            any(not _DIGEST.fullmatch(content_hash)
+                for _, content_hash in hashes)):
+        raise ValueError("projection revision or content hash does not verify")
+    if not _ARTIFACT.fullmatch(projection.source_artifact_id):
+        raise ValueError("projection artifact identity does not verify")
+    expected = "wvlproj_" + hashlib.sha256(
+        _canonical(_projection_identity(projection)).encode()).hexdigest()
+    if not _PROJECTION.fullmatch(projection.projection_id) or projection.projection_id != expected:
+        raise ValueError("projection identity does not verify")
+    return projection
 
 
 def _verify_snapshot(dataset: PortableGeospatialDataset) -> None:
@@ -161,24 +218,8 @@ def project_lineage_dataset(
         hashes.append((record_id, _sha(record)))
     revisions.sort()
     hashes.sort()
-    identity = {
-        "schema": SCHEMA,
-        "source_lineage": _SOURCE_LINEAGES[source],
-        "source_system": source,
-        "source_revision": source_revision,
-        "source_artifact_id": dataset.artifact_id,
-        "dataset_id": dataset.snapshot.dataset_id,
-        "snapshot_id": dataset.snapshot.snapshot_id,
-        "geospatial_kind": dataset.kind,
-        "record_revisions": revisions,
-        "record_content_hashes": hashes,
-        "target_contract": TARGET_CONTRACT,
-        "intended_consumer": "worldview.jepa",
-        "authority": "candidate_evidence_only",
-    }
-    return LineageDatasetProjection(
-        projection_id="wvlproj_" + hashlib.sha256(
-            _canonical(identity).encode()).hexdigest(),
+    projection = LineageDatasetProjection(
+        projection_id="",  # filled from the complete semantic identity below
         source_lineage=_SOURCE_LINEAGES[source],
         source_system=source,
         source_revision=source_revision,
@@ -190,3 +231,8 @@ def project_lineage_dataset(
         record_revisions=tuple(revisions),
         record_content_hashes=tuple(hashes),
     )
+    projection = replace(
+        projection,
+        projection_id="wvlproj_" + hashlib.sha256(
+            _canonical(_projection_identity(projection)).encode()).hexdigest())
+    return verify_lineage_projection(projection)
