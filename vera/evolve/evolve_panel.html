@@ -880,6 +880,19 @@ html.vpb-nav-hosted body{padding-left:0}
     </div>
     <div id="pf-broken"></div>
   </div>
+  <!-- the kit (looplab-control §9.4 S7: "load, why it moved, quality beside speed, poor outputs"): THE timeline of what
+       Loop Lab and Vera did over the window with the releases on it, why it moved (each release: before vs after), and
+       quality beside speed per area. Chat speed over time reads B1+'s durable call record (ollama.calls.rollup). -->
+  <div class="card">
+    <div class="card-h"><span class="card-t">Over time</span><span class="hint">census, gates and chat speed over the window &middot; releases as marks &middot; a click on a release shows what moved after it</span></div>
+    <div id="pf-tl-host"></div>
+    <div class="hint" id="pf-tl-note" style="margin-top:4px">node load over time comes with U1 (utilisation, inside and outside Loop Lab) - not built yet; chat speed reads the durable call record, which fills from the B1+ release on</div>
+  </div>
+  <div class="kp-two">
+    <div class="card"><div class="card-h"><span class="card-t">Why it moved</span><span class="hint">each release in the window: the days before vs the days after</span></div><div id="pf-why"></div></div>
+    <div class="card"><div class="card-h"><span class="card-t">Quality beside speed</span><span class="hint">this window vs the one before it</span></div><div id="pf-qs"></div></div>
+  </div>
+  <vera-drill class="olv-drill" id="pf-drill" url></vera-drill>
   <div class="kp-two">
     <div class="card"><div class="card-h"><span class="card-t">Loop Lab</span><span class="hint">is the improvement machine getting better?</span><span style="flex:1"></span><a class="hint" style="cursor:pointer" onclick="nav('work')">runs ›</a></div><div id="pf-loop" class="kp-grid"><span class="hint">loading…</span></div></div>
     <div class="card"><div class="card-h"><span class="card-t">Vera's everyday use</span><span class="hint">is it quick and right for the owner?</span><span style="flex:1"></span><a class="hint" style="cursor:pointer" onclick="nav('models')">models ›</a></div><div id="pf-vera" class="kp-grid"><span class="hint">loading…</span></div></div>
@@ -1882,6 +1895,82 @@ function _rtKinds(){
       row('escalated',x.escalated?'yes':'')+row('caller',(x.caller_file||'')+' '+(x.caller_func||''))+row('session',x.session_id)});
 }
 
+/* ═══ PERFORMANCE — over time, why it moved, quality beside speed (looplab-control §9.4 S7) ═══ */
+// Reads: evolve.performance.view (the census day series, gates, chat, corpus), evolve.releases.view (releases in the
+// window), ollama.calls.rollup (B1+: chat speed per hour), evolve.unittest.history (gate results). Each number names
+// its source; a measure that does not exist yet (node load = U1, a per-reply chat quality = Q1) says so.
+let _pfView=null,_pfRel=[];
+function _pfMean(a){a=a.filter(v=>v!=null&&!isNaN(v));return a.length?a.reduce((s,v)=>s+(+v),0)/a.length:null}
+function _pfFmt(v,d){return v==null?'–':(+v).toFixed(d==null?2:d)}
+async function perfKit(){
+  try{await _olvScript()}catch(e){return}
+  const days=+(($('pf-days')||{}).value||7);
+  const [v,rv,ru]=await Promise.all([VeraDrill.call('evolve.performance.view',{days}).catch(e=>({error:e.message})),
+    VeraDrill.call('evolve.releases.view',{days}).catch(()=>null),VeraDrill.call('ollama.calls.rollup',{hours:days*24}).catch(e=>({error:e.message}))]);
+  if(!v||v.error){$('pf-why').innerHTML=VeraStates.html('error','could not read evolve.performance.view');return}
+  _pfView=v;_pfRel=((rv&&rv.releases)||[]).filter(r=>r.finished_at&&r.status==='done').sort((a,b)=>Date.parse(a.finished_at)-Date.parse(b.finished_at));
+  perfTimeline(days);perfWhy(ru);perfQS(ru);
+}
+function perfTimeline(days){
+  const now=Date.now(),start=new Date(now-(days+1)*864e5).toISOString(),end=new Date(now+864e5).toISOString();
+  const pv={cap:'evolve.performance.view',args:{days}};
+  const lanes=[
+    {lane:'pf.done',label:'Census done rate',group:'Loop Lab',type:'strip',color:'#3fae6c',live:600,source:pv,map:{items:'loop_lab.census.series',t:'day',value:'done_rate',tip:'{day} · done {done_rate} · {runs} run(s)',color:'#3fae6c'}},
+    {lane:'pf.quality',label:'Census quality',group:'Loop Lab',type:'strip',color:'#a78bfa',live:600,source:pv,map:{items:'loop_lab.census.series',t:'day',value:'quality',tip:'{day} · quality {quality}',color:'#a78bfa'}},
+    {lane:'pf.wall',label:'Wall per goal (min)',group:'Loop Lab',type:'strip',color:'#e0a458',live:600,source:pv,map:{items:'loop_lab.census.series',t:'day',value:'wall_per_goal_min',tip:'{day} · {wall_per_goal_min} min a goal',color:'#e0a458'}},
+    {lane:'pf.gates',label:'Gate results',group:'Loop Lab',type:'mark',color:'#6db87a',live:300,source:{cap:'evolve.unittest.history',args:{limit:300}},map:{items:'runs',t:'ts',id:'ts',tip:'{branch} · {summary}',color:{field:'ok',map:{'true':'#6db87a','false':'#c96b6b'},else:'#5a6270'}}},
+    {lane:'pf.chat',label:'Chat seconds a call (p50)',group:"Vera's use",type:'strip',color:'#7aa2f7',live:600,source:{cap:'ollama.calls.rollup',args:{hours:days*24,job_type:'chat'}},map:{items:'rows',t:'bucket',value:'p50_s',tip:'{bucket} · {model} on {instance} · p50 {p50_s} s · {calls} calls',color:'#7aa2f7'}},
+    {lane:'pf.tps',label:'Chat tokens a second',group:"Vera's use",type:'strip',color:'#4ade80',live:600,source:{cap:'ollama.calls.rollup',args:{hours:days*24,job_type:'chat'}},map:{items:'rows',t:'bucket',value:'tps',tip:'{bucket} · {tps} tok/s · {model}',color:'#4ade80'}},
+    {lane:'pf.releases',label:'Releases',group:'Changes',type:'mark',color:'#4ade80',live:600,source:{cap:'evolve.schedule.events',args:{mode:'windows',include_agents:false,include_releases:true,start,end}},map:{items:'events',t:'start',id:'id',where:{source:'releases',kind:'release'},tip:'{title}',color:'#4ade80'}},
+  ];
+  lanes.forEach(s=>VeraTimeline.registerLane(s));
+  let tl=$('pf-tl');
+  if(!tl){$('pf-tl-host').innerHTML='<vera-timeline id="pf-tl"></vera-timeline>';tl=$('pf-tl');
+    tl.addEventListener('timeline:select',e=>{const it=e.detail.item||{};if(it.release_id)$('pf-drill').open('release-moved',it.release_id,{root:true})})}
+  tl.setAttribute('from','-'+days+'d');tl.setAttribute('to','+6h');tl.setAttribute('lanes',lanes.map(s=>s.lane).join(','));
+  if(!perfTimeline._kind){perfTimeline._kind=true;
+    VeraDrill.registerKind('release-moved',{label:'Release',
+      load:(id)=>{const r=_pfRel.find(x=>x.id===id);if(!r)throw new Error('not in this window');return r},
+      title:(r)=>'release '+r.id,
+      render:(r)=>_pfMovedTable([r])+'<div style="margin-top:6px">'+_olvRow('carried',(r.carried||[]).map(c=>c.branch||c.subject).join(', '))+'</div>'})}
+}
+/* before vs after one release: the census day series (days before vs days after) and chat speed (B1+ hours) */
+function _pfSide(t0){
+  const s=((_pfView&&_pfView.loop_lab&&_pfView.loop_lab.census)||{}).series||[],b=[],a=[];
+  s.forEach(d=>{const t=Date.parse(d.day+'T12:00:00Z');(t<t0?b:a).push(d)});
+  return {b,a};
+}
+function _pfMovedTable(rels,ru){
+  const rows=(ru&&!ru.error&&ru.rows)||[];
+  return '<table class="tst-t"><tr><th>release</th><th>census done</th><th>quality</th><th>min a goal</th><th>chat p50 s</th></tr>'+rels.map(r=>{
+    const t0=Date.parse(r.finished_at),{b,a}=_pfSide(t0);
+    const cb=rows.filter(x=>x.job_type==='chat'&&Date.parse(x.bucket)<t0),ca=rows.filter(x=>x.job_type==='chat'&&Date.parse(x.bucket)>=t0);
+    const cell=(f,d,lowGood)=>{const x=_pfMean(b.map(r=>r[f])),y=_pfMean(a.map(r=>r[f]));if(x==null||y==null)return '<td class="tst-src">'+_pfFmt(x,d)+' → '+_pfFmt(y,d)+'</td>';
+      const up=y>x,good=lowGood?!up:up,eq=Math.abs(y-x)<1e-9;return '<td style="color:'+(eq?'inherit':good?'var(--ok)':'var(--err)')+'">'+_pfFmt(x,d)+' → '+_pfFmt(y,d)+'</td>'};
+    const chat=_pfMean(cb.map(x=>x.p50_s))!=null||_pfMean(ca.map(x=>x.p50_s))!=null?'<td>'+_pfFmt(_pfMean(cb.map(x=>x.p50_s)),1)+' → '+_pfFmt(_pfMean(ca.map(x=>x.p50_s)),1)+'</td>':'<td class="tst-src">no call record yet</td>';
+    return '<tr class="tst-r" onclick="$(\'pf-drill\').open(\'release-moved\',\''+esc(r.id)+'\',{root:true})"><td>'+esc(r.id)+' <span class="tst-src">'+esc(_olvWhen(r.finished_at))+' · '+(r.carried||[]).length+' change(s)</span></td>'+
+      cell('done_rate',2)+cell('quality',3)+cell('wall_per_goal_min',1,true)+chat+'</tr>'}).join('')+'</table>'+
+    '<div class="tst-src" style="margin-top:4px">days before vs days after inside the window (evolve.performance.view census series); a day-level series cannot pin a move on one release when several land the same day - read it as where to look, not proof. Root-cause per change is R1 / I1.</div>';
+}
+function perfWhy(ru){
+  $('pf-why').innerHTML=_pfRel.length?_pfMovedTable(_pfRel.slice(-8).reverse(),ru):VeraStates.html('empty','no release finished in this window');
+}
+/* quality beside speed, per area: now vs the window before, and what that means */
+function perfQS(ru){
+  const v=_pfView||{},c=(v.loop_lab||{}).census||{},p=c.prev||{},g=(v.loop_lab||{}).gates||{},ch=(v.vera_use||{}).chat||{},co=(v.vera_use||{}).corpus||{};
+  // a move under 1% of the value is noise, not better or worse
+  const arrow=(x,y,lowGood)=>x==null||y==null?'':(Math.abs(y-x)<=0.01*Math.max(Math.abs(x),1e-9)?'=':((y>x)!==!!lowGood?'<span style="color:var(--ok)">better</span>':'<span style="color:var(--err)">worse</span>'));
+  const verdict=(sq,ss)=>sq===''||ss===''?'':(sq.includes('worse')&&ss.includes('better')?'faster but worse':sq.includes('better')&&ss.includes('worse')?'better but slower':sq.includes('worse')?'worse':ss.includes('worse')?'slower':'holding or better');
+  const lq=arrow(p.quality,c.quality),ls=arrow(p.wall_per_goal_min,c.wall_per_goal_min,true);
+  const rows=[
+    ['Loop (census)','quality '+_pfFmt(p.quality,3)+' → '+_pfFmt(c.quality,3)+' '+lq+' · done '+_pfFmt(p.done_rate)+' → '+_pfFmt(c.done_rate),'min a goal '+_pfFmt(p.wall_per_goal_min,1)+' → '+_pfFmt(c.wall_per_goal_min,1)+' '+ls+' · capped '+(c.wall_capped||0),verdict(lq,ls),'evolve.performance.view'],
+    ['Gates','pass '+_pfFmt(g.pass_rate)+' ('+(g.passed||0)+' of '+(g.gates||0)+')',_pfFmt(g.gate_min,1)+' min a gate · lead '+_pfFmt(g.lead_h,1)+' h to a release','','evolve.unittest.history'],
+    ['Chat',co.broken?'<span class="tst-broken">corpus BROKEN</span>':'corpus pass '+_pfFmt(co.pass_rate)+(co.stale?' (stale, '+_pfFmt(co.age_days,0)+' d old)':' ('+_pfFmt(co.age_days,0)+' d old)')+' - no per-reply quality measure yet (Q1)',
+      _pfFmt(ch.wall_s,1)+' s a reply · '+_pfFmt(ch.tps,1)+' tok/s','','chat.corpus.last + ollama.route_stats'],
+  ];
+  $('pf-qs').innerHTML='<table class="tst-t"><tr><th>area</th><th>quality</th><th>speed</th><th>so</th></tr>'+rows.map(r=>'<tr><td><b>'+esc(r[0])+'</b><div class="tst-src">'+esc(r[4])+'</div></td><td>'+r[1]+'</td><td>'+r[2]+'</td><td>'+esc(r[3])+'</td></tr>').join('')+'</table>';
+}
+
 /* ═══ SCHEDULE — a calendar of Loop Lab work (evolve.schedule.*) ═══ */
 // Any Loop Lab work on a weekly window or once: a census, a suite, a task, a pipeline step, a board item's dispatch, an
 // agentic loop on a goal, a branch's unit tests, or any capability - and any of them may be FOR a board item (board_id):
@@ -2189,6 +2278,7 @@ function pfKpi(name,val,sub,src,bad,series,col){
     +'<div class="s">'+esc(sub||'')+'</div><div class="src">'+esc(src||'')+'</div></div>'}
 function pfArrow(a,b){if(a==null||b==null)return '';return Math.abs(a-b)<0.005?' · same as before':a>b?' ↑ from '+kpN(b,2):' ↓ from '+kpN(b,2)}
 async function loadPerformance(){
+  perfKit();
   const days=(($('pf-days')||{}).value||'7');
   const d=await api('/evolve/performance/view?days='+encodeURIComponent(days));
   if(!d||d.error){$('pf-loop').innerHTML='<div class="empty">'+esc((d&&d.error)||'performance unavailable')+'</div>';return}
