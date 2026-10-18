@@ -55,7 +55,11 @@ async def _refresh_mode() -> None:
         log.debug("site capture switch: %s", e)
 
 
-schedule(_refresh_mode, interval=60, name="decide_site_capture_mode", singleton=True, skip_in_sandbox=True)
+# Per process, NOT singleton (18 Oct 2026): MODE is this process's copy of the switch, and the processes that answer
+# LLM calls (prod and every node worker) must each refresh their own. As a singleton it ran in the scheduler's leader
+# only, so the call sites kept MODE off and captured nothing (3 captures in two days with the switch on).
+schedule(_refresh_mode, interval=60, name="decide_site_capture_mode", skip_in_sandbox=True)
+_orch.start_at_import(_refresh_mode, "decide_site_capture_mode_first")
 
 
 def tap(caller: Dict[str, Any], stage: str, job_type: str, system: str, prompt: str, answer: str, model: str) -> None:
