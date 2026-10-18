@@ -1328,8 +1328,9 @@
       state.editing = !state.editing;
       grid.classList.toggle('editing', state.editing);
       if (state.editing) gridVars();
-      widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); sampleGate(w); recordChip(w);
-        var hd = w.querySelector('.w-title[data-vd-item]'); if (hd) hd.setAttribute('draggable', state.editing ? 'false' : 'true'); });   // editing: the title reorders the tile
+      widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); sampleGate(w); recordChip(w); });
+      // editing: the title reorders the tile, so its item drag (P-SUMMON) stands aside
+      widgets().forEach(function (w) { var hd = w.querySelector('.w-title[data-vd-item]'); if (hd) hd.setAttribute('draggable', state.editing ? 'false' : 'true'); });
       var b = $(opts.editBtn);
       if (b) {
         b.textContent = state.editing ? '✓ Done' : '⚙ Configure';
