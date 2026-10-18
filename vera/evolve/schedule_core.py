@@ -111,7 +111,10 @@ CAP_ALLOW_PREFIXES = ("decide.", "obs.", "evolve.suite.", "chat.corpus.", "world
                       "ml.train", "ml.sweep", "retrieval.eval", "retrieval.known_items.run",
                       "dream.cycle.run", "evolve.script.run",
                       # owner 18 Oct 2026: background work runs in scheduled windows, not in a quiet hour
-                      "evolve.background.window")
+                      "evolve.background.window",
+                      # four-minds 18 Oct 2026 (owner: every test on the Loop Lab schedule, no in-code timers): the
+                      # precedent index and the claims harvest (decide.*, caps.shortlist.* are allowed above)
+                      "plan.precedent.index", "output.claims.harvest")
 
 _HHMM = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 

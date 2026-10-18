@@ -20,8 +20,10 @@ from Vera.vera.capability_orchestration import capability, schedule
 
 try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import calibration_core as CC
+    from Vera.vera.minds import contract_core as _MC
 except Exception:                        # worktree / app-free import
     from vera.minds import calibration_core as CC   # type: ignore
+    from vera.minds import contract_core as _MC     # type: ignore
 
 log = logging.getLogger("vera.minds.calibration")
 KEY_HISTORY = "vera:decide:calibration:history"
@@ -128,8 +130,6 @@ async def _weekly_job() -> None:
         if getattr(_orch, "_IS_WORKER", False):
             return
         now = datetime.now()
-        if now.weekday() != 6 or not (5 * 60 + 30 <= now.hour * 60 + now.minute < 6 * 60 + 30):
-            return
         r = getattr(_orch, "REDIS", None)
         week = now.strftime("%G-W%V")
         if r is None or await r.get(KEY_WEEK + week):
@@ -147,4 +147,18 @@ async def _weekly_job() -> None:
         log.warning("weekly calibration job: %s", e)
 
 
-schedule(_weekly_job, interval=900, name="decide_calibration_weekly", singleton=True, skip_in_sandbox=True)
+# On the Loop Lab schedule, not an in-code timer (owner, 18 Oct 2026: "make sure you are making use of the schedule system and not creating ad-hoc timing rules").
+
+
+@capability(
+    "decide.calibration.weekly", http_method="POST", http_path="/decide/calibration/weekly", http_tags=["minds"],
+    contract=_MC.contract("decision.calibration.weekly", effects=["read", "write"], idempotency="idempotent"),
+    memory="off",
+    description="Store this week's calibration snapshot (four-minds FM-2): decide.calibration over 7 days, digested into "
+                "decide.calibration.history; once per ISO week. The target of a Loop Lab schedule entry. Output: {ok, week}.",
+)
+async def cap_decide_calibration_weekly(trace_id=None) -> Dict[str, Any]:
+    await _weekly_job()
+    week = datetime.now().strftime("%G-W%V")
+    r = getattr(_orch, "REDIS", None)
+    return {"ok": bool(r is not None and await r.get(KEY_WEEK + week)), "week": week}

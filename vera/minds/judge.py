@@ -759,8 +759,6 @@ async def _night_job() -> None:
         if str(os.environ.get("VERA_DECIDE_SHADOW", "1")).strip().lower() in ("0", "false", "no", "off"):
             return
         now = datetime.now()
-        if not JC.in_window(now.hour):
-            return
         night = (now.date() if now.hour >= 12 else now.date().fromordinal(now.date().toordinal() - 1)).isoformat()
         r = getattr(_orch, "REDIS", None)
         if r is None or await r.get(KEY_NIGHT + night):
@@ -771,6 +769,8 @@ async def _night_job() -> None:
         # the candidate matrix: every callable small LLM (model.callable), every application, LLM pairs rotated
         jobs = SP.plan(SP.judge_bindings(_orch.CAPABILITY_REGISTRY), list(JC.QUESTIONS), await matrix_models(), cap)
         jobs, chosen = await _rotate(r, jobs)
+        # the call-site row of the matrix, in the same queue
+        jobs.append(("decide.shadow.sites", "call-site matrix: tonight's site x candidate pairs", {}, "sites"))
         queued, failed = 0, []
         for name, title, args, key in jobs:
             jid = "shadow-" + night + "-" + "".join(c if c.isalnum() else "-" for c in key)[:60]
@@ -790,4 +790,21 @@ async def _night_job() -> None:
         log.warning("shadow night job: %s", e)
 
 
-schedule(_night_job, interval=900, name="decide_shadow_night", singleton=True, skip_in_sandbox=True)
+# On the Loop Lab schedule, not an in-code timer (owner, 18 Oct 2026: "make sure you are making use of the schedule system and not creating ad-hoc timing rules").
+
+
+@capability(
+    "decide.shadow.night", http_method="POST", http_path="/decide/shadow/night", http_tags=["minds"],
+    contract=_MC.contract("decision.shadow.night", effects=["write"], idempotency="idempotent"),
+    memory="off",
+    description="Queue tonight's candidate matrix (four-minds FM-2): every judge job - the rotated small-LLM pairs, kNN, "
+                "cards, the NLP-node judges, trained heads - and the call-site matrix, through the background queue, which "
+                "drains them in its scheduled windows. Once a night (job ids fixed per night). The target of a Loop Lab "
+                "schedule entry. Output: {ok, night}.",
+)
+async def cap_decide_shadow_night(trace_id=None) -> Dict[str, Any]:
+    await _night_job()
+    now = datetime.now()
+    night = (now.date() if now.hour >= 12 else now.date().fromordinal(now.date().toordinal() - 1)).isoformat()
+    r = getattr(_orch, "REDIS", None)
+    return {"ok": bool(r is not None and await r.get(KEY_NIGHT + night)), "night": night}
