@@ -2217,7 +2217,10 @@ async def _ollama_slot(iid: str, timeout: Optional[float] = None,
                             COORD_REDIS, iid, _cap, _gate.lease_ttl_ms(), _gw,
                             required=True)
                     except _gate.GateAcquisitionError as _ge:
-                        if str(_ge) == "queue_timeout":
+                        # Compare the REASON, not the message: str() of the error is "required inference lease
+                        # unavailable: queue_timeout", so the old `str(_ge) == "queue_timeout"` never matched and
+                        # every gate timeout generated ungated (S1 / D03-1, backbone 18 Oct).
+                        if getattr(_ge, "reason", "") == "queue_timeout":
                             raise Exception(
                                 f"gpu gate timeout on {iid}: no free slot after "
                                 f"{int(_gw)}s (node busy with earlier requests)")
