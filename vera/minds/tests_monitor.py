@@ -18,6 +18,11 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import APP, CAPABILITY_REGISTRY, capability
 
 try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import series_core as _SER
+except Exception:                        # worktree / app-free import
+    from vera.minds import series_core as _SER   # type: ignore
+
+try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import tests_core as TC
     from Vera.vera.minds import contract_core as _MC
 except Exception:                        # worktree / app-free import
@@ -153,3 +158,98 @@ async def _tests_page():
     if p.exists():
         return HTMLResponse(p.read_text(encoding="utf-8"))
     return HTMLResponse("<pre>tests_panel.html not found</pre>", status_code=404)
+
+
+
+# -- dated history for the Loop Lab Tests timeline (vera-44, 18 Oct; LOOPLAB-TESTS-HANDOVER §5 lanes 4, 7, 8) -------
+_SERIES_DDL = [
+    """CREATE TABLE IF NOT EXISTS four_minds_snapshots (
+           id    BIGSERIAL PRIMARY KEY,
+           ts    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+           kind  TEXT NOT NULL,
+           data  JSONB NOT NULL
+       )""",
+    "CREATE INDEX IF NOT EXISTS four_minds_snapshots_kind_ts ON four_minds_snapshots (kind, ts)",
+]
+
+
+@capability(
+    "decide.series.snapshot", http_method="POST", http_path="/decide/series/snapshot", http_tags=["minds"],
+    memory="off",
+    description="Store one row of each four-minds history series (Loop Lab Tests timeline): matrix coverage "
+                "(decide.matrix.report), claims accuracy per judge vs the live rule, worldview spread "
+                "(worldview.health). Runs on the Loop Lab schedule. Output: {ok, stored: [kind]}.",
+)
+async def cap_decide_series_snapshot(trace_id=None) -> Dict[str, Any]:
+    pool = getattr(_orch, "PG_POOL", None)
+    if pool is None:
+        return {"ok": False, "error": "postgres unavailable"}
+    report = await _call("decide.matrix.report", days=7)
+    health = await _call("worldview.health")
+    rows = [(_SER.KINDS["matrix"], _SER.matrix_row(report)), (_SER.KINDS["claims"], _SER.claims_row(report)),
+            (_SER.KINDS["worldview"], _SER.worldview_row(health))]
+    stored = []
+    async with pool.acquire() as conn:
+        for st in _SERIES_DDL:
+            await conn.execute(st)
+        for kind, data in rows:
+            if data:
+                await conn.execute("INSERT INTO four_minds_snapshots (kind, data) VALUES ($1, $2::jsonb)",
+                                   kind, json.dumps(data, default=str))
+                stored.append(kind)
+    return {"ok": True, "stored": stored}
+
+
+async def _series(kind: str, days: int) -> Dict[str, Any]:
+    pool = getattr(_orch, "PG_POOL", None)
+    if pool is None:
+        return {"rows": [], "error": "postgres unavailable"}
+    try:
+        days = max(1, min(365, int(days or 30)))
+    except Exception:
+        days = 30
+    try:
+        async with pool.acquire() as conn:
+            recs = await conn.fetch(
+                """SELECT ts, data FROM four_minds_snapshots WHERE kind = $1
+                   AND ts >= NOW() - make_interval(days => $2) ORDER BY ts DESC LIMIT 2000""", kind, days)
+    except Exception as e:                       # the table appears with the first snapshot
+        return {"rows": [], "error": str(e)[:200]}
+    out = []
+    for r in recs:
+        d = json.loads(r["data"]) if isinstance(r["data"], str) else (r["data"] or {})
+        out.append(dict(d, ts=r["ts"].isoformat()))
+    return {"rows": out, "kind": kind, "days": days}
+
+
+@capability(
+    "decide.matrix.history", http_method="GET", http_path="/decide/matrix/history", http_tags=["minds"],
+    memory="off", silent=True,
+    description="Candidate-matrix coverage over time (Loop Lab Tests lane): per snapshot pairs_scored, "
+                "pairs_untested, applications, candidates, pairs_beating_live and the LLM rotation. "
+                "Input: days (int, default 30). Output: {rows: [{ts, ...}]} newest first.",
+)
+async def cap_decide_matrix_history(days: int = 30, trace_id=None) -> Dict[str, Any]:
+    return await _series(_SER.KINDS["matrix"], days)
+
+
+@capability(
+    "decide.claims.history", http_method="GET", http_path="/decide/claims/history", http_tags=["minds"],
+    memory="off", silent=True,
+    description="Claims-check accuracy over time (FM-5.2, Loop Lab Tests lane): per snapshot the live rule's accuracy, "
+                "every judge's accuracy and outcomes_n, the best judge with >= 30 outcomes and whether it beats the "
+                "rule. Input: days (int, default 30). Output: {rows: [{ts, ...}]} newest first.",
+)
+async def cap_decide_claims_history(days: int = 30, trace_id=None) -> Dict[str, Any]:
+    return await _series(_SER.KINDS["claims"], days)
+
+
+@capability(
+    "worldview.spread.history", http_method="GET", http_path="/worldview/spread/history", http_tags=["worldview"],
+    memory="off", silent=True,
+    description="The worldview's spread over time (FM-W.1, Loop Lab Tests lane): per snapshot the median concept "
+                "population, the share and count of concepts below 20 records, the largest concept's share, records "
+                "per concept and the health status. Input: days (int, default 30). Output: {rows: [{ts, ...}]} newest first.",
+)
+async def cap_worldview_spread_history(days: int = 30, trace_id=None) -> Dict[str, Any]:
+    return await _series(_SER.KINDS["worldview"], days)
