@@ -83,3 +83,17 @@ def test_nli_direct_is_a_matrix_candidate_bound_to_the_direct_questions():
     body = src[src.index("async def _direct_probs("):]
     assert '"premise": pair["premise"], "hypothesis": pair["hypothesis"]' in body[:700]
     assert 'return {d["yes"]: e, d["no"]: 1.0 - e}' in body[:700]
+
+
+def test_a_page_read_twice_gives_its_window_once():
+    item = {"title": "Implementation Status", "url": "https://w.example/status",
+            "text": "Firefox WebGPU is enabled by default in Nightly, but not Stable or Beta, on Linux in 2026."}
+    other = {"title": "Notes", "url": "https://n.example", "text": "Firefox 141 enabled WebGPU on Windows by default."}
+    ev = [{"type": "agent_loop_v5.tool_done", "tool": "web.fetch", "ok": True, "preview": json.dumps({"result": item})},
+          {"type": "agent_loop_v5.tool_done", "tool": "web.fetch", "ok": True, "preview": json.dumps({"result": item})},
+          {"type": "agent_loop_v5.tool_done", "tool": "web.research", "ok": True,
+           "preview": json.dumps({"result": {"items": [other]}})}]
+    top = CL.top_passages("Firefox WebGPU is enabled by default in Nightly and Beta in 2026.", CL.passages(ev))
+    texts = [p["text"] for p, _ in top]
+    assert len(texts) == len(set(texts)) == 2
+    assert {p["url"] for p, _ in top} == {"https://w.example/status", "https://n.example"}
