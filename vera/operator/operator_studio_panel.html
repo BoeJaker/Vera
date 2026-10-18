@@ -198,7 +198,7 @@
   .tile .via.route{color:var(--ok)}
   .tile .ck{position:absolute;top:6px;left:6px;width:18px;height:18px;accent-color:var(--acc)}
   .tile .dom{position:absolute;top:6px;right:6px;font-size:9px;background:rgba(0,0,0,.55);color:#fff;padding:1px 6px;border-radius:8px}
-  .ev-list{display:flex;flex-direction:column;gap:7px;max-height:250px;overflow:auto}
+  .ev-list{display:flex;flex-direction:column;gap:7px;max-height:420px;overflow:auto}
   .ev-card{border:1px solid var(--border);border-radius:6px;padding:7px;background:var(--bg2);font-size:10px}
   .ev-card .ev-head{display:flex;gap:6px;align-items:center;color:var(--text);font-weight:700}
   .ev-card .ev-meta{color:var(--dim);line-height:1.45;margin-top:3px;overflow-wrap:anywhere}
@@ -787,6 +787,10 @@ function liveShot(ev){
 }
 
 /* ── discovery evidence read model ───────────────────── */
+function evidenceId(value){
+  const text=String(value||'');
+  return text.length>18?text.slice(0,14)+'…':text;
+}
 function evidenceCard(value){
   if(value.kind==='benchmark'){
     const c=(value.summaries||{})[value.candidate_variant_id]||{};
@@ -808,11 +812,11 @@ function evidenceCard(value){
   }
   const n=value.counts||{}, selected=value.selections||[], failures=value.failures||[], receipts=value.receipts||[];
   const choices=selected.length?selected.map(x=>esc(x.source_id)+' · '+esc(x.method)+' via '+esc(x.provider)+'@'+esc(x.provider_revision)+
-    ' · '+esc(x.resource)+'@'+esc(x.worker_id)+' · worker evidence '+esc(x.worker_evidence_id)).join('<br>'):'no source selected';
+    ' · '+esc(x.resource)+'@'+esc(x.worker_id)+' · worker evidence '+esc(evidenceId(x.worker_evidence_id))).join('<br>'):'no source selected';
   const failureText=failures.length?failures.map(x=>esc(x.stage)+': '+esc(x.participant)+' ('+esc(x.reason)+')').join(', '):'none';
   const receiptText=receipts.length?receipts.map(x=>esc(x.status)+' '+esc(x.provider_revision)+' · '+esc(x.item_count)+' items · '+esc(x.duration_ms)+' ms'+
     (x.error_code?' · '+esc(x.error_code):'')).join('<br>'):'none';
-  return '<div class="ev-card"><div class="ev-head"><span class="ev-pass">route</span><span>'+esc(value.request_id)+'</span></div><div class="ev-meta">'+
+  return '<div class="ev-card"><div class="ev-head"><span class="ev-pass">route</span><span>'+esc(evidenceId(value.request_id))+'</span></div><div class="ev-meta">'+
     esc(n.candidates||0)+' candidates · '+esc(n.context||0)+' context · '+esc(n.datasets||0)+' datasets · '+
     esc(n.failures||0)+' failures<br>selected: '+choices+'<br>receipts: '+receiptText+'<br>failures: '+failureText+
     '<br>authority: '+esc(value.execution_authority||'discovery.route')+' for this explicit call · consumer routes unchanged</div></div>';
