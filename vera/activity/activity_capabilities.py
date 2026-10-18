@@ -920,6 +920,10 @@ async def _intel_events(topic_id: str = "", limit: int = 40) -> List[Dict[str, A
                 "(int=120), kinds (str — comma-filter of event kinds). Output: "
                 "{scope, events:[{kind, ts, title, summary, status, session_id, "
                 "cap, ui:{...}, extra}], count}.",
+    # the Activity panel's own timeline on the desk (Wave 1: panel-derived) - cards over a time rail, drill-in, watch a run live;
+    # it reads its scope itself, named by the answer's
+    contract={"presentation": {"kind": "timeline", "form": "element", "map": {"events": "events", "t": "ts", "text": "title", "kind": "kind"},
+                               "draw": {"tag": "vera-activity-timeline", "attrs": {"scope": "{scope}", "auto": "15"}}, "title": "Activity · {scope}"}},
 )
 async def cap_activity_timeline(scope: str = "all", limit: int = 120,
                                 kinds: str = "", trace_id=None) -> Dict:
