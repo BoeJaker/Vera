@@ -289,3 +289,19 @@ def test_the_other_callers_record_their_fetches():
     assert "record_response" in caps
     from vera.minds import switchboard_core as SB
     assert SB.REGISTRY["ingress.recording"].default == "off" and SB.REGISTRY["ingress.shared_throttle"].default == "off"
+
+
+def test_the_writer_notes_which_record_holds_a_content_hash():
+    pool = _Pool()
+    w = iw.ReceiptWriter(lambda: pool, rows_in_thread=False)
+
+    async def go():
+        assert w.enqueue({"record": {"content_hash": "abc", "record_id": "p_1", "key": "https://h.example/x"}})
+        assert w.enqueue({"record": {"content_hash": "", "record_id": "p_2"}})      # incomplete: ignored
+        await w.drain()
+        w.stop()
+
+    asyncio.new_event_loop().run_until_complete(go())
+    rows = {c[1]: c[2] for c in pool.calls if c[0] == "many"}
+    assert rows["web_content"] == [("abc", "https://h.example/x", "p_1")] and "web_hosts" not in rows
+    assert "DO UPDATE SET record_id = COALESCE(web_content.record_id" in rc.NOTE_RECORD

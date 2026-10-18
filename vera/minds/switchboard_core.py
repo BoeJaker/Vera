@@ -177,6 +177,16 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "per host in the coordination Redis, so prod, the sandboxes and node fetchers together never exceed one "
        "request per interval on a host (two Redis round trips per fetch; Redis down = per process).",
        owner="web-ingress"),
+    _f("ingress.dedupe", ("off", "on"), "web", "WI-4",
+       "Whether a page ingest asks the web map first: 'off' (default) = every fetch ingests again (11 Oct scan: 40 % "
+       "of URL records are repeats, 14,750 with identical text); 'on' = the same record with the same content hash is "
+       "skipped, and content already held under another record is linked to it instead of re-embedded.",
+       owner="web-ingress"),
+    _f("discovery.defer_enrichment", ("off", "on"), "web", "WI-4",
+       "The crawl's second-order pass (entities, LLM tags): 'off' (default) = in tandem with the crawl, which waits "
+       "for it (8 Wikipedia pages: 299 s vs 28 s); 'on' = queued as one discovery.t3 idle-queue job per crawl and "
+       "run when the box is quiet (or in intel's reserved window). Interactive callers pass want_tiers=('t3',) to "
+       "keep it inline.", owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),

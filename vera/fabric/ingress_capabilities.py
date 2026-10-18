@@ -42,7 +42,7 @@ DEFAULT_BUDGET_GB = 20.0
 #: estate hosts the configuration names on top of ingress_core's rules (Redis-free: an env/config list later)
 INTERNAL_HOSTS: List[str] = []
 
-_SW: Dict[str, Any] = {"at": 0.0, "mode": "off", "throttle": "off", "task": None}
+_SW: Dict[str, Any] = {"at": 0.0, "mode": "off", "throttle": "off", "dedupe": "off", "defer": "off", "task": None}
 
 
 def _has(name: str) -> bool:
@@ -93,6 +93,8 @@ async def _refresh() -> None:
         m = str(modes.get(SWITCH) or "off")
         _SW["mode"] = m if m in ("off", "meta", "on") else "off"
         _SW["throttle"] = "on" if str(modes.get(SWITCH_THROTTLE) or "off") == "on" else "off"
+        _SW["dedupe"] = "on" if str(modes.get("ingress.dedupe") or "off") == "on" else "off"
+        _SW["defer"] = "on" if str(modes.get("discovery.defer_enrichment") or "off") == "on" else "off"
     except Exception as ex:  # noqa: BLE001
         log.debug("ingress switch read: %s", ex)
 
@@ -141,6 +143,39 @@ def record_query(query: str, *, engine: str, caller: str, result_urls: List[str]
 
 if record_fetch_result not in _wc.FETCH_HOOKS:
     _wc.FETCH_HOOKS.append(record_fetch_result)
+
+
+# ── what discovery asks the map (WI-4) ───────────────────────────────────────
+
+def dedupe_on() -> bool:
+    mode()
+    return _SW["dedupe"] == "on"
+
+
+def defer_on() -> bool:
+    mode()
+    return _SW["defer"] == "on"
+
+
+async def lookup_record(content_hash: str) -> Optional[Dict[str, Any]]:
+    """The web_content row for a hash (record_id, first_key, seen), or None. One indexed read; never raises."""
+    pool = _pool()
+    if pool is None or not content_hash:
+        return None
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(rc.LOOKUP_RECORD, content_hash)
+        return dict(row) if row else None
+    except Exception as e:  # noqa: BLE001
+        log.debug("ingress lookup: %s", e)
+        return None
+
+
+def note_record(content_hash: str, record_id: str, key: str = "") -> bool:
+    """Tell the map which fabric record holds a content hash (queued; the writer upserts it)."""
+    if mode() == "off" or not content_hash or not record_id:
+        return False
+    return WRITER.enqueue({"record": {"content_hash": content_hash, "record_id": record_id, "key": key}})
 
 
 # ── the shared per-host slot (WI-3b) ─────────────────────────────────────────
