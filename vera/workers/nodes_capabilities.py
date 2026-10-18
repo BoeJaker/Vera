@@ -355,6 +355,7 @@ async def _build_nodes() -> List[Dict]:
 
 @capability(
     "nodes.list",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "addr", "user", "docker_kind", "tags", "id"]}}},
     http_method="GET", http_path="/nodes", http_tags=["nodes"],
     memory="off", silent=True,
     description="Unified Vera node estate: one row per machine, merging the SSH "
@@ -614,6 +615,7 @@ _BACKEND_ORDER = ["docker", "proxmox", "ssh"]
 
 @capability(
     "nodes.components",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "components"}, "draw": {"columns": ["label", "key", "group", "gpu", "heavy", "needs_model", "backends", "desc"]}}},
     http_method="GET", http_path="/nodes/components", http_tags=["nodes"],
     memory="off", silent=True,
     description="Unified catalog of everything provisionable onto a node "
@@ -2945,6 +2947,7 @@ async def _blob_names(url: str) -> Dict[str, str]:
 
 @capability(
     "nodes.ollama.settings",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "instance", "status", "enabled", "priority", "num_thread", "has_gpu", "unit"]}}},
     http_method="GET", http_path="/nodes/ollama/settings", http_tags=["nodes", "ollama"],
     memory="off", silent=True,
     description="Everything tuned on each Ollama node, read live: Vera's registry values (enabled, "
@@ -3207,6 +3210,7 @@ async def _set_embedding_pin(pin: str) -> None:
 
 @capability(
     "nodes.backend.overview", memory="off", silent=True,
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["label", "instance", "backend", "status", "has_gpu", "served_by", "url"]}}},
     http_method="GET", http_path="/nodes/backend/overview", http_tags=["nodes"],
     description="The Backend controls' data, without touching the nodes: each Ollama instance "
                 "(node) - what serves it now (ollama | vllm), its live status, its vLLM server's "

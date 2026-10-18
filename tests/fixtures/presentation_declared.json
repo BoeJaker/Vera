@@ -286,6 +286,77 @@
    "values": "$"
   }
  },
+ "docker.disk.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "docker.drift": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "table",
+    "map": {
+     "rows": "drifted"
+    },
+    "title": "Drifted"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "unknown"
+    },
+    "title": "Unknown"
+   },
+   {
+    "kind": "table",
+    "map": {
+     "rows": "skipped"
+    },
+    "title": "Skipped"
+   }
+  ]
+ },
+ "docker.host.health": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "docker.hosts.list": {
+  "draw": {
+   "columns": [
+    "id",
+    "label",
+    "kind",
+    "default",
+    "socket",
+    "url"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "hosts"
+  }
+ },
+ "docker.images": {
+  "draw": {
+   "columns": [
+    "RepoTags",
+    "Size",
+    "Created",
+    "Containers",
+    "Id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "images"
+  }
+ },
  "docker.ps": {
   "form": "containers",
   "kind": "table",
@@ -294,6 +365,41 @@
    "name": "Names",
    "rows": "containers",
    "status": "State"
+  }
+ },
+ "docker.stack.catalog": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "container_name",
+    "image",
+    "ports",
+    "note"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "services"
+  }
+ },
+ "docker.stack.status": {
+  "draw": {
+   "columns": [
+    "label",
+    "running",
+    "exists",
+    "status",
+    "container_name",
+    "image",
+    "ports"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "services"
   }
  },
  "dream.history": {
@@ -401,6 +507,141 @@
    "diff": "diff"
   }
  },
+ "identity.group.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "description",
+    "members"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "groups"
+  }
+ },
+ "identity.host.list": {
+  "draw": {
+   "columns": [
+    "fqdn",
+    "enrolled"
+   ]
+  },
+  "empty": "No IPA hosts registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "hosts"
+  }
+ },
+ "identity.lldap.groups": {
+  "draw": {
+   "columns": [
+    "display_name",
+    "id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "groups"
+  }
+ },
+ "identity.lldap.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "identity.lldap.users": {
+  "draw": {
+   "columns": [
+    "id",
+    "display_name",
+    "email",
+    "creation_date"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "users"
+  }
+ },
+ "identity.openbao.seal.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "identity.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "identity.user.list": {
+  "draw": {
+   "columns": [
+    "login",
+    "name"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "users"
+  }
+ },
+ "integration.connections": {
+  "kind": "graph",
+  "map": {
+   "edge_from": "from",
+   "edge_to": "to",
+   "edges": "graph.edges",
+   "label": "label",
+   "node_id": "id",
+   "nodes": "graph.nodes",
+   "type": "type"
+  }
+ },
+ "integration.effect.inventory": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "boundary",
+    "authority",
+    "external_mutation",
+    "source_modules"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "domains"
+  }
+ },
+ "integration.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "kind",
+    "host",
+    "port",
+    "scheme",
+    "source",
+    "sensitive",
+    "identity_verified"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "integrations"
+  }
+ },
  "loop.ci.board": {
   "form": "ci-board",
   "kind": "status"
@@ -445,9 +686,116 @@
   "form": "vgraph",
   "kind": "graph"
  },
+ "mesh.activity": {
+  "empty": "No recent mesh traffic",
+  "kind": "log",
+  "map": {
+   "events": "events",
+   "kind": "kind",
+   "t": "ts",
+   "text": "label"
+  }
+ },
+ "mesh.boards.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "chip",
+    "bus",
+    "controller",
+    "builtin",
+    "note"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "boards"
+  }
+ },
+ "mesh.firmware.catalog": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "kind",
+    "chip",
+    "offset",
+    "source",
+    "note"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "artifacts"
+  }
+ },
+ "mesh.graph": {
+  "kind": "graph",
+  "map": {
+   "edge_from": "from",
+   "edge_to": "to",
+   "edges": "edges",
+   "label": "label",
+   "node_id": "id",
+   "nodes": "nodes",
+   "type": "kind"
+  }
+ },
+ "mesh.jobs": {
+  "empty": "No mesh jobs",
+  "kind": "log",
+  "map": {
+   "events": "jobs",
+   "kind": "status",
+   "t": "created_at",
+   "text": "type"
+  }
+ },
+ "mesh.nodes": {
+  "draw": {
+   "columns": [
+    "name",
+    "node_id",
+    "status",
+    "role",
+    "board",
+    "fw_version",
+    "ip",
+    "rssi",
+    "last_seen"
+   ]
+  },
+  "empty": "No mesh nodes registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
  "mesh.topology": {
   "form": "vgraph",
   "kind": "graph"
+ },
+ "mesh.ui.sprites": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "ready",
+    "frames",
+    "animation",
+    "animations",
+    "source"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "sprites"
+  }
  },
  "n8n.config.get": {
   "kind": "kv",
@@ -476,6 +824,155 @@
   "kind": "table",
   "map": {
    "rows": "alive"
+  }
+ },
+ "nodes.agent.status": {
+  "draw": {
+   "columns": [
+    "node",
+    "node_id",
+    "cores",
+    "load",
+    "mem_available_mb",
+    "mem_total_mb",
+    "runners",
+    "can_control"
+   ]
+  },
+  "empty": "No node runs the Vera node agent",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.backend.overview": {
+  "draw": {
+   "columns": [
+    "label",
+    "instance",
+    "backend",
+    "status",
+    "has_gpu",
+    "served_by",
+    "url"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.components": {
+  "draw": {
+   "columns": [
+    "label",
+    "key",
+    "group",
+    "gpu",
+    "heavy",
+    "needs_model",
+    "backends",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "components"
+  }
+ },
+ "nodes.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "addr",
+    "user",
+    "docker_kind",
+    "tags",
+    "id"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.ollama.settings": {
+  "draw": {
+   "columns": [
+    "label",
+    "instance",
+    "status",
+    "enabled",
+    "priority",
+    "num_thread",
+    "has_gpu",
+    "unit"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.runner.list": {
+  "draw": {
+   "columns": [
+    "node",
+    "model",
+    "state",
+    "stuck",
+    "rss_mb",
+    "cpu_seconds",
+    "age_s",
+    "reason"
+   ]
+  },
+  "empty": "No compute-worker processes running",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "runners"
+  }
+ },
+ "nodes.testenv.status": {
+  "draw": {
+   "columns": [
+    "host",
+    "state",
+    "current",
+    "sha",
+    "python",
+    "failed",
+    "error"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
+ "nodes.workers.list": {
+  "draw": {
+   "columns": [
+    "nodename",
+    "host",
+    "has_gpu",
+    "in_sync",
+    "classes",
+    "failures",
+    "last_error"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
   }
  },
  "obs.cluster": {
@@ -517,6 +1014,24 @@
    "values": "hosts"
   }
  },
+ "ollama.gate.status": {
+  "draw": {
+   "columns": [
+    "node",
+    "has_gpu",
+    "gated",
+    "capacity",
+    "held",
+    "free",
+    "owners"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
+  }
+ },
  "ollama.instances": {
   "draw": {
    "columns": [
@@ -529,6 +1044,21 @@
     "errors",
     "num_ctx",
     "backend"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "ollama.list_models": {
+  "draw": {
+   "columns": [
+    "status",
+    "has_gpu",
+    "count",
+    "url"
    ]
   },
   "form": "table",
@@ -554,6 +1084,25 @@
    "count": "model",
    "sum": "n",
    "values": "stats"
+  }
+ },
+ "ollama.warm.status": {
+  "draw": {
+   "columns": [
+    "node",
+    "class",
+    "slots",
+    "resident",
+    "planned",
+    "embed",
+    "busy",
+    "acting"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "nodes"
   }
  },
  "perf.scan": {

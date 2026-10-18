@@ -129,6 +129,7 @@ async def _push_io(node_id: str, io_patch: dict, kiosk_patch: dict = None) -> di
 
 @capability(
     "mesh.boards.list", http_method="GET", http_path="/mesh/boards",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "boards"}, "draw": {"columns": ["label", "id", "chip", "bus", "controller", "builtin", "note"]}}},
     http_tags=["mesh", "boards"], memory="off", silent=True,
     description="List board pin profiles (built-in + user-saved) for display/SD nodes. Each has "
                 "{id, label, chip, controller, io:{tft,sd,neopixel}, kiosk:{rotation}, note, builtin}. "
