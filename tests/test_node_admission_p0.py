@@ -101,3 +101,25 @@ def test_busy_map_config_merges_from_a_dict_or_a_string():
     assert tr.merge_pool_config({"busy_map": {"Ollama-B": "cpu-246"}})["busy_map"] == {"Ollama-B": "cpu-246"}
     assert tr.merge_pool_config({"busy_map": "Ollama-B=cpu-246,Ollama-C=cpu-247"})["busy_map"] == {"Ollama-B": "cpu-246", "Ollama-C": "cpu-247"}
     assert tr.merge_pool_config({})["busy_map"] == {}
+
+
+
+# ── P0-5: one fair queue for every gate ──
+def test_queue_order_is_oldest_first_and_only_live_gates_with_chunks_waiting():
+    joined = {"g-new": 300.0, "g-old": 100.0, "g-dead": 50.0, "g-done": 80.0}
+    pending = {"g-new": 5, "g-old": 2, "g-dead": 9, "g-done": 0}
+    order = tr.queue_order(joined, pending, alive=["g-new", "g-old", "g-done"])
+    assert [t for t, _, _ in order] == ["g-old", "g-new"]
+
+
+def test_queue_position_leaves_out_the_host_holder():
+    order = [("a", 1.0, 3), ("b", 2.0, 3), ("c", 3.0, 3)]
+    assert tr.queue_position(order, "b") == (1, 3)
+    assert tr.queue_position(order, "b", exclude=["a"]) == (0, 2)   # a holds the host: b is next for it
+    assert tr.queue_position(order, "zz") == (3, 3)                  # not queued: behind everyone
+
+
+def test_node_share_gives_the_head_all_it_can_use_then_one_each():
+    assert tr.node_share(0, 3) == 3
+    assert [tr.node_share(p, 3) for p in (1, 2, 3)] == [1, 1, 0]
+    assert tr.node_share(0, 0) == 0

@@ -536,3 +536,39 @@ def live_avoid(avoid: Sequence[str], busy_map: Dict[str, str], route_stats: Iter
         if now - t <= recent_s:
             used.add(str(s.get("instance") or ""))
     return [n for n in avoid or [] if n not in (busy_map or {}) or busy_map[n] in used]
+
+
+
+# ── P0-5: one fair queue for every gate (looplab-control §9.0, 18 Oct 2026) ──────────────────────────────────────
+# ~15 gates polled for runners at once, each grabbing whatever was free that second: no order, and a gate adopted an
+# hour earlier could keep losing to newer ones. Now every gate joins one queue (joined time = its place), heartbeats
+# while it has chunks waiting, and takes a runner only in its turn: the host's lease goes to the oldest waiting gate;
+# free node slots go to the oldest first, then one each to the next ones while slots remain.
+GATE_QUEUE_KEY = "vera:evolve:test_pool:queue"                 # zset  token -> joined (epoch s)
+GATE_QUEUE_PENDING = "vera:evolve:test_pool:queue:pending"     # hash  token -> chunks waiting
+GATE_QUEUE_ALIVE = "vera:evolve:test_pool:queue:alive:"        # + token, expires: a gate that died drops out
+GATE_QUEUE_ALIVE_S = 90
+
+
+def queue_order(joined: Dict[str, float], pending: Dict[str, int], alive: Iterable[str]) -> List[Tuple[str, float, int]]:
+    """The gates waiting for a runner, oldest first: alive, and with at least one chunk not yet running."""
+    live = set(alive or ())
+    rows = [(t, float(ts), int(pending.get(t, 0) or 0)) for t, ts in (joined or {}).items() if t in live]
+    return sorted([r for r in rows if r[2] > 0], key=lambda r: (r[1], r[0]))
+
+
+def queue_position(order: Sequence[Tuple[str, float, int]], token: str, exclude: Iterable[str] = ()) -> Tuple[int, int]:
+    """(this gate's 0-based place, how many wait), leaving out `exclude` (the host lease's holder for the host)."""
+    ex = set(exclude or ())
+    toks = [t for t, _, _ in order if t not in ex]
+    return (toks.index(token) if token in toks else len(toks)), len(toks)
+
+
+def node_share(position: int, free_slots: int) -> int:
+    """How many of the free node slots this gate takes now: the oldest takes all it can use; each next gate one, while
+    slots remain - so a gate never starves behind the head, and the head is never starved by the rest."""
+    if free_slots <= 0:
+        return 0
+    if position == 0:
+        return free_slots
+    return 1 if position < free_slots else 0
