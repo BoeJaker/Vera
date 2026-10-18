@@ -389,6 +389,8 @@
   const calMonth=(evs)=>{ const d=String((evs[0]&&evs[0].start)||'').slice(0,7);
     if(/^\d{4}-\d{2}$/.test(d)) return d;
     const n=new Date(); return n.getFullYear()+'-'+(n.getMonth()<9?'0':'')+(n.getMonth()+1); };
+  /* the desk's json tree item: an answer you open, not braces in a fence (the chat's json rule, moved here once) */
+  const jsonItem=(cap, c)=>({ kind:'json', n:cap||'result', k:'json', col:'#94a3b8', d:'data', content:{ title:String(cap||''), data:c } });
   function itemOf(capName, result, args, opts){
     if(typeof W.present!=='function'||typeof W.presentationOf!=='function') return undefined;
     /* opts.fallback: an UNDECLARED answer read through present()'s own fallback (the shape rules) - the generic adapters'
@@ -398,6 +400,8 @@
     if(!pr) return undefined;
     // nothing drawable, a receipt (it updates what it acted on - DA-08) or a job (its live item follows): no item
     if(pr.element==='none'||pr.element==='receipt'||pr.element==='job'||!pr.records.length) return null;
+    /* an undeclared answer whose structure no shape reads is a tree you open (DO-0.1 step 2a: what the chat's json rule made) */
+    if(!W.presentationOf(cap)&&pr.records[0]&&pr.records[0].form==='json') return jsonItem(cap, result);
     const title=String(pr.title||cap), r0=pr.records[0];
     const drawn=(r)=>{ try{ return W.dataFor(W.mapped(r, r.form, r.data), r.form); }catch(_){ return r.data; } };
     const widget=(r)=>({ kind:'widget', n:String(r.title||title).slice(0,52), k:'widget', col:'var(--dv5, #a78bfa)', d:'widget · '+r.form,
@@ -452,5 +456,5 @@
       default: return widget(r0);   // widget-drawn kinds (status, metric, series, log, progress, graph)
     }
   }
-  Object.assign(W, { present, presentations, presentationOf, itemOf, calMonth, presentKinds: JSON.parse(JSON.stringify(KINDS)) });
+  Object.assign(W, { present, presentations, presentationOf, itemOf, jsonItem, calMonth, presentKinds: JSON.parse(JSON.stringify(KINDS)) });
 })();

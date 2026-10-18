@@ -8351,7 +8351,7 @@ IMPORTANT:
   // anything else with structure: a tree you can open, not braces in a fence
   cvAdapter('json',
     (c)=>!!(c&&typeof c==='object'&&(Array.isArray(c)?c.length:Object.keys(c).length)),
-    (c,ctx)=>({ kind:'json', n:(ctx&&ctx.cap)||'result', k:'json', col:'#94a3b8', d:'data', content:{ title:String((ctx&&ctx.cap)||''), data:c } }));
+    (c,ctx)=>window.VeraWidget.jsonItem((ctx&&ctx.cap)||'', c));   /* the shared tree item (present.js, DO-0.1) */
   // a bare string: prose when it is long, a note when it is a line
   cvAdapter('text',
     (c)=>typeof c==='string'&&!!c.trim(),
