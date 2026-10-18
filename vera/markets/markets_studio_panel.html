@@ -6223,19 +6223,9 @@ async function renderAccounts(){
     const res=await Promise.all([api('/markets/portfolio/positions'),
                                  api('/markets/portfolio/history?days=365')]);
     const pos=res[0], h=res[1];
-    const positions=((pos&&pos.positions)||[]);
-    const tot=(pos&&pos.totals)||{};
-    holdings=positions.map(p=>({symbol_key:p.symbol_key,qty:p.qty,avg_cost:p.avg_cost,last:p.last,
-      value:p.market_value,unrealized:p.unrealized_pnl,unrealized_pct:p.unrealized_pct,
-      realized:p.realized_pnl,alloc:p.allocation_pct}));
-    const totVal=tot.value||0;
-    const open=holdings.filter(p=>(p.qty||0)>0);
-    const hhi=open.reduce((s,p)=>s+Math.pow((p.value||0)/Math.max(1,totVal),2),0);
-    tiles=[['total value','$'+fmtN(totVal),''],['cost basis','$'+fmtN(tot.cost||0),''],
-      ['unrealized',(tot.unrealized>=0?'+':'')+'$'+fmtN(Math.abs(tot.unrealized||0)),(tot.unrealized||0)>=0?'up':'dn'],
-      ['realized',(tot.realized>=0?'+':'')+'$'+fmtN(Math.abs(tot.realized||0)),(tot.realized||0)>=0?'up':'dn'],
-      ['positions',String(open.length),''],
-      ['concentration',open.length?(hhi*100).toFixed(0)+' HHI':'—',hhi>0.35?'dn':'up']];
+    /* the real book's holdings and tiles are the shared ones (markets/chart.js VeraMktChart.realBook): the desk's portfolio draws the same */
+    const rb=VeraMktChart.realBook(pos,{fmtN});
+    holdings=rb.holdings; tiles=rb.tiles;
     hist=(h&&h.t&&h.t.length>1)?{t:h.t,value:h.value,cost:h.cost}:null;
   } else {
     const eq=await api('/markets/sim/equity?account_id='+acct.id+'&limit=1000');
@@ -6254,8 +6244,7 @@ async function renderAccounts(){
       ? {t:eq.t.map(x=>Math.floor(new Date(x).getTime()/1000)),value:eq.value} : null;
   }
 
-  $('foTiles').innerHTML=tiles.map(r=>
-    '<div class="stat"><div class="v num '+r[2]+'">'+r[1]+'</div><div class="l">'+r[0]+'</div></div>').join('');
+  $('foTiles').innerHTML=VeraMktChart.tilesHtml(tiles);
 
   const open2=holdings.filter(p=>(p.qty||0)>0);
   const dn=document.getElementById('foDonut')||document.getElementById('igc_fo_0');

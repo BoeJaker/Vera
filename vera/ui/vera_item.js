@@ -398,6 +398,15 @@
     live: { route: '/markets/overview', every_s: 60, how: 'read again every minute while it is seen and the page visible (the server caches it 60 s)' },
     surfaces: ['desk', 'panel:markets-studio'],
     note: 'panel:markets-studio draws its Pulse map with the shared drawMarketMap, not the tag. markets.overview declares the treemap form; elsewhere (the dashboard) that form draws the groups by size.' });
+  registerBody('vera-mkt-folio', { role: 'element', element: 'vera-mkt-folio', src: 'vera/markets/markets_chart.js', label: 'Portfolio',
+    contract: [{ kind: 'table', by: 'present', reads: ['positions', 'totals'], how: "a markets.portfolio.positions answer: its spark-table record holding positions + totals - the canvas's widget body draws it with this element" },
+      { kind: 'table', by: 'api', reads: [], how: "/markets/portfolio/positions: the Quant Studio's Portfolio (the real book) - its tiles and holdings table with the pulse stats (VeraMktChart.realBook / tilesHtml / rows.holdings / fillHoldings, the Studio draws with them)" }],
+    faces: VIEWED, sizes: ['m', 'l', 'xl'],
+    controls: [],
+    navigation: [{ to: 'element', args: { element: 'vera-mkt-chart', symbol: '<symbol>', provider: '<provider>', tf: '1d' }, how: "a holding's row opens its chart in place; ← Portfolio returns; the host hears mkt-symbol" }],
+    live: { route: '/markets/portfolio/positions', every_s: 60, how: 'read again every minute while it is seen and the page visible' },
+    surfaces: ['desk', 'panel:markets-studio'],
+    note: 'Read-only: the ledger (the real bookkeeping) stays in the Quant Studio. panel:markets-studio draws its Portfolio with the shared pieces, not the tag.' });
   registerBody('vera-graph', { role: 'element', element: 'veraUI.Graph', src: 'vera/vera_graph.js', label: 'Graph',
     contract: [{ kind: 'graph', by: 'api', reads: ['layer', 'layerOpts', 'nodes', 'edges'], how: 'veraUI.Graph: a snapshot by layer (memory, entity, a fabric.graphs graph) through fetchSnapshot, or the nodes and edges a host loads' }],
     faces: [], sizes: [],
