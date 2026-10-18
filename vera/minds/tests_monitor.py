@@ -59,8 +59,10 @@ async def _h_matrix() -> Dict[str, Any]:
 async def _h_shortlist() -> Dict[str, Any]:
     d = await _call("caps.shortlist.replay", history=1)
     snap = d.get("latest") or {}
-    m = snap.get("matrix") or {}
-    return {"night": snap.get("night"), "hit@5": {k: (v or {}).get("hit@5") for k, v in m.items()},
+    loop, chat = snap.get("loop") or {}, snap.get("chat") or {}
+    return {"night": snap.get("night"), "index_rows": snap.get("index_rows"), "loop_n": loop.get("n"),
+            "loop_hit@5": loop.get("hit@5"), "loop_recall@10": loop.get("recall@10"), "loop_mrr": loop.get("mrr"),
+            "chat_turns_with_use": chat.get("turns_with_use"), "chat_unoffered_rate": chat.get("unoffered_rate"),
             "error": d.get("error")}
 
 
