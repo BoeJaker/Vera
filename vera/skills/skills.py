@@ -26,6 +26,12 @@ Persistence:
 import asyncio
 import sys
 import sqlite3
+
+# ONE module object, whatever name it is imported by (the data_fabric block). The loader loads this file as `skills`;
+# skills_owl and cap_ontology import it by its full name, which would otherwise run a second copy with an EMPTY
+# ONTOLOGIES / SKILLS (S11 / D13-4, backbone 18 Oct).
+for _alias in ("skills", "Vera.vera.skills.skills", "vera.skills.skills"):
+    sys.modules.setdefault(_alias, sys.modules[__name__])
 from pathlib import Path
 import json
 import logging

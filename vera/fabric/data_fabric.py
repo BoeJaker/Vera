@@ -7805,7 +7805,7 @@ async def fabric_skills_build(
     skill_external_id = None
     ontology_external_id = None
     try:
-        from Vera.vera.skills import skills_create, ontologies_create
+        from Vera.vera.skills.skills import skills_create, ontologies_create
         # 1) Skill — content is a system-prompt fragment derived from the ontology
         # Build a substantive skill content body — concepts grouped by type,
         # key relations summarised, and a usage hint.
@@ -8509,7 +8509,7 @@ async def fabric_ontologies_build(
     # Register via canonical ontologies.create
     ontology_id = None
     try:
-        from Vera.vera.skills import ontologies_create
+        from Vera.vera.skills.skills import ontologies_create
         ont_rec = await ontologies_create(
             name              = name.strip(),
             description       = final_desc,

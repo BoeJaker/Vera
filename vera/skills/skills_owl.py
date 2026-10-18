@@ -833,7 +833,7 @@ async def ontologies_export_owl(
 ):
     if not _HAS_RDFLIB:
         return {"error": f"rdflib not installed: {_RDFLIB_ERR}"}
-    from Vera.vera.skills import ONTOLOGIES
+    from Vera.vera.skills.skills import ONTOLOGIES
     ont = ONTOLOGIES.get(id)
     if not ont:
         return {"error": f"Ontology not found: {id}"}
@@ -905,7 +905,7 @@ async def ontologies_import_owl(
 
     rec = graph_to_ontology(g, default_name=name or "imported")
 
-    from Vera.vera.skills import (
+    from Vera.vera.skills.skills import (
         ONTOLOGIES, ontologies_create, ontologies_update,
     )
 
@@ -962,7 +962,7 @@ async def ontologies_owl_context(
 ):
     if not _HAS_RDFLIB:
         return {"error": f"rdflib not installed: {_RDFLIB_ERR}"}
-    from Vera.vera.skills import ONTOLOGIES
+    from Vera.vera.skills.skills import ONTOLOGIES
     wanted = {x.strip() for x in (ontology_ids or "").split(",") if x.strip()}
     onts = [o for oid, o in ONTOLOGIES.items()
             if (oid in wanted if wanted else o.get("enabled", True))]
@@ -1022,7 +1022,7 @@ async def ontologies_add_class(
     attributes:     str = "[]",
     trace_id=None,
 ):
-    from Vera.vera.skills import ONTOLOGIES, ontologies_update
+    from Vera.vera.skills.skills import ONTOLOGIES, ontologies_update
     ont = ONTOLOGIES.get(ontology_id)
     if not ont:
         return {"error": f"Ontology not found: {ontology_id}"}
@@ -1080,7 +1080,7 @@ async def ontologies_add_property(
     characteristics:  str = "",
     trace_id=None,
 ):
-    from Vera.vera.skills import ONTOLOGIES, ontologies_update
+    from Vera.vera.skills.skills import ONTOLOGIES, ontologies_update
     ont = ONTOLOGIES.get(ontology_id)
     if not ont:
         return {"error": f"Ontology not found: {ontology_id}"}
@@ -1134,7 +1134,7 @@ async def ontologies_add_restriction(
     qualifier:    str = "",
     trace_id=None,
 ):
-    from Vera.vera.skills import ONTOLOGIES, ontologies_update
+    from Vera.vera.skills.skills import ONTOLOGIES, ontologies_update
     ont = ONTOLOGIES.get(ontology_id)
     if not ont:
         return {"error": f"Ontology not found: {ontology_id}"}
@@ -1169,7 +1169,7 @@ async def ontologies_add_restriction(
                 "Inputs: id (str!). Output: {ok, errors, warnings}.",
 )
 async def ontologies_validate(id: str, trace_id=None):
-    from Vera.vera.skills import ONTOLOGIES
+    from Vera.vera.skills.skills import ONTOLOGIES
     ont = ONTOLOGIES.get(id)
     if not ont:
         return {"error": f"Ontology not found: {id}"}
