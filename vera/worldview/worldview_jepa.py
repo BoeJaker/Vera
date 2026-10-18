@@ -6242,7 +6242,7 @@ _STREAM_STATS: Dict[str, Any] = {
     # the ids waiting for their embedding (deferred embedding writes the vector after the event)
     "fabric_events":     {},
     "skipped":           {"already_indexed": 0, "not_embedded": 0, "dim_mismatch": 0, "model_not_ready": 0,
-                          "chroma_unavailable": 0, "nothing_fetched": 0},
+                          "chroma_unavailable": 0, "nothing_fetched": 0, "fetch_error": 0},
     "retry_pending":     0,
     "retried_encoded":   0,
 }
@@ -6337,10 +6337,15 @@ async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
                 if dataset_id:
                     kwargs["where"] = {"dataset_id": {"$eq": dataset_id}}
                 res = col.get(**kwargs)
-            return (res.get("ids") or [], res.get("embeddings") or [],
-                    res.get("documents") or [], res.get("metadatas") or [])
+            # chromadb returns embeddings as a numpy array: `array or []` raises (truth value is ambiguous) - test
+            # for None instead (18 Oct: every fetch with embeddings failed this way, so nothing was ever encoded)
+            embs = res.get("embeddings")
+            return (list(res.get("ids") or []), list(embs) if embs is not None else [],
+                    list(res.get("documents") or []), list(res.get("metadatas") or []))
         except Exception as e:
-            log.debug("stream fetch: %s", e)
+            sk["fetch_error"] = sk.get("fetch_error", 0) + 1
+            _STREAM_STATS["last_error"] = f"stream fetch: {e}"[:200]
+            log.warning("worldview stream fetch: %s", e)
             return [], [], [], []
 
     try:
