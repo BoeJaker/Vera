@@ -1,4 +1,110 @@
 {
+ "agentbridge.catalog": {
+  "draw": {
+   "columns": [
+    "label",
+    "paradigm",
+    "enabled",
+    "image_present",
+    "image",
+    "run_cap",
+    "run_cap_registered",
+    "docs_url"
+   ]
+  },
+  "empty": "No agent bridges registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "bridges"
+  }
+ },
+ "agentbridge.check_updates": {
+  "draw": {
+   "columns": [
+    "bridge",
+    "package",
+    "pinned",
+    "latest",
+    "drift"
+   ]
+  },
+  "empty": "No pinned packages to check",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "results"
+  }
+ },
+ "agentbridge.interoperability": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "id",
+      "capability",
+      "registered"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "shared_contracts"
+    },
+    "title": "Shared contracts"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "runtime_id",
+      "image",
+      "execution_supported",
+      "inspection_executes"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "runtime_adapters"
+    },
+    "title": "Runtime adapters"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "a2a"
+    },
+    "title": "A2A adapter"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "runtime_matrix"
+    },
+    "title": "Runtime matrix"
+   }
+  ]
+ },
+ "agentbridge.runtime_matrix": {
+  "draw": {
+   "columns": [
+    "label",
+    "runtime_id",
+    "integration",
+    "execution_lane",
+    "executes",
+    "upstream_url"
+   ]
+  },
+  "empty": "No runtime candidates",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "candidates"
+  }
+ },
  "autonomous.status": {
   "kind": "kv",
   "map": {
@@ -2026,9 +2132,138 @@
    }
   ]
  },
+ "ha.config.get": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "base_url",
+    "configured",
+    "verify_tls",
+    "updated"
+   ]
+  }
+ },
+ "ha.estate.plan": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "counts"
+    },
+    "title": "Plan"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "entity_id",
+      "kind"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "update"
+    },
+    "title": "To refresh"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "reason"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "skipped"
+    },
+    "title": "Skipped"
+   }
+  ]
+ },
+ "ha.find": {
+  "draw": {
+   "columns": [
+    "name",
+    "entity_id",
+    "state",
+    "domain",
+    "available",
+    "score"
+   ]
+  },
+  "empty": "Nothing matches",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "matches"
+  }
+ },
  "ha.health": {
   "form": "status",
   "kind": "status"
+ },
+ "ha.services": {
+  "draw": {
+   "columns": [
+    "domain",
+    "services"
+   ]
+  },
+  "empty": "No services",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "services"
+  }
+ },
+ "ha.states": {
+  "draw": {
+   "columns": [
+    "name",
+    "entity_id",
+    "state",
+    "domain",
+    "available"
+   ]
+  },
+  "empty": "No entities",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "entities"
+  }
+ },
+ "ha.summary": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "House"
+   },
+   {
+    "kind": "parts",
+    "map": {
+     "parts": "domains"
+    },
+    "title": "Entities by domain"
+   },
+   {
+    "form": "list",
+    "kind": "table",
+    "map": {
+     "rows": "unavailable"
+    },
+    "title": "Unavailable"
+   }
+  ]
  },
  "ide.agent.list": {
   "draw": {
@@ -3413,6 +3648,23 @@
    "rows": "workers"
   }
  },
+ "obs.diagnostics": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "host",
+    "mode",
+    "redis_connected",
+    "redis_ping",
+    "redis_version",
+    "redis_port",
+    "workers_in_redis",
+    "worker_count_local",
+    "caps"
+   ]
+  }
+ },
  "obs.events": {
   "form": "log",
   "kind": "log",
@@ -3436,6 +3688,34 @@
    "value": "caps_added"
   }
  },
+ "obs.neo4j_diag": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Driver"
+   },
+   {
+    "draw": {
+     "columns": [
+      "auth",
+      "ok",
+      "error_type",
+      "error"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "probe.attempts"
+    },
+    "title": "Probe"
+   }
+  ]
+ },
  "obs.node_temps": {
   "form": "temps",
   "kind": "table",
@@ -3443,6 +3723,92 @@
    "name": "label",
    "value": "max_c",
    "values": "hosts"
+  }
+ },
+ "obs.pending": {
+  "kind": "metric",
+  "map": {
+   "value": "count"
+  },
+  "title": "Pending results"
+ },
+ "obs.provenance": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "branch",
+    "git_sha_short",
+    "dirty",
+    "source",
+    "instance",
+    "pid",
+    "started_at"
+   ]
+  }
+ },
+ "obs.proxy_log": {
+  "draw": {
+   "columns": [
+    "ts",
+    "instance",
+    "model",
+    "path",
+    "type"
+   ]
+  },
+  "empty": "No proxied requests",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "log"
+  }
+ },
+ "obs.redis": {
+  "form": "kv",
+  "kind": "kv",
+  "map": {
+   "keys": [
+    "connected_clients",
+    "used_memory_human",
+    "uptime_days"
+   ]
+  }
+ },
+ "obs.scheduler": {
+  "draw": {
+   "columns": [
+    "name",
+    "interval",
+    "runs",
+    "last"
+   ]
+  },
+  "empty": "No scheduled jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
+  }
+ },
+ "obs.workers": {
+  "draw": {
+   "columns": [
+    "name",
+    "host",
+    "role",
+    "status",
+    "current_task",
+    "cpu_pct",
+    "ram_pct",
+    "tasks_done"
+   ]
+  },
+  "empty": "No workers registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "$"
   }
  },
  "ollama.gate.status": {
@@ -3580,6 +3946,33 @@
   "map": {
    "rows": "runs"
   }
+ },
+ "perf.gate": {
+  "kind": "status",
+  "map": {
+   "checks": "top_findings",
+   "verdict": "verdict"
+  }
+ },
+ "perf.log.files": {
+  "draw": {
+   "columns": [
+    "name",
+    "bytes",
+    "modified"
+   ]
+  },
+  "empty": "No log files",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "files"
+  }
+ },
+ "perf.log.tail": {
+  "form": "terminal",
+  "kind": "terminal",
+  "map": {}
  },
  "perf.scan": {
   "form": "status",
@@ -4294,6 +4687,22 @@
   "kind": "table",
   "map": {
    "rows": "characters"
+  }
+ },
+ "sys.debug.tasks": {
+  "draw": {
+   "columns": [
+    "name",
+    "coro",
+    "done",
+    "chain"
+   ]
+  },
+  "empty": "No tasks match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "tasks"
   }
  },
  "syslog.errors": {

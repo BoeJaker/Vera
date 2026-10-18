@@ -1320,6 +1320,7 @@ async def obs_cluster(trace_id=None):
 
 @capability(
     "obs.proxy_log", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "log"}, "draw": {"columns": ["ts", "instance", "model", "path", "type"]}, "empty": "No proxied requests"}},
     http_method="GET", http_path="/cluster/proxy_log", http_tags=["obs"],
     description="Recent requests through the local Ollama proxy.",
 )
