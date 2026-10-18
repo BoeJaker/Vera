@@ -158,4 +158,4 @@ async def _night_job() -> None:
         log.warning("plan precedent night job: %s", e)
 
 
-schedule(_night_job, interval=900, name="plan_precedent_night", singleton=True, skip_in_sandbox=True)
+# On the Loop Lab schedule, not an in-code timer (owner, 18 Oct 2026: "make sure you are making use of the schedule system and not creating ad-hoc timing rules"). Its entry calls plan.precedent.index.

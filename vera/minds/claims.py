@@ -137,4 +137,4 @@ async def _night_job() -> None:
         log.warning("claims harvest: %s", e)
 
 
-schedule(_night_job, interval=900, name="output_claims_harvest", singleton=True, skip_in_sandbox=True)
+# On the Loop Lab schedule, not an in-code timer (owner, 18 Oct 2026: "make sure you are making use of the schedule system and not creating ad-hoc timing rules"). Its entry calls output.claims.harvest.

@@ -158,7 +158,7 @@ def test_the_nightly_judge_runs_each_configured_model():
 def test_night_triggers_run_on_prod_only_and_mark_the_night_after_success():
     for rel in (("vera", "minds", "judge.py"), ("vera", "minds", "tool_shortlist.py")):
         src = open(os.path.join(ROOT, *rel), encoding="utf-8").read()
-        body = src[src.index("async def _night_job"):src.index("schedule(_night_job")]
+        body = src[src.index("async def _night_job"):src.index("# On the Loop Lab schedule")]
         assert 'if getattr(_orch, "_IS_WORKER", False):' in body, rel
         assert "nx=True" not in body, rel                      # the key is no longer taken before the work
         assert body.index("await r.get(KEY_NIGHT + night)") < body.index("await r.set(KEY_NIGHT + night"), rel

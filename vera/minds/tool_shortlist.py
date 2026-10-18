@@ -297,8 +297,6 @@ async def _night_job() -> None:
         if getattr(_orch, "_IS_WORKER", False):
             return
         now = datetime.now()
-        if not JC.in_window(now.hour):
-            return
         night = now.date().isoformat() if now.hour >= 12 else datetime.fromordinal(now.toordinal() - 1).date().isoformat()
         r = getattr(_orch, "REDIS", None)
         if r is None or await r.get(KEY_NIGHT + night):
@@ -316,7 +314,23 @@ async def _night_job() -> None:
         log.warning("tool shortlist night job: %s", e)
 
 
-schedule(_night_job, interval=900, name="caps_shortlist_index_night", singleton=True, skip_in_sandbox=True)
+# On the Loop Lab schedule, not an in-code timer (owner, 18 Oct 2026: "make sure you are making use of the schedule system and not creating ad-hoc timing rules").
+
+
+@capability(
+    "caps.shortlist.nightly", http_method="POST", http_path="/caps/shortlist/nightly", http_tags=["minds", "caps"],
+    contract=_MC.contract("tool.shortlist.nightly", effects=["read", "write", "model"], idempotency="idempotent"),
+    memory="off",
+    description="The tool shortlist's nightly pass (four-minds FM-3): rebuild the step index from the day's runs, then the "
+                "offline replay with the tool-choice matrix (kNN, prior, keywords, kNN + cross-encoder). Once a night. "
+                "The target of a Loop Lab schedule entry. Output: {ok, night}.",
+)
+async def cap_caps_shortlist_nightly(trace_id=None) -> Dict[str, Any]:
+    await _night_job()
+    now = datetime.now()
+    night = now.date().isoformat() if now.hour >= 12 else datetime.fromordinal(now.toordinal() - 1).date().isoformat()
+    r = getattr(_orch, "REDIS", None)
+    return {"ok": bool(r is not None and await r.get(KEY_NIGHT + night)), "night": night}
 
 
 RERANK_SAMPLE = 150          # steps re-ranked by the cross-encoder per replay (an NLP-node call each)

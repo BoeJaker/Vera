@@ -92,7 +92,7 @@ def test_the_replay_holds_each_run_out_and_counts_what_no_past_run_used():
 
 def test_the_night_job_replays_after_a_successful_build_and_keeps_snapshots():
     src = open(os.path.join(ROOT, "vera", "minds", "tool_shortlist.py"), encoding="utf-8").read()
-    job = src[src.index("async def _night_job("):src.index("schedule(_night_job")]
+    job = src[src.index("async def _night_job("):src.index("# On the Loop Lab schedule")]
     assert job.index('await r.set(KEY_NIGHT + night, "1", ex=86400)') < job.index("await run_replay(night)")
     rep = src[src.index("async def run_replay("):src.index("try:                                     # pragma: no cover - import-shape only\n    from Vera.vera.minds import chat_tools_core")]
     assert "asyncio.to_thread(TC.replay, rows)" in rep and "ltrim(KEY_REPLAY, 0, REPLAY_KEEP - 1)" in rep

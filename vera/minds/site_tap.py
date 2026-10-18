@@ -229,4 +229,4 @@ async def _night_job() -> None:
         log.warning("site matrix night: %s", e)
 
 
-schedule(_night_job, interval=900, name="decide_site_matrix_night", singleton=True, skip_in_sandbox=True)
+# On the Loop Lab schedule, not an in-code timer (owner, 18 Oct 2026: "make sure you are making use of the schedule system and not creating ad-hoc timing rules"). decide.shadow.night queues decide.shadow.sites with the rest of the matrix.
