@@ -68,6 +68,10 @@ t('widget_element.js + present.js parse as one script', parsed === true, parsed)
   const g2 = W.present('demo.t', { t: { a: 50 } }, { presentation: { kind: 'table', form: 'temps', map: { rows: 't' }, draw: { sort: 'name' } } }).records[0];
   t('another form keeps its draw as its own words', JSON.stringify(g2.draw) === '{"sort":"name"}'); }
 const ui = fs.readFileSync(path.join(root, 'vera', 'ui builder', 'ui_capabilities.py'), 'utf8');
-t('the widget route appends present.js', /extra = p\.parent \/ "present\.js"[\s\S]{0,120}body \+= chr\(10\) \+ extra\.read_text/.test(ui));
+// the route appends its companions in one loop since K5 (19 Oct 2026): present.js, then widget_dive.js (VeraDive)
+t('the widget route appends present.js', /for name in \([^)]*"present\.js"[^)]*\):[\s\S]{0,160}body \+= chr\(10\) \+ extra\.read_text/.test(ui));
+t('widget_element.js + present.js + widget_dive.js parse as one script (what the route serves)', (() => {
+  const all = both + String.fromCharCode(10) + fs.readFileSync(path.join(root, 'vera', 'widgets', 'widget_dive.js'), 'utf8');
+  try { new vm.Script(all); return true; } catch (e) { return e.message; } })() === true);
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
