@@ -1589,7 +1589,7 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
                 gaps.append("the background report could not start: " + str(job.get("_error") or job.get("error")))
 
     known = await known_task
-    kitems = _seek.known_items(known.get("pages") or [], items, chars=chars) if not known.get("_error") else []
+    kitems = _seek.known_items(known.get("pages") or [], items, chars=chars, query=subject) if not known.get("_error") else []
     if kitems and need != "latest":
         items = [it for it in items if it.get("text")] + kitems + [it for it in items if not it.get("text")]
         checked.append(f"already known: {len(kitems)} page(s) Vera has read before (the fabric's page index)")
@@ -1598,7 +1598,7 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
                        "listed: 'latest' asks for new)")
     elif known.get("_error"):
         checked.append("fabric index: " + str(known["_error"])[:80])
-    elif not known.get("pages"):
+    else:
         try:    # nothing Vera has read before: the demand a targeted crawl fills (web-ingress WI-14a)
             _ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
             if _ing is not None:

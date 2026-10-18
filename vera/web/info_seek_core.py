@@ -403,10 +403,38 @@ def build_pack(need: str, question: str, subject: str, items: Sequence[Dict[str,
     return out
 
 
+_YEAR = re.compile(r"^(19|20)\d\d$")
+MIN_COVER = 0.5
+
+
+def cover_terms(query: str) -> List[str]:
+    """The words a page must carry to be about the query: its keywords, lower-cased, 3+ characters, no years (an
+    overview query adds the current year, which every dated page matches), cut to a 5-letter stem."""
+    out: List[str] = []
+    for w in re.findall(r"[a-z0-9]+", keywords_of(query).lower()):
+        if len(w) < 3 or _YEAR.match(w) or w in _KW_STOP:
+            continue
+        s = w[:5]
+        if s not in out:
+            out.append(s)
+    return out
+
+
+def coverage(query: str, text: str) -> float:
+    """Share of the query's cover terms the text carries (1.0 when the query has none). The page index ORs the
+    words, so a page matching only "2026" or "limits" ranks; this is what tells it apart (prod, 18 Oct)."""
+    ts = cover_terms(query)
+    if not ts:
+        return 1.0
+    low = str(text or "").lower()
+    return sum(1 for t in ts if t in low) / len(ts)
+
+
 def known_items(pages: Sequence[Dict[str, Any]], items: Sequence[Dict[str, Any]], *, chars: int = 900,
-                limit: int = 3) -> List[Dict[str, Any]]:
+                limit: int = 3, query: str = "", min_cover: float = MIN_COVER) -> List[Dict[str, Any]]:
     """Pages the fabric already holds (the recall index) as evidence items: kind 'known', their stored text as the
-    excerpt (nothing to fetch), one per site, none that the live results already carry."""
+    excerpt (nothing to fetch), one per site, none that the live results already carry, and - given the query -
+    only pages carrying at least min_cover of its words."""
     have = {canon_url(it.get("url") or "") for it in items or ()}
     sites = set()
     out: List[Dict[str, Any]] = []
@@ -420,6 +448,8 @@ def known_items(pages: Sequence[Dict[str, Any]], items: Sequence[Dict[str, Any]]
             continue
         text = " ".join(str(p.get("full_text") or p.get("text") or "").split())
         if len(text.split()) < 30:
+            continue
+        if query and coverage(query, str(p.get("title") or "") + " " + text) < min_cover:
             continue
         sites.add(site)
         have.add(cu)
