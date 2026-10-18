@@ -12,13 +12,14 @@ Pure: no torch, no Redis, no registry.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 MIN_RECORDS_PER_CONCEPT = 20      # doc 49: fail below roughly 20
 MIN_PERPLEXITY_SHARE = 0.10       # codebook perplexity / K: below this, a few concepts do all the work
 MAX_STEPS_PER_TRANSITION = 20.0   # dynamics steps per distinct observed transition: above this it is memorising
 MIN_INDEX_SHARE = 0.5             # FAISS vectors / records assigned
 STALE_DAYS = 14.0                 # no persist (training checkpoint) in this long
+MAX_LARGEST_SHARE = 0.5           # one concept holding more than this share of the records swallows the space
 
 OK, DEGRADED, STALE, UNTRAINED = "ok", "degraded", "stale", "untrained"
 
@@ -35,13 +36,33 @@ def _age_days(iso: Any, now: datetime) -> Optional[float]:
     return max(0.0, (now - t).total_seconds() / 86400.0)
 
 
+def spread(populations: Sequence[int], k: int = 0) -> Dict[str, Any]:
+    """How records spread over the concepts (FM-W.1, 18 Oct 2026): median population, share of concepts below
+    MIN_RECORDS_PER_CONCEPT, the largest concept's share of the records. Unused concepts count as 0 up to k."""
+    pops = sorted(int(p or 0) for p in populations or [])
+    if k and len(pops) < k:
+        pops = [0] * (k - len(pops)) + pops
+    if not pops:
+        return {}
+    n, total = len(pops), sum(pops)
+    mid = n // 2
+    median = pops[mid] if n % 2 else (pops[mid - 1] + pops[mid]) / 2
+    return {"median_population": median,
+            "concepts_below_min": sum(1 for p in pops if p < MIN_RECORDS_PER_CONCEPT),
+            "share_below_min": round(sum(1 for p in pops if p < MIN_RECORDS_PER_CONCEPT) / n, 3),
+            "largest_population": pops[-1],
+            "largest_share": round(pops[-1] / total, 3) if total else 0.0}
+
+
 def verdict(model: Dict[str, Any], index: Optional[Dict[str, Any]] = None,
             held_out: Optional[Dict[str, Any]] = None,
-            now: Optional[datetime] = None) -> Dict[str, Any]:
+            now: Optional[datetime] = None,
+            populations: Optional[Sequence[int]] = None) -> Dict[str, Any]:
     """Return {status, reasons, metrics} for a worldview.stats()["model"] dict.
 
     ``index`` is worldview.stats()["index"]; ``held_out`` is a future evaluation
-    {"beats_baseline": bool, ...} - absent today, which keeps the verdict below ok.
+    {"beats_baseline": bool, ...} - absent today, which keeps the verdict below ok. ``populations`` (records per
+    concept) lets the verdict judge the distribution, not only the mean (FM-W.1).
     """
     now = now or datetime.now(timezone.utc)
     model = model or {}
@@ -64,6 +85,8 @@ def verdict(model: Dict[str, Any], index: Optional[Dict[str, Any]] = None,
         "index_share": round(vectors / records, 3) if records else 0.0,
         "checkpoint_age_days": round(age, 2) if age is not None else None,
     }
+    dist = spread(populations, k) if populations is not None else {}
+    metrics.update(dist)
 
     trained = bool(model.get("ready")) and records > 0 and isinstance(steps, dict) and any(int(v or 0) > 0 for v in steps.values())
     if not trained:
@@ -76,6 +99,12 @@ def verdict(model: Dict[str, Any], index: Optional[Dict[str, Any]] = None,
 
     if k and records / k < MIN_RECORDS_PER_CONCEPT:
         reasons.append(f"{records / k:.1f} records per concept (< {MIN_RECORDS_PER_CONCEPT})")
+    if dist and dist["median_population"] < MIN_RECORDS_PER_CONCEPT:
+        # the mean hid this on 18 Oct: 23.2 per concept, median 1, 78 of 94 concepts below 20
+        reasons.append(f"median concept holds {dist['median_population']:g} records (< {MIN_RECORDS_PER_CONCEPT}); "
+                       f"{dist['concepts_below_min']} of {k or len(populations)} concepts below {MIN_RECORDS_PER_CONCEPT}")
+    if dist and dist["largest_share"] > MAX_LARGEST_SHARE:
+        reasons.append(f"one concept holds {dist['largest_share']:.0%} of the records (> {MAX_LARGEST_SHARE:.0%})")
     if k and perplexity / k < MIN_PERPLEXITY_SHARE:
         reasons.append(f"codebook perplexity {perplexity:.1f} is {perplexity / k:.1%} of K={k} (< {MIN_PERPLEXITY_SHARE:.0%})")
     if transitions and dyn_steps / transitions > MAX_STEPS_PER_TRANSITION:

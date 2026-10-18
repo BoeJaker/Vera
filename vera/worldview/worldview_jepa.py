@@ -5949,7 +5949,9 @@ async def cap_worldview_health(trace_id=None) -> Dict:
         from vera.worldview import worldview_health_core as _whc
     try:
         st = MODEL.stats()
-        return _whc.verdict(st, WV_INDEX.stats(), held_out=st.get("held_out") or None)
+        # FM-W.1: the records per concept, so the verdict judges the spread (median, share below the minimum)
+        pops = list(Counter(MODEL.record_concepts.values()).values())
+        return _whc.verdict(st, WV_INDEX.stats(), held_out=st.get("held_out") or None, populations=pops)
     except Exception as e:                                # a broken model is not healthy
         log.warning("worldview.health: %s", e)
         return {"status": "untrained", "reasons": [f"health check failed: {e}"], "metrics": {}}
