@@ -19,6 +19,10 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, schedule
 
 try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import revert_core as RV
+except Exception:                        # worktree / app-free import
+    from vera.minds import revert_core as RV   # type: ignore
+try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import calibration_core as CC
     from Vera.vera.minds import contract_core as _MC
 except Exception:                        # worktree / app-free import
@@ -162,3 +166,57 @@ async def cap_decide_calibration_weekly(trace_id=None) -> Dict[str, Any]:
     week = datetime.now().strftime("%G-W%V")
     r = getattr(_orch, "REDIS", None)
     return {"ok": bool(r is not None and await r.get(KEY_WEEK + week)), "week": week}
+
+
+
+@capability(
+    "decide.calibration.guard", http_method="POST", http_path="/decide/calibration/guard", http_tags=["minds"],
+    memory="off",
+    description="FM-11 automatic revert: read the 7-day calibration and the global switch modes; a decide.student.<q> "
+                "switch whose student is taking decisions (first*, sampled) goes back to 'off' on a revert trigger - "
+                "a precision drop of that question's student (>= 3 points at tau), escalation > 60% or drift - with "
+                "the reason, and emits minds.killed. ECE alone does not revert. A census arm's own modes are not "
+                "touched. On the Loop Lab schedule. Input: dry_run (bool, default false). "
+                "Output: {ok, reverted: [{switch, question, from, to, reasons}], alerts, dry_run}.",
+)
+async def cap_decide_calibration_guard(dry_run: bool = False, trace_id=None) -> Dict[str, Any]:
+    from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, emit_event
+
+    def _fn(name):
+        c = CAPABILITY_REGISTRY.get(name) or {}
+        return c.get("raw") or c.get("func")
+
+    rep = await cap_decide_calibration(days=7)
+    if rep.get("error"):
+        return {"ok": False, "error": rep["error"]}
+    get = _fn("minds.switch.get")
+    sw = (await get()) if get else {}
+    modes = {k: (v or {}).get("mode") for k, v in ((sw or {}).get("global") or {}).items()}
+    students: Dict[str, str] = {}
+    r = getattr(_orch, "REDIS", None)
+    if r is not None:
+        try:
+            raw = await r.get("vera:decide:cascade:plan")
+            plan_ = json.loads(raw) if raw else {}
+            plan_ = plan_.get("plan", plan_) if isinstance(plan_, dict) else {}
+            students = {q: str(p.get("impl") or "") for q, p in plan_.items() if isinstance(p, dict) and p.get("impl")}
+        except Exception as e:
+            log.debug("guard cascade plan: %s", e)
+    todo = RV.plan(rep.get("alert_items") or [], modes, students)
+    done = []
+    if not dry_run:
+        setter = _fn("minds.switch.set")
+        for rec in todo:
+            res = await setter(id=rec["switch"], mode=RV.OFF, reason=RV.reason(rec), by="four-minds:auto-revert") \
+                if setter else {"ok": False, "error": "minds.switch.set missing"}
+            rec = dict(rec, ok=bool(res.get("ok")), error=res.get("error"))
+            if res.get("ok"):
+                try:
+                    await emit_event({"type": "minds.killed", "id": rec["switch"], "from": rec["from"],
+                                      "to": RV.OFF, "reason": RV.reason(rec)})
+                except Exception:
+                    pass
+                log.warning("auto-revert: %s %s -> off (%s)", rec["switch"], rec["from"], "; ".join(rec["reasons"]))
+            done.append(rec)
+    return {"ok": True, "reverted": done if not dry_run else todo, "dry_run": bool(dry_run),
+            "alerts": len(rep.get("alert_items") or [])}
