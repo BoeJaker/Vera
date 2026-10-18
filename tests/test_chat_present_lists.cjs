@@ -6,11 +6,12 @@
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const H = fs.readFileSync(path.join(__dirname, '..', 'vera', 'chat', 'chat_panel.html'), 'utf8');
 let fails = 0; const t = (name, cond, extra) => { console.log((cond ? 'ok   ' : 'FAIL ') + name + (cond ? '' : '  ' + (extra || ''))); if (!cond) fails++; };
-const a = H.indexOf('  function _cvPresented(capName, result, args, opts){'), b = H.indexOf('  // the one entry point', a);
+const PRES = fs.readFileSync(path.join(__dirname, '..', 'vera', 'widgets', 'present.js'), 'utf8');   /* DO-0.1: the record -> item step is shared (VeraWidget.itemOf) */
+const a = PRES.indexOf('  function itemOf(capName, result, args, opts){'), b = PRES.indexOf('  Object.assign(W, {', a);
 const decl = {}; const W = { presentationOf: (c) => decl[c] || null, present: (cap, res) => ({ element: decl[cap].element, title: cap, records: [{ form: decl[cap].form, data: res }] }),
   dataFor: (d) => d, mapped: (r, f, d) => d };
-const ctx = { window: { VeraWidget: W }, _cvCalMonth: () => '2026-10', Object, String, Array, JSON }; vm.createContext(ctx);
-vm.runInContext(H.slice(a, b) + ';this.f=_cvPresented;', ctx);
+const ctx = { W, calMonth: () => '2026-10', Object, String, Array, JSON }; vm.createContext(ctx);
+vm.runInContext(PRES.slice(a, b) + ';this.f=itemOf;', ctx);
 const EV = [1, 2, 3, 4, 5, 6].map((i) => ({ id: 'e' + i, title: 'Event ' + i, start: '2026-10-1' + i + 'T09:00' }));
 decl['cal.events.list'] = { element: 'calendar', form: 'schedule' };
 { const it = ctx.f('cal.events.list', { events: EV }, {});

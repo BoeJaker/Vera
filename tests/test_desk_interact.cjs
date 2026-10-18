@@ -113,8 +113,9 @@ t('U13: a deep dive is no wider than 460 nor taller than 360', C.includes('const
 /* U14 - tidy */
 t('U14: tidy deals the desk afresh, from the Canvas menu', C.includes('    tidy() { this._holdEnd();') && H.includes("if(a.a==='tidy'){ if(typeof c.tidy==='function') c.tidy();") && H.includes('data-cvm="tidy"'));
 /* U11 / U18 - the declared reader */
-t('U11: a table or record that names its own form gets that form', H.includes("if((pr.element==='table'||pr.element==='kv')&&P.form&&P.form!=='table'&&P.form!=='kv') return widget("));
-const fn = H.slice(H.indexOf('function _cvPresented('), H.indexOf('function _cvAdapt('));
+const PRES = fs.readFileSync(path.join(root, 'vera', 'widgets', 'present.js'), 'utf8');   /* DO-0.1: the declared reader is shared (VeraWidget.itemOf) */
+t('U11: a table or record that names its own form gets that form', PRES.includes("if((pr.element==='table'||pr.element==='kv')&&P.form&&P.form!=='table'&&P.form!=='kv') return widget("));
+const fn = PRES.slice(PRES.indexOf('function itemOf('), PRES.indexOf('Object.assign(W, {', PRES.indexOf('function itemOf(')));
 t('U18: the declared reader takes its colours from the theme', fn.length > 100 && !/col:'#/.test(fn) && fn.includes("col:'var(--dv5, #a78bfa)'"));
 
 /* round 7 (owner 2026-10-15) */

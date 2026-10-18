@@ -26,6 +26,6 @@ t('without its capability there is nothing to run again', !draw({ rc: 0 }).inclu
 { const el = { dataset: {}, _live: {}, _ranBusy: { [KEY]: true } }; t('running: it says so', draw({ cap: 'x' }, el).includes('running…')); }
 t('when it ran again', draw({ cap: 'x', ran_at: '2026-10-16T22:10:05.000Z' }).includes('ran again 22:10:05'));
 t('run again calls the same capability with the same arguments and writes the answer into the item', C.includes("body: JSON.stringify({ name: c.cap, arguments: c.args || {} })") && C.includes("await this.call('canvas.update', Object.assign(this._ref(key), { content: Object.assign({}, c, { output: out.slice(0, 16000), ran_at: new Date().toISOString() }, rc != null ? { rc } : {}) }))"));
-t('the chat keeps what ran it on the item (adapter and declared path)', H.includes('function _cvRanOf(c, ctx, it){') && H.includes("(c,ctx)=>_cvRanOf(c, ctx, _cvCapTerm(c) ||") && H.includes('output:out.slice(0,16000), cap, args:Object.assign({}, args||{}) }'));
+t('the chat keeps what ran it on the item (adapter and declared path)', H.includes('function _cvRanOf(c, ctx, it){') && H.includes("(c,ctx)=>_cvRanOf(c, ctx, _cvCapTerm(c) ||") && fs.readFileSync(path.join(__dirname, '..', 'vera', 'widgets', 'present.js'), 'utf8').includes('output:out.slice(0,16000), cap, args:Object.assign({}, args||{}) }'));   /* the declared path is shared (DO-0.1) */
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);

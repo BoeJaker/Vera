@@ -382,5 +382,79 @@
     return Object.assign(base(kind, recs[0].why || ''), { records: recs });
   }
 
-  Object.assign(W, { present, presentations, presentationOf, presentKinds: JSON.parse(JSON.stringify(KINDS)) });
+  /* AN ANSWER AS A DESK ITEM (DO-0.1 step 1: one resolver): present()'s record(s) as the item the desk / chat draws - moved
+     unchanged from the chat page (_cvPresented), so every surface makes the same item from the same answer. undefined: not
+     declared (and no opts.fallback) - the caller's own rules go on; null: nothing to draw. */
+  /* a diary's month: the month of its first event, else this month */
+  const calMonth=(evs)=>{ const d=String((evs[0]&&evs[0].start)||'').slice(0,7);
+    if(/^\d{4}-\d{2}$/.test(d)) return d;
+    const n=new Date(); return n.getFullYear()+'-'+(n.getMonth()<9?'0':'')+(n.getMonth()+1); };
+  /* the desk's json tree item: an answer you open, not braces in a fence (the chat's json rule, moved here once) */
+  const jsonItem=(cap, c)=>({ kind:'json', n:cap||'result', k:'json', col:'#94a3b8', d:'data', content:{ title:String(cap||''), data:c } });
+  function itemOf(capName, result, args, opts){
+    if(typeof W.present!=='function'||typeof W.presentationOf!=='function') return undefined;
+    /* opts.fallback: an UNDECLARED answer read through present()'s own fallback (the shape rules) - the generic adapters'
+       one reading (D10 step 2b, owner 2026-10-17) */
+    const cap=String(capName||''); if(!cap||(!W.presentationOf(cap)&&!(opts&&opts.fallback))) return undefined;
+    let pr=null; try{ pr=W.present(cap, result, { args:args||{} }); }catch(_){ return undefined; }
+    if(!pr) return undefined;
+    // nothing drawable, a receipt (it updates what it acted on - DA-08) or a job (its live item follows): no item
+    if(pr.element==='none'||pr.element==='receipt'||pr.element==='job'||!pr.records.length) return null;
+    /* an undeclared answer whose structure no shape reads is a tree you open (DO-0.1 step 2a: what the chat's json rule made) */
+    if(!W.presentationOf(cap)&&pr.records[0]&&pr.records[0].form==='json') return jsonItem(cap, result);
+    const title=String(pr.title||cap), r0=pr.records[0];
+    const drawn=(r)=>{ try{ return W.dataFor(W.mapped(r, r.form, r.data), r.form); }catch(_){ return r.data; } };
+    const widget=(r)=>({ kind:'widget', n:String(r.title||title).slice(0,52), k:'widget', col:'var(--dv5, #a78bfa)', d:'widget · '+r.form,
+      content:Object.assign({}, r, { widget:r.form, form:r.form, title:r.title||title, record:r }) });
+    const rowsOf=(v)=>Array.isArray(v)?v:(v&&typeof v==='object'?(Array.isArray(v.rows)?v.rows:[]):[]);
+    /* the list in an answer: the answer itself, or its list under a usual name - a declaration that names a form hands over
+       the whole answer ({events:[...]}), and a calendar of six events became nothing (D10 measurement, 2026-10-17) */
+    const listOf=(v, keys)=>Array.isArray(v)?v:(v&&typeof v==='object'?(keys.map((k)=>v[k]).find(Array.isArray)||[]):[]);
+    /* A FORM IT NAMES IS THE FORM IT GETS (review 2026-10-15 U11): a table or record whose declaration names its own widget
+       form (docker.ps containers, sysmon.status numbers, obs.node_temps temps, evolve.sandbox.list sandboxes, ...) was drawn
+       as a plain table or field list - what the hint table drew before was that form. The desk's own calendar and code
+       elements stay: they do more than the forms of the same name. */
+    { const P=W.presentationOf(cap)||{}; if((pr.element==='table'||pr.element==='kv')&&P.form&&P.form!=='table'&&P.form!=='kv') return widget(Object.assign({}, r0, { form:String(P.form) })); }
+    switch(pr.element){
+      case 'table': { const rows=rowsOf(drawn(r0)).filter(x=>x&&typeof x==='object'); if(!rows.length) return null;
+        /* a list of plain values (a host's open ports) is a column too, shown joined; the declaration's draw.columns choose and
+           order them (DA-04c (d) - a scan's hosts) */
+        const flat=(v)=>v==null||typeof v!=='object'||(Array.isArray(v)&&v.every(s=>s==null||typeof s!=='object'));
+        const want=((W.presentationOf(cap)||{}).draw||{}).columns;
+        /* the columns: a field some of the first 50 rows hold, plain in all of them - not only the first row's (its empty first
+           value dropped a column that the other rows filled; D10 measurement) */
+        const head=rows.slice(0,50), keys=[]; head.forEach(x=>Object.keys(x).forEach(k=>{ if(keys.indexOf(k)<0) keys.push(k); }));
+        const columns=(Array.isArray(want)&&want.length?want.map(String).filter(k=>rows.some(x=>x[k]!=null)):keys.filter(k=>head.some(x=>x[k]!=null)&&head.every(x=>flat(x[k])))).slice(0,8);
+        const body=rows.slice(0,80).map(x=>columns.map(c=>{ const v=x[c]; return v==null?'':Array.isArray(v)?v.join(', ').slice(0,120):typeof v==='object'?JSON.stringify(v).slice(0,120):String(v).slice(0,120); }));
+        return { kind:'table', n:title+' · '+body.length+' rows', k:'table', col:'var(--dv1, #38bdf8)', d:'table · '+body.length+' rows',
+                 content:{ columns, rows:body, caption:title } }; }
+      case 'records': { const items=listOf(r0.data, ['items','results','records','rows','pages','sources','data']).filter(x=>x&&typeof x==='object').map((x,i)=>({ id:String(x.id!=null?x.id:(x.url||i)), url:x.url||'',
+          domain:x.domain||(String(x.url||'').match(/^https?:\/\/([^/]+)/)||[])[1]||'', title:String(x.title||x.url||''), snippet:String(x.snippet||'').slice(0,1200),
+          text:typeof x.text==='string'&&x.text.length>=200?x.text.slice(0,20000):undefined, when:x.when||undefined, score:typeof x.score==='number'?x.score:undefined }));
+        if(!items.length) return null;
+        return { kind:'records', n:items.length+' '+(pr.kind==='reading'?'pages':'records'), k:'records', col:'var(--dv2, #7aa2d6)', d:'records · '+items.length,
+                 content:{ title, kind:pr.kind==='reading'?'web':'records', items, total:items.length } }; }
+      case 'markdown': { const md=String(r0.data||''); return { kind:'markdown', n:(md.replace(/^#+\s*/,'').split('\n').find(x=>x.trim())||title).slice(0,52), k:'prose', col:'var(--acc2)', d:'written', content:{ md:md.slice(0,20000) } }; }
+      case 'code': { const d=r0.data||{}; if(pr.kind==='diff'){ const t=String(d.diff||d.patch||''); if(!t.trim()) return null;   /* a patch too, and the file it is of (the diff adapter's reading, D10 step 2c) */
+          return { kind:'code', n:'diff · '+t.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'diff', content:{ code:t.slice(0,120000), lang:'diff', filename:String(d.path||d.file||'') } }; }
+        const code=String(d.code||''), p=String(d.path||''), lang=String(d.lang||'');
+        return { kind:'code', n:(p?p.split('/').pop():(lang||'code'))+' · '+code.split('\n').length+' lines', k:'code', col:'var(--dv3, #fb923c)', d:'code', content:{ code:code.slice(0,120000), lang, filename:p?p.split('/').pop():'', path:p } }; }
+      case 'session': { const ls=(r0.data&&r0.data.lines)||[]; const cmd=ls.length&&/^\$ /.test(ls[0])?ls[0].slice(2):''; const out=(cmd?ls.slice(1):ls).join('\n');
+        return { kind:'session', n:(cmd||title).slice(0,52), k:'term', col:'var(--dv6, #7dd3fc)', d:'terminal'+(r0.data&&r0.data.state?' · '+r0.data.state:''), content:Object.assign({ command:cmd, output:out.slice(0,16000), cap, args:Object.assign({}, args||{}) }, (()=>{ const m=String((r0.data&&r0.data.state)||'').match(/^rc (-?\d+)$/); return m?{ rc:+m[1] }:{}; })()) }; }   /* what ran it, how it ended (DU-E-session) */
+      case 'image': { const d=r0.data||{}; const url=d.image_b64?('data:image/png;base64,'+d.image_b64):String(d.url||''); if(!url) return null;
+        return { kind:'image', n:String(d.caption||title), k:'image', col:'var(--dv4, #e879f9)', d:'image', content:{ url, alt:String(d.caption||title), caption:String(d.caption||'') } }; }
+      case 'kv': { const f=r0.data; if(!f||typeof f!=='object') return null; return { kind:'kv', n:title, k:'kv', col:'var(--dim2, #94a3b8)', d:'record · '+Object.keys(f).length+' fields', content:{ title, fields:f } }; }
+      case 'calendar': { const evs=listOf(r0.data, ['events','items','data']).filter(x=>x&&x.start).map(x=>Object.assign({}, x, { title:String(x.title||'') })); if(!evs.length) return null;
+        return { kind:'calendar', n:'Calendar', k:'calendar', col:'var(--dv7, #9fe1e7)', d:'calendar · '+evs.length+' event'+(evs.length===1?'':'s'), key:'calendar:month',
+                 content:{ title:title||'Calendar', month:calMonth(evs), selected:'', events:evs } }; }
+      /* the names an answer holds, as the desk's entities element - chips, a list, a graph (DO-0.3; present() reads them
+         to one row each {name, type, count, group}, which a widget draws as pills) */
+      case 'entities': { const es=(Array.isArray(r0.data)?r0.data:[]).filter(x=>x&&x.name); if(!es.length) return null; const groups=[], by={};
+        es.forEach(x=>{ const g=String(x.group||x.type||'other'); if(!by[g]){ by[g]={ group:g, entities:[] }; groups.push(by[g]); } by[g].entities.push({ text:String(x.name), type:String(x.type||''), count:+x.count||1 }); });
+        return { kind:'entities', n:title+' · '+es.length+' name'+(es.length===1?'':'s'), k:'entities', col:'var(--dv2, #7aa2d6)', d:'entities · '+es.length, content:{ groups } }; }
+      case 'composite': return pr.records.map(widget);
+      default: return widget(r0);   // widget-drawn kinds (status, metric, series, log, progress, graph)
+    }
+  }
+  Object.assign(W, { present, presentations, presentationOf, itemOf, jsonItem, calMonth, presentKinds: JSON.parse(JSON.stringify(KINDS)) });
 })();
