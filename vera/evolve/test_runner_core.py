@@ -59,7 +59,10 @@ POOL_DEFAULTS = {"enabled": False, "max_nodes": 3, "min_files": 40, "chunks": 12
                  # P0-4 (looplab-control §9.0, 18 Oct 2026): busy_avoid node -> the Ollama instance it hosts. With a
                  # mapping, a busy_avoid node is left alone only while running loop work has used ITS instance in the
                  # last BUSY_RECENT_S; without one, every busy_avoid node is left alone whenever anything runs.
-                 "busy_map": {}}
+                 "busy_map": {},
+                 # P0-6 (owner 18 Oct 2026: "running less tests per gate is approved"): an ADOPT gate runs the test
+                 # files that touch its change (impact_select); promote-to-main / nightly runs keep the full tier
+                 "impact": True}
 #: a node counts as in use by the running work if its instance served a loop call this recently
 BUSY_RECENT_S = 600
 #: The docker --cpu-shares of an idle-priority host shard (default 1024).
@@ -82,7 +85,7 @@ def merge_pool_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 cfg[k] = max(1, min(64, int(v)))
             elif k in ("node_parallel", "host_parallel"):
                 cfg[k] = max(1, min(8, int(v)))
-            elif k == "idle_priority":
+            elif k in ("idle_priority", "impact"):
                 cfg[k] = bool(v)
             elif k == "busy_avoid":
                 vals = v.split(",") if isinstance(v, str) else list(v or [])
@@ -572,3 +575,104 @@ def node_share(position: int, free_slots: int) -> int:
     if position == 0:
         return free_slots
     return 1 if position < free_slots else 0
+
+
+
+# ── P0-6: test-impact selection for adopt gates (owner approved 18 Oct 2026) ─────────────────────────────────────
+# Every gate ran all 1,079 test files whatever it changed; a one-file panel fix waited as long as a core rewrite.
+# An adopt gate now runs the files that touch the change; anything that could touch everything runs everything.
+#: a change to any of these runs the full tier
+IMPACT_FULL = ("vera/capability_orchestration.py", "tests/conftest.py", "conftest.py", "requirements", "pytest.ini",
+               "setup.cfg", "pyproject.toml", "vera/__init__.py", "tests/__init__.py")
+#: above this share of all files, the selection is not worth it: run the full tier
+IMPACT_MAX_SHARE = 0.6
+#: how many steps out from a changed module its importers count
+IMPACT_DEPTH = 3
+#: modules nearly everything imports (for the decorator, the registry): reaching one does not spread further - a
+#: change TO one runs the full tier (IMPACT_FULL); a change that a hub merely looks up stays local
+IMPACT_HUBS = {"capability_orchestration"}
+_SYSMOD_RE = re.compile(r"sys\.modules(?:\.get\(|\[)\s*[\"']([\w.]+)[\"']")
+_IMPORT_RE = re.compile(r"^[ \t]*(?:from[ \t]+([\w.]+)[ \t]+import[ \t]+(\([^)]*\)|[\w*, \t]+)|import[ \t]+([\w., \t]+))", re.M)
+
+
+def module_name(path: str) -> str:
+    """vera/evolve/x_core.py -> x_core (the loader registers modules under bare names; tests use vera.X or the bare
+    name or the file path - all contain it)."""
+    base = path.replace("\\", "/").rsplit("/", 1)[-1]
+    return base[:-3] if base.endswith(".py") else base
+
+
+def imports_of(src: str) -> List[str]:
+    """Bare module names a source imports: `from a.b import c, d` gives b, c, d; `import a.b` gives b."""
+    out: List[str] = []
+    for m in _IMPORT_RE.finditer(src or ""):
+        if m.group(1):
+            out.append(m.group(1).rsplit(".", 1)[-1])
+            out += [x.strip().split(" as ")[0].strip() for x in m.group(2).replace("(", "").replace(")", "").split(",")]
+        elif m.group(3):
+            out += [x.strip().split(" as ")[0].strip().rsplit(".", 1)[-1] for x in m.group(3).split(",")]
+    # modules loaded by bare name are reached through sys.modules, not imports (the loader registers them so):
+    # sys.modules.get("evolve_capabilities") or ...get("Vera.vera.evolve.evolve_capabilities") is a dependency too
+    out += [m.rsplit(".", 1)[-1] for m in _SYSMOD_RE.findall(src or "")]
+    return [x for x in out if x and x != "*"]
+
+
+def importers_index(sources: Dict[str, str]) -> Dict[str, set]:
+    """bare module name -> the bare names of the vera modules that import it."""
+    idx: Dict[str, set] = {}
+    for path, src in (sources or {}).items():
+        me = module_name(path)
+        for dep in set(imports_of(src)):
+            idx.setdefault(dep, set()).add(me)
+    return idx
+
+
+def affected_names(changed: Iterable[str], importers: Dict[str, set], depth: int = IMPACT_DEPTH) -> set:
+    """The changed modules and everything that imports them, up to `depth` steps out; plus every changed file's name
+    (an .html / .js / .json is matched by its file name)."""
+    names: set = set()
+    frontier: set = set()
+    for c in changed or []:
+        base = c.replace("\\", "/").rsplit("/", 1)[-1]
+        names.add(base)
+        if c.endswith(".py"):
+            frontier.add(module_name(c))
+    seen = set(frontier)
+    for _ in range(max(0, depth)):
+        nxt = set()
+        for n in frontier:
+            nxt |= importers.get(n, set()) - seen - IMPACT_HUBS
+        seen |= nxt
+        frontier = nxt
+        if not frontier:
+            break
+    return names | seen
+
+
+def impact_select(test_files: Sequence[str], changed: Sequence[str], test_text: Dict[str, str],
+                  importers: Dict[str, set], max_share: float = IMPACT_MAX_SHARE) -> Tuple[List[str], str]:
+    """(the test files to run, why). Full list when the change could touch everything, when nothing was selected,
+    or when the selection is most of the suite anyway."""
+    files = list(test_files or [])
+    ch = [c.replace("\\", "/") for c in (changed or [])]
+    full = [c for c in ch if any(c == f or c.startswith(f) for f in IMPACT_FULL)]
+    if full:
+        return files, "full tier: the change touches %s" % ", ".join(sorted(set(full))[:3])
+    names = {n for n in affected_names(ch, importers) if len(n) >= 4}
+    # one alternation for every name (one pass per test file, not one per name)
+    rx = re.compile(r"(?<![\w])(?:" + "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True)) + r")(?![\w])")         if names else None
+    picked = []
+    for f in files:
+        base = f.rsplit("/", 1)[-1]
+        if any(c == f or c == "tests/" + base for c in ch):
+            picked.append(f)
+            continue
+        txt = test_text.get(f) or ""
+        if rx is not None and rx.search(txt):
+            picked.append(f)
+    if not picked:
+        return files, "full tier: no test names the change (safe default)"
+    if len(picked) > max_share * len(files):
+        return files, "full tier: %d of %d files touch the change" % (len(picked), len(files))
+    return picked, "%d of %d test files touch the change (%d module(s) affected)" % (
+        len(picked), len(files), sum(1 for n in names if not n.endswith((".html", ".js", ".json", ".css"))))
