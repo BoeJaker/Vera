@@ -3935,7 +3935,7 @@ span.vw-sampled{opacity:.85}
       if (h) h.textContent = 'Every row · ' + rw.length; if (tw) tw.setAttribute('record', JSON.stringify({ form: 'table', title: 'Every row', data: rw, draw: { search: true } })); };
     const dx = (window.VeraDive && typeof window.VeraDive.enhance === 'function') ? window.VeraDive.enhance({ sc, bd, rec, data, rows: (d) => diveRows(rec, d), setRows,
       call: (cap, args) => call((host && host.base) || '', cap, args), refresh: () => { const b = sc.querySelector('[data-dv="refresh"]'); if (b && !b.disabled) b.click(); } }) : null;
-    const close = () => { sc.remove(); document.removeEventListener('keydown', onKey, true); };
+    const close = () => { sc.remove(); document.removeEventListener('keydown', onKey, true); if (dx && dx.destroy) dx.destroy(); };
     const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
     document.addEventListener('keydown', onKey, true);
     sc.addEventListener('click', (e) => { if (e.target === sc) close(); const b = e.target.closest && e.target.closest('[data-dv]'); if (!b) return;

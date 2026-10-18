@@ -42,6 +42,7 @@ t('the dive hands VeraDive the open sheet; a row opens the drawer; a second read
   assert.ok(EL.includes("window.VeraDive.enhance({ sc, bd, rec, data, rows: (d) => diveRows(rec, d), setRows,"));
   assert.ok(EL.includes("tw.setAttribute('item-drawer', '');"), '5 row drill');
   assert.ok(EL.includes('fill(v); if (dx) dx.answered(v);'), '6 the read again is handed over');
+  assert.ok(EL.includes('if (dx && dx.destroy) dx.destroy();'), 'closing the sheet removes its key listener at once');
   assert.ok(UI.includes('for name in ("present.js", "widget_dive.js"):'), 'served with widget_element.js');
 });
 t('8 keyboard: every key is listed on the sheet and typing in a field is never taken', () => {

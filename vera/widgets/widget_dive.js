@@ -206,7 +206,9 @@
     return {
       // the dive read again: freshness, the diff against the last read, the brush kept
       answered: function (data) { cur.prevRows = cur.rows; cur.data = data; cur.rows = ctx.rows(data); cur.at = Date.now(); drawDiff(); applyBrush(); },
-      addLayer: addLayer, state: cur
+      addLayer: addLayer, state: cur,
+      // the sheet closed: its key listener and the freshness tick go with it (vera-d0's review)
+      destroy: function () { document.removeEventListener('keydown', onKey, true); clearInterval(tick); }
     };
   }
   api.enhance = enhance;
