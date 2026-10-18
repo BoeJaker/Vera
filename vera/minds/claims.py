@@ -18,6 +18,11 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import capability, schedule
 
 try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import test_activity as _TA
+except Exception:                        # worktree / app-free import
+    from vera.minds import test_activity as _TA   # type: ignore
+
+try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import claims_core as CL, ledger_core as LC, judge_core as JC
     from Vera.vera.minds import contract_core as _MC
 except Exception:                        # worktree / app-free import
@@ -115,7 +120,8 @@ async def harvest(hours: int = 48, max_runs: int = 40) -> Dict[str, Any]:
                 "hours (int=48), max_runs (int=40). Output: {ok, runs, claims}.",
 )
 async def cap_output_claims_harvest(hours: int = 48, max_runs: int = 40, trace_id=None) -> Dict[str, Any]:
-    return await harvest(hours, max_runs)
+    async with _TA.declared("four-minds:claims-harvest", "claims harvest (FM-5.2)", ttl_s=1800):
+        return await harvest(hours, max_runs)
 
 
 async def _night_job() -> None:

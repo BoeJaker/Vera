@@ -1473,6 +1473,8 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
 
     # what Vera already tracks on the subject - milliseconds, so always asked
     intel_task = asyncio.create_task(_seek_call("intel.lookup", 8, query=subject, since=since))
+    # what the fabric has already read on it (the page index; web-ingress WI-10b) - bounded, never waited on long
+    known_task = asyncio.create_task(_seek_call("discovery.recall_index.search", 3, query=subject, limit=8))
 
     if need == "latest":
         if not since:
@@ -1551,6 +1553,16 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
             else:
                 gaps.append("the background report could not start: " + str(job.get("_error") or job.get("error")))
 
+    known = await known_task
+    kitems = _seek.known_items(known.get("pages") or [], items, chars=chars) if not known.get("_error") else []
+    if kitems and need != "latest":
+        items = [it for it in items if it.get("text")] + kitems + [it for it in items if not it.get("text")]
+        checked.append(f"already known: {len(kitems)} page(s) Vera has read before (the fabric's page index)")
+    elif kitems:
+        checked.append(f"already known: {len(kitems)} older page(s) on '{subject}' in the fabric's index (not "
+                       "listed: 'latest' asks for new)")
+    elif known.get("_error"):
+        checked.append("fabric index: " + str(known["_error"])[:80])
     intel = await intel_task
     if intel.get("tracked"):
         tp = intel.get("topic") or {}

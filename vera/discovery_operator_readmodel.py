@@ -56,9 +56,40 @@ def project_route_report(report: Any) -> dict[str, Any]:
         rejected_option_ids = report.rejected_option_ids
     except AttributeError as exc:
         raise ValueError("report must implement the discovery route contract") from exc
+    candidate_options = {
+        option.option_id: (candidate, option)
+        for candidate in result.candidates for option in candidate.options
+    }
+    ranked = {value.option_id: value for value in ranked_options}
+    selections: list[dict[str, Any]] = []
+    for assignment in plan.assignments:
+        selected = candidate_options.get(assignment.option_id)
+        ranking = ranked.get(assignment.option_id)
+        if selected is None or ranking is None:
+            raise ValueError("route selection evidence is incomplete")
+        candidate, option = selected
+        selections.append({
+            "candidate_id": assignment.candidate_id,
+            "source_id": candidate.source_id,
+            "source_kind": candidate.source_kind,
+            "method": option.method,
+            "provider": option.provider,
+            "provider_revision": option.provider_revision,
+            "resource": assignment.resource,
+            "output_kinds": list(option.output_kinds),
+            "rank": ranking.rank,
+            "score": ranking.score,
+            "worker_id": assignment.worker_id,
+            "worker_evidence_id": assignment.worker_evidence_id,
+            "gpu_admission_id": assignment.gpu_admission_id,
+        })
     return {
         "kind": "route", "request_id": result.request.request_id,
         "result_id": result.result_id, "plan_id": plan.plan_id,
+        "evidence_scope": "explicit_route_execution",
+        "execution_authority": "discovery.route",
+        "consumer_routing_changed": False,
+        "control_authority": False,
         "counts": {
             "candidates": len(result.candidates), "receipts": len(result.receipts),
             "context": len(result.context), "datasets": len(result.datasets),
@@ -69,6 +100,7 @@ def project_route_report(report: Any) -> dict[str, Any]:
             "candidate_id": value.candidate_id, "source_id": value.source_id,
             "option_id": value.option_id, "rank": value.rank, "score": value.score,
         } for value in ranked_options],
+        "selections": selections,
         "assignments": [{
             "candidate_id": value.candidate_id, "option_id": value.option_id,
             "worker_id": value.worker_id, "resource": value.resource,
@@ -90,7 +122,12 @@ def project_route_report(report: Any) -> dict[str, Any]:
     }
 
 
-def project_benchmark_comparison(comparison: Mapping[str, Any]) -> dict[str, Any]:
+def project_benchmark_comparison(
+        comparison: Mapping[str, Any], *,
+        evidence_scope: str = "offline_comparison",
+        production_ready: bool = False,
+        authority_changed: bool = False,
+        providers_invoked: bool | None = None) -> dict[str, Any]:
     if not isinstance(comparison, Mapping) or comparison.get("schema") != BENCHMARK_SCHEMA:
         raise ValueError("comparison must be a context benchmark result")
     required = ("fixture_id", "snapshot_id", "baseline_variant_id",
@@ -120,6 +157,13 @@ def project_benchmark_comparison(comparison: Mapping[str, Any]) -> dict[str, Any
         raise ValueError("comparison observation ids are invalid") from exc
     if not isinstance(comparison["passed"], bool):
         raise ValueError("comparison passed must be boolean")
+    evidence_scope = _bounded(evidence_scope, "evidence scope")
+    for name, value in (("production_ready", production_ready),
+                        ("authority_changed", authority_changed)):
+        if not isinstance(value, bool):
+            raise ValueError(f"{name} must be boolean")
+    if providers_invoked is not None and not isinstance(providers_invoked, bool):
+        raise ValueError("providers_invoked must be boolean or null")
     # Summaries are already aggregate-only; copy only the reviewed metric families.
     def summary(value: Mapping[str, Any]) -> dict[str, Any]:
         if not isinstance(value, Mapping):
@@ -142,6 +186,11 @@ def project_benchmark_comparison(comparison: Mapping[str, Any]) -> dict[str, Any
                       candidate: summary(summaries[candidate])},
         "blockers": blockers, "passed": comparison["passed"],
         "observation_count": len(observation_ids),
+        "evidence_scope": evidence_scope,
+        "production_ready": production_ready,
+        "authority_changed": authority_changed,
+        "providers_invoked": providers_invoked,
+        "control_authority": False,
     }
 
 
@@ -198,6 +247,7 @@ def project_research_shadow(observation: Any) -> dict[str, Any]:
         raise ValueError("research shadow must remain payload-free and non-authoritative")
     return {
         "schema": SHADOW_SCHEMA,
+        "kind": "research_shadow",
         "observation_id": _bounded(value["observation_id"], "observation"),
         "producer": _bounded(value["producer"], "producer"),
         "query_digest": _bounded(value["query_digest"], "query digest"),
@@ -230,8 +280,17 @@ class DiscoveryOperatorLedger:
             self._routes.append(value)
         return deepcopy(value)
 
-    def record_benchmark(self, comparison: Mapping[str, Any]) -> dict[str, Any]:
-        value = project_benchmark_comparison(comparison)
+    def record_benchmark(
+            self, comparison: Mapping[str, Any], *,
+            evidence_scope: str = "offline_comparison",
+            production_ready: bool = False,
+            authority_changed: bool = False,
+            providers_invoked: bool | None = None) -> dict[str, Any]:
+        value = project_benchmark_comparison(
+            comparison, evidence_scope=evidence_scope,
+            production_ready=production_ready,
+            authority_changed=authority_changed,
+            providers_invoked=providers_invoked)
         with self._lock:
             self._benchmarks.append(value)
         return deepcopy(value)

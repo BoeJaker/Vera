@@ -363,3 +363,31 @@ def test_feed_hits_match_the_feeds_vera_follows():
     assert [h["url"] for h in hits] == ["https://g.co/a", "https://g.co/b"]
     assert hits[0]["engine"] == "feed: Guardian: property" and hits[0]["published"].startswith("2026-10-07")
     assert "feed_task = asyncio.create_task(_feed_hits(subject))" in src
+
+
+
+def test_known_items_from_the_page_index():
+    """web-ingress WI-10b: what the fabric already read joins the evidence, one per site, never a duplicate of a
+    live result, never a near-empty page."""
+    body = "Lab space vacancy in Cambridge fell to 2.1 per cent as demand from life science firms continued. " * 4
+    pages = [{"url": "https://www.bidwells.co.uk/research/lab", "title": "Lab market", "full_text": body, "synced_at": "2026-10-01"},
+             {"url": "https://bidwells.co.uk/research/other", "title": "Same site", "full_text": body},
+             {"url": "https://news.example/a?utm_source=x", "title": "Already live", "full_text": body},
+             {"url": "https://thin.example/", "title": "Thin", "full_text": "too short"},
+             {"url": "https://savills.co.uk/lab", "title": "Savills lab", "full_text": body}]
+    live = [{"url": "https://news.example/a", "title": "live"}]
+    k = C.known_items(pages, live, chars=120)
+    assert [x["url"] for x in k] == ["https://www.bidwells.co.uk/research/lab", "https://savills.co.uk/lab"]
+    assert all(x["kind"] == "known" and len(x["text"]) <= 120 and x["snippet"] for x in k)
+    assert k[0]["seen"] == "2026-10-01"
+    assert C.known_items([], live) == [] and len(C.known_items(pages, [], limit=1)) == 1
+
+
+def test_info_seek_asks_the_page_index_bounded():
+    import ast
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "web", "web_capabilities.py"), encoding="utf-8").read()
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_info_seek")
+    d = ast.dump(fn)
+    assert "discovery.recall_index.search" in d and "known_items" in d
+    assert '"discovery.recall_index.search", 3' in src

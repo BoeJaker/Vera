@@ -21,6 +21,11 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability, schedule
 
 try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import test_activity as _TA
+except Exception:                        # worktree / app-free import
+    from vera.minds import test_activity as _TA   # type: ignore
+
+try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import tool_shortlist_core as TC
     from Vera.vera.minds import judge_core as JC
 except Exception:                        # worktree / app-free import
@@ -326,11 +331,12 @@ async def _night_job() -> None:
                 "The target of a Loop Lab schedule entry. Output: {ok, night}.",
 )
 async def cap_caps_shortlist_nightly(trace_id=None) -> Dict[str, Any]:
-    await _night_job()
-    now = datetime.now()
-    night = now.date().isoformat() if now.hour >= 12 else datetime.fromordinal(now.toordinal() - 1).date().isoformat()
-    r = getattr(_orch, "REDIS", None)
-    return {"ok": bool(r is not None and await r.get(KEY_NIGHT + night)), "night": night}
+    async with _TA.declared("four-minds:tool-shortlist-nightly", "tool shortlist nightly (FM-3)", ttl_s=3600):
+        await _night_job()
+        now = datetime.now()
+        night = now.date().isoformat() if now.hour >= 12 else datetime.fromordinal(now.toordinal() - 1).date().isoformat()
+        r = getattr(_orch, "REDIS", None)
+        return {"ok": bool(r is not None and await r.get(KEY_NIGHT + night)), "night": night}
 
 
 RERANK_SAMPLE = 150          # steps re-ranked by the cross-encoder per replay (an NLP-node call each)

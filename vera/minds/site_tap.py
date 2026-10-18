@@ -20,6 +20,11 @@ import Vera.vera.capability_orchestration as _orch
 from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability, schedule
 
 try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.minds import test_activity as _TA
+except Exception:                        # worktree / app-free import
+    from vera.minds import test_activity as _TA   # type: ignore
+
+try:                                     # pragma: no cover - import-shape only
     from Vera.vera.minds import site_tap_core as SC, matrix_core as MX, judge_core as JC
     from Vera.vera.minds import contract_core as _MC
 except Exception:                        # worktree / app-free import
@@ -132,43 +137,44 @@ async def _candidate_answer(cand: str, e: Dict[str, str], labels: List[str]) -> 
                 "Inputs: jobs (int=24), samples (int=20). Output: {ok, pairs, sites}.",
 )
 async def cap_decide_shadow_sites(jobs: int = JOBS_PER_NIGHT, samples: int = SAMPLES, trace_id=None) -> Dict[str, Any]:
-    disc = await cap_decide_sites_discover()
-    apps = disc.get("sites") or {}
-    if not apps:
-        return {"ok": True, "pairs": 0, "sites": 0, "note": "no call site behaves like a decision yet"}
-    try:
-        from Vera.vera.minds import judge as J
-    except Exception:                    # pragma: no cover
-        from vera.minds import judge as J  # type: ignore
-    cands = [f"llm:{m}" for m in await J.matrix_models()] + [ZEROSHOT]
-    r = getattr(_orch, "REDIS", None)
-    raw = await r.hgetall(LAST_KEY) if r is not None else {}
-    last = {_d(k): _d(v) for k, v in (raw or {}).items()}
-    pairs = MX.rotate([f"{s}||{c}" for s in apps for c in cands], last, int(jobs or JOBS_PER_NIGHT))
-    es = await _entries()
-    by_site: Dict[str, List[Dict[str, str]]] = {}
-    for e in es:
-        by_site.setdefault(e.get("site", ""), []).append(e)
-    night = datetime.now().date().isoformat()
-    done = 0
-    for p in pairs:
-        site, cand = p.split("||", 1)
-        sample = by_site.get(site, [])[:max(1, int(samples or SAMPLES))]
-        res = []
-        for e in sample:
-            t0 = time.monotonic()
-            try:
-                ans = await _candidate_answer(cand, e, apps[site]["labels"])
-            except Exception as ex:
-                log.debug("site candidate %s: %s", cand, ex)
-                continue
-            res.append((e.get("answer"), SC.pick_label(ans, apps[site]["labels"]) or "",
-                        int((time.monotonic() - t0) * 1000)))
-        if r is not None:
-            await r.hset(RESULTS_KEY, p, json.dumps(dict(SC.agreement(res), night=night)))
-            await r.hset(LAST_KEY, p, night)
-        done += 1
-    return {"ok": True, "pairs": done, "sites": len(apps)}
+    async with _TA.declared("four-minds:call-site-matrix", "call-site matrix (FM-2)", ttl_s=3600):
+        disc = await cap_decide_sites_discover()
+        apps = disc.get("sites") or {}
+        if not apps:
+            return {"ok": True, "pairs": 0, "sites": 0, "note": "no call site behaves like a decision yet"}
+        try:
+            from Vera.vera.minds import judge as J
+        except Exception:                    # pragma: no cover
+            from vera.minds import judge as J  # type: ignore
+        cands = [f"llm:{m}" for m in await J.matrix_models()] + [ZEROSHOT]
+        r = getattr(_orch, "REDIS", None)
+        raw = await r.hgetall(LAST_KEY) if r is not None else {}
+        last = {_d(k): _d(v) for k, v in (raw or {}).items()}
+        pairs = MX.rotate([f"{s}||{c}" for s in apps for c in cands], last, int(jobs or JOBS_PER_NIGHT))
+        es = await _entries()
+        by_site: Dict[str, List[Dict[str, str]]] = {}
+        for e in es:
+            by_site.setdefault(e.get("site", ""), []).append(e)
+        night = datetime.now().date().isoformat()
+        done = 0
+        for p in pairs:
+            site, cand = p.split("||", 1)
+            sample = by_site.get(site, [])[:max(1, int(samples or SAMPLES))]
+            res = []
+            for e in sample:
+                t0 = time.monotonic()
+                try:
+                    ans = await _candidate_answer(cand, e, apps[site]["labels"])
+                except Exception as ex:
+                    log.debug("site candidate %s: %s", cand, ex)
+                    continue
+                res.append((e.get("answer"), SC.pick_label(ans, apps[site]["labels"]) or "",
+                            int((time.monotonic() - t0) * 1000)))
+            if r is not None:
+                await r.hset(RESULTS_KEY, p, json.dumps(dict(SC.agreement(res), night=night)))
+                await r.hset(LAST_KEY, p, night)
+            done += 1
+        return {"ok": True, "pairs": done, "sites": len(apps)}
 
 
 @capability(
