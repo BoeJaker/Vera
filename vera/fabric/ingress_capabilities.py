@@ -890,9 +890,47 @@ async def _host_slot(host: str) -> None:
                         "{ok, results:[{url, final_url, status, content_type, html, text, elapsed_ms, error, etag, "
                         "last_modified, bytes}], ran_on}.")
 async def cap_ingress_fetch_batch(urls: Any = None, max_chars: int = cc.MAX_BODY_CHARS, trace_id=None):
+    us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])][:cc.MAX_BATCH]
+    res_key, res_field = await _reserve_self(len(us))
+    try:
+        return await _fetch_batch(us, max_chars)
+    finally:
+        await _release_self(res_key, res_field)
+
+
+async def _reserve_self(n_urls: int):
+    """On a crawl node: note this batch in the node's reservation hash so test-chunk admission counts it
+    (node_compute admit(), vera-44). Best effort; on the host, or without Redis, nothing."""
+    import uuid
+    hid = os.environ.get("VERA_WORKER_HOST_ID", "")
+    r = getattr(_orch, "REDIS", None)
+    if not getattr(_orch, "_IS_WORKER", False) or not hid or r is None:
+        return "", ""
+    try:
+        try:
+            from Vera.vera.workers import node_compute_core as _ncc
+        except ImportError:  # pragma: no cover
+            from vera.workers import node_compute_core as _ncc
+        key, field = _ncc.KEY_EXTRA_RES + hid, uuid.uuid4().hex          # vera-44's P0d reads this hash
+        await r.hset(key, field, _ncc.extra_entry(cc.BATCH_FN, cc.batch_timeout_s(n_urls), time.time()))
+        return key, field
+    except Exception as e:  # noqa: BLE001
+        log.debug("crawl reservation: %s", e)
+        return "", ""
+
+
+async def _release_self(key: str, field: str) -> None:
+    if not key or not field:
+        return
+    try:
+        await _orch.REDIS.hdel(key, field)
+    except Exception as e:  # noqa: BLE001
+        log.debug("crawl reservation release: %s", e)
+
+
+async def _fetch_batch(us: List[str], max_chars: int) -> Dict[str, Any]:
     import socket
     import httpx
-    us = [str(u) for u in (urls if isinstance(urls, list) else [urls] if urls else [])][:cc.MAX_BATCH]
     headers = dict(getattr(_wc, "BROWSER_HEADERS", {}) or {})
     headers["Accept-Encoding"] = ic.accept_encoding()
     out: List[Dict[str, Any]] = []
@@ -940,7 +978,7 @@ async def cap_crawl_fetch_many(urls: Any = None, parallel: int = 4, per_batch: i
             attempts = 0
             for attempts in (1, 2):
                 try:
-                    r = await _call("ingress.fetch.batch", urls=b, _timeout=30 + 25 * len(b))
+                    r = await _call("ingress.fetch.batch", urls=b, _timeout=cc.batch_timeout_s(len(b)))
                 except Exception as e:  # noqa: BLE001
                     r = {"error": str(e)[:200]}
                 if isinstance(r.get("results"), list) and len(r["results"]) == len(b):
@@ -1124,3 +1162,76 @@ async def cap_map_retention(days: int = 90, trace_id=None):
         return {"error": str(e)[:200]}
     return {"retention": sc.retention_curves(rev, rec, sizes, {"web_fetches": int(cnt[0] or 0),
                                                                  "web_links": int(cnt[1] or 0)}, span)}
+
+
+# ── the Web map pane (WI-11): read-only, inside the Fabric panel ─────────────
+
+from pathlib import Path as _Path
+
+_MAP_PANEL = _Path(__file__).with_name("web_map_panel.html")
+TOPICS_SQL = ("SELECT t.topic_key, t.name, t.saturation, t.novel_yield, count(m.url_key) AS members, "
+              "max(u.last_seen) AS newest FROM web_topic t LEFT JOIN web_topic_members m USING (topic_key) "
+              "LEFT JOIN web_urls u USING (url_key) GROUP BY t.topic_key, t.name, t.saturation, t.novel_yield "
+              "ORDER BY members DESC LIMIT $1")
+
+
+@capability("fabric.map.topics", http_method="GET", http_path="/fabric/map/topics", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="The web map's topic maps, largest first: per topic its pages, novel yield, saturation and "
+                        "when its newest page was seen. Input: limit (int, default 50). Output: {topics:[{topic_key, "
+                        "name, members, novel_yield, saturation, newest}]}.")
+async def cap_map_topics(limit: int = 50, trace_id=None):
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected", "topics": []}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(TOPICS_SQL, max(1, min(int(limit or 50), 500)))
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:160], "topics": []}
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["newest"] = d["newest"].isoformat() if d.get("newest") else ""
+        d["novel_yield"] = float(d["novel_yield"]) if d.get("novel_yield") is not None else None
+        out.append(d)
+    return {"topics": out}
+
+
+@capability("fabric.map.metrics.history", http_method="GET", http_path="/fabric/map/metrics/history",
+            http_tags=["fabric", "ingress"], memory="off", silent=True,
+            description="The stored nightly rows of fabric.map.metrics, newest first - a read, nothing is recomputed. "
+                        "Input: limit (int, default 14). Output: {history:[{day, metrics}]}.")
+async def cap_map_metrics_history(limit: int = 14, trace_id=None):
+    import json as _json
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected", "history": []}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT day, metrics FROM web_metrics_daily ORDER BY day DESC LIMIT $1",
+                                    max(1, min(int(limit or 14), 365)))
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:160], "history": []}
+    return {"history": [{"day": str(r[0]), "metrics": _json.loads(r[1]) if isinstance(r[1], str) else r[1]} for r in rows]}
+
+
+@capability("fabric.map.panel", http_method="GET", http_path="/fabric/map/panel", http_tags=["fabric", "ingress"],
+            memory="off", silent=True, description="The Web map pane (read-only).")
+async def cap_map_panel(trace_id=None):
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(_MAP_PANEL.read_text(encoding="utf-8") if _MAP_PANEL.exists() else "<p>web_map_panel.html missing</p>",
+                        headers={"Cache-Control": "no-cache"})
+
+
+try:
+    _orch.register_ui(
+        "web-map", "Web map", "◇",
+        '<div style="height:100%;display:flex;flex-direction:column"><iframe src="/fabric/map/panel" '
+        'style="flex:1;border:none;width:100%;height:100%"></iframe></div>',
+        ui_caps=["fabric.map.stats", "fabric.map.topics", "fabric.map.metrics.history", "fabric.map.gaps",
+                 "fabric.map.concept_seeds"],
+        mode="element",
+    )
+except Exception as _e:  # noqa: BLE001 - a stand-in orchestration (tests) has no UI registry
+    log.debug("web map panel not registered: %s", _e)

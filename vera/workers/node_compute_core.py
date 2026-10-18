@@ -73,6 +73,9 @@ NEEDS: Dict[str, Dict[str, float]] = {
     "ml.forward":        {"cpu": 1.0, "mem_gb": 1.0},
     "ml.module_forward": {"cpu": 1.0, "mem_gb": 1.0},
     "onnx.run":          {"cpu": 1.0, "mem_gb": 1.0},
+    # web-ingress WI-12 crawl class: fetch-only batches a crawl worker reserves for itself while it runs one
+    # (ingress_crawl_core.EXTRA_RES_KEY; the class stream has no target host to reserve against - vera-44, 18 Oct)
+    "ingress.fetch.batch": {"cpu": 0.25, "mem_gb": 0.25},
 }
 def threads_for(fn: str, default: int) -> int:
     """Threads a job of `fn` may use: the cores it was admitted for (NEEDS).

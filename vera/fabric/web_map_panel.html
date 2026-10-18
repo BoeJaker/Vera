@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>/* vera theme boot — paint cached theme before CSS parses, avoids flash */
+  (function(){try{var d=document.documentElement,S=window.localStorage;
+  var t=S.getItem('vera:ui:theme');if(t)d.setAttribute('data-theme',t);
+  var v=JSON.parse(S.getItem('vera:ui:themeVars')||'null');
+  if(v)for(var k in v)d.style.setProperty(k,v[k]);}catch(e){}})();</script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web map</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  /* Fallback values — overridden by the theme vars the harness injects */
+  --bg:  #0e0f12; --s1: #13151a; --s2: #1a1d24; --s3: #222630;
+  --bd:  rgba(255,255,255,.07); --bd2: rgba(255,255,255,.14);
+  --t1:  #d4dae4; --t2: #6b7585; --t3: #3b4252;
+  --ac:  #6ea8d8; --ac2: #5ec9a0; --ac3: #e09a55; --ac4: #e06060;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+}
+html, body { background: var(--bg); color: var(--t1); font: 13px/1.45 var(--sans); }
+body { padding: 14px 16px 24px; overflow-y: auto; }
+h1 { font-size: 15px; font-weight: 600; }
+.sub { color: var(--t2); font-size: 12px; margin-top: 2px; }
+header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.stamp { color: var(--t3); font: 11px var(--mono); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-bottom: 14px; }
+.tile { background: var(--s1); border: 1px solid var(--bd); border-radius: 8px; padding: 9px 11px; }
+.tile .k { color: var(--t2); font-size: 11px; }
+.tile .v { font: 500 18px var(--mono); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.tile .n { color: var(--t3); font-size: 11px; margin-top: 1px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px; }
+section { background: var(--s1); border: 1px solid var(--bd); border-radius: 8px; padding: 11px 12px; min-width: 0; }
+section h2 { font-size: 12px; font-weight: 600; color: var(--t2); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+section .why { color: var(--t3); font-size: 11px; margin: -4px 0 8px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; color: var(--t2); font-weight: 500; padding: 3px 6px 5px 0; border-bottom: 1px solid var(--bd); }
+td { padding: 4px 6px 4px 0; border-bottom: 1px solid var(--bd); vertical-align: top; }
+td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td .muted { color: var(--t3); }
+.bar { display: grid; grid-template-columns: minmax(0, 11em) 1fr 4em; gap: 8px; align-items: center; margin: 3px 0; font-size: 12px; }
+.bar .l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--t2); }
+.bar .t { height: 7px; background: var(--s3); border-radius: 4px; overflow: hidden; }
+.bar .t i { display: block; height: 100%; background: var(--ac); border-radius: 4px; }
+.bar .c { text-align: right; font-family: var(--mono); }
+.pill { display: inline-block; padding: 0 6px; border-radius: 9px; font-size: 11px; background: var(--s3); color: var(--t2); }
+.pill.ok { color: var(--ac2); } .pill.warn { color: var(--ac3); } .pill.bad { color: var(--ac4); }
+.empty { color: var(--t3); font-size: 12px; padding: 4px 0; }
+.err { color: var(--ac4); font-size: 12px; }
+.wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Web map</h1>
+    <div class="sub">What Vera has fetched from the internet, what it could not answer, and how well its own index answers. Read-only; refreshes every minute.</div>
+  </div>
+  <div class="stamp" id="stamp">loading…</div>
+</header>
+
+<div class="tiles" id="tiles"></div>
+
+<div class="grid">
+  <section>
+    <h2>Fetches in the last 24 h, by caller</h2>
+    <div id="callers"><div class="empty">loading…</div></div>
+  </section>
+  <section>
+    <h2>Index metrics, nightly</h2>
+    <div class="why">Answer rate: questions info.seek answered from pages already read. Overlap: share of a search engine's top 10 the index also holds.</div>
+    <div class="wrap" id="metrics"><div class="empty">loading…</div></div>
+  </section>
+  <section>
+    <h2>Topics</h2>
+    <div class="why">Intel topics and the pages mapped to them.</div>
+    <div class="wrap" id="topics"><div class="empty">loading…</div></div>
+  </section>
+  <section>
+    <h2>Open gaps</h2>
+    <div class="why">Questions the index had nothing on; the 22:15 crawl fills them.</div>
+    <div class="wrap" id="gaps"><div class="empty">loading…</div></div>
+  </section>
+  <section>
+    <h2>Worldview concept seeds</h2>
+    <div class="why">Thin worldview concepts crawled for; their record count before and now.</div>
+    <div class="wrap" id="seeds"><div class="empty">loading…</div></div>
+  </section>
+</div>
+
+<script src="/ui/vera-ui.js"></script>
+<script>
+function _ancestorWith(prop) {
+  let w = window;
+  for (let guard = 0; guard < 8 && w.parent && w.parent !== w; guard++) {
+    w = w.parent;
+    try { if (w[prop] !== undefined && w[prop] !== null) return w; } catch (_) { break; }
+  }
+  return null;
+}
+function base() {
+  try { const w = _ancestorWith('_veraBase'); if (w) return w._veraBase.replace(/\/$/, ''); } catch (_) {}
+  return location.origin;
+}
+async function api(path) {
+  const r = await fetch(base() + path);
+  if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + path);
+  const j = await r.json();
+  return (j && j.content && typeof j.content === 'object') ? j.content : j;
+}
+function esc(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function num(n) { return n === null || n === undefined ? '—' : Number(n).toLocaleString(); }
+function pct(x) { return x === null || x === undefined ? '—' : (100 * x).toFixed(x < 0.1 ? 1 : 0) + '%'; }
+function ago(iso) {
+  if (!iso) return '—';
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 90) return Math.round(s) + ' s ago';
+  if (s < 5400) return Math.round(s / 60) + ' min ago';
+  if (s < 129600) return Math.round(s / 3600) + ' h ago';
+  return Math.round(s / 86400) + ' d ago';
+}
+function tile(k, v, n) { return `<div class="tile"><div class="k">${esc(k)}</div><div class="v">${v}</div>${n ? `<div class="n">${esc(n)}</div>` : ''}</div>`; }
+function fail(id, e) { document.getElementById(id).innerHTML = `<div class="err">${esc(e.message || e)}</div>`; }
+
+async function loadStats() {
+  try {
+    const s = await api('/fabric/map/stats');
+    const b = s.budget || {};
+    const state = b.state || '';
+    document.getElementById('tiles').innerHTML =
+      tile('Hosts', num(s.web_hosts)) + tile('URLs', num(s.web_urls)) + tile('Links', num(s.web_links)) +
+      tile('Fetches, 24 h', num(s.fetches_24h)) + tile('New URLs, 24 h', num(s.new_urls_24h)) +
+      tile('Repeat share, 24 h', pct(Number(s.repeat_share_24h)), 'fetches of a URL already held') +
+      tile('Map size', ((b.bytes || 0) / 1048576).toFixed(0) + ' MB', `${pct(b.share)} of ${b.budget_gb ?? '?'} GB · ${state}`) +
+      tile('Recording', esc(s.mode || '—'));
+    const cs = s.callers_24h || [];
+    const top = Math.max(1, ...cs.map(c => c.n || 0));
+    document.getElementById('callers').innerHTML = cs.length ? cs.map(c =>
+      `<div class="bar"><span class="l" title="${esc(c.caller)}">${esc(c.caller || '?')}</span><span class="t"><i style="width:${(100 * (c.n || 0) / top).toFixed(1)}%"></i></span><span class="c">${num(c.n)}</span></div>`).join('')
+      : '<div class="empty">No fetches recorded in the last 24 h.</div>';
+  } catch (e) { fail('tiles', e); document.getElementById('callers').innerHTML = ''; }
+}
+
+async function loadMetrics() {
+  try {
+    const r = await api('/fabric/map/metrics/history?limit=14');
+    const rows = r.history || [];
+    document.getElementById('metrics').innerHTML = rows.length ? `<table><thead><tr><th>Day</th><th class="num">Questions</th>
+      <th class="num">Answer rate</th><th class="num">Overlap</th><th class="num">New / crawl h</th><th class="num">Pages / question</th></tr></thead><tbody>` +
+      rows.map(h => { const m = h.metrics || {}; return `<tr><td>${esc(h.day)}</td><td class="num">${num(m.questions)}</td>
+        <td class="num">${pct(m.index_answer_rate)}</td><td class="num">${pct(m.live_overlap)}</td>
+        <td class="num">${num(m.novel_yield_per_crawl_hour)}</td><td class="num">${num(m.pages_per_question)}</td></tr>`; }).join('') + '</tbody></table>'
+      : '<div class="empty">No nightly row yet (written at 23:50).</div>';
+  } catch (e) { fail('metrics', e); }
+}
+
+async function loadTopics() {
+  try {
+    const r = await api('/fabric/map/topics');
+    const ts = r.topics || [];
+    document.getElementById('topics').innerHTML = ts.length ? `<table><thead><tr><th>Topic</th><th class="num">Pages</th>
+      <th class="num">Novel yield</th><th>Saturation</th><th>Newest page</th></tr></thead><tbody>` +
+      ts.map(t => { const sat = t.saturation || '';
+        const cls = sat === 'saturated' ? 'warn' : (sat ? 'ok' : '');
+        return `<tr><td>${esc(t.name || t.topic_key)}</td><td class="num">${num(t.members)}</td>
+          <td class="num">${t.novel_yield == null ? '—' : Number(t.novel_yield).toFixed(2)}</td>
+          <td>${sat ? `<span class="pill ${cls}">${esc(sat)}</span>` : '<span class="muted">—</span>'}</td>
+          <td>${ago(t.newest)}</td></tr>`; }).join('') + '</tbody></table>'
+      : '<div class="empty">No topic maps yet.</div>';
+  } catch (e) { fail('topics', e); }
+}
+
+async function loadGaps() {
+  try {
+    const r = await api('/fabric/map/gaps?days=7&limit=30');
+    const gs = (r.gaps || []).filter(g => g.open);
+    document.getElementById('gaps').innerHTML = gs.length ? `<table><thead><tr><th>Question</th><th class="num">Asked</th><th>Last</th></tr></thead><tbody>` +
+      gs.map(g => `<tr><td>${esc(g.query)}</td><td class="num">${num(g.times)}</td><td>${ago(g.last)}</td></tr>`).join('') + '</tbody></table>'
+      : '<div class="empty">No open gaps in the last 7 days.</div>';
+  } catch (e) { fail('gaps', e); }
+}
+
+async function loadSeeds() {
+  try {
+    const r = await api('/fabric/map/concept_seeds?days=30');
+    const done = r.concepts || [], next = r.next || [];
+    let h = '';
+    if (done.length) {
+      h += `<table><thead><tr><th>Concept</th><th class="num">Before</th><th class="num">Now</th><th class="num">Change</th><th class="num">Pages</th></tr></thead><tbody>` +
+        done.map(c => `<tr><td>${esc(c.label)}</td><td class="num">${num(c.population_at_first_seed)}</td><td class="num">${num(c.population_now)}</td>
+          <td class="num">${c.change == null ? '—' : (c.change > 0 ? '+' : '') + c.change}</td><td class="num">${num(c.pages)}</td></tr>`).join('') + '</tbody></table>';
+    } else {
+      h += '<div class="empty">Nothing seeded yet.</div>';
+    }
+    if (next.length) h += `<div class="why" style="margin-top:8px">Tonight: ${next.map(n => esc(n.label) + ' (' + n.population + ')').join(' · ')}</div>`;
+    document.getElementById('seeds').innerHTML = h;
+  } catch (e) { fail('seeds', e); }
+}
+
+async function refresh() {
+  await Promise.all([loadStats(), loadMetrics(), loadTopics(), loadGaps(), loadSeeds()]);
+  document.getElementById('stamp').textContent = 'updated ' + new Date().toLocaleTimeString();
+}
+refresh();
+setInterval(() => { if (!document.hidden) refresh(); }, 60000);
+</script>
+</body>
+</html>

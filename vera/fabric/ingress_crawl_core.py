@@ -97,3 +97,13 @@ def failed_row(url: str, error: str) -> Dict[str, Any]:
 def where(hostname: str, is_worker: bool) -> str:
     return ("node:" if is_worker else "host:") + (str(hostname or "") or "?")
 
+
+# ── a crawl worker's own reservation (contract with vera-44, 18 Oct) ─────────
+#: The worker writes node_compute_core.extra_entry(BATCH_FN, batch_timeout_s(n), now) into the hash
+#: node_compute_core.KEY_EXTRA_RES + <host_id> while a batch runs (P0d's admit() reads it).
+BATCH_FN = "ingress.fetch.batch"
+
+
+def batch_timeout_s(n_urls: int) -> int:
+    """How long a batch of n URLs may take - the host waits this long, and the reservation lasts as long."""
+    return 30 + 25 * max(1, int(n_urls or 1))
