@@ -177,14 +177,16 @@ async def _update_run(run_id: str, **fields) -> None:
         pass
 
 
-async def _call(name: str, **kw) -> Any:
-    cap = CAPABILITY_REGISTRY.get(name)
+async def _call(cap_name: str, /, **kw) -> Any:
+    # positional-only: a scheduled capability may itself take an argument called `name`
+    # (evolve.script.run does) - 18 Oct 2026, the first live run failed with "multiple values for 'name'"
+    cap = CAPABILITY_REGISTRY.get(cap_name)
     if not cap or not cap.get("func"):
-        return {"error": f"capability not available: {name}"}
+        return {"error": f"capability not available: {cap_name}"}
     try:
         return await cap["func"](**kw)
     except Exception as e:
-        return {"error": f"{name}: {e}"}
+        return {"error": f"{cap_name}: {e}"}
 
 
 # ── the box ──────────────────────────────────────────────────────────────────
