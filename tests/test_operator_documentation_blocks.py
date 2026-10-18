@@ -50,18 +50,20 @@ class _Ctx:
 VOID = {"id": "void", "type": "dark", "vars": {"--bg": "#000"}}
 
 
-def _run(monkeypatch, tmp_path: Path, fail=(), started=None, **params):
+def _run(monkeypatch, tmp_path: Path, fail=(), started=None, caps_down=False, **params):
     shot_urls = []
 
     async def _ensure(target, call_cap, default_base):
         return {"ready": True, "kind": "live", "base_url": default_base}
 
-    async def _fetch(client, url):
+    async def _fetch(client, url, timeout=15):
         if url.endswith("/ui/panels"):
             return [{"id": "alpha", "label": "Alpha"}, {"id": "beta", "label": "Beta"},
                     {"id": "stray", "label": "Unmapped"}]
         if url.endswith("/ui/themes"):
             return {"active": "ash", "themes": [VOID]}
+        if caps_down:                                   # /mcp/tools timed out: _fetch_json returns None
+            return None
         return [{"name": "demo.ping", "description": "Ping."}]
 
     async def _start(base_url, viewport=None):
@@ -107,6 +109,33 @@ def test_write_caps_false_refreshes_screenshots_and_keeps_the_curated_table(monk
     assert "demo.ping" not in md
     assert "assets/demo/alpha.png" in md and "assets/demo/beta.png" in md
     assert "Authored prose." in md
+
+
+def test_a_failed_catalogue_fetch_leaves_every_capability_table(monkeypatch, tmp_path):
+    """S31 / D32-3: a /mcp/tools timeout wrote "No capabilities resolved" over 33 of 42 pages' tables."""
+    result, _, md = _run(monkeypatch, tmp_path, caps_down=True)
+
+    assert "| curated table |" in md and "No capabilities resolved" not in md
+    assert result["caps_written"] is False and "unavailable" in result["caps_note"]
+    assert "assets/demo/alpha.png" in md                  # the screenshots still refresh
+
+
+def test_a_working_catalogue_still_writes_the_table(monkeypatch, tmp_path):
+    result, _, md = _run(monkeypatch, tmp_path)
+
+    assert "demo.ping" in md and "| curated table |" not in md and result["caps_written"] is True
+
+
+def test_the_catalogue_fetch_gets_a_longer_timeout():
+    seen = {}
+
+    class _Client:
+        async def get(self, url, timeout=None):
+            seen[url.rsplit("/", 1)[-1]] = timeout
+            raise RuntimeError("down")
+    for path in ("/ui/panels", "/mcp/tools"):
+        assert asyncio.run(_doc._fetch_json(_Client(), "https://vera.test" + path)) is None
+    assert seen["tools"] == _doc.CAPS_FETCH_TIMEOUT > seen["panels"]
 
 
 def test_a_failed_capture_keeps_the_image_already_on_disk(monkeypatch, tmp_path):
