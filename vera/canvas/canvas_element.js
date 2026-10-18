@@ -3970,7 +3970,7 @@
          preview="on|off"           whether an HTML item, and a code block that is a whole page, DRAW by default or
                                     show their source. Either way the drawing is a sandboxed frame.
          explode-offer="both|code|never"  whether the canvas offers to explode a code item, a prose item, or neither. */
-    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange', 'panel-room', 'desk-combine', 'desk-fill', 'desk-settle', 'desk-fit', 'desk-windows']; }
+    static get observedAttributes() { return ['canvas-id', 'rows', 'compact', 'columns', 'rail', 'session-id', 'bare', 'blocks', 'align', 'preview', 'explode-offer', 'fuse', 'chat-side', 'chat-rect', 'desk-arrange', 'panel-room', 'desk-combine', 'desk-fill', 'desk-settle', 'desk-fit', 'desk-windows', 'pointer-trace']; }
 
     constructor() {
       super();
@@ -4037,6 +4037,7 @@
       if (name === 'align' && this.hasAttribute('stage')) { this._view = null; this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); }
       if ((name === 'chat-side' || name === 'desk-arrange') && this.deskAlign() && this.hasAttribute('stage')) this._placeNow();
       if (name === 'panel-room') { try { this._panelRoom(); } catch (e) { /* optional */ } }
+      if (name === 'pointer-trace') this._traceSet(this.getAttribute('pointer-trace') === 'on');
       /* the desk's own switches (WSU-48, Settings): combine changes which cards there are, the rest how they are placed -
          a change takes effect at once; fit switched off drops what it had measured */
       if (/^desk-(combine|fill|settle|fit|windows)$/.test(name) && this.deskAlign() && this.hasAttribute('stage')) {
@@ -8664,6 +8665,63 @@
       const need = Math.round(chrome + (bd.scrollHeight - bd.clientHeight > 0 ? bd.scrollHeight : bd.clientHeight) + 8);
       if (need > H * 0.7) { if (this._max !== key) { this._toggleMax(key); E[key] = 'max'; } return; }
       if (need > it.offsetHeight + 4) { (this._minH || (this._minH = {}))[key] = need; E[key] = E[key] || 'grow'; this._placeNow(); }
+    }
+    /* THE POINTER MONITOR (WSU-100; owner 2026-10-18: over a UI panel, the markets chart or a node graph on the desk "the mouse does
+       not change to the hand icon to indicate interactivity in any position", in Chrome - so something else is topmost there). A chat
+       setting, off by default (attribute pointer-trace="on"). Where the pointer goes and presses on this page it records the topmost
+       element (through the shadow root), its cursor, the live element drawn at that point (#live: panel page, chart, graph, terminal)
+       and whether the hit is inside it - else what covers it - and whether this page's frame is itself topmost in the page around
+       it. One line is shown at the foot of the desk; the records go to /ui/desk/trace (read with ui.desk.trace). A press that
+       reaches an embedded page is seen here only as this window losing focus. Nothing on the desk changes. */
+    _traceSet(on) {
+      const T = this._trace || (this._trace = { on: false, log: [], out: [], last: '', at: 0 });
+      if (on === T.on) return; T.on = on;
+      if (!on) { ['pointermove', 'pointerdown'].forEach((k) => window.removeEventListener(k, T.h, true)); window.removeEventListener('blur', T.b);
+        clearInterval(T.iv); clearInterval(T.sc); const el = this.shadowRoot && this.shadowRoot.querySelector('.vc-trace'); if (el) el.remove(); return; }   /* the listeners in the panel pages and the outer page check T.on and fall silent */
+      const lab = (e) => { if (!e || !e.tagName) return String(e); const c = typeof e.className === 'string' ? e.className : (e.className && e.className.baseVal) || '';
+        return e.tagName.toLowerCase() + (e.id ? '#' + e.id : '') + (c ? '.' + c.trim().split(/\s+/).slice(0, 2).join('.') : '') + (e.dataset && (e.dataset.key || e.dataset.kind) ? '[' + (e.dataset.kind || '') + (e.dataset.key ? ' ' + String(e.dataset.key).slice(0, 40) : '') + ']' : ''); };
+      const show = (line) => { const sr = this.shadowRoot; if (!sr) return; let el = sr.querySelector('.vc-trace');
+        if (!el) { el = document.createElement('div'); el.className = 'vc-trace'; el.setAttribute('aria-hidden', 'true');
+          el.style.cssText = 'position:fixed;left:8px;bottom:8px;z-index:2147483000;pointer-events:none;max-width:70vw;padding:4px 8px;border-radius:6px;font:10px/1.35 var(--mono,ui-monospace,monospace);white-space:pre-wrap;color:var(--fg,#e8e6e3);background:color-mix(in srgb,var(--bg2,#1d2128) 92%,transparent);border:1px solid var(--acc,#5a9e8f)';
+          sr.appendChild(el); }
+        el.textContent = 'pointer monitor: ' + line; };
+      const rec = (r) => { r.t = Math.round(performance.now()); T.log.push(r); if (T.log.length > 80) T.log.shift(); T.out.push(r); if (T.out.length > 40) T.out.shift();
+        try { window.__deskTrace = T.log; } catch (e) {} show(r.kind + ' ' + r.top + ' (cursor ' + r.cursor + ')' + (r.live ? ' | ' + r.verdict : '') + (r.page ? ' | ' + r.page : '')); };
+      T.h = (ev) => {
+        const x = ev.clientX, y = ev.clientY; const sr = this.shadowRoot; if (!sr) return;
+        const hr = this.getBoundingClientRect(); if (x < hr.left || x > hr.right || y < hr.top || y > hr.bottom) return;
+        if (ev.type === 'pointermove' && Date.now() - T.at < 120) return; T.at = Date.now();
+        const docTop = document.elementFromPoint(x, y); const deep = docTop === this ? sr.elementsFromPoint(x, y) : [docTop];
+        const top = deep[0] || docTop; let cursor = ''; try { cursor = getComputedStyle(top).cursor; } catch (e) {}
+        const lv = [...sr.querySelectorAll('#live .lv')].find((l) => { const q = l.getBoundingClientRect(); return q.width > 4 && x >= q.left && x <= q.right && y >= q.top && y <= q.bottom; });
+        const inLive = !!(lv && top && (lv === top || lv.contains(top)));
+        let page = ''; try { const fe = window.frameElement; if (fe && window.parent && window.parent.document) { const q = fe.getBoundingClientRect(); const k = q.width / Math.max(1, innerWidth);
+          const pt = window.parent.document.elementFromPoint(q.left + x * k, q.top + y * k); page = pt === fe ? '' : 'page around: ' + lab(pt) + ' is over this frame'; } } catch (e) { page = ''; }
+        const r = { kind: ev.type === 'pointerdown' ? 'PRESS' : 'over', x: Math.round(x), y: Math.round(y), top: lab(top), cursor, path: deep.slice(0, 4).map(lab).join(' < '),
+          live: lv ? (lv.dataset.kind || '') + ' ' + String(lv.dataset.key || '').slice(0, 40) : '', verdict: lv ? (inLive ? 'reaches the ' + (lv.dataset.kind || 'live') + ' element' : 'COVERED: ' + lab(top) + ' is over the ' + (lv.dataset.kind || 'live') + ' element') : '', page };
+        const sig = r.kind + r.top + r.verdict + r.page; if (r.kind === 'over' && sig === T.last) return; T.last = sig; rec(r); };
+      T.b = () => { setTimeout(() => { const a = document.activeElement; rec({ kind: 'focus', top: a && a.shadowRoot && a.shadowRoot.activeElement ? lab(a.shadowRoot.activeElement) : lab(a), cursor: '', live: '', verdict: 'this page lost focus - a press reached an embedded page', page: '' }); }, 0); };
+      ['pointermove', 'pointerdown'].forEach((k) => window.addEventListener(k, T.h, true)); window.addEventListener('blur', T.b);
+      /* the other two places a pointer can be: INSIDE a live element's own page (a panel - same origin, so its events are heard here:
+         'reached', with that page's own cursor), and the OUTERMOST page around this one (something there over this frame takes the
+         pointer before this page sees it: 'page around covers') */
+      const sub = (w, fn) => { ['pointermove', 'pointerdown'].forEach((k) => w.addEventListener(k, fn, true)); };
+      const inFrame = (lv) => (ev) => { if (!T.on || (ev.type === 'pointermove' && Date.now() - T.at < 120)) return; T.at = Date.now();
+        const d = ev.target && ev.target.ownerDocument; let cursor = ''; try { cursor = d.defaultView.getComputedStyle(ev.target).cursor; } catch (e) {}
+        const r = { kind: ev.type === 'pointerdown' ? 'PRESS' : 'over', top: lab(ev.target), cursor, live: (lv.dataset.kind || '') + ' ' + String(lv.dataset.key || '').slice(0, 40), verdict: 'reached inside the ' + (lv.dataset.kind || 'live') + ' page', page: '' };
+        const sig = r.kind + r.top + r.verdict; if (r.kind === 'over' && sig === T.last) return; T.last = sig; rec(r); };
+      const scan = () => { const sr = this.shadowRoot; if (!sr) return; sr.querySelectorAll('#live .lv iframe').forEach((f) => { try { const w = f.contentWindow; if (!w || !w.document || w.__vtOn === T) return; w.__vtOn = T; sub(w, inFrame(f.closest('.lv'))); } catch (e) { /* another origin: not heard */ } }); };
+      try { const tw = window.top; if (tw && tw !== window && tw.document && !tw.__vtTop) { tw.__vtTop = 1; sub(tw, (ev) => { if (!T.on || (ev.type === 'pointermove' && Date.now() - T.at < 120)) return;
+        let fe = null; try { let w = window; while (w.parent && w.parent !== tw) w = w.parent; fe = w.frameElement; } catch (e) {} if (!fe) return;
+        const q = fe.getBoundingClientRect(); if (ev.clientX < q.left || ev.clientX > q.right || ev.clientY < q.top || ev.clientY > q.bottom) return;
+        if (ev.target === fe || fe.contains(ev.target)) return; T.at = Date.now();
+        const r = { kind: ev.type === 'pointerdown' ? 'PRESS' : 'over', top: lab(ev.target), cursor: '', live: '', verdict: '', page: 'page around covers the chat: ' + lab(ev.target) };
+        const sig = r.kind + r.page; if (r.kind === 'over' && sig === T.last) return; T.last = sig; rec(r); }); } } catch (e) { /* no reach to the outer page */ }
+      scan(); T.sc = setInterval(scan, 1500);
+      const base = (root._veraBase || '').replace(/\/$/, '');
+      T.iv = setInterval(() => { if (!T.out.length) return; const records = T.out.splice(0, T.out.length);
+        fetch(base + '/ui/desk/trace', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: this.getAttribute('session-id') || this.getAttribute('canvas-id') || '', ua: navigator.userAgent, records }) }).catch(() => {}); }, 3000);
+      show('on - move over a panel, chart or graph and press');
     }
     /* a short notice with one action (Undo), at the foot of the canvas; it leaves after 8 s or when acted on (WSU-66) */
     _undoToast(text, undo) {
