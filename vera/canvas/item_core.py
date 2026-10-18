@@ -51,12 +51,25 @@ def _num(v: Any) -> Optional[float]:
 
 
 def face_of(block: Dict[str, Any]) -> str:
-    """The face a block shows: its own when it has one, else the one its state implies (a parked item is a pill
-    on the shelf; everything else a tile)."""
+    """The face a block shows: a parked item is a pill on the shelf whatever its record says (WSU-58 S2: parking
+    wins over a stored face); otherwise its own face when it has one, else a tile."""
+    if block.get("state") == "parked":
+        return "pill"
     f = str(block.get("face") or "")
     if f in FACES:
         return f
-    return "pill" if block.get("state") == "parked" else "tile"
+    return "tile"
+
+
+def face_for_state(block: Dict[str, Any], state: str) -> Optional[str]:
+    """The face a move of `block` to `state` gives, as S2's transition has it, or None when the face stays:
+    'park' -> a pill; out of the shelf (parked or hidden) back to now / pinned ('unpark', 'pin') -> a tile."""
+    prev = block.get("state") if block.get("state") in STATES else "now"
+    if state == "parked" and prev != "parked":
+        return "pill"
+    if prev in ("parked", "hidden") and state in ("now", "pinned"):
+        return "tile"
+    return None
 
 
 def norm_place(p: Any, prev: Optional[Dict[str, Any]] = None) -> Tuple[Optional[Dict[str, Any]], List[str]]:
@@ -185,12 +198,18 @@ def apply_set(block: Dict[str, Any], fields: Dict[str, Any]) -> Tuple[Dict[str, 
     # a tile or window asked of a parked item brings it back into the now band: the shelf only holds pills
     if want.get("face") in ("tile", "window", "full") and "state" not in want and block.get("state") == "parked":
         want["state"] = "now"
+    # a state move with no face asked takes the face the move gives (park -> pill, unpark / pin off the shelf -> tile)
+    if "state" in want and "face" not in want:
+        f = face_for_state(block, want["state"])
+        if f:
+            want["face"] = f
     changed: Dict[str, Any] = {}
     prev: Dict[str, Any] = {}
+    face0 = face_of(block)                   # read before the state moves, so prev (the undo) holds the face it had
     for k, v in want.items():
         old = block.get(k)
         if k == "face":
-            old = face_of(block)
+            old = face0
         if old != v:
             prev[k] = old
             changed[k] = v
