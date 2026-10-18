@@ -42,7 +42,11 @@ Each channel descriptor:
 
 from __future__ import annotations
 
+import logging
+import sys
 from typing import Any, Callable, Dict, List, Optional
+
+log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ARGUMENT BUILDERS — pure (rendered_report, ctx) -> cap kwargs.
@@ -115,9 +119,39 @@ def _build_chat(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
     return args
 
 
-def _build_generic(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
-    """Best-effort builder for skill channels over an unrecognised cap."""
-    args: Dict[str, Any] = {"text": rendered}
+def _build_print(rendered: str, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    """print.notify takes title + body: the generic {"text"} was dropped by its wrapper, so the printer channel printed
+    an empty note with a timestamp (S24 / D02-2)."""
+    return {"title": _header(ctx)[:60], "body": rendered or ""}
+
+
+def _cap_params(cap: str) -> Optional[set]:
+    """The argument names a registered cap takes (its schema's properties); None when the registry or cap is not
+    loaded here (the pure-module tests), so the caller keeps its default."""
+    for mod_name in ("Vera.vera.capability_orchestration", "capability_orchestration", "vera.capability_orchestration"):
+        reg = getattr(sys.modules.get(mod_name), "CAPABILITY_REGISTRY", None)
+        if isinstance(reg, dict) and cap in reg:
+            props = ((reg[cap] or {}).get("schema") or {}).get("properties")
+            return set(props) if isinstance(props, dict) and props else None
+    return None
+
+
+# The names a cap's text argument goes by, most common first.
+_TEXT_ARGS = ("text", "body", "content", "message", "report", "markdown", "md")
+
+
+def _build_generic(rendered: str, ctx: Dict[str, Any], cap: str = "") -> Dict[str, Any]:
+    """Builder for skill channels over a cap with no builder: the text goes to the argument the cap really takes
+    (its schema), so a cap without a `text` argument no longer loses the content silently."""
+    params = _cap_params(cap) if cap else None
+    key = "text"
+    if params is not None and "text" not in params:
+        key = next((k for k in _TEXT_ARGS if k in params), "text")
+        if key == "text":
+            log.warning("delivery: cap %s takes none of %s - the content would be dropped", cap, ", ".join(_TEXT_ARGS))
+    args: Dict[str, Any] = {key: rendered}
+    if params is not None and "title" in params:
+        args["title"] = _header(ctx)
     if ctx.get("target"):
         args["target"] = ctx["target"]
     return args
@@ -206,6 +240,7 @@ _BUILDERS: Dict[str, Callable[[str, Dict[str, Any]], Dict[str, Any]]] = {
     "canvas.add":       _build_canvas,
     "report.canvas":    _build_canvas_report,
     "report.store":     _build_store,
+    "print.notify":     _build_print,
 }
 
 
@@ -331,6 +366,15 @@ def register_channel(channel_id: str, *, label: str, cap: str,
     cid = (channel_id or "").strip()
     if not cid:
         return
+    fmt = (default_format or "").strip()
+    if fmt:
+        try:
+            from . import output_formats as _of
+            if _of.get_profile(fmt) is None:
+                # apply_format ignores an unknown id silently (the printer registered "text"; the profile is "plain")
+                log.warning("delivery: channel %s names unknown format %r - its answers go out unshaped", cid, fmt)
+        except Exception:                          # pragma: no cover - import guard
+            pass
     _DYNAMIC_CHANNELS[cid] = _norm({
         "label": label, "cap": cap, "default_format": default_format,
         "needs_target": needs_target, "target_field": target_field,
@@ -362,7 +406,10 @@ def build_args(channel_id: str, rendered: str, ctx: Dict[str, Any]) -> Dict[str,
     ch = get_channel(channel_id)
     if not ch:
         return {}
-    builder = _BUILDERS.get(ch.get("cap", ""), _build_generic)
+    cap = ch.get("cap", "")
+    builder = _BUILDERS.get(cap)
+    if builder is None:
+        return _build_generic(rendered or "", ctx or {}, cap=cap)
     return builder(rendered or "", ctx or {})
 
 
@@ -421,14 +468,24 @@ def describe_for_model(available: Optional[List[str]] = None,
 # asks wrong (measured 2026-10-02, qwen3.5:2b: "keep it somewhere I can see" -> none, "so I can listen to it on my
 # drive" -> none), so an explicit ask is read here and decides; the model is asked only when the request says nothing.
 # Most specific first: "email me the report" is an email, not a report.
+# Every pattern needs the ask itself - a delivery verb or "so I can ..." - never the bare noun: "how do I set up email
+# on my phone" is a question about email, "my audio driver is broken" is not a podcast, "the HTML canvas element" is
+# not the canvas (S24 / D02-3).
+_OBJ = r"(it|this|that|them|me|the \w+|a \w+)"
 _ASKS = [
-    ("email",       r"\be-?mail\b"),
-    ("telegram",    r"\btelegram\b|\bmy phone\b|\btext me\b|\bping (it|this|me)\b"),
-    ("podcast",     r"\blisten\b|\bhear (it|this)\b|\baudio\b|\bpodcast\b|\bout loud\b|\baloud\b|\bread (it|this|me)\b.*\b(later|car|drive)\b"),
-    ("notebook",    r"\bnotebook\b|\bmy notes\b|\bsave (it|this) (to|in) (my )?notes\b"),
-    ("memory",      r"\bremember (this|that|it)\b|\bdon'?t forget\b"),
+    ("email",       rf"\be-?mail (me|it|this|that|them|the \w+)\b|\bsend me an e-?mail\b"
+                    rf"|\b(send|forward|mail) {_OBJ}( \w+)?( to me)? (by|via|over|to my|in an) (e-?mail|inbox)\b"),
+    ("telegram",    rf"\b(send|text|ping|push|message) {_OBJ}( \w+)? (to|on) my phone\b|\btext me\b|\bping me\b"
+                    rf"|\b(send|text|ping|push|message) {_OBJ}( \w+)? (on|over|via|by|through) telegram\b|\btelegram me\b"),
+    ("podcast",     r"\b(so (that )?i can|let me|i want to|i'?d like to) (listen|hear)\b|\b(as|into|make it) a podcast\b"
+                    r"|\bas audio\b|\b(read|say) (it|this|that) (out loud|aloud|to me)\b"
+                    r"|\bread (it|this|me)\b.*\b(later|car|drive)\b"),
+    ("notebook",    r"\b(save|put|add|write|keep|copy|log|jot)\b[^.?!]{0,30}\b(to|in|into) (my |the )?(notebook|notes)\b"),
+    ("memory",      r"(^|[.!?]\s*|,\s*|\bplease\s+|\band\s+)remember (this|that|it)\b|\bdon'?t forget (this|that|it)\b"
+                    r"|\bkeep (this|that|it) in mind\b"),
     ("canvas_html", r"\b(as a|proper|full) (document|doc|report)\b|\bwrite[- ]?up\b|\bwith diagrams\b|\bhtml report\b"),
-    ("canvas",      r"\bcanvas\b|\b(beside|next to) the chat\b|\bkeep (it|this) (open|somewhere|handy|visible|around)\b"
+    ("canvas",      rf"\b(put|place|pin|show|keep|add|drop|send) {_OBJ}( \w+)? (on|to|onto|in) (the |my )?canvas\b"
+                    r"|\b(beside|next to) the chat\b|\bkeep (it|this) (open|somewhere|handy|visible|around)\b"
                     r"|\bwhere i can see\b|\bpin (it|this)\b"),
 ]
 
