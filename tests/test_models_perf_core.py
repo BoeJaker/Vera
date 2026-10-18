@@ -14,8 +14,10 @@ PASSIVE = {"total_calls": 49430, "rows": [
      "calls": 27478, "job_types": ["chat", "loop_executor"], "obs_tps": 30.6, "avg_latency_s": 55.07},
     {"model": "jaahas/qwen3.5-uncensored:9b", "instance_id": "gpu-250", "has_gpu": True, "calls": 14529,
      "obs_tps": 20.5, "avg_latency_s": 73.11},
-    {"model": "qwen2.5-coder:14b", "instance_id": "gpu-250", "calls": 662, "obs_tps": 0.5, "avg_latency_s": 456.78},
-    {"model": "qwen3-coder:30b", "instance_id": "cpu-246", "calls": 339, "obs_tps": 5.3, "avg_latency_s": 117.79}]}
+    {"model": "qwen2.5-coder:14b", "instance_id": "gpu-250", "calls": 662, "obs_tps": 0.5, "avg_latency_s": 456.78,
+     "last_ts": "2026-09-10T10:36:19Z"},
+    {"model": "qwen3-coder:30b", "instance_id": "cpu-246", "calls": 339, "obs_tps": 5.3, "avg_latency_s": 117.79,
+     "last_ts": "2026-10-18T08:43:21Z"}]}
 ROUTE = {"stats": [
     {"model": "jaahas/qwen3.5-uncensored:9b", "instance": "gpu-250", "job_type": "loop_executor", "n": 12945, "ema_elapsed_s": 16.5, "ema_tps": 7.5, "ema_tokens": 124},
     {"model": "jaahas/qwen3.5-uncensored", "instance": "gpu-250", "job_type": "chat", "n": 12273, "ema_elapsed_s": 64.5, "ema_tps": 9.9, "ema_tokens": 738, "ema_prompt_chars": 7814},
@@ -85,7 +87,9 @@ def test_models_view_summary_and_issues():
     s = v["summary"]
     assert s["calls"] == 49430 and s["bench_runs"] == 1
     assert s["fastest"]["model"] == "jaahas/qwen3.5-uncensored"
-    assert s["slowest"]["model"] == "qwen2.5-coder:14b"
+    assert s["slowest"]["model"] == "qwen3-coder:30b"     # coder:14b is slower but last used 10 Sep: history
+    old = next(r for r in v["models"] if r["model"] == "qwen2.5-coder:14b")
+    assert old["stale"] is True and old["last_age_days"] == 38.0
     whats = [i["what"] for i in v["issues"]]
     assert whats[0] == "benchmarks" and "56 days" in v["issues"][0]["why"]
     assert any(w.startswith("benchmark bench-c3f7a031") for w in whats)
@@ -135,10 +139,10 @@ BG = {"jobs": [{"name": "ide.claude_sessions.ingest", "runs": 0, "defers": 10,
                 "waiting": [{"title": "intel", "waiting_for_s": 32346, "stranded": 0}]}}
 
 
-def test_queue_kpis_flag_quiet_gated_jobs():
-    q = M.queue_kpis(BG)
-    assert q["depth"] == 22 and q["oldest_h"] == 10.8 and q["stranded"] == 1
-    assert [j["name"] for j in q["quiet_gated"]] == ["ide.claude_sessions.ingest"]
+def test_queue_kpis():
+    q = M.queue_kpis(dict(BG, min_quiet_s=600))
+    assert q["depth"] == 22 and q["oldest_h"] == 10.8 and q["stranded"] == 1 and q["min_quiet_s"] == 600
+    assert "quiet_gated" not in q          # the jobs row is the drain's own label, not held-back work (18 Oct)
 
 
 CORPUS = {"run": {"run_id": "20261011T130117", "finished": "2026-10-11T14:37:43+00:00"},
@@ -164,5 +168,5 @@ def test_chat_share_services_and_whole_view():
     v = M.performance_view(CENSUS, REL, BG, ROUTE, CORPUS, {}, days=7, now=NOW, bench=BENCH)
     whats = [b["what"] for b in v["broken"]]
     assert whats[0].startswith("benchmark bench-c3f7a031")
-    assert "chat test corpus" in whats and "quiet-gated background jobs" in whats
+    assert "chat test corpus" in whats and not any("quiet" in w for w in whats)
     assert v["loop_lab"]["gates"]["passed"] == 2 and v["vera_use"]["chat"]["replies"] == 12273
