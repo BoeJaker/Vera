@@ -6210,6 +6210,11 @@ async def cap_worldview_config_set(
 # fabric without requiring full retraining.
 # ─────────────────────────────────────────────────────────────────────────────
 
+try:                                     # pragma: no cover - import-shape only
+    from Vera.vera.worldview import stream_core as _SC
+except Exception:                        # worktree / app-free import
+    from vera.worldview import stream_core as _SC   # type: ignore
+
 _STREAM_ENABLED = False
 _STREAM_TASK: Optional[asyncio.Task] = None
 _STREAM_STATS: Dict[str, Any] = {
@@ -6231,7 +6236,15 @@ _STREAM_STATS: Dict[str, Any] = {
     "event_filters":     ["fabric.ingested", "fabric.upserted",
                           "fabric.pipeline.stage", "fabric.dataset.created"],
     "batch_size":        64,      # max records to process per ingestion event
+    # FM-W.2 (18 Oct): what the worker did with what it saw - fabric events by type, records skipped by reason, and
+    # the ids waiting for their embedding (deferred embedding writes the vector after the event)
+    "fabric_events":     {},
+    "skipped":           {"already_indexed": 0, "not_embedded": 0, "dim_mismatch": 0, "model_not_ready": 0,
+                          "chroma_unavailable": 0, "nothing_fetched": 0},
+    "retry_pending":     0,
+    "retried_encoded":   0,
 }
+_STREAM_RETRY: Dict[str, int] = {}     # record id -> passes without an embedding (stream_core.retry_ids)
 
 
 def _chunk_ids(ids: List[str], size: int) -> List[List[str]]:
@@ -6286,16 +6299,16 @@ async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
     If record_ids is provided, fetches those specific records.
     Otherwise fetches the latest records and filters to un-indexed ones.
     """
-    if not MODEL.ready:
-        return 0
-    if MODEL.train_steps.get("gnn", 0) == 0:
+    global _STREAM_RETRY
+    sk = _STREAM_STATS.setdefault("skipped", {})
+    if not MODEL.ready or MODEL.train_steps.get("gnn", 0) == 0:
+        sk["model_not_ready"] = sk.get("model_not_ready", 0) + 1
         return 0
 
     fab = _get_fabric()
-    if not fab:
-        return 0
-    chroma = getattr(fab, "FABRIC_CHROMA", None)
+    chroma = getattr(fab, "FABRIC_CHROMA", None) if fab else None
     if not chroma or not getattr(chroma, "available", False):
+        sk["chroma_unavailable"] = sk.get("chroma_unavailable", 0) + 1
         return 0
 
     loop = asyncio.get_running_loop()
@@ -6335,18 +6348,19 @@ async def _stream_encode_new_records(dataset_id: str, limit: int = 64,
         return 0
 
     if not ids:
+        sk["nothing_fetched"] = sk.get("nothing_fetched", 0) + 1
+        if record_ids:                           # asked for ids Chroma does not have yet: they may still arrive
+            _STREAM_RETRY = _SC.retry_ids(_STREAM_RETRY, [r for r in record_ids[:limit]
+                                                         if r not in MODEL.record_concepts], record_ids)
+            _STREAM_STATS["retry_pending"] = len(_STREAM_RETRY)
         return 0
 
-    # Filter to records NOT already indexed
-    existing = set(MODEL.record_concepts.keys())
-    new_indices = []
-    for i, rid in enumerate(ids):
-        if rid not in existing and i < len(embs) and embs[i] is not None:
-            try:
-                if len(embs[i]) >= 10:
-                    new_indices.append(i)
-            except Exception:
-                pass
+    # Sort the batch: what to encode, and what was skipped and why (FM-W.2)
+    new_indices, skipped = _SC.classify(ids, embs, MODEL.record_concepts.keys(), MODEL.embed_dim)
+    for reason, rids in skipped.items():
+        sk[reason] = sk.get(reason, 0) + len(rids)
+    _STREAM_RETRY = _SC.retry_ids(_STREAM_RETRY, skipped["not_embedded"], record_ids or ())
+    _STREAM_STATS["retry_pending"] = len(_STREAM_RETRY)
 
     if not new_indices:
         return 0
@@ -6503,6 +6517,16 @@ async def _wv_stream_worker():
                     break
                 backoff = 2.0          # a read that worked: reset the backoff
                 if not msgs:
+                    # FM-W.2: ids whose embedding was not written yet when their event came - try them again
+                    if _STREAM_RETRY:
+                        try:
+                            again = list(_STREAM_RETRY)[:_STREAM_STATS.get("batch_size", 64)]
+                            got = await _stream_encode_new_records("", limit=len(again), record_ids=again)
+                            _STREAM_STATS["records_encoded"] += got
+                            _STREAM_STATS["records_indexed"] += got
+                            _STREAM_STATS["retried_encoded"] = _STREAM_STATS.get("retried_encoded", 0) + got
+                        except Exception as e:
+                            log.debug("stream retry: %s", e)
                     # Check if dynamics update is due
                     now = time.time()
                     interval = _STREAM_STATS.get("dynamics_interval", 60)
@@ -6533,6 +6557,8 @@ async def _wv_stream_worker():
                                                          ["fabric.ingested"])
                             if any(etype == f or etype.startswith(f + ".")
                                    for f in filters):
+                                fe = _STREAM_STATS.setdefault("fabric_events", {})
+                                fe[etype] = fe.get(etype, 0) + 1
                                 dataset_id = ev.get("dataset_id", "")
                                 # Accept event even without explicit count —
                                 # many fabric events don't carry one
