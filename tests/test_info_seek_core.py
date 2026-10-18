@@ -408,3 +408,17 @@ def test_known_pages_must_be_about_the_question():
     assert len(C.known_items(pages, [])) == 2
     src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "web", "web_capabilities.py"), encoding="utf-8").read()
     assert "chars=chars, query=subject)" in src
+
+
+def test_a_known_page_that_is_also_a_live_result_is_not_a_gap():
+    """prod 18 Oct: after the gap fill crawled the zubrowka pages, the next seek found one of them live as well;
+    known_items rightly left it out of the evidence, and info.seek recorded the gap again. The gap test now asks
+    the index alone."""
+    src = open(os.path.join(os.path.dirname(__file__), "..", "vera", "web", "web_capabilities.py"), encoding="utf-8").read()
+    i = src.index("_seek.known_items(known.get(\"pages\") or [], [], chars=80, query=subject, limit=1)")
+    assert i < src.index('record_gap(subject, caller="info.seek")')
+    body = "Zubrowka bison grass vodka: coumarin limits in the EU are 2 mg per litre for spirit drinks. " * 4
+    pages = [{"url": "https://monkeybrad.example/tatanka", "title": "Tatanka", "full_text": body}]
+    live = [{"url": "https://monkeybrad.example/tatanka"}]
+    assert C.known_items(pages, live, query="zubrowka coumarin limits 2026") == []
+    assert len(C.known_items(pages, [], query="zubrowka coumarin limits 2026", limit=1)) == 1

@@ -1598,6 +1598,8 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
                        "listed: 'latest' asks for new)")
     elif known.get("_error"):
         checked.append("fabric index: " + str(known["_error"])[:80])
+    elif _seek.known_items(known.get("pages") or [], [], chars=80, query=subject, limit=1):
+        checked.append("already known: the index's pages on this are among the live results")
     else:
         try:    # nothing Vera has read before: the demand a targeted crawl fills (web-ingress WI-14a)
             _ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
