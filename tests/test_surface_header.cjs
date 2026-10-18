@@ -12,6 +12,6 @@ t('VeraLive calls carry it (the caller or the page says the surface)', R('vera/u
 t('the market chart says desk inside the canvas, else the markets panel', R('vera/markets/markets_chart.js').includes("'panel:markets'") && R('vera/markets/markets_chart.js').includes("'X-Vera-Surface': surf + '; trigger=' +"));
 const H = R('vera/chat/chat_panel.html'), O = R('vera/capability_orchestration.html');
 t('the chat page api() carries chat', H.includes("'X-Vera-Surface':'chat; trigger='+"));
-t('the chat page wrapper: lhm for ?only=menu, else chat; never overrides', H.includes(String.raw`var SURF = (/[?&]only=menu/.test(location.search) ? 'lhm' : 'chat');`) && H.includes("if (!h.has('X-Vera-Surface'))"));
+t('the chat page wrapper: lhm for ?only=menu, else chat; never overrides', H.includes(String.raw`var SURF = (/[?&]only=menu\b/.test(location.search) ? 'lhm' : 'chat');`) && H.includes("if (!h.has('X-Vera-Surface'))"));
 t('the harness page wrapper says lhm', O.includes("var SURF = 'lhm';") && O.includes('wrapped._veraSurf = true; window.fetch = wrapped;'));
 console.log(bad ? bad + ' FAILED' : 'all passed'); process.exit(bad ? 1 : 0);
