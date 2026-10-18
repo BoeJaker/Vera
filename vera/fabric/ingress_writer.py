@@ -14,8 +14,10 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 try:
     from Vera.vera.fabric import ingress_receipts_core as rc
+    from Vera.vera.fabric import ingress_novelty_core as nc
 except ImportError:  # pragma: no cover
     from vera.fabric import ingress_receipts_core as rc
+    from vera.fabric import ingress_novelty_core as nc
 
 log = logging.getLogger("vera.ingress")
 
@@ -30,8 +32,10 @@ DDL_LOCK_TIMEOUT = "3s"
 
 class ReceiptWriter:
     def __init__(self, pool_getter: PoolGetter, *, queue_max: int = QUEUE_MAX, batch_max: int = BATCH_MAX,
-                 flush_every_s: float = FLUSH_EVERY_S, rows_in_thread: bool = True) -> None:
+                 flush_every_s: float = FLUSH_EVERY_S, rows_in_thread: bool = True,
+                 novelty_getter: Optional[Callable[[], bool]] = None) -> None:
         self._pool_getter = pool_getter
+        self._novelty_getter = novelty_getter or (lambda: False)
         self._q: Optional[asyncio.Queue] = None
         self._queue_max, self._batch_max, self._every = int(queue_max), int(batch_max), float(flush_every_s)
         self._task: Optional[asyncio.Task] = None
@@ -39,7 +43,7 @@ class ReceiptWriter:
         self._rows_in_thread = rows_in_thread
         self.stats: Dict[str, Any] = {"enqueued": 0, "dropped_full": 0, "dropped_no_store": 0, "flushed": 0,
                                       "batches": 0, "errors": 0, "last_flush_ms": 0, "last_error": "",
-                                      "queries": 0, "links": 0, "content": 0}
+                                      "queries": 0, "links": 0, "content": 0, "novel": 0, "near": 0, "known": 0}
 
     # ── the request path ─────────────────────────────────────────────────────
     def enqueue(self, item: Dict[str, Any]) -> bool:
@@ -123,10 +127,14 @@ class ReceiptWriter:
         links = [ln for r in rows for ln in r["links"]]
         qrows = [rc.query_row(b["query"], b.get("engine", ""), b.get("caller", ""), b.get("purpose", ""),
                               b.get("result_urls") or []) for b in queries]
+        novelty_rows: List[tuple] = []
+        yield_rows: List[tuple] = []
         try:
             async with pool.acquire() as conn:
                 if not self._ddl_done:
                     await self._ddl(conn)
+                if content and self._novelty_getter():
+                    novelty_rows, yield_rows = await self._score(conn, rows)
                 async with conn.transaction():
                     if hosts:
                         await conn.executemany(rc.UPSERT_HOST, hosts)
@@ -140,6 +148,10 @@ class ReceiptWriter:
                         await conn.executemany(rc.INSERT_QUERY, qrows)
                     if notes:
                         await conn.executemany(rc.NOTE_RECORD, notes)
+                    if novelty_rows:
+                        await conn.executemany(rc.UPDATE_URL_NOVELTY, novelty_rows)
+                    if yield_rows:
+                        await conn.executemany(rc.UPDATE_HOST_YIELD, yield_rows)
         except Exception as e:  # noqa: BLE001
             self.stats["errors"] += 1
             self.stats["last_error"] = str(e)[:200]
@@ -152,6 +164,29 @@ class ReceiptWriter:
         self.stats["batches"] += 1
         self.stats["last_flush_ms"] = int((time.monotonic() - t0) * 1000)
         return {"fetches": len(fetched), "links": len(links), "content": len(content), "queries": len(qrows)}
+
+    async def _score(self, conn: Any, rows: List[Dict[str, Any]]) -> "tuple[List[tuple], List[tuple]]":
+        """Novelty for every row with content (WI-5 steps 1-2): one read of the hashes the map holds and one of
+        the LSH-band neighbours for the whole batch, then pure scoring. Never fails the flush."""
+        with_content = [r for r in rows if r.get("content")]
+        if not with_content:
+            return [], []
+        try:
+            hashes = [r["content_hash"] for r in with_content]
+            known = {x[0] for x in await conn.fetch(rc.LOOKUP_HASHES, hashes)}
+            bands = nc.band_params([r["content"][5:9] for r in with_content])
+            cand = [(x[0], x[1]) for x in await conn.fetch(rc.LOOKUP_BANDS, *bands)]
+        except Exception as e:  # noqa: BLE001
+            log.debug("novelty lookup: %s", e)
+            return [], []
+        novelty_rows, yield_rows = [], []
+        for r in with_content:
+            sc = nc.score(r["content_hash"], known, cand, r["content"][4])
+            novelty_rows.append((r["key"], sc["novelty"], sc["kind"], sc["canonical"] or None))
+            yield_rows.append((r["host"][0], 1.0 if sc["kind"] == "new" else 0.0))
+            self.stats[{"new": "novel", "near": "near", "known": "known"}[sc["kind"]]] += 1
+            known.add(r["content_hash"])                 # the same content twice in one batch is known the 2nd time
+        return novelty_rows, yield_rows
 
     async def _ddl(self, conn: Any) -> None:
         try:

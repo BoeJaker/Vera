@@ -187,6 +187,11 @@ REGISTRY: Dict[str, Feature] = {f.id: f for f in (
        "for it (8 Wikipedia pages: 299 s vs 28 s); 'on' = queued as one discovery.t3 idle-queue job per crawl and "
        "run when the box is quiet (or in intel's reserved window). Interactive callers pass want_tiers=('t3',) to "
        "keep it inline.", owner="web-ingress"),
+    _f("ingress.novelty", ("off", "on"), "web", "WI-5",
+       "Novelty on every receipt with content: 'off' (default) = not scored; 'on' = exact (hash) and near-duplicate "
+       "(simhash within 3 bits via the LSH bands) against web_content, written to web_urls.novelty and the host's "
+       "novel-yield EWMA - two indexed reads per batch, off the request path. The embedding step stays in shadow "
+       "(four-minds §12.5).", owner="web-ingress"),
     _f("intel.nlp_triage", ("on", "off"), "intel", "FM-13.3",
        "intel's triage on the NLP tier (config 'nlp'): 'on' = nlp.embed novelty, nlp.rerank relevance, entities; "
        "'off' = keyword/heuristic triage, no nlp.* calls.", owner="intelligence"),
