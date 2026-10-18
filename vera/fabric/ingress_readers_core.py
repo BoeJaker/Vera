@@ -287,15 +287,37 @@ def read_json(data: bytes, url: str, reader: str = "json") -> Dict[str, Any]:
     if kind == "geojson":
         reader = "geojson"
     d = _doc(reader, url, title, text, structured=[{"source": "json", "type": kind, "data": _trim(obj)}], **extra)
-    if kind in ("ckan", "geojson", "api_page"):
-        d["kind"] = {"ckan": "catalogue", "geojson": "file", "api_page": "api"}[kind]
+    if kind in ("ckan", "geojson", "api_page", "graphql"):
+        d["kind"] = {"ckan": "catalogue", "geojson": "file", "api_page": "api", "graphql": "api"}[kind]
+    if kind == "graphql":
+        d["reader"] = "graphql"
+        d["text"] = extra.get("summary") or d["text"]
     return d
+
+
+def graphql_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """An introspection answer as the API's shape: its object types with their fields, the query and mutation roots,
+    built-in (__) types left out. The text is one line per type - what a search over APIs should find."""
+    types = []
+    for t in schema.get("types") or []:
+        if not isinstance(t, dict) or str(t.get("name") or "").startswith("__") or t.get("kind") not in ("OBJECT", "INPUT_OBJECT", "ENUM", "INTERFACE"):
+            continue
+        fields = [str(f.get("name") or "") for f in (t.get("fields") or t.get("inputFields") or t.get("enumValues") or [])
+                  if isinstance(f, dict)]
+        types.append({"name": str(t.get("name") or ""), "kind": t.get("kind"), "fields": fields[:60]})
+    roots = {k: str((schema.get(k) or {}).get("name") or "") for k in ("queryType", "mutationType", "subscriptionType")}
+    lines = [f"{t['kind'].lower()} {t['name']}: {', '.join(t['fields'])}" for t in types[:400]]
+    return {"title": "GraphQL schema", "types": len(types), "roots": roots,
+            "summary": "GraphQL API. " + "; ".join(f"{k} {v}" for k, v in roots.items() if v) + "\n" + "\n".join(lines)}
 
 
 def _json_shape(obj: Any, url: str) -> Tuple[str, Dict[str, Any]]:
     """What a JSON body is: a CKAN package_search answer (R3), a GeoJSON feature collection, a cursor-paginated page
-    (R4), or plain data."""
+    (R4), a GraphQL introspection answer (R10), or plain data."""
     if isinstance(obj, dict):
+        schema = (obj.get("data") or {}).get("__schema") if isinstance(obj.get("data"), dict) else obj.get("__schema")
+        if isinstance(schema, dict) and isinstance(schema.get("types"), list):
+            return "graphql", graphql_schema(schema)
         if obj.get("type") == "FeatureCollection" and isinstance(obj.get("features"), list):
             names = [str((f.get("properties") or {}).get("name") or "") for f in obj["features"][:50] if isinstance(f, dict)]
             return "geojson", {"features": len(obj["features"]), "names": [n for n in names if n]}
@@ -396,6 +418,107 @@ def read_xml(data: bytes, url: str) -> Dict[str, Any]:
     return _doc(reader if reader in ("rss", "atom", "sitemap") else "xml", url, title, body[:MAX_CELLS_TEXT], children=children)
 
 
+# ── R7: Parquet (schema and a sample; the whole file only under the reader's byte cap) ───────────────────────────
+
+PARQUET_SAMPLE = 20
+
+
+def read_parquet(data: bytes, url: str) -> Dict[str, Any]:
+    """A Parquet file's schema, row count and first rows (pyarrow, read from the bytes in memory). Remote range
+    reads for big files are not done here: a body past the reader's cap never reaches a reader."""
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:
+        return _doc("parquet", url, "", "", needs_lib="pyarrow")
+    pf = pq.ParquetFile(io.BytesIO(data))
+    cols = [f"{f.name} ({f.type})" for f in pf.schema_arrow]
+    rows: List[List[Any]] = []
+    if pf.num_row_groups:
+        tbl = pf.read_row_group(0).slice(0, PARQUET_SAMPLE)
+        rows = [list(r.values()) for r in tbl.to_pylist()]
+    names = [f.name for f in pf.schema_arrow]
+    text = "Parquet table: " + ", ".join(cols) + "\n" + "\n".join(", ".join(str(v)[:80] for v in r) for r in rows)
+    return _doc("parquet", url, url.rsplit("/", 1)[-1], text[:MAX_CELLS_TEXT], kind="file", sample_only=True,
+                tables=[{"name": "parquet", "columns": names, "rows": rows, "total_rows": int(pf.metadata.num_rows)}])
+
+
+# ── R10: KML (placemarks, for godseye places) ─────────────────────────────────
+
+def read_kml(data: bytes, url: str) -> Dict[str, Any]:
+    """KML placemarks: name, description and the first coordinate (lon, lat) of each - the places a geo file names."""
+    root = ET.fromstring(data)
+    places = []
+    for el in root.iter():
+        if not el.tag.endswith("Placemark"):
+            continue
+        rec: Dict[str, Any] = {}
+        for sub in el.iter():
+            tag = sub.tag.rsplit("}", 1)[-1]
+            if tag == "name" and "name" not in rec:
+                rec["name"] = (sub.text or "").strip()
+            elif tag == "description" and "description" not in rec:
+                rec["description"] = re.sub(r"<[^>]+>", " ", sub.text or "").strip()[:500]
+            elif tag == "coordinates" and "lon" not in rec:
+                first = (sub.text or "").strip().split()
+                parts = first[0].split(",") if first else []
+                try:
+                    rec["lon"], rec["lat"] = float(parts[0]), float(parts[1])
+                except (IndexError, ValueError):
+                    pass
+        if rec:
+            places.append(rec)
+        if len(places) >= MAX_ROWS:
+            break
+    title = next((t.text.strip() for t in root.iter() if t.tag.endswith("name") and t.text), "")
+    text = "\n".join(f"{p.get('name', '')}: {p.get('description', '')}".strip(": ") for p in places)
+    return _doc("kml", url, title, text[:MAX_CELLS_TEXT], kind="file", places=places)
+
+
+# ── R9: media - described for a T3 job, never processed inline ────────────────
+
+MEDIA_OPS = {"image": "describe", "audio": "transcribe", "video": "transcribe"}
+
+
+def read_media(reader: str, data: bytes, url: str) -> Dict[str, Any]:
+    """An image, audio or video file: no text now. The doc carries what a background (T3) job should do with it -
+    describe an image, transcribe audio or a video's sound - so the crawl queues it and never runs a model inline."""
+    op = MEDIA_OPS.get(reader, "")
+    return _doc(reader, url, url.rsplit("/", 1)[-1][:200], "", kind="media",
+                t3={"op": op, "url": url, "reader": reader, "bytes": len(data or b"")} if op else None)
+
+
+def youtube_id(url: str) -> str:
+    """The video id of a YouTube watch/short/embed/youtu.be URL ('' otherwise) - captions are a T3 job too."""
+    m = re.match(r"https?://(?:www\.|m\.)?(?:youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|embed/)|youtu\.be/)([\w-]{11})", url or "")
+    return m.group(1) if m else ""
+
+
+# ── R5 (ODS): an OpenDocument spreadsheet is a zip of content.xml ──────────────
+
+_NS_T = "{urn:oasis:names:tc:opendocument:xmlns:table:1.0}"
+
+
+def read_ods(data: bytes, url: str) -> Dict[str, Any]:
+    z = zipfile.ZipFile(io.BytesIO(data))
+    bad = _zip_ok(z)
+    if bad:
+        return _doc("ods", url, "", "", error=bad)
+    root = ET.fromstring(z.read("content.xml"))
+    tables, lines = [], []
+    for tb in root.iter(_NS_T + "table"):
+        rows: List[List[str]] = []
+        for tr in tb.iter(_NS_T + "table-row"):
+            cells = [" ".join(t.strip() for t in c.itertext()).strip() for c in tr.iter(_NS_T + "table-cell")]
+            if any(cells):
+                rows.append(cells)
+            if len(rows) >= MAX_ROWS:
+                break
+        name = tb.get(_NS_T + "name") or "sheet"
+        tables.append({"name": name, "rows": rows})
+        lines += [name + ": " + ", ".join(r) for r in rows[:200]]
+    return _doc("ods", url, url.rsplit("/", 1)[-1], "\n".join(lines)[:MAX_CELLS_TEXT], kind="file", tables=tables)
+
+
 # ── the router ────────────────────────────────────────────────────────────────
 
 READERS = {
@@ -405,6 +528,9 @@ READERS = {
     "gzip": read_gzip, "csv": read_csv, "json": read_json, "geojson": lambda b, u: read_json(b, u, "geojson"),
     "yaml": read_yaml,
     "xml": read_xml, "rss": read_xml, "atom": read_xml, "sitemap": read_xml,
+    "parquet": read_parquet, "kml": read_kml, "ods": read_ods,
+    "image": lambda b, u: read_media("image", b, u), "audio": lambda b, u: read_media("audio", b, u),
+    "video": lambda b, u: read_media("video", b, u),
 }
 
 

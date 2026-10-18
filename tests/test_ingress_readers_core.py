@@ -162,3 +162,68 @@ def test_no_crawl_function_uses_a_module_alias_it_also_assigns_locally():
     assert ("_process", "_pc") not in bad or "_ipc.crawl_record(" in src
     block = src[src.index("and _ingress_read_files_on():"):src.index("# Non-HTML, non-data file")]
     assert "_ipc.crawl_record(" in block and "_pc.crawl_record(" not in block.replace("_ipc.crawl_record(", "")
+
+
+
+# ── WI-7a: R7 Parquet, R10 KML + GraphQL, R9 media, R5 ODS ────────────────────
+
+def test_parquet_reads_schema_and_a_sample():
+    import io as _io
+    import pytest
+    pa = pytest.importorskip("pyarrow")
+    import pyarrow.parquet as pq
+    buf = _io.BytesIO()
+    pq.write_table(pa.table({"city": ["Cambridge", "Oxford", "Leeds"], "vacancy": [2.1, 3.4, 7.0]}), buf)
+    d = rd.read("parquet", buf.getvalue(), "https://data.example/lab.parquet")
+    assert d["reader"] == "parquet" and d["kind"] == "file" and d["sample_only"]
+    t = d["tables"][0]
+    assert t["columns"] == ["city", "vacancy"] and t["total_rows"] == 3 and t["rows"][0] == ["Cambridge", 2.1]
+    assert "Cambridge" in d["text"] and "vacancy (double)" in d["text"]
+    bad = rd.read("parquet", b"not parquet", "https://data.example/x.parquet")
+    assert bad.get("error")
+
+
+def test_kml_placemarks():
+    kml = b"""<?xml version="1.0"?><kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>Labs</name>
+    <Placemark><name>Babraham</name><description><![CDATA[<b>campus</b>]]></description>
+    <Point><coordinates>0.205,52.135,0</coordinates></Point></Placemark>
+    <Placemark><name>No point</name></Placemark></Document></kml>"""
+    d = rd.read("kml", kml, "https://geo.example/labs.kml")
+    assert d["title"] == "Labs" and d["places"][0] == {"name": "Babraham", "description": "campus", "lon": 0.205, "lat": 52.135}
+    assert d["places"][1] == {"name": "No point"} and "Babraham: campus" in d["text"]
+
+
+def test_graphql_introspection_answer():
+    import json as _json
+    body = _json.dumps({"data": {"__schema": {"queryType": {"name": "Query"}, "mutationType": None, "types": [
+        {"kind": "OBJECT", "name": "Query", "fields": [{"name": "listing"}, {"name": "search"}]},
+        {"kind": "OBJECT", "name": "Listing", "fields": [{"name": "id"}, {"name": "price"}]},
+        {"kind": "OBJECT", "name": "__Type", "fields": [{"name": "name"}]},
+        {"kind": "SCALAR", "name": "String"}]}}}).encode()
+    d = rd.read("json", body, "https://api.example/graphql")
+    assert d["reader"] == "graphql" and d["kind"] == "api" and d["types"] == 2
+    assert "object Listing: id, price" in d["text"] and "queryType Query" in d["text"] and "__Type" not in d["text"]
+
+
+def test_media_is_described_for_a_t3_job_never_read_inline():
+    for reader, op in (("image", "describe"), ("audio", "transcribe"), ("video", "transcribe")):
+        d = rd.read(reader, b"\x00" * 64, f"https://m.example/f.{reader}")
+        assert d["kind"] == "media" and d["text"] == "" and d["t3"]["op"] == op and d["t3"]["bytes"] == 64
+    assert rd.youtube_id("https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1") == "dQw4w9WgXcQ"
+    assert rd.youtube_id("https://youtu.be/dQw4w9WgXcQ") == "dQw4w9WgXcQ" and rd.youtube_id("https://example.com/v") == ""
+
+
+def test_ods_sheets():
+    import io as _io, zipfile as _zf
+    content = (b'<?xml version="1.0"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" '
+               b'xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0">'
+               b'<office:body><office:spreadsheet><table:table table:name="Rents"><table:table-row>'
+               b'<table:table-cell><text:p>City</text:p></table:table-cell><table:table-cell><text:p>Rent</text:p></table:table-cell>'
+               b'</table:table-row><table:table-row><table:table-cell><text:p>Leeds</text:p></table:table-cell>'
+               b'<table:table-cell><text:p>950</text:p></table:table-cell></table:table-row></table:table>'
+               b'</office:spreadsheet></office:body></office:document-content>')
+    buf = _io.BytesIO()
+    with _zf.ZipFile(buf, "w") as z:
+        z.writestr("content.xml", content)
+    d = rd.read("ods", buf.getvalue(), "https://data.example/rents.ods")
+    assert d["tables"][0] == {"name": "Rents", "rows": [["City", "Rent"], ["Leeds", "950"]]} and "Rents: Leeds, 950" in d["text"]
