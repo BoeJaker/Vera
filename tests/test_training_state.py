@@ -13,10 +13,12 @@ from vera.minds import ledger_core as LC, loop_ledger, training_state_core as TS
 pytestmark = pytest.mark.critical
 
 
-def test_surfaces_default_to_loop_and_discovery():
+def test_surfaces_default_to_loop_discovery_and_intel():
     # discovery joined 2026-10-10: the drift guard's page verdicts (public web excerpts) are labelled for the
-    # FM-7.5 200-page set; chat, intel and memory stay off until asked for
-    assert TS.enabled_surfaces(None) == {"loop", "discovery"} and TS.enabled_surfaces("") == {"loop", "discovery"}
+    # FM-7.5 200-page set; intel joined 2026-10-11 (FM-13.6: the gates' signals, rated in /decide/labels);
+    # chat and memory stay off until asked for
+    want = {"loop", "discovery", "intel"}
+    assert TS.enabled_surfaces(None) == want and TS.enabled_surfaces("") == want
     assert TS.enabled_surfaces("none") == set()
     assert TS.enabled_surfaces("loop, chat") == {"loop", "chat"}
 
@@ -57,7 +59,7 @@ def test_the_run_ledger_keeps_each_decisions_inputs():
 
 def test_every_loop_decision_site_passes_its_inputs():
     src = open(os.path.join(ROOT, "vera", "dag", "dag_workshop_capabilities.py"), encoding="utf-8").read()
-    for call in ('_dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal})',
+    for call in ('_dl.tier(tier, tier_info, model=str(model or ""), inputs={"goal": goal},',
                  '_dl.intent(intent, _intent_info, model=str(model or ""), inputs={"goal": goal})'):
         assert call in src, call
     for head in ('_dl.verify(step.get("id"), v["met"], len(_vr), model=str(model or ""),\n',

@@ -57,7 +57,10 @@ async def _config() -> Dict[str, Any]:
 
 _WORKER_FIELDS = ("id", "role", "status", "classes", "libs", "host", "host_id",
                   "current_task", "task_started", "cpu_pct", "ncpu", "mem_avail_gb",
-                  "ram_total_gb", "ram_used_gb", "load1", "metrics_at")
+                  "ram_total_gb", "ram_used_gb", "load1", "metrics_at",
+                  # several jobs per worker (MW-7): admission reads these - left
+                  # out, every worker fell back to one job at a time (2026-10-11)
+                  "compute_slots", "compute_running")
 
 
 async def _workers() -> List[Dict[str, Any]]:
@@ -156,7 +159,11 @@ async def _run_here(fn: str, inputs: Dict[str, Any], threads: int,
         except Exception:
             return False
 
-    inputs = dict(inputs, _threads=threads)
+    inputs = dict(inputs, _threads=core.threads_for(fn, threads))
+    if inputs.get("_blob_refs") and _orch.REDIS is not None:
+        err = await core.resolve_blob_refs(inputs, _orch.REDIS.get)
+        if err:
+            raise NodeComputeError(f"{fn}: {err}")
     return await loop.run_in_executor(None, func, inputs, progress, should_stop)
 
 
@@ -166,12 +173,34 @@ async def _run_here(fn: str, inputs: Dict[str, Any], threads: int,
 _RESERVED: Dict[str, Dict[str, float]] = {}
 
 
-def _reserve(hid: str, fn: str, sign: int) -> None:
+def _reserve(hid: str, fn: str, sign: int, entry: Optional[list] = None) -> list:
+    """+1: count a job sent to `hid` (returns its entry); -1 with that entry:
+    it finished. `sent` keeps each job's send time and size, so admission
+    stops counting a job once the node's metrics show it (MW-7)."""
     need = core.NEEDS.get(fn, {"cpu": 1.0, "mem_gb": 1.0})
-    cur = _RESERVED.setdefault(hid, {"cpu": 0.0, "mem_gb": 0.0, "jobs": 0.0})
+    cur = _RESERVED.setdefault(hid, {"cpu": 0.0, "mem_gb": 0.0, "jobs": 0.0, "sent": []})
+    cur.setdefault("sent", [])
     for k in ("cpu", "mem_gb"):
         cur[k] = max(0.0, cur[k] + sign * need[k])
     cur["jobs"] = max(0.0, cur.get("jobs", 0.0) + sign)
+    if sign > 0:
+        entry = [time.time(), float(need["cpu"]), float(need["mem_gb"])]
+        cur["sent"].append(entry)
+        return entry
+    if entry is not None:
+        try:
+            cur["sent"].remove(entry)
+        except ValueError:
+            pass
+    return entry or []
+
+
+def _avoided(pick: Dict[str, Any], avoid) -> bool:
+    """Whether a pick is one of `avoid` (node names or host ids, any case)."""
+    want = {str(a).strip().lower() for a in avoid or () if str(a).strip()}
+    if not want:
+        return False
+    return bool(want & {str(pick.get(k) or "").strip().lower() for k in ("host", "host_id")} - {""})
 
 
 async def node_plan(fn: str, exclude=()) -> Dict[str, Any]:
@@ -191,7 +220,7 @@ async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
                       stop: Optional[Callable[[], bool]] = None,
                       trace_id: str = "", max_wait_s: Optional[int] = None,
                       host_fallback: Optional[bool] = None,
-                      serial: str = "") -> Dict[str, Any]:
+                      serial: str = "", avoid=()) -> Dict[str, Any]:
     """_run_on_node, optionally inside a cluster-wide one-at-a-time slot.
 
     `serial` names the slot (e.g. "training"): of all the jobs - on every
@@ -206,7 +235,7 @@ async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
     if not name or r is None:
         return await _run_on_node(fn, inputs, label=label, on_progress=on_progress, stop=stop,
                                   trace_id=trace_id, max_wait_s=max_wait_s,
-                                  host_fallback=host_fallback)
+                                  host_fallback=host_fallback, avoid=avoid)
     cfg = await _config()
     cap = cfg["max_wait_s"] if max_wait_s is None else max(0, int(max_wait_s))
     key, token, t0 = core.serial_key(name), uuid.uuid4().hex, time.time()
@@ -237,7 +266,7 @@ async def run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
         left = max(0, int(cap - (time.time() - t0)))
         return await _run_on_node(fn, inputs, label=label, on_progress=on_progress, stop=stop,
                                   trace_id=trace_id, max_wait_s=left,
-                                  host_fallback=host_fallback)
+                                  host_fallback=host_fallback, avoid=avoid)
     finally:
         keeper.cancel()
         try:
@@ -250,7 +279,7 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
                        on_progress: Optional[Callable[[Dict[str, Any]], Any]] = None,
                        stop: Optional[Callable[[], bool]] = None,
                        trace_id: str = "", max_wait_s: Optional[int] = None,
-                       host_fallback: Optional[bool] = None) -> Dict[str, Any]:
+                       host_fallback: Optional[bool] = None, avoid=()) -> Dict[str, Any]:
     """Run an allow-listed function on the node worker with the most room for
     it and return its outputs. `on_progress` (async) receives each progress
     dict; `stop()` is polled and, once true, asks the node to stop at its next
@@ -302,7 +331,7 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
         return await on_host(why)
 
     # ── node ─────────────────────────────────────────────────────────────────
-    blob = core.pack(dict(inputs, _threads=cfg["threads"]))
+    blob = core.pack(dict(inputs, _threads=core.threads_for(fn, cfg["threads"])))
     exclude: List[str] = []
     last_err = ""
     for attempt in range(2):
@@ -310,6 +339,10 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
         waited_note = ""
         while True:
             p = await node_plan(fn, exclude=exclude)
+            if p["pick"] is not None and _avoided(p["pick"], avoid):
+                # a node the caller leaves alone (a gate beside a census: compute-roles K)
+                exclude.append(str(p["pick"].get("host_id")))
+                continue
             if p["pick"] is not None:
                 break
             if stop and stop():
@@ -332,7 +365,7 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
         # reserve in the same step as the pick (no await between): jobs planned
         # side by side - a gate's shards - then see it and pick other nodes
         # (2026-10-04: two of a gate's three shards picked the same node)
-        _reserve(hid, fn, +1)
+        _entry = _reserve(hid, fn, +1)
         try:
             out = await _dispatch_and_wait(r, job, fn, blob, hid, node, base, t0,
                                            on_progress, stop, trace_id, attempt)
@@ -344,7 +377,7 @@ async def _run_on_node(fn: str, inputs: Dict[str, Any], *, label: str = "",
             job = uuid.uuid4().hex[:12]
             base = {**base, "job": job}
         finally:
-            _reserve(hid, fn, -1)
+            _reserve(hid, fn, -1, _entry)
     await _record({**base, "state": "error", "error": last_err[:300],
                    "seconds": round(time.time() - t0, 1)})
     raise NodeComputeError(f"{fn}: {last_err} (twice)")
@@ -496,11 +529,9 @@ async def cap_compute_run(job: str = "", fn: str = "", trace_id=None) -> Dict:
     del blob
     # inputs too big to send with every job (a gate's code archive, shared by
     # its chunks) are stored once in Redis by the caller and named here
-    for name, key in (inputs.pop("_blob_refs", None) or {}).items():
-        data = await r.get(str(key))
-        if data is None:
-            return await finish(False, f"input {name!r} expired or was withdrawn")
-        inputs[name] = data
+    err = await core.resolve_blob_refs(inputs, r.get)
+    if err:
+        return await finish(False, err)
 
     stop_ev = threading.Event()
     pending: List[str] = []
@@ -606,7 +637,10 @@ async def cap_compute_status(trace_id=None) -> Dict:
                          "status": w.get("status"),
                          "libs": json.loads(w["libs"]) if w.get("libs") else {},
                          "capacity": core.capacity(w),
-                         "reserved": _RESERVED.get(w.get("host_id") or "", {}),
+                         "reserved": {k: v for k, v in _RESERVED.get(w.get("host_id") or "", {}).items()
+                                      if k != "sent"},
+                         "compute_slots": w.get("compute_slots") or "",
+                         "compute_running": w.get("compute_running") or "",
                          "current_task": w.get("current_task")} for w in ws],
             "functions": funcs, "jobs": jobs}
 

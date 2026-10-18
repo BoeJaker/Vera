@@ -452,7 +452,7 @@
       (loopUrl ? `<a class="vao-fc" href="${esc(loopUrl.replace('/reattach', '/reattach'))}" target="_blank" rel="noopener" title="Re-attach to this loop's output (replays, then tails)">Re-run · attach ↗</a>` : '') +
       /* the projection's identity links: the DAG workshop is the NATIVE authority for a run; the activity panel
          (#run:<id>) is the full Run timeline the ticker is a projection of - named for what they are */
-      (nativeUrl ? `<a class="vao-fc" href="${esc(nativeUrl)}" target="_blank" rel="noopener" title="The run's native record - the DAG workshop is the authority the ticker projects">Open native DAG workshop ↗</a>` : '') +
+      (nativeUrl ? `<a class="vao-fc" href="${esc(nativeUrl)}" target="_blank" rel="noopener" title="The run's native record remains authoritative">Open ${esc(ui.native_label || 'native runtime')} ↗</a>` : '') +
       (openUrl ? `<a class="vao-fc" href="${esc(openUrl)}" target="_blank" rel="noopener" title="Every event of this run, in the activity panel">Open full Run timeline ↗</a>` : '') +
       `<button class="vao-fc" type="button" data-close="1">Close</button></div>` +
       (flowBusy === flowKey && !flowSteps ? `<div class="vao-fnote">Reading the run…</div>` :

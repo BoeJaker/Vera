@@ -169,15 +169,57 @@ def _seal(plaintext: str) -> str:
     return ""
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+def _reg():
+    import Vera.vera.capability_orchestration as _c
+    return _c.CAPABILITY_REGISTRY
+
+
 def _open(sealed: str) -> str:
     if not sealed:
         return ""
+    if _pa().is_ref(sealed):                       # in the Platforms credential store
+        return _pa().open_value_sync(_reg(), sealed)
     if vsecrets:
         try:
             return vsecrets.open_secret(sealed)
         except Exception:
             return ""
     return ""
+
+
+async def _adopt(dry_run: bool):
+    """Move instance secrets still sealed here into the Platforms store (platform.secrets.adopt)."""
+    rows = await _load_instances()
+    moved, changed = [], False
+    for rec in rows:
+        for f in ('token_sealed', 'api_key_sealed'):
+            if not _pa().needs_adopting(rec.get(f)):
+                continue
+            key = _pa().key_for("vscode", rec.get("id"), f.replace("_sealed", ""))
+            moved.append({"record": rec.get("id"), "field": f, "key": key})
+            if not dry_run:
+                new = await _pa().adopt_value(_reg(), key, rec[f], f"vscode {rec.get('label') or rec.get('id')} " + f)
+                changed = changed or new != rec[f]
+                rec[f] = new
+    if changed:
+        await _save_instances(rows)
+    return moved
+
+
+_pa().register_adopter("vscode", _adopt)
 
 
 def _public(rec: dict) -> dict:

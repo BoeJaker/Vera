@@ -36,7 +36,10 @@ def snapshot():
         "summary": "summary", "full_text": "complete memory",
         "human_text": True, "ai_output": False, "model": "model-1",
         "capability": "memory.store", "source_url": "https://example.invalid/item",
-        "metadata": {}, "keywords": [], "embedding": [], "relations": [],
+        "metadata": {"noise": {"class": "low"}, "canonical_id": "canon-1"},
+        "keywords": ["derived"], "embedding": [],
+        "embedding_model": "embed-1", "graph_id": "graph-1",
+        "relations": [{"to": "other"}],
     }
     value["content_hash"] = native_memory_content_hash(value)
     return value
@@ -103,6 +106,7 @@ def test_native_snapshot_round_trip_retains_public_memory_semantics():
         "ttl_seconds", "record_type", "source_type", "category", "tags",
         "importance", "archived", "language", "summary", "human_text",
         "ai_output", "model", "capability", "source_url", "content_hash",
+        "metadata", "keywords", "embedding_model", "graph_id", "relations",
     ):
         assert rebuilt[field] == value[field]
     assert rebuilt["text"] == rebuilt["full_text"] == value["full_text"]

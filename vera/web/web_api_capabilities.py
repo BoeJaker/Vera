@@ -135,6 +135,7 @@ _DRIVERS_META: Dict[str, dict] = {
             {"key": "map_title",    "label": "Result → title field",      "secret": False},
             {"key": "map_snippet",  "label": "Result → snippet field",    "secret": False},
             {"key": "fetch_path",   "label": "Fetch path ({url}) (opt)",  "secret": False},
+            {"key": "connection",   "label": "Platforms API connection (opt - its base URL and key)", "secret": False},
             {"key": "auth_header",  "label": "Auth header name (opt)",    "secret": False},
             {"key": "auth_value",   "label": "Auth header value (opt)",   "secret": True},
         ],
@@ -167,9 +168,49 @@ async def _get(pid: str) -> Optional[dict]:
     return (await _stored()).get(pid)
 
 
+def _pa():
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p             # tests in a worktree: the newer copy
+    return _p
+
+
 def _secret(rec: dict, key: str) -> str:
-    """Decrypt a sealed field of a provider record."""
-    return vsecrets.open_secret((rec.get("secrets") or {}).get(key, "") or "")
+    """A provider's secret field: an "@secret:<key>" reference into the Platforms credential store (owner
+    2026-10-11: every credential in the store), or a value sealed here the old way."""
+    raw = (rec.get("secrets") or {}).get(key, "") or ""
+    return _pa().open_value_sync(_orch.CAPABILITY_REGISTRY, raw, vsecrets.open_secret)
+
+
+async def _adopt(dry_run: bool) -> List[Dict[str, str]]:
+    """Move provider secrets still sealed here into the store (platform.secrets.adopt)."""
+    r = _redis()
+    moved: List[Dict[str, str]] = []
+    for pid, rec in (await _stored()).items():
+        changed = False
+        for k, raw in list((rec.get("secrets") or {}).items()):
+            if not raw or _pa().is_ref(raw):
+                continue
+            key = _pa().key_for("webapi", pid, k)
+            moved.append({"record": pid, "field": k, "key": key})
+            if dry_run:
+                continue
+            val = vsecrets.open_secret(raw)
+            ref = await _pa().vault(_orch.CAPABILITY_REGISTRY, key, val, f"Web API {rec.get('label') or pid} {k}")
+            if ref:
+                rec["secrets"][k] = ref
+                changed = True
+        if changed and r:
+            await r.hset(KEY_PROVIDERS, pid, json.dumps(rec))
+            _TOKENS.pop(pid, None)
+    return moved
+
+
+_pa().register_adopter("web_api", _adopt)
 
 
 def _cfg(rec: dict, key: str, default: str = "") -> str:
@@ -522,13 +563,27 @@ def _rest_headers(rec: dict) -> dict:
     return h
 
 
+async def _rest_get(rec: dict, path: str) -> Any:
+    """GET a path of a REST provider: through its Platforms API connection when it names one (base URL and key
+    from there - data-connections plan), else its own base URL and auth header."""
+    conn = _cfg(rec, "connection").strip()
+    if conn:
+        got = await _pa().connection_get(_orch.CAPABILITY_REGISTRY, conn, path, accept="application/json",
+                                         timeout=12)
+        if got.get("error"):
+            raise RuntimeError(f"connection {conn}: {got['error']}")
+        got["response"].raise_for_status()
+        return got["response"].json()
+    return await _get_json(_cfg(rec, "base_url").rstrip("/") + path, _rest_headers(rec))
+
+
 async def _rest_search(rec: dict, query: str, limit: int) -> List[Dict[str, Any]]:
-    base = _cfg(rec, "base_url").rstrip("/")
+    base = _cfg(rec, "base_url").rstrip("/") or _cfg(rec, "connection")
     path = _cfg(rec, "search_path")
     if not base or not path:
         return []
     path = path.replace("{query}", quote_plus(query)).replace("{limit}", str(limit))
-    data = await _get_json(base + path, _rest_headers(rec))
+    data = await _rest_get(rec, path)
     items = _dig(data, _cfg(rec, "results_path")) or []
     if not isinstance(items, list):
         return []
@@ -543,12 +598,12 @@ async def _rest_search(rec: dict, query: str, limit: int) -> List[Dict[str, Any]
 
 
 async def _rest_fetch(rec: dict, url: str) -> Optional[Dict[str, Any]]:
-    base = _cfg(rec, "base_url").rstrip("/")
+    base = _cfg(rec, "base_url").rstrip("/") or _cfg(rec, "connection")
     fpath = _cfg(rec, "fetch_path")
     if not base or not fpath:
         return None
     fpath = fpath.replace("{url}", quote_plus(url))
-    data = await _get_json(base + fpath, _rest_headers(rec))
+    data = await _rest_get(rec, fpath)
     text = json.dumps(data, indent=2) if not isinstance(data, str) else data
     if not text:
         return None
@@ -731,11 +786,14 @@ async def cap_web_api_save(id: str = "", kind: str = "", label: str = "",
         "config": {**(existing.get("config") or {}), **(config or {})},
         "secrets": dict(existing.get("secrets") or {}),
     }
-    # Seal only non-blank secret fields; blank keeps the stored value.
+    # Non-blank secret fields go to the Platforms credential store (a reference stays here); sealed here only
+    # when that store is not loaded. Blank keeps the stored value.
     for k, v in (secrets or {}).items():
         if v:
+            ref = await _pa().vault(_orch.CAPABILITY_REGISTRY, _pa().key_for("webapi", id, k), v,
+                                    f"Web API {rec['label']} {k}")
             try:
-                rec["secrets"][k] = vsecrets.seal(v)
+                rec["secrets"][k] = ref or vsecrets.seal(v)
             except Exception as e:
                 return {"error": f"could not seal {k}: {e}"}
     try:

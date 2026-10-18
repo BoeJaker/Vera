@@ -101,7 +101,7 @@ def native_snapshot_from_revision(
         raise ValueError("memory revision tags must be a string list")
     for field in (
         "text", "summary", "native_record_type", "source_type", "category",
-        "parent_id", "session_id", "trace_id", "updated_at", "language",
+        "parent_id", "session_id", "trace_id", "language",
         "model", "capability", "source_url",
     ):
         if not isinstance(content.get(field, ""), str):
@@ -114,13 +114,22 @@ def native_snapshot_from_revision(
     for field in ("archived", "human_text", "ai_output"):
         if not isinstance(content.get(field, False), bool):
             raise ValueError(f"memory revision {field} must be boolean")
+    native_metadata = content.get("metadata", {})
+    keywords = content.get("keywords", [])
+    relations = content.get("relations", [])
+    if not isinstance(native_metadata, dict):
+        raise ValueError("memory revision metadata must be an object")
+    if not isinstance(keywords, list) or any(not isinstance(item, str) for item in keywords):
+        raise ValueError("memory revision keywords must be a string list")
+    if not isinstance(relations, list):
+        raise ValueError("memory revision relations must be a list")
     return {
         "id": native_memory_id,
         "session_id": content.get("session_id", ""),
         "trace_id": content.get("trace_id", ""),
         "parent_id": content.get("parent_id", ""),
         "created_at": revision.created_at,
-        "updated_at": content.get("updated_at", revision.created_at),
+        "updated_at": revision.created_at,
         "ttl_seconds": content.get("ttl_seconds", 0),
         "record_type": content.get("native_record_type", "message"),
         "source_type": content.get("source_type", "human"),
@@ -138,7 +147,9 @@ def native_snapshot_from_revision(
         "capability": content.get("capability", ""),
         "source_url": content.get("source_url", ""),
         "content_hash": native_memory_content_hash({"full_text": content.get("text", "")}),
-        "metadata": {}, "keywords": [], "embedding": [], "relations": [],
+        "metadata": dict(native_metadata), "keywords": list(keywords),
+        "embedding": [], "embedding_model": content.get("embedding_model", ""),
+        "graph_id": content.get("graph_id", ""), "relations": list(relations),
     }
 
 

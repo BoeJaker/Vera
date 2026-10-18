@@ -182,3 +182,16 @@ def test_pool_config_has_chunks():
     from vera.evolve import test_runner_core as core
     assert core.merge_pool_config({})["chunks"] == 12
     assert core.merge_pool_config({"chunks": 500})["chunks"] == 64
+
+
+def test_placement_counts_runners_host_first():
+    """17 Oct 2026: vera.log gets one line per gate saying where its chunks ran."""
+    import importlib.util as _u
+    _sp = _u.spec_from_file_location("trc_placement", os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "vera", "evolve", "test_runner_core.py"))
+    _trc = _u.module_from_spec(_sp)
+    _sp.loader.exec_module(_trc)
+    shards = [{"runner": "Ollama-C"}, {"runner": "host"}, {"runner": "Ollama"}, {"runner": "host"},
+              {"runner": "node", "error": "x", "requeued": True}]
+    assert _trc.placement(shards) == "host 2, Ollama 1, Ollama-C 1 (1 requeued)"
+    assert _trc.placement([]) == "no chunks"

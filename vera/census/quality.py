@@ -49,11 +49,23 @@ def _text(files: Dict[str, str], name: str) -> Optional[str]:
 
 
 def evaluate_one(check: Dict[str, Any], files: Dict[str, str],
-                 answer: str = "") -> Dict[str, Any]:
+                 answer: str = "", tools: Optional[List[str]] = None) -> Dict[str, Any]:
     """One check -> {ok, label, detail}."""
     import re as _re
 
     why = str(check.get("why") or "").strip()
+
+    # The run must have CALLED a capability (12 Oct 2026, owner: the operator-family census passed goals
+    # whose "verify in a browser" was python -m http.server + curl - the operator never ran). Fails, and
+    # says so, when the run's tool list is unknown: an unmeasured check is not a pass.
+    if "tool_called" in check:
+        want = str(check["tool_called"])
+        label = why or ("called %s" % want)
+        if tools is None:
+            return {"ok": False, "label": label, "detail": "the run's tool list was not available"}
+        n = sum(1 for t in tools if str(t) == want or str(t).startswith(want + "."))
+        return {"ok": n > 0, "label": label,
+                "detail": ("%d call(s)" % n) if n else "%s was never called" % want}
 
     if "answer_contains" in check:
         want = str(check["answer_contains"])
@@ -138,7 +150,7 @@ def evaluate_one(check: Dict[str, Any], files: Dict[str, str],
 
 
 def evaluate(checks: Optional[List[Dict[str, Any]]], files: Dict[str, str],
-             answer: str = "") -> Dict[str, Any]:
+             answer: str = "", tools: Optional[List[str]] = None) -> Dict[str, Any]:
     """Score a goal. {score, passed, failed, total, results}.
 
     `score` is None when a goal declares no checks - NOT 0 and NOT 1. An
@@ -148,7 +160,7 @@ def evaluate(checks: Optional[List[Dict[str, Any]]], files: Dict[str, str],
     items = list(checks or [])
     if not items:
         return {"score": None, "passed": 0, "failed": 0, "total": 0, "results": []}
-    results = [evaluate_one(c, files or {}, answer) for c in items]
+    results = [evaluate_one(c, files or {}, answer, tools) for c in items]
     passed = sum(1 for r in results if r["ok"])
     return {"score": round(passed / float(len(results)), 3),
             "passed": passed, "failed": len(results) - passed,

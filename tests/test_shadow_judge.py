@@ -145,20 +145,20 @@ def test_knn_vote_weights_neighbours_and_skips_its_own_run():
 
 def test_the_night_job_also_queues_the_knn_judge():
     src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
-    assert '("decide.shadow.knn", "shadow judge: kNN, all questions"' in src
+    assert "SP.plan(SP.judge_bindings(_orch.CAPABILITY_REGISTRY)" in src     # B3: from the bindings (test_shadow_plan)
     assert "cap_decide_shadow_knn(question_id=q," in src
 
 
 def test_the_nightly_judge_runs_each_configured_model():
     src = open(os.path.join(ROOT, "vera", "minds", "judge.py"), encoding="utf-8").read()
     assert 'DEFAULT_MODELS = "qwen3:4b-instruct-2507-q4_K_M,qwen3:0.6b"' in src
-    assert "for model in _models()" in src and '"model": model' in src
+    assert "_models(), cap)" in src                                     # the planner asks per model (test_shadow_plan)
 
 
 def test_night_triggers_run_on_prod_only_and_mark_the_night_after_success():
     for rel in (("vera", "minds", "judge.py"), ("vera", "minds", "tool_shortlist.py")):
         src = open(os.path.join(ROOT, *rel), encoding="utf-8").read()
-        body = src[src.index("async def _night_job"):src.index("schedule(_night_job")]
+        body = src[src.index("async def _night_job"):src.index("# On the Loop Lab schedule")]
         assert 'if getattr(_orch, "_IS_WORKER", False):' in body, rel
         assert "nx=True" not in body, rel                      # the key is no longer taken before the work
         assert body.index("await r.get(KEY_NIGHT + night)") < body.index("await r.set(KEY_NIGHT + night"), rel

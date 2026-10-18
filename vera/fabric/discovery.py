@@ -171,6 +171,47 @@ def _ingest():
 def _sqlite_conn():
     return _df()._sqlite_conn()
 
+def _ingress_receipt(url: str, resp, ms: int, caller: str, purpose: str = "crawl") -> None:
+    """A fetch made here (not through web_client) still leaves its receipt in the web map (web-ingress WI-3b)."""
+    try:
+        import sys as _sys
+        ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+        if ing is None or resp is None:
+            return
+        ct = str(resp.headers.get("content-type", "") or "")
+        ing.record_response(url, status=int(resp.status_code), content_type=ct, body=resp.text or "",
+                            elapsed_ms=int(ms), caller=caller, purpose=purpose, final_url=str(resp.url),
+                            headers=dict(resp.headers))
+    except Exception as e:  # noqa: BLE001
+        log.debug("ingress receipt %s: %s", url, e)
+
+
+try:                                   # the row and query shapes, proved against the real schema in tests (D07-1)
+    from Vera.vera.fabric import discovery_store_core as _dsc
+except ImportError:                    # pragma: no cover
+    from vera.fabric import discovery_store_core as _dsc
+
+#: crawl_id -> the crawl's consolidator stop event, so a crawl that dies in its main loop (B2 was a ValueError on
+#: a malformed queue entry) still stops its in-tandem consolidator instead of leaving it scanning every 20 s.
+_CRAWL_STOPS: Dict[str, "asyncio.Event"] = {}
+
+
+def _write_fabric_page(ds_id: str, crawl_id: str, url: str, title: str, full_text: str,
+                       tags, headings, word_count) -> bool:
+    """Mirror a page into fabric_pages, the index recall, discover.query/compile and the KB read. One writer for
+    crawls (which never wrote it: B1), discover_ingest_page and scrape_page; a shorter text never overwrites a
+    longer one (B18)."""
+    try:
+        _ensure_tables()
+        conn = _sqlite_conn()
+        sql, params = _dsc.fabric_page_row(ds_id, crawl_id, url, title, full_text, tags, headings, word_count)
+        conn.execute(sql, params)
+        conn.commit()
+        return True
+    except Exception as e:  # noqa: BLE001
+        log.debug("fabric_pages %s: %s", url, e)
+        return False
+
 def _get_graph(name: str = "fabric"):
     try:
         graphs = _df().GRAPHS
@@ -2091,7 +2132,12 @@ async def _run_crawl(crawl_id: str, ds_id: str, seed_url: str, config: Dict,
         except Exception:
             pass
     async with lock:
-        return await _run_crawl_impl(crawl_id, ds_id, seed_url, config, queue, visited)
+        try:
+            return await _run_crawl_impl(crawl_id, ds_id, seed_url, config, queue, visited)
+        finally:
+            ev = _CRAWL_STOPS.pop(crawl_id, None)
+            if ev is not None:
+                ev.set()               # whatever happened inside, the consolidator and refiner stop
 
 
 async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict,
@@ -2120,6 +2166,10 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     entities_llm = bool(config.get("extract_entities_llm", True))
     reconcile_ent = bool(config.get("reconcile_entities", False))
     llm_tagging  = bool(config.get("llm_tagging", False))
+    # WI-4: the second-order pass (entities, LLM tags) runs after the crawl, on the idle queue, when the switch
+    # discovery.defer_enrichment is on and the caller did not ask for it inline (want_tiers includes "t3")
+    _defer_t3 = (_ingress_defer_on() and "t3" not in set(config.get("want_tiers") or ()))
+    _deferred_t3: List[Dict] = []
     min_relevance = float(config.get("min_relevance", 0.0) or 0.0)
     topic        = config.get("topic", "") or ""
     topic_dropoff = int(config.get("topic_dropoff", 3))
@@ -2189,6 +2239,9 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
         _pq_seq += 1
         return _pq_seq
 
+    # Every entry in the crawl's shape before the heap sees it: a surface expand passed (url, depth, dry, parent)
+    # and the main loop unpacked six (B2); mixed shapes also made heapq compare a str with a float.
+    queue[:] = _dsc.normalise_queue(queue, _next_seq)
     heapq.heapify(queue)   # safe on empty list and on already-heap lists
 
     async def _emit(stage, **kw):
@@ -2325,6 +2378,7 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
     #    duplicates (e.g. multi-type "Pikachu") WHILE the crawl runs, so the
     #    graph stays clean as data arrives rather than only at the end. ─────────
     _consol_stop = asyncio.Event()
+    _CRAWL_STOPS[crawl_id] = _consol_stop
     _consolidator = None
 
     async def _periodic_consolidate():
@@ -2418,7 +2472,9 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                     if _crawl_rotate and not _crawl_ua:
                         _ph = _browser_headers(custom_ua=_ua_for(urlparse(page_url).netloc),
                                                referer=parent_url or page_url)
+                    _t_get = time.monotonic()
                     resp = await client.get(page_url, headers=_ph) if _ph else await client.get(page_url)
+                    _ingress_receipt(page_url, resp, int((time.monotonic() - _t_get) * 1000), "fabric.discover.crawl")
                 if resp.status_code >= 400:
                     return
                 ct = resp.headers.get("content-type", "").lower()
@@ -2456,6 +2512,51 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                 except Exception as e:
                     log.debug("data ingest %s: %s", page_url, e)
                 return
+            if "text/html" not in ct and "text/plain" not in ct and _ingress_read_files_on():
+                # WI-4b: read the file (PDF, Office, EPUB, archive, catalogue...) instead of dropping it
+                try:
+                    _fdoc = await asyncio.to_thread(_read_file_doc, resp.content, ct, page_url)
+                except Exception as e:
+                    _fdoc = {}
+                    log.debug("read file %s: %s", page_url, e)
+                if _fdoc:
+                    _frid = "f_" + hashlib.sha256(f"{ds_id}:{page_url}".encode()).hexdigest()[:22]
+                    _ftags = extra_tags + ["web", "discovery", "file", str(_fdoc.get("reader") or "")]
+                    _frec = _ipc.crawl_record(
+                        _fdoc, _frid, page_url, _ftags, hostname=urlparse(page_url).netloc, depth=depth,
+                        kind=_fdoc.get("kind") or "file", reader=_fdoc.get("reader") or "",
+                        tables=(_fdoc.get("tables") or [])[:20], children=(_fdoc.get("children") or [])[:200],
+                        datasets=(_fdoc.get("datasets") or [])[:200], needs_ocr=bool(_fdoc.get("needs_ocr")),
+                        sample_only=bool(_fdoc.get("sample_only")), bytes=int(_fdoc.get("bytes") or 0),
+                        content_type=ct[:120])
+                    if not _frec.get("title"):
+                        _frec["title"] = page_url.rsplit("/", 1)[-1][:200]
+                    try:
+                        await ingest_fn(ds_id, [_frec], source="fabric_discovery", tags=_ftags)
+                        pages_fetched += 1
+                    except Exception as e:
+                        log.warning("ingest file %s: %s", page_url, e)
+                        return
+                    if _fdoc.get("text"):
+                        await asyncio.to_thread(_write_fabric_page, ds_id, crawl_id, page_url, _frec["title"],
+                                                _fdoc.get("text") or "", _ftags, [], _fdoc.get("word_count", 0))
+                    _record_edge(crawl_id, ds_id, (parent_url or ds_id), page_url,
+                                 ("LINKS_TO" if parent_url else "HAS_PAGE"), "File")
+                    _kids = _file_child_urls(_fdoc, page_url)
+                    _qn = {_normalize_url(q[2]) for q in queue}
+                    _added = 0
+                    for _ku in _kids:
+                        _kn = _normalize_url(_ku)
+                        if _kn and _kn not in visited and _kn not in _qn:
+                            heapq.heappush(queue, (-0.6, _next_seq(), _kn, depth + 1, 0, page_url))
+                            _qn.add(_kn)
+                            _added += 1
+                    await _emit("file_read", url=page_url, reader=_fdoc.get("reader"), kind=_fdoc.get("kind"),
+                                chars=len(_fdoc.get("text") or ""), children=len(_fdoc.get("children") or []),
+                                followed=_added, needs_ocr=bool(_fdoc.get("needs_ocr")),
+                                message=f"read {_fdoc.get('reader')} file {page_url[:70]} "
+                                        f"({len(_fdoc.get('text') or '')} chars, +{_added} links)")
+                    return
             if "text/html" not in ct and "text/plain" not in ct:
                 # Non-HTML, non-data file (e.g. .pdf, .json with bad content-type,
                 # .epub, etc.).  Try the parent directory — it may be an index page
@@ -2674,6 +2775,10 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
             except Exception as e:
                 log.warning("ingest page %s: %s", page_url, e)
                 return
+            # the page index too (recall, discover.query/compile, the KB): crawls never wrote it (B1)
+            await asyncio.to_thread(_write_fabric_page, ds_id, crawl_id, page_url, title, full_text,
+                                    extra_tags + ["web", "discovery"] + llm_tags,
+                                    structure.get("headings", []), structure.get("word_count", 0))
 
             await _emit("page_added", url=page_url, title=(title or "")[:80],
                         record_id=rid, depth=depth, dataset_id=ds_id,
@@ -2690,12 +2795,15 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
             if do_entities or (llm_tagging and topic):
                 ck = "code" if (structure.get("code_blocks") and
                                 len(structure.get("code_blocks", [])) >= 2) else "web"
-                try:
-                    _pq_put_nowait((full_text, title, rid, ds_id, ck, page_url,
-                                    bool(llm_tagging and topic),
-                                    bool(do_entities), bool(entities_llm)))
-                except Exception as e:
-                    log.debug("enqueue proc %s: %s", page_url, e)
+                if _defer_t3:
+                    _deferred_t3.append({"rid": rid, "ck": ck, "url": page_url})
+                else:
+                    try:
+                        _pq_put_nowait((full_text, title, rid, ds_id, ck, page_url,
+                                        bool(llm_tagging and topic),
+                                        bool(do_entities), bool(entities_llm)))
+                    except Exception as e:
+                        log.debug("enqueue proc %s: %s", page_url, e)
             if rep_dropoff > 0 and full_text:
                 pg=set(re.sub(r"[^a-z0-9]"," ",full_text[:4000].lower()).split())
                 if pg:
@@ -2944,6 +3052,15 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
         if pending:
             await asyncio.wait(pending)
 
+    # WI-4: the deferred second-order pass goes to the idle queue as one job for this crawl
+    if _deferred_t3:
+        try:
+            r = await _submit_t3(ds_id, _deferred_t3, crawl_id=crawl_id, llm_ent=bool(entities_llm),
+                                 reconcile=bool(reconcile_ent), topic=(topic if llm_tagging else ""))
+            await _emit("enrichment_deferred", pages=len(_deferred_t3), dataset_id=ds_id, job=r.get("id", ""),
+                        message=f"entities for {len(_deferred_t3)} pages queued for a quiet window")
+        except Exception as e:
+            log.warning("deferred enrichment %s: %s", ds_id, e)
     # Wait for the background 2nd-order queue to finish (it ran in tandem
     # throughout the crawl — this only awaits the small tail), then stop workers.
     try:
@@ -3162,6 +3279,155 @@ def _page_rid(dataset_id: str, url: str) -> str:
 # run the live fetch/search, then refresh the discovery entity graph.
 # ═══════════════════════════════════════════════════════════════════════════
 
+# ── WI-4: the web map's dedupe and the deferred second-order pass ──────────────
+try:
+    from Vera.vera.fabric import ingress_parse_core as _pc
+except ImportError:                    # pragma: no cover
+    from vera.fabric import ingress_parse_core as _pc
+#: the same module under a name no function shadows (_run_crawl_impl._process has a local dict called _pc, which
+#: made `_pc.crawl_record` an UnboundLocalError inside the crawl - WI-4b's file branch failed silently on prod)
+_ipc = _pc
+
+
+def _ingress_mod():
+    import sys as _sys
+    return _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+
+
+def _ingress_dedupe_on() -> bool:
+    m = _ingress_mod()
+    try:
+        return bool(m and m.dedupe_on())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ingress_read_files_on() -> bool:
+    m = _ingress_mod()
+    try:
+        return bool(m and m.read_files_on())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _read_file_doc(content: bytes, ct: str, url: str) -> Dict:
+    """A fetched file as a ParsedDoc through the ingress readers (WI-6), byte-capped per reader. Synchronous: call
+    it in a thread."""
+    try:
+        from Vera.vera.fabric import ingress_readers_core as _ir
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_readers_core as _ir
+    reader = _pc.ic.reader_for(ct, url, (content or b"")[:4096])
+    cap = _pc.ic.max_bytes_for(reader)
+    if not cap or len(content or b"") > cap:
+        d = _pc.parse_text("", url, reader=reader)
+        d.update(kind=_pc.ic.kind_of(reader), bytes=len(content or b""), sample_only=True)
+        return d
+    return _ir.read(reader, content or b"", url)
+
+
+def _file_child_urls(doc: Dict, url: str) -> List[str]:
+    try:
+        from Vera.vera.fabric import ingress_readers_core as _ir
+    except ImportError:  # pragma: no cover
+        from vera.fabric import ingress_readers_core as _ir
+    return _ir.child_urls(doc, url)
+
+
+def _ingress_defer_on() -> bool:
+    m = _ingress_mod()
+    try:
+        return bool(m and m.defer_on())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _ingress_hash(text: str) -> str:
+    try:
+        return _pc.ic.content_hash(text) if text else ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def _ingress_lookup(content_hash: str):
+    m = _ingress_mod()
+    if m is None:
+        return None
+    try:
+        return await m.lookup_record(content_hash)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _ingress_note(content_hash: str, rid: str, url: str) -> None:
+    m = _ingress_mod()
+    if m is not None:
+        try:
+            m.note_record(content_hash, rid, _pc.ic.url_key(url))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _idle_svc():
+    try:
+        from Vera.vera import idle_queue_service as s
+        return s
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _submit_t3(ds_id: str, items: List[Dict], *, crawl_id: str = "", llm_ent: bool = False,
+                     reconcile: bool = False, topic: str = "") -> Dict:
+    """One idle-queue job for a crawl's deferred entity pass; without a queue it runs now, in the background."""
+    job = _pc.t3_job(ds_id, items, crawl_id=crawl_id, llm_ent=llm_ent, reconcile=reconcile, llm_tag_topic=topic)
+    svc = _idle_svc()
+    if svc is None:
+        asyncio.create_task(_t3_handler({"payload": job["payload"]}, None))
+        return {"queued": False, "id": ""}
+    return await svc.submit(job["kind"], job["title"], dedupe_key=job["dedupe_key"], payload=job["payload"],
+                            total=job["total"])
+
+
+async def _t3_handler(job: Dict, should_continue) -> Dict:
+    """The deferred second-order pass: entities (and relations) for each record the crawl stored, one at a time,
+    yielding when the box gets busy (the queue re-queues what is left)."""
+    p = job.get("payload") or {}
+    ds_id, recs = str(p.get("dataset_id") or ""), list(p.get("records") or [])
+    done, found = int(((job.get("progress") or {}).get("done") or 0)), 0
+    svc = _idle_svc()
+    for i, rec in enumerate(recs):
+        if i < done:
+            continue
+        if should_continue is not None:
+            why = await should_continue()
+            if why:
+                return {"yielded": f"pre-empted: {why}", "items": i}
+        rid = rec.get("rid") or ""
+        try:
+            row = _sqlite_conn().execute("SELECT text FROM fabric_records WHERE id=?", (rid,)).fetchone()
+            text = row["text"] if row else ""
+            if text:
+                found += await extract_entities_for_record(text, rid, ds_id, rec.get("ck") or "web",
+                                                           llm_assist=bool(p.get("llm_ent")),
+                                                           reconcile=bool(p.get("reconcile")))
+        except Exception as e:  # noqa: BLE001
+            log.debug("t3 %s: %s", rid, e)
+        if svc is not None and job.get("id"):
+            try:
+                await svc.report_progress(job["id"], done=i + 1, total=len(recs))
+            except Exception:  # noqa: BLE001
+                pass
+    return {"ok": True, "items": len(recs), "entities": found}
+
+
+try:
+    _svc_t3 = _idle_svc()
+    if _svc_t3 is not None and not _svc_t3.has_handler(_pc.T3_KIND):
+        _svc_t3.register_handler(_pc.T3_KIND, _t3_handler)
+except Exception as _e:  # noqa: BLE001
+    log.debug("t3 handler not registered: %s", _e)
+
+
 async def discover_ingest_page(
     url: str, *, dataset_id: str = "", html: str = "", text: str = "",
     title: str = "", structure: Optional[Dict] = None,
@@ -3197,7 +3463,9 @@ async def discover_ingest_page(
         try:
             async with httpx.AsyncClient(timeout=timeout, follow_redirects=True,
                                           headers=_HTTP_HEADERS) as c:
+                _t_get = time.monotonic()
                 resp = await c.get(url)
+            _ingress_receipt(url, resp, int((time.monotonic() - _t_get) * 1000), "fabric.discover.ingest_page", "page")
             if resp.status_code >= 400:
                 return {"error": f"HTTP {resp.status_code}", "url": url, "dataset_id": ds_id}
             html = resp.text
@@ -3223,8 +3491,20 @@ async def discover_ingest_page(
     extra_tags = list(tags or []) + ["web", "discovery"]
 
     rid = _page_rid(ds_id, url)
+    # WI-4 dedupe (switch ingress.dedupe): the same record with the same content is not ingested again; content
+    # already held under another record is linked to it and skips the entity pass
+    _chash = _ingress_hash(full_text)
+    _canonical = ""
+    if _chash and _ingress_dedupe_on():
+        _dec = _pc.dedupe_decision(_chash, await _ingress_lookup(_chash), ds_id, rid)
+        if _dec["action"] == "skip":
+            return {"ok": True, "record_id": rid, "dataset_id": ds_id, "url": url, "title": title,
+                    "chars": len(full_text), "entities": 0, "full_fetch": bool(full_fetch), "deduped": "same"}
+        if _dec["action"] == "link":
+            _canonical, extract_entities = _dec["canonical"], False
     record = {
         "id": rid, "text": full_text, "title": title, "url": url,
+        "content_hash": _chash, "canonical_record": _canonical,
         "hostname": urlparse(url).netloc,
         "headings": headings[:20],
         "links": [{"url": ln.get("url", ""), "anchor": ln.get("anchor", "")[:80]}
@@ -3237,21 +3517,11 @@ async def discover_ingest_page(
     except Exception as e:
         log.warning("discover_ingest_page ingest %s: %s", url, e)
         return {"error": f"ingest: {e}", "url": url, "dataset_id": ds_id}
+    if _chash and not _canonical:
+        _ingress_note(_chash, rid, url)         # the map learns which record holds this content
 
     # Mirror into fabric_pages so discover_recall / gather_discovery can find it
-    try:
-        conn = _sqlite_conn()
-        page_id = "page:" + hashlib.sha1(url.encode()).hexdigest()[:16]
-        conn.execute(
-            "INSERT OR REPLACE INTO fabric_pages "
-            "(id, dataset_id, crawl_id, url, title, full_text, tags, headings, "
-            " word_count, created_at) VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
-            (page_id, ds_id, crawl_id, url, title, full_text,
-             ",".join(extra_tags[:20]), json.dumps(headings[:40]), word_count)
-        )
-        conn.commit()
-    except Exception as e:
-        log.debug("discover_ingest_page fabric_pages %s: %s", url, e)
+    await asyncio.to_thread(_write_fabric_page, ds_id, crawl_id, url, title, full_text, extra_tags, headings, word_count)
 
     try:
         _record_edge(crawl_id, ds_id, (parent_url or ds_id), url,
@@ -3284,11 +3554,31 @@ async def discover_recall(query: str = "", urls: Optional[List[str]] = None,
     in a worker thread: web.search calls this beside every live search, and on the
     event loop it stalled every other request while it ran (RF-02).
     """
-    return await asyncio.to_thread(_discover_recall_sync, query, urls, dataset_id, limit)
+    indexed = await _recall_from_index(query, dataset_id, limit) if query else None
+    return await asyncio.to_thread(_discover_recall_sync, query, urls, dataset_id, limit, indexed)
+
+
+async def _recall_from_index(query: str, dataset_id: str, limit: int) -> Optional[List[Dict]]:
+    """Pages from the Postgres page search index (four-minds FM-7.1) when the switch `discovery.recall_index` is
+    `pg` and the index answers; None keeps the LIKE path (the default, and every failure)."""
+    try:
+        eff = (CAPABILITY_REGISTRY.get("minds.effective") or {}).get("func")
+        mode = str((((await eff()) or {}).get("modes") or {}).get("discovery.recall_index") or "off") if eff else "off"
+        if mode != "pg":
+            return None
+        fn = (CAPABILITY_REGISTRY.get("discovery.recall_index.search") or {}).get("func")
+        if not fn:
+            return None
+        res = await fn(query=query, dataset_id=dataset_id, limit=limit)
+        return list(res.get("pages") or []) if isinstance(res, dict) and res.get("ok") else None
+    except Exception as e:
+        log.debug("discover_recall index: %s", e)
+        return None
 
 
 def _discover_recall_sync(query: str = "", urls: Optional[List[str]] = None,
-                          dataset_id: str = "", limit: int = 20) -> Dict:
+                          dataset_id: str = "", limit: int = 20,
+                          indexed: Optional[List[Dict]] = None) -> Dict:
     """Pull already-processed discovery data (pages + entities) from the fabric.
 
     Used by the web.* caps to return what the fabric already knows about a query
@@ -3316,7 +3606,15 @@ def _discover_recall_sync(query: str = "", urls: Optional[List[str]] = None,
                 if d.get("url") in seen:
                     continue
                 seen.add(d.get("url")); pages.append(d)
-        if query and len(pages) < limit:
+        if indexed is not None:
+            # ranked by the Postgres page index (FM-7.1); the URL hits above keep their place first
+            for d in indexed:
+                if len(pages) >= limit:
+                    break
+                if d.get("url") in seen:
+                    continue
+                seen.add(d.get("url")); pages.append(d)
+        elif query and len(pages) < limit:
             terms = [t for t in query.lower().split() if len(t) >= 3][:6] or [query[:40].lower()]
             clauses, params = [], []
             for t in terms:
@@ -4023,14 +4321,33 @@ async def cap_api_list(dataset_id: str = "", include_endpoints: bool = True,
     description="Sample an API endpoint and MAP its response shape: locate the "
                 "record array, infer a flat field schema, return a small sample, "
                 "and suggest a jq_path so it can be wired up as a pull source. "
-                "Input: surface_id (str) OR url (str), headers (JSON str='{}'), "
-                "sample (int=5). "
+                "Input: surface_id (str) OR url (str) OR connection (str, a Platforms API "
+                "connection id) + path (str), headers (JSON str='{}'), sample (int=5). "
+                "Through a connection its credential is used and never shown; the answer's "
+                "add_source holds the fabric.sources.add arguments for it. "
                 "Output: {ok, url, root_type, count, suggested_jq, "
-                "schema:[{field,type,example}], records:[...]}.",
+                "schema:[{field,type,example}], records:[...], add_source}.",
 )
 async def cap_api_map(surface_id: str = "", url: str = "", headers: str = "{}",
-                      sample: int = 5, trace_id=None) -> Dict:
+                      sample: int = 5, connection: str = "", path: str = "", trace_id=None) -> Dict:
     _ensure_tables()
+    if connection.strip():
+        try:
+            from Vera.vera.platforms import platform_access as _pa
+        except Exception:
+            from vera.platforms import platform_access as _pa
+        got = await _pa.connection_get(CAPABILITY_REGISTRY, connection.strip(), path, accept="application/json")
+        if got.get("error"):
+            return {"error": got["error"], "url": got.get("shown_url", "")}
+        r = got["response"]
+        if r.status_code >= 400:
+            return {"error": f"HTTP {r.status_code}", "url": got["shown_url"]}
+        try:
+            data = r.json()
+        except ValueError:
+            return {"error": "the answer is not JSON", "url": got["shown_url"]}
+        return _map_answer(data, got["shown_url"], sample,
+                           {"connection": connection.strip(), "path": path, "source_type": "api"})
     if surface_id and not url:
         row = _sqlite_conn().execute(
             "SELECT url FROM fabric_surfaces WHERE id=?", (surface_id,)).fetchone()
@@ -4052,7 +4369,12 @@ async def cap_api_map(surface_id: str = "", url: str = "", headers: str = "{}",
             data = r.json()
     except Exception as e:
         return {"error": f"fetch failed: {e}"}
+    return _map_answer(data, url, sample, {"url": url, "source_type": "api",
+                                           **({"headers": json.dumps(hdrs)} if hdrs else {})})
 
+
+def _map_answer(data: Any, url: str, sample: int, add: Dict[str, Any]) -> Dict:
+    """fabric.api.map's answer for a fetched JSON document."""
     # Locate the record array and the jq_path that reaches it.
     suggested_jq, arr = "", None
     if isinstance(data, list):
@@ -4067,6 +4389,14 @@ async def cap_api_map(surface_id: str = "", url: str = "", headers: str = "{}",
                 if isinstance(v, list) and v:
                     arr, suggested_jq = v, k
                     break
+        if arr is None:
+            # one level down: {"response": {"results": [...]}} (Guardian), {"data": {"items": [...]}}
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    k2 = next((k2 for k2, v2 in v.items() if isinstance(v2, list) and v2), "")
+                    if k2:
+                        arr, suggested_jq = v[k2], f"{k}.{k2}"
+                        break
         if arr is None:
             arr = [data]
     else:
@@ -4088,7 +4418,8 @@ async def cap_api_map(surface_id: str = "", url: str = "", headers: str = "{}",
     return {"ok": True, "url": url, "root_type": root_type,
             "count": len(arr or []), "suggested_jq": suggested_jq,
             "schema": list(schema_map.values()),
-            "records": (arr or [])[:max(1, min(int(sample or 5), 25))]}
+            "records": (arr or [])[:max(1, min(int(sample or 5), 25))],
+            "add_source": {**add, "jq_path": suggested_jq}}
 
 
 @capability(
@@ -4749,6 +5080,13 @@ async def cap_discover_delete_scan(crawl_id: str, delete_dataset: bool = False,
     except Exception as e:
         return {"error": str(e)}
     ds_id = (row["dataset_id"] if row else "") or ""
+    # the graph nodes this scan wrote, by id - read before the rows go (B5)
+    try:
+        _surface_ids = [r[0] for r in conn.execute(_dsc.SCAN_SURFACE_IDS_SQL, (crawl_id,)).fetchall()]
+        _subtable_ids = [r[0] for r in conn.execute(_dsc.SCAN_SUBTABLE_IDS_SQL, (crawl_id,)).fetchall()]
+    except Exception as e:
+        log.debug("delete_scan ids: %s", e)
+        _surface_ids, _subtable_ids = [], []
     deleted = {}
     for table, col in (("fabric_surfaces", "crawl_id"),
                        ("fabric_subtables", "crawl_id"),
@@ -4766,10 +5104,7 @@ async def cap_discover_delete_scan(crawl_id: str, delete_dataset: bool = False,
     # map doesn't keep showing a deleted scan (surfaces / subtable child nodes).
     graph = _get_graph()
     if graph and getattr(graph, "available", False):
-        for cy, p in (
-            ("MATCH (s:Surface {crawl_id:$cid}) DETACH DELETE s", {"cid": crawl_id}),
-            ("MATCH (s:Subtable {crawl_id:$cid}) DETACH DELETE s", {"cid": crawl_id}),
-        ):
+        for cy, p in _dsc.purge_cypher(_surface_ids, _subtable_ids):
             try:
                 await graph.query(cy, p)
             except Exception as e:
@@ -5376,16 +5711,8 @@ async def _llm_steer_crawl(topic: str, ds_id: str, n_angles: int = 6,
     """
     searched = searched or set()
     try:
-        rows = _sqlite_conn().execute(
-            "SELECT title, description FROM fabric_records "
-            "WHERE dataset_id=? AND title IS NOT NULL "
-            "ORDER BY ROWID DESC LIMIT 25",
-            (ds_id,),
-        ).fetchall()
-        summaries = [
-            f"{r['title']}: {(r['description'] or '')[:120]}".strip()
-            for r in rows if r["title"]
-        ]
+        rows = _sqlite_conn().execute(_dsc.RECENT_RECORDS_SQL, (ds_id, 25)).fetchall()   # text + data JSON (B3)
+        summaries = _dsc.record_summaries(rows)
     except Exception:
         summaries = []
     try:
@@ -6059,21 +6386,11 @@ async def cap_discover_topic(
     # If overwriting, wipe the existing dataset so the graph starts clean
     if overwrite and ds_id:
         try:
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_records WHERE dataset_id=?", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_discovery_edges WHERE parent_dataset=?", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_surfaces WHERE parent_dataset=?", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_entity_mentions WHERE dataset_id=?", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_entities WHERE id IN "
-                "(SELECT entity_id FROM fabric_entity_mentions WHERE dataset_id=?)", (ds_id,))
-            _sqlite_conn().execute(
-                "DELETE FROM fabric_discovery_frontier WHERE dataset_id=?", (ds_id,))
-            _sqlite_conn().commit()
-            log.info("topic overwrite: cleared dataset %s", ds_id)
+            # one connection, one commit: each statement used to open its own and the commit went to a
+            # seventh, so nothing was ever deleted (DATA-01)
+            _ensure_tables()
+            cleared = await asyncio.to_thread(_dsc.overwrite_dataset, _sqlite_conn(), ds_id)
+            log.info("topic overwrite: cleared dataset %s: %s", ds_id, cleared)
         except Exception as e:
             log.warning("overwrite clear %s: %s", ds_id, e)
 
@@ -7735,7 +8052,9 @@ async def cap_discover_scrape_page(
     try:
         async with _httpx.AsyncClient(timeout=20, follow_redirects=True,
                                        headers=_HTTP_HEADERS) as client:
+            _t_get = time.monotonic()
             resp = await client.get(url)
+        _ingress_receipt(url, resp, int((time.monotonic() - _t_get) * 1000), "fabric.discover.scrape_page", "page")
         if resp.status_code >= 400:
             return {"error": f"HTTP {resp.status_code}", "url": url}
         ct = resp.headers.get("content-type", "").lower()
@@ -7757,25 +8076,8 @@ async def cap_discover_scrape_page(
     if not ds_id:
         ds_id = _dataset_for_url(url) or ""
     if ds_id:
-        try:
-            _ensure_tables()
-            conn = _sqlite_conn()
-            import hashlib as _hashlib
-            page_id = "page:" + _hashlib.sha1(url.encode()).hexdigest()[:16]
-            tags_str = ",".join(tags[:20]) if tags else ""
-            headings_json = json.dumps(headings[:40])
-            conn.execute(
-                "INSERT OR REPLACE INTO fabric_pages "
-                "(id, dataset_id, crawl_id, url, title, full_text, tags, headings, "
-                " word_count, created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,datetime('now'))",
-                (page_id, ds_id, "", url, title, full_text, tags_str,
-                 headings_json, word_count)
-            )
-            conn.commit()
-            stored = True
-        except Exception as e:
-            log.debug("scrape_page store: %s", e)
+        stored = await asyncio.to_thread(_write_fabric_page, ds_id, "", url, title, full_text, tags or [],
+                                         headings, word_count)
 
     return {
         "ok": True,
@@ -8616,11 +8918,8 @@ async def cap_discover_compile(
 
     if not topic:
         try:
-            r = conn.execute(
-                "SELECT label FROM fabric_crawl_history WHERE dataset_id=? LIMIT 1",
-                (ds_id,)
-            ).fetchone()
-            topic = (r["label"] if r else "") or ds_id.replace("_", " ")
+            r = conn.execute(_dsc.TOPIC_FROM_FRONTIER_SQL, (ds_id,)).fetchone()     # (B4: no crawl_history table)
+            topic = _dsc.topic_from_frontier(r["config"] if r else "", ds_id)
         except Exception:
             topic = ds_id.replace("_", " ")
 
@@ -8722,17 +9021,13 @@ async def cap_discover_compile(
 
     stored_id = ""
     try:
-        import uuid as _uuid
-        stored_id = str(_uuid.uuid4())
-        conn.execute(
-            "INSERT OR REPLACE INTO fabric_records "
-            "(id, dataset_id, url, kind, title, data, created_at) "
-            "VALUES (?,?,?,?,?,?,datetime('now'))",
-            (stored_id, ds_id, "compiled:" + ds_id, "document", doc_title, document)
-        )
+        sql, params = _dsc.compiled_record_row(ds_id, doc_title, document, pages_used=len(pages))   # real columns (B4)
+        conn.execute(sql, params)
         conn.commit()
+        stored_id = params[0]
     except Exception as e:
-        log.debug("compile store: %s", e)
+        log.warning("compile store %s: %s", ds_id, e)
+        stored_id = ""                                     # never claim a store that did not happen
 
     await _emit("done", message="Document compiled",
                 title=doc_title, pages_used=len(pages), sections=len(doc_sections))
@@ -8793,8 +9088,7 @@ async def cap_discover_entity_extract(
         "fabric.entity_graph.extract",
         dataset_id=ds_id,
         use_llm=use_llm,
-        limit=max_records,
-        batch_size=worker_batch,
+        limit=max_records,                                 # extract takes no batch_size: it raised every call (B17)
         persist=True,
         trace_id=trace_id,
     ) or {}

@@ -183,7 +183,7 @@ def prestep_decision(sid: str, step_id: Any, gaps: List[Any], known_steps: int, 
 
 
 def intent_shadow_decision(sid: str, rec: Dict[str, Any], *, minds_digest: str = "default",
-                           origin: str = "user") -> Optional[Dict[str, Any]]:
+                           origin: str = "user", for_id: str = "") -> Optional[Dict[str, Any]]:
     """The zero-shot model's intent for the same goal, recorded as a SHADOW of the live
     loop.intent decision: same question, same state (heuristic + llm), same run, its own
     confidence and margin, and whether it agrees. A second, independent labeller of the same
@@ -206,7 +206,10 @@ def intent_shadow_decision(sid: str, rec: Dict[str, Any], *, minds_digest: str =
         p=_num(rec.get("confidence")), margin=_num(rec.get("margin")),
         minds_digest=minds_digest or "default", run_id=_short(sid, 80), session_id=_short(sid, 80),
         detail={"used": _short(rec.get("used"), 20), "agrees_used": rec.get("agrees_used"),
-                "agrees_llm": rec.get("agrees_llm"), "scores": scores})
+                "agrees_llm": rec.get("agrees_llm"), "scores": scores,
+                # the live decision it shadows - every other shadow carries it; without it the report, the
+                # calibration and the night scorer cannot pair the two (decide.calibration, 2026-10-10)
+                **({"for": _short(for_id, 80)} if for_id else {})})
 
 
 def tier_outcome(decision: Dict[str, Any], steps_run: Optional[int], fast_path: Optional[bool],

@@ -203,8 +203,14 @@ class RunLedger:
         self._send(d, inputs)
 
     def tier(self, tier: str, info: Dict[str, Any], model: str = "",
-             inputs: Optional[Dict[str, Any]] = None) -> None:
+             inputs: Optional[Dict[str, Any]] = None, by: str = "",
+             student: Optional[Dict[str, Any]] = None) -> None:
+        """The tier, and a System 1 student's answer to the same goal as its shadow (compute-roles, 18 Oct
+        2026: the loop.tier hook - kNN 0.979 vs live 0.873 on the first matrix night)."""
+        n = len(self.decisions)
         self._decide(LD.tier_decision, tier, info or {}, model, inputs)
+        if len(self.decisions) > n:
+            self._student_shadow(self.decisions[-1], by or ("llm" if (info or {}).get("llm") else "rule"), student)
 
     def intent(self, intent: str, info: Dict[str, Any], model: str = "",
                inputs: Optional[Dict[str, Any]] = None) -> None:
@@ -212,8 +218,11 @@ class RunLedger:
 
     def intent_shadow(self, rec: Dict[str, Any], inputs: Optional[Dict[str, Any]] = None) -> None:
         """The zero-shot intent beside the live one (mode=shadow); never judged by run_outcomes."""
+        live = next((x for x in reversed(self.decisions)
+                     if x.get("question_id") == "loop.intent" and x.get("mode") != "shadow"), None)
         try:
-            d = LD.intent_shadow_decision(self.sid, rec or {}, minds_digest=self._digest_now(), origin=self.origin)
+            d = LD.intent_shadow_decision(self.sid, rec or {}, minds_digest=self._digest_now(), origin=self.origin,
+                                          for_id=(live or {}).get("decision_id") or "")
         except Exception as e:
             log.debug("loop ledger intent shadow: %s", e)
             return

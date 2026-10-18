@@ -121,12 +121,48 @@ def _seal(v: str) -> str:
 
 
 def _open(v: str) -> str:
+    if v and _pa().is_ref(v):                     # in the Platforms credential store (data-connections plan)
+        return _pa().open_value_sync(_orch.CAPABILITY_REGISTRY, v)
     if v and vsecrets is not None:
         try:
             return vsecrets.open_secret(v)
         except Exception:
             return v
     return v
+
+
+def _pa():
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p             # tests in a worktree: the newer copy
+    return _p
+
+
+async def _adopt(dry_run: bool) -> List[Dict[str, str]]:
+    """Move integration API tokens still sealed here into the Platforms store (platform.secrets.adopt)."""
+    r = _redis()
+    moved: List[Dict[str, str]] = []
+    for rec in await _all():
+        api = rec.get("api") or {}
+        if not _pa().needs_adopting(api.get("auth")):
+            continue
+        key = _pa().key_for("integration", rec.get("id"), "api")
+        moved.append({"record": rec.get("id"), "field": "api.auth", "key": key})
+        if not dry_run and r:
+            new = await _pa().adopt_value(_orch.CAPABILITY_REGISTRY, key, api["auth"],
+                                          f"Integration {rec.get('label') or rec.get('id')} API token")
+            if new != api["auth"]:
+                api["auth"] = new
+                rec["api"] = api
+                await r.hset(KEY_INTEGRATIONS, rec["id"], json.dumps(rec))
+    return moved
+
+
+_pa().register_adopter("integrations", _adopt)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -201,13 +237,25 @@ async def _audit(event: str, rec: Dict, **extra) -> None:
     contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "integrations"}, "draw": {"columns": ["label", "kind", "host", "port", "scheme", "source", "sensitive", "identity_verified"]}}},
     http_method="GET", http_path="/integrations/list", http_tags=["integration"],
     memory="off", silent=True,
-    description="List all integrations (API secrets redacted). Output: "
-                "{integrations:[{id,label,kind,base_url,source,access,sensitive,"
-                "identity_verified,in_mesh,mcp_id,ssh_host_id}], count}.",
+    description="List all integrations (API secrets redacted), and the API connections kept on the Platforms "
+                "page. Output: {integrations:[{id,label,kind,base_url,source,access,sensitive,"
+                "identity_verified,in_mesh,mcp_id,ssh_host_id}], count, platform_connections:[{id,label,"
+                "base_url,configured,enabled}]}.",
 )
 async def cap_list(trace_id=None) -> Dict:
     recs = [_redact(r) for r in await _all()]
-    return {"integrations": recs, "count": len(recs)}
+    # the hub is a view over Platforms too (data-connections plan, owner 2026-10-11): the API connections kept
+    # there, without their keys
+    conns: List[Dict] = []
+    pl = _cap_raw("platform.list")
+    if pl:
+        try:
+            conns = [{"id": p["id"], "label": p.get("label", p["id"]), "base_url": (p.get("fields") or {}).get("base_url", ""),
+                      "configured": bool(p.get("configured")), "enabled": p.get("enabled", True) is not False}
+                     for p in ((await pl()) or {}).get("platforms") or [] if p.get("kind") == "api"]
+        except Exception:
+            conns = []
+    return {"integrations": recs, "count": len(recs), "platform_connections": conns}
 
 
 @capability(
@@ -276,8 +324,10 @@ async def cap_save(id: str = "", label: str = "", kind: str = "generic",
     if api_header:
         api["auth_header"] = api_header
     if api_token:
+        ref = await _pa().vault(_orch.CAPABILITY_REGISTRY, _pa().key_for("integration", rec.get("id"), "api"),
+                                api_token, f"Integration {rec.get('label') or rec.get('id')} API token")
         try:
-            api["auth"] = _seal(api_token)
+            api["auth"] = ref or _seal(api_token)
         except RuntimeError as e:
             return {"error": str(e)}
     api.setdefault("auth_scheme",
@@ -1132,20 +1182,24 @@ async def integration_effect_enforcement_readiness(trace_id=None):
     description="Inspect bounded payload-free aggregates of observe-only external-effect "
                 "decisions. Returns admission, execution and replay-suppression counts plus "
                 "reason codes for one isolated family: integration_api, telegram, email, "
-                "commerce, or infrastructure. "
+                "commerce, or infrastructure. Optional source filters to a bounded "
+                "async-context attribution such as intel. "
                 "It cannot enforce, execute, retry, open secrets, or retain payloads.",
 )
 async def integration_effect_shadow_evidence(
-        limit: int = 50, family: str = "integration_api", trace_id=None):
+        limit: int = 50, family: str = "integration_api", source: str = "", trace_id=None):
     try:
-        result = default_external_effect_shadow_evidence(family=family).summary(limit=limit)
+        evidence = default_external_effect_shadow_evidence(family=family)
+        result = (evidence.summary(limit=limit, source=source) if source
+                  else evidence.summary(limit=limit))
         result["family"] = family
         return result
     except (TypeError, ValueError) as exc:
-        return {"schema": "vera.external-effect-shadow-evidence/v1", "error": str(exc),
+        return {"schema": "vera.external-effect-shadow-evidence/v2", "error": str(exc),
                 "totals": {"observations": 0, "would_admit": 0,
                            "would_execute": 0, "would_suppress": 0},
                 "classifications": {}, "reasons_in_window": {}, "recent": [],
+                "sources": {}, "source_filter": source,
                 "family": family, "window": {"requested": limit, "returned": 0},
                 "enforcement": "observe_only", "executes": False,
                 "retries": False, "retains_payload": False}

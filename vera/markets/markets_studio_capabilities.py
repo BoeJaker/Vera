@@ -3573,9 +3573,47 @@ if _CAP_AVAILABLE and HAS_NUMPY:
 
     # ── Macro / on-chain layer datasets ──────────────────────────────────────
 
-    def _fred_rows_sync(series: str) -> List[list]:
-        txt = _http_text_sync(
-            f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}")
+    async def _conn_text(conn: str, path: str) -> Optional[str]:
+        """A macro read through its Platforms API connection (data-connections plan: its rate limit, its switch,
+        its visibility); None when there is no such connection, so the direct read below runs as before."""
+        try:
+            try:
+                from Vera.vera.platforms import platform_access as _pa
+            except ImportError:
+                from vera.platforms import platform_access as _pa
+            got = await _pa.connection_get(CAPABILITY_REGISTRY, conn, path, timeout=30)
+        except Exception as e:  # noqa: BLE001
+            log.debug("markets: connection %s: %s", conn, e)
+            return None
+        if got.get("error"):
+            if "no connection" in got["error"] or "not loaded" in got["error"]:
+                return None
+            raise RuntimeError(f"{conn}: {got['error']}")
+        r = got["response"]
+        r.raise_for_status()
+        return r.text
+
+    async def _macro_prefetch(mid: str) -> Dict[str, str]:
+        """The raw answers a macro series needs, read through its connection ahead of the sync parser."""
+        m = _MACRO_BY_ID.get(mid) or {}
+        out: Dict[str, str] = {}
+        series = m.get("derived_from") or mid
+        src = (_MACRO_BY_ID.get(series) or m).get("source")
+        key = series.split(":", 1)[1] if ":" in series else series
+        if src == "fred":
+            txt = await _conn_text("fred", f"/graph/fredgraph.csv?id={key}")
+        elif src == "chain":
+            txt = await _conn_text("blockchain_info", f"/charts/{key}?timespan=all&format=json&sampled=true")
+        else:
+            txt = None
+        if txt is not None:
+            out[series] = txt
+        return out
+
+    def _fred_rows_sync(series: str, txt: Optional[str] = None) -> List[list]:
+        if txt is None:
+            txt = _http_text_sync(
+                f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}")
         rows: List[list] = []
         for line in txt.splitlines()[1:]:
             parts = line.strip().split(",")
@@ -3590,9 +3628,12 @@ if _CAP_AVAILABLE and HAS_NUMPY:
             rows.append([ts, v, v, v, v, 0.0])
         return rows
 
-    def _chain_rows_sync(chart: str) -> List[list]:
-        j = _http_json_sync(f"https://api.blockchain.info/charts/{chart}",
-                            {"timespan": "all", "format": "json", "sampled": "true"})
+    def _chain_rows_sync(chart: str, txt: Optional[str] = None) -> List[list]:
+        if txt is not None:
+            j = json.loads(txt)
+        else:
+            j = _http_json_sync(f"https://api.blockchain.info/charts/{chart}",
+                                {"timespan": "all", "format": "json", "sampled": "true"})
         rows: List[list] = []
         for p in (j or {}).get("values") or []:
             try:
@@ -3602,12 +3643,13 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                 continue
         return rows
 
-    def _macro_rows_sync(mid: str) -> List[list]:
+    def _macro_rows_sync(mid: str, fetched: Optional[Dict[str, str]] = None) -> List[list]:
+        fetched = fetched or {}
         m = _MACRO_BY_ID.get(mid)
         if not m:
             raise ValueError(f"unknown macro series '{mid}'")
         if m.get("derive") == "yoy":
-            base = _fred_rows_sync(m["derived_from"])
+            base = _fred_rows_sync(m["derived_from"].split(":", 1)[-1], fetched.get(m["derived_from"]))
             out = []
             for i, row in enumerate(base):
                 target = row[0] - 365 * 86400_000
@@ -3623,9 +3665,9 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                     out.append([row[0], v, v, v, v, 0.0])
             return out
         if m["source"] == "fred":
-            return _fred_rows_sync(mid.split(":", 1)[1])
+            return _fred_rows_sync(mid.split(":", 1)[1], fetched.get(mid))
         if m["source"] == "chain":
-            return _chain_rows_sync(mid.split(":", 1)[1])
+            return _chain_rows_sync(mid.split(":", 1)[1], fetched.get(mid))
         raise ValueError(f"unknown macro source for '{mid}'")
 
     async def _macro_ingest_timeframe(job: dict, symbol: str, tf: str,
@@ -3639,7 +3681,8 @@ if _CAP_AVAILABLE and HAS_NUMPY:
                                    "1d", ["macro"])
         last_ms = await loop.run_in_executor(None, md._last_bar_ms_sync, ds)
         try:
-            rows = await loop.run_in_executor(None, _macro_rows_sync, symbol)
+            fetched = await _macro_prefetch(symbol)
+            rows = await loop.run_in_executor(None, _macro_rows_sync, symbol, fetched)
         except Exception as e:
             job["errors"][tf] = str(e)[:300]
             return 0

@@ -1126,7 +1126,7 @@ def _host_ml_pins() -> Dict[str, str]:
     model a node trains comes back as a pickle the host must load."""
     from importlib import metadata as _md
     vers = {}
-    for pkg in ("torch", "scikit-learn"):
+    for pkg in ("torch", "scikit-learn", "onnxruntime"):
         try:
             vers[pkg] = _md.version(pkg)
         except Exception:

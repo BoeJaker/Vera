@@ -54,6 +54,27 @@ def _redis():
     return getattr(_orch, "REDIS", None)
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+async def _adopt(dry_run: bool):
+    """Move Prometheus credentials still sealed here into the Platforms store (platform.secrets.adopt)."""
+    return await _pa().adopt_json_hash(_orch.CAPABILITY_REGISTRY, _redis(), KEY_PROM, ('password',), "prometheus", dry_run, "Prometheus")
+
+
+_pa().register_adopter("prometheus", _adopt)
+
+
 def _cap_raw(name: str):
     c = _orch.CAPABILITY_REGISTRY.get(name)
     return c.get("raw") if c else None
@@ -69,6 +90,8 @@ def _seal(v: str) -> str:
 
 
 def _open(v: str) -> str:
+    if v and _pa().is_ref(v):
+        return _pa().open_value_sync(_orch.CAPABILITY_REGISTRY, v)
     if v and _HAS_SECRETS:
         try:
             return vsecrets.open_secret(v)
@@ -135,6 +158,7 @@ async def _get_prom(prom_id: str, opened: bool = False) -> Optional[Dict]:
     rec = json.loads(raw)
     if opened:
         rec = dict(rec)
+        await _pa().prime(_orch.CAPABILITY_REGISTRY, rec.get("password"))
         rec["password"] = _open(rec.get("password", ""))
     return rec
 
@@ -174,7 +198,8 @@ async def cap_prom_save(label: str = "", url: str = "", user: str = "",
     rec["label"] = label or rec.get("label") or rec.get("url", pid)
     rec["user"] = user if user else rec.get("user", "")
     if password:
-        rec["password"] = _seal(password)
+        rec["password"] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("prometheus", pid, "password"), password,
+                                          f"Prometheus {rec.get('label') or pid} password")
     rec.setdefault("password", "")
     rec["verify_tls"] = bool(verify_tls)
     rec["default"] = bool(make_default) or rec.get("default", False)

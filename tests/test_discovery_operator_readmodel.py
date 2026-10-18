@@ -28,10 +28,17 @@ def comparison(secret="secret query payload"):
 
 
 def test_benchmark_projection_is_payload_free_and_operator_useful():
-    value = project_benchmark_comparison(comparison())
+    value = project_benchmark_comparison(
+        comparison(), evidence_scope="frozen_fixture_conformance",
+        providers_invoked=False)
     assert value["passed"] is True
     assert value["observation_count"] == 2
     assert value["summaries"]["candidate"]["quality"]["ndcg"] == 0.8
+    assert value["evidence_scope"] == "frozen_fixture_conformance"
+    assert value["production_ready"] is False
+    assert value["authority_changed"] is False
+    assert value["providers_invoked"] is False
+    assert value["control_authority"] is False
     assert "secret query payload" not in json.dumps(value)
 
 
@@ -42,7 +49,8 @@ def test_ledger_is_bounded_newest_first_and_returns_copies():
         value["fixture_id"] = f"fixture-{index}"
         ledger.record_benchmark(value)
     snap = ledger.snapshot()
-    assert snap["counts"] == {"routes": 0, "benchmarks": 2}
+    assert snap["counts"] == {"routes": 0, "benchmarks": 2,
+                              "research_shadows": 0}
     assert [value["fixture_id"] for value in snap["benchmarks"]] == [
         "fixture-2", "fixture-1"]
     snap["benchmarks"][0]["fixture_id"] = "forged"
@@ -89,5 +97,9 @@ def test_operator_panel_exposes_read_only_discovery_evidence():
     assert 'id="discEvList"' in panel
     assert "/operator/discovery/evidence?limit=10" in panel
     assert "this view cannot run discovery" in panel
+    assert "Research shadows" in panel
+    assert "consumer routes unchanged" in panel
+    assert "worker evidence" in panel
+    assert "not production ready" in panel
     assert '"operator.discovery.evidence"' in capabilities
     assert '"operator.discovery.benchmark.record"' in capabilities

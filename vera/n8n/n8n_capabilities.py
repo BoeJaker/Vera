@@ -49,6 +49,7 @@ from Vera.vera.capability_orchestration import (
 from Vera.vera.mcp.mcp_client import MCPClient, MCPError, probe as mcp_probe
 from Vera.vera.mcp import mcp_client_core as mcc
 from Vera.vera.n8n import n8n_core as core
+from Vera.vera.n8n.n8n_effects import observe_n8n_workflow_effect
 from Vera.vera.security import secrets as vsecrets
 
 log = logging.getLogger("vera.n8n")
@@ -97,11 +98,53 @@ async def _load_config(open_secrets: bool = True) -> Dict[str, Any]:
         for f in _SECRET_FIELDS:
             if cfg.get(f):
                 try:
-                    cfg[f] = vsecrets.open_secret(cfg[f])
+                    cfg[f] = await _pa().open_any(_orch.CAPABILITY_REGISTRY, cfg[f])
                 except Exception:
                     log.warning("n8n: could not unseal %s", f)
                     cfg[f] = ""
+        # nothing set here: the Platforms target "n8n" holds the same settings (data-connections plan) - use
+        # it for whatever this config leaves empty
+        if not cfg.get("base_url") or any(not cfg.get(f) for f in _SECRET_FIELDS):
+            tf = await _pa().target_fields(_orch.CAPABILITY_REGISTRY, "n8n")
+            for f in ("base_url",) + tuple(_SECRET_FIELDS):
+                if not cfg.get(f) and tf.get(f):
+                    cfg[f] = tf[f].rstrip("/") if f == "base_url" else tf[f]
     return cfg
+
+
+def _pa():
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p             # tests in a worktree: the newer copy
+    return _p
+
+
+async def _adopt(dry_run: bool) -> List[Dict[str, str]]:
+    """Move this module's credentials still sealed here into the Platforms store (platform.secrets.adopt)."""
+    r = _redis()
+    if not r:
+        return []
+    raw = await r.hgetall(KEY_CONFIG)
+    vals = {(k.decode() if isinstance(k, bytes) else k): (v.decode() if isinstance(v, bytes) else v)
+             for k, v in (raw or {}).items()}
+    moved: List[Dict[str, str]] = []
+    for f in _SECRET_FIELDS:
+        if not _pa().needs_adopting(vals.get(f)):
+            continue
+        key = _pa().key_for("n8n", f)
+        moved.append({"record": "n8n", "field": f, "key": key})
+        if not dry_run:
+            new = await _pa().adopt_value(_orch.CAPABILITY_REGISTRY, key, vals[f], "n8n " + f)
+            if new != vals[f]:
+                await r.hset(KEY_CONFIG, f, new)
+    return moved
+
+
+_pa().register_adopter("n8n", _adopt)
 
 
 def _redact(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -170,8 +213,9 @@ async def cap_config_set(base_url: str = "", api_key: str = "", mcp_path: str = 
 
     stored = dict(cur)
     for f in _SECRET_FIELDS:
-        if stored.get(f):
-            stored[f] = vsecrets.seal(stored[f])
+        if stored.get(f):          # into the Platforms credential store; sealed here only without it
+            stored[f] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("n8n", f), stored[f],
+                                         "n8n " + f)
     await r.hset(KEY_CONFIG, mapping={
         k: (json.dumps(v) if isinstance(v, (dict, list))
             else ("1" if v is True else "0" if v is False else str(v)))
@@ -255,16 +299,27 @@ async def cap_workflow_get(id: str = "", full: bool = False, trace_id=None):
 @capability(
     "n8n.workflow.create", http_method="POST", http_path="/n8n/workflow/create",
     http_tags=["n8n"], memory="on",
+    redact_args=["name", "nodes", "connections", "settings",
+                 "idempotency_key", "approval_receipt_ref"], redact_result=True,
     description="Create an n8n workflow from a node graph. Input: name (str!), "
                 "nodes (list!), connections (dict), settings (dict), "
-                "activate (bool). Output: {ok, id, workflow}.",
+                "activate (bool), optional idempotency_key, "
+                "approval_receipt_ref and retry policy evidence. Control "
+                "references are not sent to n8n. Output includes one shadow "
+                "per provider mutation in effect_shadows.",
 )
 async def cap_workflow_create(name: str = "", nodes: Optional[List] = None,
                               connections: Optional[Dict] = None,
                               settings: Optional[Dict] = None,
-                              activate: bool = False, trace_id=None):
+                              activate: bool = False, idempotency_key: str = "",
+                              approval_receipt_ref: str = "", retry: bool = False,
+                              trace_id=None):
     if not name or not nodes:
         return {"error": "name and nodes are required"}
+    shadows = [observe_n8n_workflow_effect(
+        operation="create", workflow_ref=name,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)]
     try:
         body = {"name": name, "nodes": nodes,
                 "connections": connections or {},
@@ -273,46 +328,74 @@ async def cap_workflow_create(name: str = "", nodes: Optional[List] = None,
         wf = wf.get("data", wf)
         wid = wf.get("id", "")
         if activate and wid:
+            shadows.append(observe_n8n_workflow_effect(
+                operation="activate", workflow_ref=wid,
+                idempotency_key=idempotency_key,
+                approval_receipt_ref=approval_receipt_ref, retry=retry))
             await _api("POST", f"workflows/{wid}/activate")
             wf["active"] = True
         await emit_event({"type": "n8n.workflow.created", "id": wid, "name": name})
         cfg = await _load_config()
         return {"ok": True, "id": wid,
-                "workflow": core.workflow_summary(wf, cfg.get("base_url", ""))}
+                "workflow": core.workflow_summary(wf, cfg.get("base_url", "")),
+                "effect_shadows": shadows}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "effect_shadows": shadows}
 
 
 @capability(
     "n8n.workflow.activate", http_method="POST", http_path="/n8n/workflow/activate",
     http_tags=["n8n"], memory="on",
+    redact_args=["id", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
     description="Activate or deactivate an n8n workflow — an inactive workflow's "
                 "production webhook/MCP URL returns 404. Input: id (str!), "
-                "active (bool=True). Output: {ok, id, active}.",
+                "active (bool=True), optional idempotency_key, "
+                "approval_receipt_ref and retry policy evidence. Control "
+                "references are not sent to n8n. Output includes effect_shadow.",
 )
-async def cap_workflow_activate(id: str = "", active: bool = True, trace_id=None):
+async def cap_workflow_activate(id: str = "", active: bool = True,
+                                idempotency_key: str = "",
+                                approval_receipt_ref: str = "",
+                                retry: bool = False, trace_id=None):
     if not id:
         return {"error": "id required"}
+    shadow = observe_n8n_workflow_effect(
+        operation="activate" if active else "deactivate", workflow_ref=id,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     try:
         await _api("POST", f"workflows/{id}/{'activate' if active else 'deactivate'}")
-        return {"ok": True, "id": id, "active": bool(active)}
+        return {"ok": True, "id": id, "active": bool(active),
+                "effect_shadow": shadow}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "effect_shadow": shadow}
 
 
 @capability(
     "n8n.workflow.delete", http_method="POST", http_path="/n8n/workflow/delete",
     http_tags=["n8n"], memory="on",
-    description="Delete an n8n workflow. Input: id (str!). Output: {ok, id}.",
+    redact_args=["id", "idempotency_key", "approval_receipt_ref"],
+    redact_result=True,
+    description="Delete an n8n workflow. Input: id (str!), optional "
+                "idempotency_key, approval_receipt_ref and retry policy "
+                "evidence. Control references are not sent to n8n. Output "
+                "includes effect_shadow.",
 )
-async def cap_workflow_delete(id: str = "", trace_id=None):
+async def cap_workflow_delete(id: str = "", idempotency_key: str = "",
+                              approval_receipt_ref: str = "",
+                              retry: bool = False, trace_id=None):
     if not id:
         return {"error": "id required"}
+    shadow = observe_n8n_workflow_effect(
+        operation="delete", workflow_ref=id,
+        idempotency_key=idempotency_key,
+        approval_receipt_ref=approval_receipt_ref, retry=retry)
     try:
         await _api("DELETE", f"workflows/{id}")
-        return {"ok": True, "id": id}
+        return {"ok": True, "id": id, "effect_shadow": shadow}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "effect_shadow": shadow}
 
 
 @capability(

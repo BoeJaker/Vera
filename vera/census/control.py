@@ -76,8 +76,26 @@ def write_json(path: str, data: Dict[str, Any]) -> bool:
 
 # ── control ──────────────────────────────────────────────────────────────────
 
+def hold_expired(control: Dict[str, Any], now: Optional[float] = None) -> bool:
+    """A pause/yield written with `until` (census.control.set hours=...) ends by itself at that
+    time (compute-roles, 11 Oct 2026): a manual yield used to block every later census slot until
+    someone lifted it by hand. A drop never expires."""
+    c = control or {}
+    until = str(c.get("until") or "").strip()
+    if not until or c.get("drop") or not c.get("pause"):
+        return False
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.fromisoformat(until.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return (now if now is not None else time.time()) >= dt.timestamp()
+    except (TypeError, ValueError):
+        return False
+
+
 def control_state(control: Dict[str, Any]) -> str:
-    """'drop' outranks 'pause' outranks 'yield' outranks 'run'.
+    """'drop' outranks 'pause' outranks 'yield' outranks 'run'. A hold past its `until` is 'run'.
 
     A yield IS a pause (`pause: true`) with `after_goal: true`; every reader
     that only asks "is a pause on file" (the restart plan, the startup lift,
@@ -86,7 +104,7 @@ def control_state(control: Dict[str, Any]) -> str:
     c = control or {}
     if c.get("drop"):
         return "drop"
-    if c.get("pause"):
+    if c.get("pause") and not hold_expired(c):
         return "yield" if c.get("after_goal") else "pause"
     return "run"
 
@@ -96,7 +114,7 @@ ACTIONS = ("pause", "resume", "drop", "yield")
 
 def make_control(action: str, reason: str = "", by: str = "",
                  resume_on_start: bool = False,
-                 restore: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                 restore: Optional[Dict[str, Any]] = None, until: str = "") -> Dict[str, Any]:
     """The file to write for one of pause / resume / drop / yield.
 
     `resume_on_start` marks a pause written by a restart: the census module
@@ -118,6 +136,8 @@ def make_control(action: str, reason: str = "", by: str = "",
         "resume_on_start": bool(resume_on_start) if a == "pause" else False,
         "ts": _now_iso(),
     }
+    if a in ("pause", "yield") and str(until or "").strip():
+        d["until"] = str(until).strip()[:40]
     if a == "pause" and resume_on_start and restore and restore.get("after_goal"):
         d["restore"] = {"after_goal": True,
                         "reason": str(restore.get("reason") or "")[:200],
@@ -161,7 +181,11 @@ def active_view(active: Dict[str, Any], *, now: Optional[float] = None) -> Dict[
     updated = str(a.get("updated_at") or "")
     age = None
     try:
-        t = time.mktime(time.strptime(updated, "%Y-%m-%dT%H:%M:%SZ")) - time.timezone
+        # UTC text -> epoch with timegm. mktime read it as LOCAL time: on prod (Europe/London,
+        # timezone 0, BST in summer) every age came out an hour too old, so a census whose active file
+        # was 1 h old read as stale/dead to /health and the release hold (DEEP-21 D21-3, 11 Oct 2026).
+        import calendar
+        t = calendar.timegm(time.strptime(updated, "%Y-%m-%dT%H:%M:%SZ"))
         age = round((now if now is not None else time.time()) - t)
     except Exception:
         pass

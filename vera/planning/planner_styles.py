@@ -1004,8 +1004,33 @@ def unresolved_findings(results: Sequence[Dict[str, Any]], unmet: Optional[Seque
     return out[:limit]
 
 
+def grounding_block(evidence_text: str, grounding: Optional[Dict[str, Any]] = None,
+                    rules_text: str = "") -> str:
+    """The run's dated evidence (info.seek items) and the deterministic grounding floor
+    (grounding_rules.check: bad [n] citations, figures no source contains), for the checker."""
+    parts: List[str] = []
+    if rules_text.strip():
+        parts.append("GROUNDING RULES:\n" + rules_text.strip())
+    if evidence_text.strip():
+        parts.append("THE RUN'S DATED EVIDENCE (cite as [n]):\n" + evidence_text.strip())
+    g = grounding or {}
+    if g and not g.get("ok", True):
+        lines = []
+        if g.get("bad_citations"):
+            lines.append("- citations to no source: %s" % ", ".join("[%s]" % n for n in g["bad_citations"]))
+        if g.get("uncited_numbers"):
+            lines.append("- figures/dates no source contains: %s"
+                         % ", ".join(map(str, list(g["uncited_numbers"])[:12])))
+        for sent in list(g.get("unsupported") or [])[:6]:
+            lines.append("  in: %s" % sent)
+        if lines:
+            parts.append("GROUNDING CHECK (deterministic - each is a claim to fix or remove):\n"
+                         + "\n".join(lines))
+    return "\n\n".join(parts)
+
+
 def answer_check_prompt(goal: str, files: Sequence[Any], answer: str,
-                        findings: Sequence[str] = ()) -> str:
+                        findings: Sequence[str] = (), grounding_text: str = "") -> str:
     """The checker's prompt: the goal, the run's record (files + unresolved findings),
     then the answer to check."""
     parts: List[str] = []
@@ -1022,6 +1047,8 @@ def answer_check_prompt(goal: str, files: Sequence[Any], answer: str,
     body = "\n\n".join(parts) or "(the run wrote no file and left no finding)"
     if len(body) > ANSWER_CHECK_EVIDENCE_CHARS:
         body = body[:ANSWER_CHECK_EVIDENCE_CHARS - len(CLIP_MARK)] + CLIP_MARK
+    if grounding_text.strip():                    # bounded by its own builder (evidence_ledger_core)
+        body += "\n\n" + grounding_text.strip()
     a = str(answer or "")
     return ("GOAL: %s\n\nTHE RUN'S RECORD:\n%s\n\nTHE FINAL ANSWER TO CHECK:\n%s%s"
             % (goal, body, a[:ANSWER_CHECK_ANSWER_CHARS],

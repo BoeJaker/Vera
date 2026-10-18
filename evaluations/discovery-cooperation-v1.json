@@ -1,0 +1,50 @@
+{
+  "schema": "vera.discovery-cooperation-corpus/v1",
+  "revision": 1,
+  "policy": {"synthetic_only": true, "network_calls": false, "model_calls": false, "capability_execution": false, "writes": false, "production_decision": false},
+  "repetitions": 3,
+  "dataset": {
+    "id": "discovery-cooperation-fixture",
+    "created_at": "2026-10-18T09:00:00Z",
+    "records": [{"record_id": "synonym-a", "revision": "r1"}, {"record_id": "synonym-b", "revision": "r1"}, {"record_id": "multi-a", "revision": "r2"}, {"record_id": "multi-b", "revision": "r3"}, {"record_id": "diverse-a", "revision": "r1"}, {"record_id": "diverse-b", "revision": "r1"}],
+    "record_schema": {"record_id": "string", "revision": "string"},
+    "provenance": {"source": "synthetic frozen discovery cooperation fixture", "payloads": false}
+  },
+  "variants": [
+    {"id": "native_research", "revision": "research-native/v1", "configuration": "native web citation selection", "ablations": ["without-portable-cooperation"]},
+    {"id": "portable_cooperative", "revision": "discovery-cooperative/v1", "configuration": "portable web and snapshot context cooperation", "ablations": []}
+  ],
+  "cases": [
+    {
+      "id": "synonym-recall", "query": "portable model execution on small edge nodes",
+      "relevant_sources": ["native-web", "fabric-snapshot"],
+      "relevant_authorities": [{"identity": "record:synonym-a", "revision": "r1"}, {"identity": "record:synonym-b", "revision": "r1"}],
+      "required_claims": ["edge execution is portable", "a verified package revision exists"],
+      "variants": {
+        "native_research": {"discovered_sources": ["native-web"], "selected_sources": ["native-web"], "hits": [{"identity": "record:synonym-a", "revision": "r1"}, {"identity": "record:irrelevant-a", "revision": "r1"}], "supported_claims": ["edge execution is portable"], "scout_ms": [25, 26, 24], "first_useful_context_ms": [92, 96, 94], "end_to_end_ms": [122, 126, 124], "byte_count": 1800, "cost_units": 2, "cpu_ms": 18},
+        "portable_cooperative": {"discovered_sources": ["native-web", "fabric-snapshot"], "selected_sources": ["native-web", "fabric-snapshot"], "hits": [{"identity": "record:synonym-a", "revision": "r1"}, {"identity": "record:synonym-b", "revision": "r1"}], "supported_claims": ["edge execution is portable", "a verified package revision exists"], "scout_ms": [18, 19, 17], "first_useful_context_ms": [68, 71, 69], "end_to_end_ms": [91, 94, 92], "byte_count": 1700, "cost_units": 2, "cpu_ms": 22}
+      }
+    },
+    {
+      "id": "multi-source-support", "query": "current deployment state and the evidence behind it",
+      "relevant_sources": ["native-web", "fabric-snapshot"],
+      "relevant_authorities": [{"identity": "record:multi-a", "revision": "r2"}, {"identity": "record:multi-b", "revision": "r3"}],
+      "required_claims": ["deployment is observed", "evidence is revision bound"],
+      "variants": {
+        "native_research": {"discovered_sources": ["native-web"], "selected_sources": ["native-web"], "hits": [{"identity": "record:multi-a", "revision": "r2"}, {"identity": "record:irrelevant-b", "revision": "r1"}], "supported_claims": ["deployment is observed"], "scout_ms": [23, 25, 24], "first_useful_context_ms": [88, 91, 89], "end_to_end_ms": [119, 122, 120], "byte_count": 1600, "cost_units": 2, "cpu_ms": 17},
+        "portable_cooperative": {"discovered_sources": ["native-web", "fabric-snapshot"], "selected_sources": ["native-web", "fabric-snapshot"], "hits": [{"identity": "record:multi-a", "revision": "r2"}, {"identity": "record:multi-b", "revision": "r3"}], "supported_claims": ["deployment is observed", "evidence is revision bound"], "scout_ms": [17, 18, 16], "first_useful_context_ms": [65, 67, 66], "end_to_end_ms": [89, 91, 90], "byte_count": 1550, "cost_units": 2, "cpu_ms": 21}
+      }
+    },
+    {
+      "id": "duplicate-resistance", "query": "independent evidence for distributed language processing",
+      "relevant_sources": ["native-web", "fabric-snapshot"],
+      "relevant_authorities": [{"identity": "record:diverse-a", "revision": "r1"}, {"identity": "record:diverse-b", "revision": "r1"}],
+      "required_claims": ["processing is distributed", "sources are independent"],
+      "variants": {
+        "native_research": {"discovered_sources": ["native-web"], "selected_sources": ["native-web"], "hits": [{"identity": "record:diverse-a", "revision": "r1"}, {"identity": "record:diverse-a", "revision": "r1"}], "supported_claims": ["processing is distributed"], "scout_ms": [24, 25, 23], "first_useful_context_ms": [90, 93, 91], "end_to_end_ms": [121, 124, 122], "byte_count": 1750, "cost_units": 2, "cpu_ms": 18},
+        "portable_cooperative": {"discovered_sources": ["native-web", "fabric-snapshot"], "selected_sources": ["native-web", "fabric-snapshot"], "hits": [{"identity": "record:diverse-a", "revision": "r1"}, {"identity": "record:diverse-b", "revision": "r1"}], "supported_claims": ["processing is distributed", "sources are independent"], "scout_ms": [17, 18, 17], "first_useful_context_ms": [66, 69, 67], "end_to_end_ms": [90, 93, 91], "byte_count": 1650, "cost_units": 2, "cpu_ms": 22}
+      }
+    }
+  ],
+  "expected": {"passed": true, "blockers": []}
+}

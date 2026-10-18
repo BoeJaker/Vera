@@ -72,6 +72,13 @@ _SERVES_EMBED = _bind(
     uses="384-d sentence embeddings (MiniLM) for similarity, clustering, kNN and decision cards.",
     limits="the memory store's vectors (those are nomic 768-d via the embedding service).", **_NLP)
 
+_SERVES_NLI = _bind(
+    "nli", io_in="pair", io_out="scores", labels=["entailment", "neutral", "contradiction"],
+    uses="Check whether a passage supports, contradicts or says nothing about a statement (NLI) - "
+         "e.g. a claim in an answer against the evidence it cites - with no LLM call.",
+    limits="long passages (cut at ~320 tokens); world knowledge the passage does not state; it "
+           "over-flags paraphrase, so treat 'not entailed' as 'check this', not as wrong.", **_NLP)
+
 #: cap name -> its serves= (one binding or a list)
 NLP_SERVES = {
     "nlp.rerank": _SERVES_RERANK,
@@ -79,6 +86,7 @@ NLP_SERVES = {
     "nlp.ner": _SERVES_NER,
     "nlp.zeroshot": _SERVES_ZEROSHOT,
     "nlp.qa": _SERVES_QA,
+    "nlp.nli": _SERVES_NLI,
     "nlp.langid": _SERVES_LANGID,
     "nlp.embed": _SERVES_EMBED,
 }

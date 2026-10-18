@@ -31,9 +31,10 @@ except ImportError:  # pragma: no cover - a worktree test imports the package as
 import logging.handlers  # noqa: E402  (submodule; `import logging` alone won't load it)
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .capability_enforcement import PolicyEnforcementDenied, enforcement_projection
+from . import money_guard_core as _money_guard
 # Pure context-budget decisions — window vs prompt vs output vs retained prefix.
 # Imports nothing from Vera, so it is safe this early and cannot cycle. Pinned by
 # tests/test_ctx_policy.py, which is the point: these were inline and untestable.
@@ -1119,9 +1120,13 @@ ROLE_PROFILES_USER: Dict[str, dict] = {}
 
 try:
     from Vera.vera.role_profile_merge import inherit_declared_fields as _inherit_declared_fields
+    from Vera.vera.role_profile_merge import follow_model_ref as _follow_model_ref
+    from Vera.vera.role_profile_merge import follow_model_refs as _follow_model_refs
 except Exception:                                     # pragma: no cover
     try:
         from vera.role_profile_merge import inherit_declared_fields as _inherit_declared_fields
+        from vera.role_profile_merge import follow_model_ref as _follow_model_ref
+        from vera.role_profile_merge import follow_model_refs as _follow_model_refs
     except Exception:
         def _inherit_declared_fields(declared: dict, supplied: dict) -> dict:
             return dict(supplied or {})               # degrade to previous behaviour
@@ -1170,21 +1175,30 @@ def _effective_role_profiles() -> Dict[str, dict]:
         user = ROLE_PROFILES_USER.get(name) or {}
         for role, r in (user.get("roles") or {}).items():
             merged["roles"][role] = r
+        merged["roles"] = _follow_model_refs(merged["roles"])     # "@executor" models (12 Oct 2026)
         out[name] = merged
     for name, prof in ROLE_PROFILES_USER.items():
         if name not in out:
             out[name] = {"name": name, "label": prof.get("label", name),
                          "owner": prof.get("owner", "user"),
-                         "roles": dict(prof.get("roles") or {})}
+                         "roles": _follow_model_refs(dict(prof.get("roles") or {}))}
     return out
 
 
-def resolve_role_rule(profile: str, role: str) -> Optional[dict]:
-    """Effective rule for a profile role: USER override, else DECLARED."""
+def _resolve_role_rule_raw(profile: str, role: str) -> Optional[dict]:
     user = (ROLE_PROFILES_USER.get(profile) or {}).get("roles") or {}
     if role in user:
         return user[role]
     return ((ROLE_PROFILES_DECLARED.get(profile) or {}).get("roles") or {}).get(role)
+
+
+def resolve_role_rule(profile: str, role: str) -> Optional[dict]:
+    """Effective rule for a profile role: USER override, else DECLARED; a model written as
+    "@<role>" is that role's model in the same profile (role_profile_merge.follow_model_ref)."""
+    rule = _resolve_role_rule_raw(profile, role)
+    if rule is None:
+        return None
+    return _follow_model_ref(rule, lambda r: _resolve_role_rule_raw(profile, r))
 
 
 def _merge_rule_over_base(rule: Optional[dict], base: dict,
@@ -2489,6 +2503,38 @@ async def media_slot(service: str = ""):
 # When each node was last handed work. Only used as the FINAL tie-break in
 # _pick_best, so it spreads otherwise-identical candidates round-robin.
 _LAST_PICKED: Dict[str, float] = {}
+# GPU residency, refreshed from /api/ps before routing (gpu_slot_core): iid -> (read_at, [models]).
+_GPU_RESIDENT: Dict[str, Tuple[float, List[str]]] = {}
+# GPU model loads that hung (gpu_slot_core.load_suspect): iid -> {model, at, ts, elapsed_s, resident,
+# advice}. Shown on /health as gpu_load_suspect; cleared when the model is seen resident.
+_GPU_LOAD_SUSPECT: Dict[str, Dict[str, Any]] = {}
+try:
+    from Vera.vera import gpu_slot_core as _gpu_slot_core
+except Exception:                                     # pragma: no cover
+    from vera import gpu_slot_core as _gpu_slot_core
+
+
+async def _refresh_gpu_resident() -> None:
+    """Read each online GPU node's resident models (/api/ps) when the cached reading is
+    older than gpu_slot_core.RESIDENT_TTL_S / 2. Cheap (one GET, 3 s cap); never raises."""
+    now = time.time()
+    for iid, inst in list(OLLAMA_INSTANCES.items()):
+        if not (inst.get("has_gpu") and inst.get("url") and inst.get("status") == "online"):
+            continue
+        at, _ = _GPU_RESIDENT.get(iid) or (0.0, [])
+        if now - at < _gpu_slot_core.RESIDENT_TTL_S / 2:
+            continue
+        try:
+            async with httpx.AsyncClient(verify=_SSL_CTX, timeout=3) as c:
+                r = await c.get(f"{inst['url']}/api/ps")
+            if r.status_code == 200:
+                _GPU_RESIDENT[iid] = (time.time(), [str(m.get("name") or "")
+                                                    for m in (r.json() or {}).get("models") or []])
+                _sus = _GPU_LOAD_SUSPECT.get(iid)
+                if _sus and _model_tag_core.is_served(str(_sus.get("model") or ""), _GPU_RESIDENT[iid][1]):
+                    _GPU_LOAD_SUSPECT.pop(iid, None)          # the model loaded: no longer wedged
+        except Exception as e:
+            log.debug("gpu residency read failed for %s: %s", iid, e)
 
 
 def _embed_node_id() -> str:
@@ -2832,6 +2878,21 @@ def pick_instance(prefer_gpu: bool = False, instance_id: Optional[str] = None,
                 _note(f"ctx escalation: ~{ctx_need} tokens exceeds GPU window {_lim} — "
                       f"routing to CPU ({_cpu_ids}) to keep the GPU free and avoid a spill")
 
+    # ── GPU slot guard (gpu_slot_core, 11 Oct 2026): a model that is NOT resident on a busy
+    #    GPU would wait inside Ollama for the resident model to go idle - which a loop never
+    #    lets happen (300 s timeouts on every coder call). Send it to a CPU node that has it.
+    if model and has_model:
+        _cpu_alt = any(not i.get("has_gpu") for i in has_model.values())
+        for _g in [iid for iid, i in has_model.items() if i.get("has_gpu")]:
+            _at, _res = _GPU_RESIDENT.get(_g) or (0.0, [])
+            _skip, _why = _gpu_slot_core.skip_gpu(
+                model=model, model_resident=_model_tag_core.is_served(model, _res),
+                resident=_res, resident_at=_at, cpu_alternative=_cpu_alt, now=time.time(),
+                busy=_gpu_slot_core.is_busy((has_model[_g] or {}).get("in_use") or 0,
+                                            _LAST_PICKED.get(_g, 0.0), time.time()))
+            if _skip:
+                has_model = {iid: i for iid, i in has_model.items() if iid != _g}
+                _note(_why)
     if prefer_gpu:
         # Best: GPU node that has the model
         gpu_with_model = {iid:i for iid,i in has_model.items() if i["has_gpu"]}
@@ -3859,6 +3920,7 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         _prompt_need = prompt_need_tokens(prompt, system, eff_model or OLLAMA_MODEL, eff_job_type)
     except Exception:
         _prompt_need = 0
+    await _refresh_gpu_resident()       # residency for the GPU slot guard (gpu_slot_core)
     chosen = pick_instance(prefer_gpu=prefer_gpu, instance_id=instance_id,
                            model=eff_model, job_type=eff_job_type,
                            rule_override=(eff_rule if (cap_rule or bg_demoted) else None),
@@ -4412,6 +4474,21 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
         log.error("ollama_generate [%s] FAILED after %.2fs inst=%s caller=%s:%s err=%s",
                   req_id, elapsed, chosen,
                   caller["caller_file"], caller["caller_func"], err_str)
+        try:
+            _at_w, _res_w = _GPU_RESIDENT.get(chosen) or (0.0, [])
+            if _gpu_slot_core.load_suspect(
+                    has_gpu=bool((OLLAMA_INSTANCES.get(chosen) or {}).get("has_gpu")),
+                    timed_out="timed out" in err_str.lower() or "timeout" in err_str.lower(),
+                    model=str(eff_model or ""), resident=_res_w,
+                    model_resident=_model_tag_core.is_served(str(eff_model or ""), _res_w)):
+                _GPU_LOAD_SUSPECT[chosen] = {"model": eff_model, "at": now_iso(), "ts": time.time(),
+                                             "elapsed_s": elapsed, "resident": list(_res_w)[:3],
+                                             "advice": _gpu_slot_core.WEDGE_ADVICE}
+                log.warning("GPU LOAD SUSPECT on %s: loading '%s' timed out after %.0fs while %s stayed "
+                            "resident - %s", chosen, eff_model, elapsed, ", ".join(_res_w[:3]),
+                            _gpu_slot_core.WEDGE_ADVICE)
+        except Exception:
+            pass
         # Don't flip a node offline on a single error — a slow generation that
         # exceeds the HTTP timeout (common for large-context jobs on CPU nodes)
         # would otherwise cascade the whole node out of rotation and starve
@@ -4592,6 +4669,29 @@ async def ollama_generate(prompt: str, system: str = "", json_mode: bool = False
     finally:
         inst["in_use"]=max(0,inst["in_use"]-1)
         _inflight_release(inst, _req_slot_id)
+
+
+# Every short answer to the call-site matrix (four-minds FM-2 / FM-12, switch decide.site_capture, off by default): a
+# generation that answers with a label is a decision whoever made it. Wrapped here, right after the definition, so
+# every later `from ... import ollama_generate` gets this name; the tap is a sys.modules lookup and a non-awaited task,
+# and only when the switch is on and the answer is short.
+import functools as _site_ft
+_ollama_generate_core = ollama_generate
+
+
+@_site_ft.wraps(_ollama_generate_core)
+async def ollama_generate(*args, **kwargs) -> str:
+    out = await _ollama_generate_core(*args, **kwargs)
+    try:
+        st = sys.modules.get("site_tap") or sys.modules.get("Vera.vera.minds.site_tap")
+        if st is not None and st.MODE.get("on") and isinstance(out, str) and 0 < len(out.strip()) <= st.MAX_ANSWER:
+            prompt = args[0] if args else kwargs.get("prompt", "")
+            system = args[1] if len(args) > 1 else kwargs.get("system", "")
+            st.tap(_ollama_caller_info(), str(kwargs.get("request_stage") or ""), str(kwargs.get("job_type") or ""),
+                   str(system or ""), str(prompt or ""), out, str(kwargs.get("model") or ""))
+    except Exception:                    # the tap must never touch the answer
+        pass
+    return out
 
 
 def _ollama_log_append(entry: dict):
@@ -6184,6 +6284,10 @@ async def worker_loop(worker_id: str):
     await _refresh_vetted()
     _classes = (await _worker_classes()) if _IS_WORKER else None
     _host_id = os.environ.get("VERA_WORKER_HOST_ID", "") if _IS_WORKER else ""
+    # compute jobs this node worker runs side by side (MW-7); 0 on the host
+    _compute_slots = ((int(os.environ.get("VERA_COMPUTE_SLOTS") or 0)
+                       or _compute_core.compute_slots_default(os.cpu_count() or 2))
+                      if _IS_WORKER else 0)
     _streams = _placement.streams_to_read(is_worker=_IS_WORKER, classes=_classes,
                                           host_id=_host_id)
     _advertised = [c for c in CAPABILITY_REGISTRY
@@ -6212,6 +6316,9 @@ async def worker_loop(worker_id: str):
         "current_task": "",
         "task_started": "",
         "ollama_instance": "",
+        # compute jobs it runs side by side, and how many run now (admission)
+        "compute_slots": _compute_slots,
+        "compute_running": 0,
     }
     WORKER_REGISTRY[worker_id] = dict(reg)
     try:
@@ -6269,6 +6376,7 @@ async def worker_loop(worker_id: str):
                 "current_task": str(w.get("current_task", "")),
                 "task_started": str(w.get("task_started", "")),
                 "ollama_instance": str(w.get("ollama_instance", "")),
+                "compute_running": str(w.get("compute_running", 0)),
             })
             await REDIS.expire(f"vera:workers:{worker_id}", 120)
         except Exception:
@@ -6350,9 +6458,14 @@ async def worker_loop(worker_id: str):
                              worker_id, cap_name, _why, _target)
                     continue
 
-                WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"
-                WORKER_REGISTRY[worker_id]["current_task"] = cap_name
-                WORKER_REGISTRY[worker_id]["task_started"] = now_iso()
+                # a compute job runs beside the others (MW-7): the worker stays
+                # free to read the next one; anything else runs one at a time
+                _detach = cap is not None and _compute_core.run_detached(
+                    cap_name, _IS_WORKER, _compute_slots)
+                if not _detach:
+                    WORKER_REGISTRY[worker_id]["status"] = f"running:{cap_name}"
+                    WORKER_REGISTRY[worker_id]["current_task"] = cap_name
+                    WORKER_REGISTRY[worker_id]["task_started"] = now_iso()
                 await emit_event({
                     "type": "worker.start", "worker": worker_id,
                     "capability": cap_name, "task": task_id,
@@ -6404,67 +6517,86 @@ async def worker_loop(worker_id: str):
                         await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
                         await REDIS.xdel(_stream, msg_id)
                 else:
-                    # Run the cap as a separate task so cluster.job.stop can
-                    # cancel it cooperatively (cancel() interrupts at next await).
-                    # A record carrying `bg` runs inside BACKGROUND_LLM: every
-                    # Ollama call the cap makes is then background work — demoted
-                    # off the GPU while a person is active — exactly as the dream
-                    # scheduler's calls are. The set() lands in the new task's own
-                    # context, so nothing leaks into the worker loop.
-                    async def _run_cap(_bg=bg_label):
-                        if _bg:
-                            BACKGROUND_LLM.set(_bg)
-                        return await cap["raw"](**payload, trace_id=trace_id)
-                    inner = asyncio.ensure_future(_run_cap())
-                    RUNNING_TASKS[task_id] = inner
+                    async def _execute(cap=cap, payload=payload, trace_id=trace_id, task_id=task_id,
+                                       reply_to=reply_to, _stream=_stream, msg_id=msg_id,
+                                       cap_name=cap_name, bg_label=bg_label):
+                        # Run the cap as a separate task so cluster.job.stop can
+                        # cancel it cooperatively (cancel() interrupts at next await).
+                        # A record carrying `bg` runs inside BACKGROUND_LLM: every
+                        # Ollama call the cap makes is then background work — demoted
+                        # off the GPU while a person is active — exactly as the dream
+                        # scheduler's calls are. The set() lands in the new task's own
+                        # context, so nothing leaks into the worker loop.
+                        async def _run_cap(_bg=bg_label):
+                            if _bg:
+                                BACKGROUND_LLM.set(_bg)
+                            return await cap["raw"](**payload, trace_id=trace_id)
+                        inner = asyncio.ensure_future(_run_cap())
+                        RUNNING_TASKS[task_id] = inner
 
-                    # The registration's TTL is refreshed once per loop turn,
-                    # and a turn blocks here for the whole task - so a task
-                    # longer than 120 s made a busy worker look dead, and orphan
-                    # recovery (which skips live consumers) could run it twice.
-                    async def _heartbeat(_wid=worker_id):
-                        while True:
-                            await asyncio.sleep(30)
+                        # The registration's TTL is refreshed once per loop turn,
+                        # and a turn blocks here for the whole task - so a task
+                        # longer than 120 s made a busy worker look dead, and orphan
+                        # recovery (which skips live consumers) could run it twice.
+                        async def _heartbeat(_wid=worker_id):
+                            while True:
+                                await asyncio.sleep(30)
+                                try:
+                                    await REDIS.expire(f"vera:workers:{_wid}", 120)
+                                except Exception:
+                                    pass
+                        _hb = asyncio.create_task(_heartbeat())
+                        _act = {"t0": time.time(), "result": None, "error": ""}
+                        try:
+                            result = await inner
+                            _act["result"] = result
+                            await _post_result(reply_to, {
+                                "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
+                            }, maxlen=5000)
+                            WORKER_REGISTRY[worker_id]["tasks_done"] += 1
+                            await emit_event({"type": "worker.done", "worker": worker_id, "task": task_id})
+                        except asyncio.CancelledError:
+                            # Intentional cancel of the inner task — not the worker loop.
+                            _act["error"] = "cancelled"
+                            await _post_result(reply_to, {
+                                "id": task_id, "error": "cancelled", "trace_id": trace_id,
+                            })
+                            await emit_event({
+                                "type": "worker.cancelled", "worker": worker_id, "task": task_id,
+                            })
+                        except Exception as e:
+                            _act["error"] = str(e)[:300]
+                            await _post_result(reply_to, {
+                                "id": task_id, "error": str(e), "trace_id": trace_id,
+                            })
+                            WORKER_REGISTRY[worker_id]["tasks_failed"] += 1
+                            await emit_event({
+                                "type": "worker.error", "worker": worker_id,
+                                "task": task_id, "error": str(e),
+                            })
+                        finally:
+                            _hb.cancel()
+                            RUNNING_TASKS.pop(task_id, None)
+                            await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
+                            await REDIS.xdel(_stream, msg_id)
+                            asyncio.ensure_future(_worker_activity(
+                                worker_id, cap_name, cap, payload, trace_id, bg_label, _act))
+
+                    if _detach:
+                        WORKER_REGISTRY[worker_id]["compute_running"] = \
+                            WORKER_REGISTRY[worker_id].get("compute_running", 0) + 1
+
+                        async def _detached(_ex=_execute, _wid=worker_id):
                             try:
-                                await REDIS.expire(f"vera:workers:{_wid}", 120)
-                            except Exception:
-                                pass
-                    _hb = asyncio.create_task(_heartbeat())
-                    _act = {"t0": time.time(), "result": None, "error": ""}
-                    try:
-                        result = await inner
-                        _act["result"] = result
-                        await _post_result(reply_to, {
-                            "id": task_id, "result": json.dumps(result), "trace_id": trace_id,
-                        }, maxlen=5000)
-                        WORKER_REGISTRY[worker_id]["tasks_done"] += 1
-                        await emit_event({"type": "worker.done", "worker": worker_id, "task": task_id})
-                    except asyncio.CancelledError:
-                        # Intentional cancel of the inner task — not the worker loop.
-                        _act["error"] = "cancelled"
-                        await _post_result(reply_to, {
-                            "id": task_id, "error": "cancelled", "trace_id": trace_id,
-                        })
-                        await emit_event({
-                            "type": "worker.cancelled", "worker": worker_id, "task": task_id,
-                        })
-                    except Exception as e:
-                        _act["error"] = str(e)[:300]
-                        await _post_result(reply_to, {
-                            "id": task_id, "error": str(e), "trace_id": trace_id,
-                        })
-                        WORKER_REGISTRY[worker_id]["tasks_failed"] += 1
-                        await emit_event({
-                            "type": "worker.error", "worker": worker_id,
-                            "task": task_id, "error": str(e),
-                        })
-                    finally:
-                        _hb.cancel()
-                        RUNNING_TASKS.pop(task_id, None)
-                        await REDIS.xack(_stream, GROUP_WORKERS, msg_id)
-                        await REDIS.xdel(_stream, msg_id)
-                        asyncio.ensure_future(_worker_activity(
-                            worker_id, cap_name, cap, payload, trace_id, bg_label, _act))
+                                await _ex()
+                            except Exception as _e:
+                                log.warning("compute job (detached) failed: %s", _e)
+                            finally:
+                                WORKER_REGISTRY[_wid]["compute_running"] = max(
+                                    0, WORKER_REGISTRY[_wid].get("compute_running", 1) - 1)
+                        asyncio.ensure_future(_detached())
+                        continue
+                    await _execute()
 
                 WORKER_REGISTRY[worker_id]["status"] = "idle"
                 WORKER_REGISTRY[worker_id]["current_task"] = ""
@@ -7142,7 +7274,7 @@ async def _activity_worker():
                             },
                             created_at=ts, updated_at=ts,
                         )
-                        await MEMORY.store(rec)
+                        await MEMORY.store(rec, producer_kind="capability_activity")
                         graph_ok = True
                     except Exception as e:
                         log.warning("activity_worker store [%s]: %s",
@@ -7289,6 +7421,8 @@ def capability(
         for _e in _binding_errs:
             log.error("model binding dropped: %s", _e)
             MODEL_BINDING_ERRORS.append(_e)
+        if _bindings:
+            _placement.set_model_placement(name, [b.get("placement") for b in _bindings])
         _auto_schema   = generate_schema(func)
         _final_schema  = _merge_schema(_auto_schema, schema) if schema else _auto_schema
         # A selector argument (nlp.ner's `task`) gets its options and what each
@@ -7301,6 +7435,7 @@ def capability(
                 if not _props[_k].get("description"):
                     _props[_k]["description"] = _frag["description"]
         group  = name.split(".")[0]
+        _is_money = _money_guard.TAG in (tags or ())
         _redact_args = frozenset(str(key) for key in (redact_args or ()))
         _alias_for = str(compatibility_alias_for or "").strip()
         if _alias_for and (_alias_for == name or not re.fullmatch(
@@ -7325,6 +7460,21 @@ def capability(
                         return _estate_guard.refusal(name)
                 except Exception as _eg:              # pragma: no cover
                     log.debug("estate guard skipped for %s: %s", name, _eg)
+            # MONEY: a capability tagged "money" (real broker orders, arming) runs only when
+            # the owner asks for it directly - its own route or the browser's /mcp/call, as
+            # the outermost capability, outside any background driver. Loops, agents,
+            # dreams, schedules, widgets and bridges are refused (money_guard_core).
+            if _is_money:
+                _ok, _why = _money_guard.allowed(
+                    name=name, running_caps=RUNNING_CAPS.get(), http_cap=CURRENT_HTTP_CAP.get(""),
+                    mcp_call=MCP_CALL_ACTIVE.get(False), caller_kind=CALLER_KIND.get(""),
+                    background=BACKGROUND_LLM.get(""))
+                if not _ok:
+                    log.warning("money guard: refused %s (%s)", name, _why)
+                    await emit_event({"type": "cap.denied", "name": name, "group": group,
+                                      "rule": "money", "reason": _why})
+                    return {"ok": False, "error": f"refused: {_why}", "refused": "money",
+                            "capability": name}
             # READ-THROUGH: a dev sandbox has no estate of its own (its Redis and SQLite are its own, empty); a read-only
             # estate capability is answered by prod, one way — see sandbox_guard.read_through_allowed. Prod itself
             # never takes this branch, and neither does a process that merely imported this module (a test, a script):
@@ -9609,6 +9759,7 @@ async def obs_health(trace_id=None):
                            "backend":i.get("backend","ollama"),"served_by":i.get("served_by","")}
                       for iid,i in OLLAMA_INSTANCES.items()},
             "gpu_gate":await _health_gpu_gate(),
+            "gpu_load_suspect": _gpu_slot_core.live_suspects(_GPU_LOAD_SUSPECT, time.time()),
             "census":await _health_census(),
             "activity":await _health_activity(),
             "files":_health_files(),
@@ -9862,6 +10013,18 @@ async def obs_redis(keys: bool = True, trace_id=None):
                 "uptime_days":info.get("uptime_in_days"),"keys":stats}
     except Exception as e: return {"error":str(e)}
 
+
+def _redact_redis_url(url):
+    """The Redis URL for a diagnostic answer: user and host kept, the password never (security/redis_auth_core.py)."""
+    try:
+        from Vera.vera.security import redis_auth_core as _rac
+    except Exception:
+        from vera.security import redis_auth_core as _rac
+    try:
+        return _rac.redact_url(str(url or ""))
+    except Exception:
+        return "redis://***"
+
 @capability("obs.diagnostics", memory="off", silent=True,
             contract={"presentation": {"kind": "kv", "form": "kv", "map": {"keys": ["host", "mode", "redis_connected", "redis_ping", "redis_version", "redis_port", "workers_in_redis", "worker_count_local", "caps"]}}},
             http_method="GET", http_path="/diagnostics", http_tags=["obs"],
@@ -9871,7 +10034,7 @@ async def obs_diagnostics(trace_id=None):
     import socket
     diag: dict = {
         "host":        socket.gethostname(),
-        "redis_url":   REDIS_URL,
+        "redis_url":   _redact_redis_url(REDIS_URL),   # never the password: the API has no auth (18 Oct leak)
         "redis_connected": bool(REDIS),
         "worker_count_local": len(WORKER_REGISTRY),
         "caps": len(CAPABILITY_REGISTRY),
@@ -11228,6 +11391,14 @@ async def _execute_native_dag_with_workflow_evidence(
         trace_id=tid, emit=emit_event, session_id=session_id,
         workflow_id=workflow_evidence.get("workflow_hash") or tid,
     )
+    from .execution.workflow_memory_observer import observe_completed_workflow
+    await observe_completed_workflow(
+        session_id=session_id,
+        dag=execution_graph,
+        state=state or {},
+        result=result,
+        trigger="native_dag",
+    )
     response = {"trace_id": tid, "result": result}
     if include_workflow_ir:
         response["workflow_ir"] = {
@@ -12176,6 +12347,9 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "fabric/context.py"),
         os.path.join(_here, "fabric/memory_retrieval.py"),
         os.path.join(_here, "fabric/discovery.py"),
+        os.path.join(_here, "fabric/page_search.py"),
+        os.path.join(_here, "fabric/known_item.py"),
+        os.path.join(_here, "fabric/memory_perf.py"),
         os.path.join(_here, "fabric/knowledgebase.py"),
         os.path.join(_here, "text/text_ops_capabilities.py"),
         os.path.join(_here, "skills/skills.py"),
@@ -12203,6 +12377,9 @@ async def lifespan(app: FastAPI):
         # os.path.join(_here, "research_activity_capabilities.py"),
         os.path.join(_here, "web/web_capabilities.py"),
         os.path.join(_here, "web/web_api_capabilities.py"),
+        # Explicit opt-in portable route over the existing web capability
+        # boundaries. Loaded after web.* so registration never implies use.
+        os.path.join(_here, "discovery_capabilities.py"),
         os.path.join(_here, "telegram/telegram_capabilities.py"),
         os.path.join(_here, "dream/dream_capabilities.py"),
         # Idle-queue `cap` jobs: any capability as background work, dispatched
@@ -12282,6 +12459,7 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "machine learning/ml_workshop.py"),
         os.path.join(_here, "machine learning/ml_training.py"),
         os.path.join(_here, "machine learning/ml_onnx.py"),
+        os.path.join(_here, "machine learning/student_training.py"),
         os.path.join(_here, "markets/markets_capabilities.py"),
         os.path.join(_here, "markets/markets_data_capabilities.py"),
         os.path.join(_here, "markets/markets_analysis_capabilities.py"),
@@ -12311,6 +12489,10 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "activity/activity_capabilities.py"),
         os.path.join(_here, "worldview/worldview_jepa.py"),
         os.path.join(_here, "intel/intel_capabilities.py"),
+        # the web map's receipts (web-ingress WI-3): hooks web_client, writes through the fabric's Postgres pool
+        os.path.join(_here, "fabric/ingress_capabilities.py"),
+        # SearXNG self-healing (web-ingress §16): probe, restart on the dead-network signature, escalate
+        os.path.join(_here, "web/searxng_heal_capabilities.py"),
         os.path.join(_here, "research/researcher_api.py"),
         # nlp_dispatch BEFORE nlp_capabilities: the caps import the placement
         # switch from it, and its own caps (nlp.config.*, nlp.nodes) are how an
@@ -12359,9 +12541,16 @@ async def lifespan(app: FastAPI):
         os.path.join(_here, "minds/ledger_capabilities.py"),
         os.path.join(_here, "minds/training_state.py"),
         os.path.join(_here, "minds/judge.py"),
+        os.path.join(_here, "minds/cascade.py"),
+        os.path.join(_here, "minds/claims.py"),
+        os.path.join(_here, "minds/site_tap.py"),
         os.path.join(_here, "minds/tool_shortlist.py"),
         os.path.join(_here, "minds/label_capabilities.py"),
         os.path.join(_here, "minds/export.py"),
+        os.path.join(_here, "minds/calibration.py"),
+        os.path.join(_here, "minds/precedent.py"),
+        os.path.join(_here, "minds/chat_corpus.py"),
+        os.path.join(_here, "minds/chat_replay.py"),
         os.path.join(_here, "minds/sense_capabilities.py"),
         os.path.join(_here, "minds/baseline_capabilities.py"),
         # The widget registry (UI redesign): every part of the UI as a record -
@@ -12420,6 +12609,7 @@ async def lifespan(app: FastAPI):
         # records, so it must come after both census/ and evolve/ above.
         os.path.join(_here, "evolve/task_history_capabilities.py"),
         os.path.join(_here, "evolve/delegate_capabilities.py"),
+        os.path.join(_here, "agents/agent_work_capabilities.py"),
         # The Ship page's one table: a row per branch from the pipeline list,
         # the sandbox registry, the test history and the edges - after evolve/.
         os.path.join(_here, "evolve/ship_capabilities.py"),
@@ -12437,6 +12627,7 @@ async def lifespan(app: FastAPI):
         # canvas/, widgets/, web/, fabric/, markets/ and dag/ (caps.search), which it
         # calls through the registry.
         os.path.join(_here, "canvas/enrich_capabilities.py"),
+        os.path.join(_here, "canvas/engagement.py"),
         # Closed-loop orchestrator (M7 Phase B) — part of Loop Lab; dedicated module.
         os.path.join(_here, "evolve/orchestrator_capabilities.py"),
         # Operator: general observe→think→act web/computer operator (drives any
@@ -12847,7 +13038,43 @@ def _mount_all_http_routes(app: FastAPI):
 
 
 APP = FastAPI(title="Vera Orchestrator", version="3.0", lifespan=lifespan)
-APP.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# CORS: only this machine's own origins (any port) and VERA_ALLOWED_ORIGINS may
+# read responses cross-origin. It was "*", which let any website the owner
+# opened read what the API returns.
+from Vera.vera import edge_guard as _edge_guard
+_EDGE_HOSTS = _edge_guard.local_hosts(cfg.BACKEND_HOST)
+_CORS_ORIGIN_RE = r"^https?://(" + "|".join(
+    re.escape(h) if ":" not in h else r"\[" + re.escape(h) + r"\]"
+    for h in sorted(_EDGE_HOSTS)) + r")(:\d+)?$"
+APP.add_middleware(CORSMiddleware,
+                   allow_origins=_edge_guard._env_list("VERA_ALLOWED_ORIGINS"),
+                   allow_origin_regex=_CORS_ORIGIN_RE,
+                   allow_methods=["*"], allow_headers=["*"])
+
+# Edge guard: refuses cross-site requests and WebSocket handshakes (rules in
+# vera/edge_guard_core.py). Added after CORS, so it is the outermost middleware
+# and runs before CORS and routing. Default mode is enforce (VERA_EDGE_GUARD;
+# break-glass: SET vera:auth:mode observe EX 3600 on the host's Redis).
+APP.add_middleware(_edge_guard.EdgeGuard,
+                   backend_host=cfg.BACKEND_HOST,
+                   listen_port=cfg.ORCHESTRATOR_PORT,
+                   on_event=lambda evt: emit_event(evt),
+                   redis_getter=lambda: REDIS)
+
+
+@capability("auth.edge.status", memory="off", silent=True,
+            http_method="GET", http_path="/auth/edge/status", http_tags=["auth"],
+            description="The edge guard's mode and what it saw since start: counts of requests it refused or "
+                        "would refuse by rule, the most common Origin and Host values, and the last 50 "
+                        "refusals (method, path, origin, host, peer; never headers or bodies). Read-only. "
+                        "Output: {mode, configured_mode, override, host_mode, allowed_hosts, allowed_origins, "
+                        "trusted_proxies, counts, seen_origins, seen_hosts, recent}.")
+async def cap_auth_edge_status(trace_id=None):
+    g = _edge_guard.current()
+    if g is None:
+        return {"mode": "not started", "note": "the guard is built on the first request"}
+    return g.status()
 # ollama.instances is mounted at /ollama/instances; /ollama/cluster answers the same (see the cap)
 APP.add_api_route("/ollama/cluster", _ollama_cluster_get_alias, methods=["GET"],
                   tags=["ollama"], include_in_schema=False)

@@ -167,6 +167,21 @@ if _VERA_MODE:
             "research routing profile registration failed: %s", _rp_err)
 
 log = logging.getLogger("vera.researcher")
+
+def _ingress_client(timeout: float = 30, headers=None, *, purpose: str = "api", caller: str = "research",
+                    follow_redirects: bool = True, **kw):
+    """This module's HTTP client (web-ingress WI-9): through the ingress gateway when it is loaded - every response
+    a receipt in the web map, every request on the host's shared slot - else a plain client, as before."""
+    import sys as _sys
+    ing = _sys.modules.get("ingress_capabilities") or _sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+    if ing is not None and hasattr(ing, "hooked_client"):
+        try:
+            return ing.hooked_client(caller=caller, purpose=purpose, timeout=timeout, headers=headers,
+                                     follow_redirects=follow_redirects, **kw)
+        except Exception as e:  # noqa: BLE001
+            log.debug("ingress client: %s", e)
+    return httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=follow_redirects, **kw)
+
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 SCREENSHOT_DIR = Path("screenshots")
@@ -954,7 +969,7 @@ async def query_redis(query: str) -> list[Citation]:
             host=src.config.get("host",_BACKEND_HOST),
             port=int(src.config.get("port",6379)),
             username=src.config.get("username") or None,   # a Redis ACL user
-            password=src.config.get("password") or None,
+            password=(await _cfg_secret(src.config, "password")) or None,
             db=int(src.config.get("db",0)),
             decode_responses=True,
         )
@@ -1032,7 +1047,7 @@ async def _searxng_once(host: str, query: str, limit: int) -> list[dict]:
     definition of when to stop.
     """
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with _ingress_client(timeout=10.0, purpose="search") as c:
 
             async def _fetch(pageno: int):
                 try:
@@ -1072,12 +1087,25 @@ async def search_brave(query: str, limit: int) -> list[dict]:
     if isinstance(src.config, str):
         try: cfg = json.loads(src.config)
         except Exception: cfg = {}
+    # the key: a literal here (older setups), an "@secret:<key>" reference, or - when empty - the Platforms
+    # credential brave_search_api_key (the master key store; owner 2026-10-11)
     api_key = cfg.get("api_key", "")
+    try:
+        try:
+            from Vera.vera.platforms import platform_access as _pa
+        except Exception:
+            from vera.platforms import platform_access as _pa
+        _pa.declare(CAPABILITY_REGISTRY, "brave_search_api_key", "web.search / research (Brave)",
+                    label="Brave Search API", why="search fallback when SearXNG is thin")
+        api_key = await _pa.resolve(CAPABILITY_REGISTRY, api_key, "brave_search_api_key")
+    except Exception as e:
+        log.debug("search_brave: platform key: %s", e)
+        api_key = "" if str(api_key).startswith("@secret:") else api_key
     if not api_key:
         log.debug("search_brave: no api_key configured")
         return []
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with _ingress_client(timeout=10.0, purpose="search") as c:
             r = await _request_with_web_policy(
                 lambda: c.get("https://api.search.brave.com/res/v1/web/search",
                               params={"q":query,"count":limit},
@@ -1102,7 +1130,7 @@ def _clean_search_url(url: str) -> str:
 async def search_ddg(query: str, limit: int) -> list[dict]:
     try:
         _hdrs = _webclient.BROWSER_HEADERS if _webclient else {"User-Agent": "Mozilla/5.0"}
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as c:
+        async with _ingress_client(timeout=10.0, follow_redirects=True, purpose="search") as c:
             r = await _request_with_web_policy(
                 lambda: c.get("https://html.duckduckgo.com/html/",
                               params={"q":query}, headers=_hdrs),
@@ -1446,6 +1474,24 @@ async def gather_web_search(query: str, job_id: str) -> list[Citation]:
         if txt:
             cit.full_text = txt
 
+    # Observe the result set Research already produced. This is deliberately
+    # best-effort and post-collection: it performs no second search/fetch,
+    # changes no citations, and cannot fail the native research path.
+    try:
+        try:
+            from Vera.vera.research.discovery_shadow import record_research_citations_shadow
+            from Vera.vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
+        except ImportError:  # pragma: no cover - isolated test package spelling
+            from vera.research.discovery_shadow import record_research_citations_shadow
+            from vera.discovery_operator_readmodel import DISCOVERY_OPERATOR_LEDGER
+        record_research_citations_shadow(
+            query, citations, DISCOVERY_OPERATOR_LEDGER.record_research_shadow,
+            on_error=lambda error: log.debug(
+                "research discovery shadow observation failed: %s", error),
+        )
+    except Exception as exc:
+        log.debug("research discovery shadow hook unavailable: %s", exc)
+
     return citations
 
 
@@ -1507,7 +1553,7 @@ async def gather_arxiv(
         return []
     log.debug("gather_arxiv: querying for %r", query[:60])
     try:
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with _ingress_client(timeout=10.0, purpose="api") as c:
             r = await c.get("https://export.arxiv.org/api/query",
                 params={"search_query":f"all:{query}","max_results":limit,"sortBy":"relevance"})
         cits = []
@@ -1533,7 +1579,7 @@ async def gather_hackernews(query: str, limit: int = 8) -> list[Citation]:
         return []
     log.debug("gather_hackernews: querying for %r", query[:60])
     try:
-        async with httpx.AsyncClient(timeout=8.0) as c:
+        async with _ingress_client(timeout=8.0, purpose="api") as c:
             r = await c.get("https://hn.algolia.com/api/v1/search",
                 params={"query":query,"hitsPerPage":limit,"tags":"story"})
         return [Citation(id=str(uuid.uuid4())[:8],
@@ -1643,7 +1689,7 @@ async def query_neo4j(query: str) -> list[Citation]:
     if not src: return []
     uri      = src.config.get("uri", "bolt://localhost:7687")
     user     = src.config.get("user", "neo4j")
-    password = src.config.get("password", "")
+    password = await _cfg_secret(src.config, "password")
     cypher   = src.config.get("cypher", "")
     label    = src.config.get("node_label", "")
     prop     = src.config.get("text_property", "text")
@@ -1903,7 +1949,7 @@ async def _github_crawl_readme(repo_url: str, token: str = "") -> str:
         headers = {"Accept": "application/vnd.github.raw+json"}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        async with httpx.AsyncClient(timeout=10.0) as c:
+        async with _ingress_client(timeout=10.0, purpose="page") as c:
             r = await c.get(api_url, headers=headers)
             if r.status_code == 200:
                 return r.text[:4000]
@@ -1930,7 +1976,7 @@ async def gather_github(query: str, limit: int = 8) -> list[Citation]:
     """
     src = next((s for s in sources if s.id == "github" and s.enabled), None)
     if not src: return []
-    token = src.config.get("token", "")
+    token = await _cfg_secret(src.config, "token", "github_token")
     if not token:
         log.info("GitHub: no token — using web-search fallback")
     orgs        = src.config.get("orgs", "")
@@ -1947,7 +1993,7 @@ async def gather_github(query: str, limit: int = 8) -> list[Citation]:
             "X-GitHub-Api-Version": "2022-11-28",
         }
         try:
-            async with httpx.AsyncClient(timeout=12.0, headers=api_headers) as c:
+            async with _ingress_client(timeout=12.0, headers=api_headers, purpose="api") as c:
                 scope = ""
                 if repos:
                     scope = " ".join(f"repo:{r.strip()}" for r in repos.split(",") if r.strip())
@@ -2060,7 +2106,7 @@ async def gather_archive(query: str, active: set) -> list[Citation]:
 
     if "wayback" in active and any(s.id == "wayback" and s.enabled for s in sources):
         try:
-            async with httpx.AsyncClient(timeout=10.0) as c:
+            async with _ingress_client(timeout=10.0, purpose="api") as c:
                 # CDX API: find recent snapshots containing the query terms
                 r = await c.get("http://web.archive.org/cdx/search/cdx",
                     params={
@@ -2086,7 +2132,7 @@ async def gather_archive(query: str, active: set) -> list[Citation]:
     if "commoncrawl" in active and any(s.id == "commoncrawl" and s.enabled for s in sources):
         try:
             # Common Crawl Index API
-            async with httpx.AsyncClient(timeout=12.0) as c:
+            async with _ingress_client(timeout=12.0, purpose="api") as c:
                 r = await c.get("https://index.commoncrawl.org/CC-MAIN-2024-10-index",
                     params={"url": f"*{query.replace(' ','*')}*", "output": "json", "limit": 4})
                 for line in r.text.strip().splitlines()[:4]:
@@ -2182,7 +2228,7 @@ async def _fetch_structured_url(url: str, job_id: str, timeout: float = 15.0) ->
             html, text = fp.get("html", ""), fp.get("text", "")
             title = fp.get("title", "") or url
         else:
-            async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as c:
+            async with _ingress_client(timeout=timeout, follow_redirects=True, purpose="page") as c:
                 r = await c.get(url, headers={"Accept": "text/html,application/xhtml+xml"})
                 if r.status_code >= 400:
                     return None
@@ -3309,7 +3355,7 @@ async def _gather_nvd(keyword: str, job_id: str, limit: int = 12) -> list[Citati
     try:
         await broadcast(job_id, {"type":"step","t":time.time(),
             "label":"NVD/CVE","detail":f"Querying NVD: {keyword[:50]}"})
-        async with httpx.AsyncClient(timeout=15.0) as c:
+        async with _ingress_client(timeout=15.0, purpose="api") as c:
             r = await c.get("https://services.nvd.nist.gov/rest/json/cves/2.0",
                 params={"keywordSearch": keyword, "resultsPerPage": limit},
                 headers={"User-Agent":"Vera-Research/2.0"})
@@ -4480,7 +4526,26 @@ async def collect_ollama(
         except Exception:
             pass
 
+    _site_tap(prompt, system, result, inst)
     return result
+
+
+def _site_tap(prompt: str, system: str, answer: str, inst: "OllamaInstance") -> None:
+    """Research's short answers to the call-site matrix (four-minds FM-2 / FM-12; RF-50's rest): research generates
+    through its own stream, not ollama_generate, so the shared path's tap never saw its decisions (directive style,
+    angle grounded, arXiv allowed, duplicate, novelty ...). The site is the research function that asked. Only when
+    the switch decide.site_capture is on; never raises, never waits."""
+    try:
+        st = sys.modules.get("site_tap") or sys.modules.get("Vera.vera.minds.site_tap")
+        if st is None or not st.MODE.get("on") or not answer or len(answer.strip()) > st.MAX_ANSWER:
+            return
+        import inspect
+        frames = inspect.stack(context=0)              # no source lines read
+        fr = frames[2] if len(frames) > 2 else None
+        caller = {"caller_module": "researcher_api", "caller_func": fr.function if fr else "collect_ollama"}
+        st.tap(caller, "research", "research", system or "", prompt or "", answer, getattr(inst, "model", "") or "")
+    except Exception:
+        pass
 
 
 async def list_models(inst: OllamaInstance) -> list[str]:
@@ -7779,6 +7844,81 @@ async def download_job_files_zip(job_id: str):
 
 
 
+# ── Source credentials: kept in the Platforms store (owner 2026-10-11: every credential in the store) ────────
+# A source's api_key / token / password is saved as an "@secret:research_<id>_<field>" reference; the key itself
+# goes to platform.secrets. Lists show a stored literal as bullets, and bullets posted back keep what is stored.
+_SRC_SECRET_FIELDS = ("api_key", "token", "password")
+_SRC_BULLETS = "\u2022" * 8
+
+
+def _src_cfg_dict(cfg) -> dict:
+    if isinstance(cfg, dict):
+        return cfg
+    if isinstance(cfg, str) and cfg.strip():
+        try:
+            d = json.loads(cfg)
+            return d if isinstance(d, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _src_redacted(cfg) -> dict:
+    out = dict(_src_cfg_dict(cfg))
+    for f in _SRC_SECRET_FIELDS:
+        v = out.get(f)
+        if isinstance(v, str) and v and not v.startswith("@secret:"):
+            out[f] = _SRC_BULLETS
+    return out
+
+
+def _platform_access():
+    try:
+        from Vera.vera.platforms import platform_access as _pa
+    except Exception:
+        from vera.platforms import platform_access as _pa
+    return _pa
+
+
+async def _cfg_secret(cfg, field: str, default_key: str = "") -> str:
+    """A source's credential: a literal (older setups), an "@secret:<key>" reference, or - empty - the
+    Platforms credential `default_key`."""
+    v = _src_cfg_dict(cfg).get(field, "") or ""
+    if v == _SRC_BULLETS:
+        v = ""
+    try:
+        return await _platform_access().resolve(CAPABILITY_REGISTRY, v, default_key)
+    except Exception as e:
+        log.debug("research: credential %s: %s", field, e)
+        return "" if str(v).startswith("@secret:") else str(v)
+
+
+async def _secure_sources(new_list, old_list, dry: bool = False) -> list:
+    """Move literal credentials in `new_list`'s configs into the store (in place); bullets posted back keep the
+    value stored in `old_list`. Returns the store keys moved (or that would be)."""
+    old = {o.id: _src_cfg_dict(o.config) for o in (old_list or [])}
+    moved = []
+    pa = _platform_access()
+    for src in new_list:
+        cfg = dict(_src_cfg_dict(src.config))
+        for f in _SRC_SECRET_FIELDS:
+            v = cfg.get(f)
+            if v == _SRC_BULLETS:
+                cfg[f] = old.get(src.id, {}).get(f, "")
+                v = cfg[f]
+            if not isinstance(v, str) or not v.strip() or v.startswith("@secret:"):
+                continue
+            key = re.sub(r"[^a-z0-9_]+", "_", f"research_{src.id}_{f}".lower())[:64]
+            if not dry:
+                if not await pa.store_secret(CAPABILITY_REGISTRY, key, v.strip(), f"Research source {src.label} {f}"):
+                    continue                     # no credential store loaded: keep the literal rather than lose it
+                cfg[f] = "@secret:" + key
+            moved.append(key)
+        if not dry:
+            src.config = cfg
+    return moved
+
+
 # ── Sources ───────────────────────────────────────────────────────────────────
 
 @app.get("/api/sources")
@@ -7788,7 +7928,7 @@ async def get_sources():
     for s in sources:
         if s.id not in seen:
             seen.add(s.id)
-            deduped.append(asdict(s))
+            deduped.append({**asdict(s), "config": _src_redacted(s.config)})
     return deduped
 
 
@@ -7811,6 +7951,7 @@ async def update_sources(req: SourceUpdateRequest):
             ))
         except Exception as e:
             raise HTTPException(400, f"Invalid source: {e}")
+    await _secure_sources(new, sources)
     sources = new
     await DB.save_sources(sources)
     _write_config_file()
@@ -7825,6 +7966,7 @@ async def add_source(d: dict):
                          enabled=bool(d.get("enabled",True)),config=d.get("config",{}))
         # Remove any existing source with the same id first
         global sources
+        await _secure_sources([src], sources)
         sources = [s for s in sources if s.id != src.id]
         sources.append(src)
         await DB.save_sources(sources)
@@ -7867,7 +8009,7 @@ async def test_source(req: SourceTestRequest):
 
     elif src.id=="brave":
         try:
-            key=cfg.get("api_key","")
+            key=await _cfg_secret(cfg, "api_key", "brave_search_api_key")
             if not key: detail="No API key configured"; ok=False
             else:
                 async with httpx.AsyncClient(timeout=8.0) as c:
@@ -7880,7 +8022,7 @@ async def test_source(req: SourceTestRequest):
     elif src.type==SourceType.NEO4J:
         uri=cfg.get("uri","bolt://localhost:7687")
         user=cfg.get("user","neo4j")
-        password=cfg.get("password","")
+        password=await _cfg_secret(cfg, "password")
 
         # ── Strategy A: try Vera session driver first (no new connection needed) ──
         vera_tried=False
@@ -8005,7 +8147,7 @@ async def test_source(req: SourceTestRequest):
         try:
             import redis.asyncio as aioredis  # type:ignore
             r=aioredis.Redis(host=cfg.get("host","localhost"),port=int(cfg.get("port",6379)),
-                username=cfg.get("username") or None,password=cfg.get("password") or None,
+                username=cfg.get("username") or None,password=(await _cfg_secret(cfg, "password")) or None,
                 db=int(cfg.get("db",0)),decode_responses=True)
             await r.ping()
             prefix=cfg.get("prefix","vera:")
@@ -8015,7 +8157,7 @@ async def test_source(req: SourceTestRequest):
         except Exception as e: detail=str(e)
 
     elif src.type==SourceType.GITHUB:
-        token=cfg.get("token","")
+        token=await _cfg_secret(cfg, "token", "github_token")
         if not token: detail="No token configured — add a GitHub personal access token"; ok=False
         else:
             try:
@@ -11095,7 +11237,7 @@ if _VERA_MODE:
     )
     async def cap_sources(trace_id=None):
         return [{"id": s.id, "label": s.label, "type": s.type.value,
-                 "enabled": s.enabled, "config": s.config, "status": s.status}
+                 "enabled": s.enabled, "config": _src_redacted(s.config), "status": s.status}
                 for s in globals()["sources"]]
 
     @capability(
@@ -11114,6 +11256,7 @@ if _VERA_MODE:
                 id=d["id"], label=d["label"], type=SourceType(d["type"]),
                 enabled=bool(d.get("enabled", True)), config=d.get("config", {}),
                 status=d.get("status", "unknown")))
+        await _secure_sources(new, sources)
         sources = new
         await DB.save_sources(sources)
         _write_config_file()
@@ -11135,11 +11278,28 @@ if _VERA_MODE:
         global sources
         cfg = json.loads(config) if isinstance(config, str) else config
         src = DataSource(id=id, label=label, type=SourceType(type), enabled=enabled, config=cfg)
+        await _secure_sources([src], sources)
         sources = [s for s in sources if s.id != src.id]
         sources.append(src)
         await DB.save_sources(sources)
         _write_config_file()
         return {"ok": True}
+
+    @capability(
+        "research.sources.secure",
+        http_method="POST", http_path="/research/sources/secure",
+        http_tags=["research"], memory="off",
+        description="Move the API keys, tokens and passwords written into research sources' config into the "
+                    "Platforms credential store, leaving @secret: references. DRY RUN BY DEFAULT. "
+                    "Input: dry_run (bool=True). Output: {ok, dry_run, moved[]}.",
+    )
+    async def cap_sources_secure(dry_run: bool = True, trace_id=None):
+        cur = globals()["sources"]
+        moved = await _secure_sources(cur, cur, dry=dry_run)
+        if moved and not dry_run:
+            await DB.save_sources(cur)
+            _write_config_file()
+        return {"ok": True, "dry_run": dry_run, "moved": moved}
 
     @capability(
         "research.sources.delete",

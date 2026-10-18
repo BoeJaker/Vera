@@ -120,6 +120,27 @@ def _redis():
     return getattr(_orch, "REDIS", None)
 
 
+def _pa():
+    """The Platforms credential access module (data-connections phase 4, owner 2026-10-11: every credential in
+    the store)."""
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p
+    return _p
+
+
+async def _adopt(dry_run: bool):
+    """Move LLM provider credentials still sealed here into the Platforms store (platform.secrets.adopt)."""
+    return await _pa().adopt_json_hash(_orch.CAPABILITY_REGISTRY, _redis(), KEY_PROVIDERS, ('api_key',), "provider", dry_run, "LLM provider")
+
+
+_pa().register_adopter("providers", _adopt)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 #  Provider records (seal on write, redact on read, env fallback on use)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -152,12 +173,14 @@ async def _merged() -> Dict[str, dict]:
 
 
 async def _get(pid: str) -> Optional[dict]:
-    return (await _merged()).get(pid)
+    rec = (await _merged()).get(pid)
+    await _pa().prime(_orch.CAPABILITY_REGISTRY, (rec or {}).get("api_key"))          # _open_key is sync
+    return rec
 
 
 def _open_key(rec: dict) -> str:
     """Stored sealed key (decrypted) or the provider's env-var fallback."""
-    stored = vsecrets.open_secret(rec.get("api_key", "")) if rec.get("api_key") else ""
+    stored = _pa().open_any_sync(_orch.CAPABILITY_REGISTRY, rec.get("api_key", "")) if rec.get("api_key") else ""
     if stored:
         return stored
     env = _ENV_KEYS.get(rec.get("kind", ""))
@@ -311,7 +334,8 @@ async def cap_providers_save(id: str = "", label: str = "", kind: str = "openai"
     if api_key:
         # Blank input keeps the stored key (don't clobber on a metadata-only save).
         try:
-            rec["api_key"] = vsecrets.seal(api_key)
+            rec["api_key"] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("provider", id, "api_key"), api_key,
+                                             f"LLM provider {rec.get('label') or id} API key")
         except Exception as e:
             return {"error": f"could not seal key: {e}"}
     try:

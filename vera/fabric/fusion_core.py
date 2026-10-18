@@ -96,3 +96,22 @@ def list_weight(n_lists: int) -> float:
     ranked source (session memory) competes on equal terms.
     """
     return float(max(1, int(n_lists)))
+
+
+#: how many fused candidates the cross-encoder re-reads (FM-7.3: one node call, 1 query x N documents)
+RERANK_TOP = 30
+
+
+def rerank_lift(rerank_scores: Sequence[float], top: float) -> List[float]:
+    """New scores for a reranked head, in the head's own order: the cross-encoder decides the order inside the head,
+    and every head item lands above every candidate outside it (whose scores are <= top). The best gets 2 * top, the
+    rest step down evenly, the last stays above top."""
+    n = len(rerank_scores)
+    if not n:
+        return []
+    order = sorted(range(n), key=lambda i: -float(rerank_scores[i]))
+    out = [0.0] * n
+    base = float(top) if top and top > 0 else 1.0
+    for pos, i in enumerate(order):
+        out[i] = base * (2.0 - pos / n)
+    return out

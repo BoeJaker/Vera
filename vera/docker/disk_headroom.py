@@ -182,3 +182,74 @@ def reap_summary(containers: Optional[Sequence[Dict[str, Any]]],
                  "running and %d that finished recently"
                  % (len(doomed), float(retain_hours), len(running), kept)),
     }
+
+
+# ── session snapshot images and workspace volumes (disk plan C5, 17 Oct 2026) ──
+# The container reaper above left two things growing ~7 GB/day: `vera-session:<sid>`
+# images (sandbox.session.commit) and the named `vera-sbx-*-ws` workspace volumes, which a
+# removed container leaves behind. 17 Oct: 1,901 images (141 GB) removed by hand. These
+# take the same stance as reapable(): keep anything in use, young, or of unknown age.
+
+SESSION_IMAGE_REPO = "vera-session"
+#: A committed snapshot or a workspace volume is kept for two weeks after it was made; a
+#: session re-opened later starts from the base image and rehydrates /workspace.
+DEFAULT_IMAGE_RETAIN_HOURS = 14 * 24.0
+
+
+def hours_since(ts: Any, now_epoch: float) -> Optional[float]:
+    """Hours from a docker timestamp to now: images print '2026-10-03 12:34:56 +0100 BST',
+    volumes '2026-10-03T12:34:56+01:00' (or Z). None when unreadable."""
+    from datetime import datetime
+    s = str(ts or "").strip()
+    m = re.match(r"(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)?\s*(Z|[+-]\d{2}:?\d{2})?", s)
+    if not m:
+        return None
+    tz = (m.group(3) or "Z").replace("Z", "+0000").replace(":", "")
+    try:
+        t = datetime.strptime(f"{m.group(1)} {m.group(2)} {tz}", "%Y-%m-%d %H:%M:%S %z").timestamp()
+    except ValueError:
+        return None
+    return (float(now_epoch) - t) / 3600.0
+
+
+def reapable_images(images: Optional[Iterable[Dict[str, Any]]], used: Iterable[str],
+                    retain_hours: float = DEFAULT_IMAGE_RETAIN_HOURS) -> List[Dict[str, Any]]:
+    """Session snapshot images that may go. Each image is {ref, id, age_hours}; `used` holds
+    the image refs/ids of every container (running or not). Reapable only when it is a
+    vera-session image, no container uses it (by ref, or id - full or short), and it is
+    known to be older than the retention."""
+    used = {str(u).strip() for u in used if str(u).strip()}
+    used_ids = {u.split(":", 1)[-1][:12] for u in used if u.startswith("sha256:") or re.fullmatch(r"[0-9a-f]{12,64}", u)}
+    out: List[Dict[str, Any]] = []
+    for im in (images or []):
+        if not isinstance(im, dict):
+            continue
+        ref, iid = str(im.get("ref") or ""), str(im.get("id") or "")
+        if not ref.startswith(SESSION_IMAGE_REPO + ":"):
+            continue
+        if ref in used or iid in used or iid.split(":", 1)[-1][:12] in used_ids:
+            continue
+        age = _num(im.get("age_hours"))
+        if age is None or age <= float(retain_hours):
+            continue
+        out.append({"ref": ref, "id": iid, "age_hours": round(age, 1)})
+    return out
+
+
+def reapable_volumes(volumes: Optional[Iterable[Dict[str, Any]]],
+                     retain_hours: float = DEFAULT_IMAGE_RETAIN_HOURS) -> List[Dict[str, Any]]:
+    """Session workspace volumes that may go. Each is {name, dangling, age_hours}: only a
+    vera-sbx-* volume that no container references and that is known to be older than the
+    retention."""
+    out: List[Dict[str, Any]] = []
+    for v in (volumes or []):
+        if not isinstance(v, dict):
+            continue
+        name = str(v.get("name") or "")
+        if not name.startswith(SESSION_PREFIX) or not v.get("dangling"):
+            continue
+        age = _num(v.get("age_hours"))
+        if age is None or age <= float(retain_hours):
+            continue
+        out.append({"name": name, "age_hours": round(age, 1)})
+    return out

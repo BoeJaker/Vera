@@ -75,6 +75,9 @@ def test_once_per_window_and_every():
     e = weekday(kind="task", target={"id": "t1"}, repeat="every", every_minutes=30)
     e["last_started_at"] = sc.iso(_t(2026, 9, 21, 8, 45))
     assert sc.is_due(e, MON, FREE)[1] == "interval not elapsed"
+    # every kind runs in the background now (DEEP-21 D21-1): an unfinished run holds the next start
+    assert sc.is_due(e, _t(2026, 9, 21, 9, 15), FREE)[1] == "previous run still going"
+    e["last_finished_at"] = sc.iso(_t(2026, 9, 21, 8, 50))
     assert sc.is_due(e, _t(2026, 9, 21, 9, 15), FREE) == (True, "due")
     # An exclusive non-census schedule waits for the census; a non-exclusive one does not.
     assert sc.is_due(e, _t(2026, 9, 21, 9, 15), dict(FREE, census_running=True))[1] == "census in flight"
@@ -162,7 +165,8 @@ def test_normalize_rejects_what_a_person_must_fix():
     with pytest.raises(ValueError):
         sc.normalize({"kind": "suite", "target": {}})
     with pytest.raises(ValueError):
-        sc.normalize({"kind": "census", "target": {}, "start": "17:00", "end": "05:00", "timezone": "UTC"})
+        # overnight windows are allowed since looplab-control A6 (17 Oct 2026); a zero-length one is not
+        sc.normalize({"kind": "census", "target": {}, "start": "05:00", "end": "05:00", "timezone": "UTC"})
     with pytest.raises(ValueError):
         sc.normalize({"kind": "census", "target": {}, "days": [7], "timezone": "UTC"})
     with pytest.raises(ValueError):
@@ -262,4 +266,4 @@ def test_layer_of_every_event():
     assert sc.layer_of({"source": "loop-lab", "kind": "census", "board_id": "b1"}) == "board"
     assert sc.layer_of({"source": "loop-lab-run", "kind": "board"}) == "board"
     assert sc.layer_of({"source": "local"}) == "calendar" and sc.layer_of({"source": "google"}) == "calendar"
-    assert set(sc.LAYERS) == {"windows", "runs", "results", "board", "calendar"}
+    assert set(sc.LAYERS) == {"windows", "runs", "results", "board", "calendar", "agents", "host", "releases"}

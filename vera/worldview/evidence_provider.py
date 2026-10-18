@@ -15,8 +15,8 @@ import math
 import re
 from typing import Any, Mapping, Protocol, Sequence
 
-from vera.fabric.dataset_provider import DatasetSnapshot
-from vera.models.model_package import ModelPackage
+from ..fabric.dataset_provider import DatasetSnapshot
+from ..models.model_package import ModelCompatibility, ModelPackage
 
 
 EVIDENCE_SCHEMA = "vera.worldview-evidence/v1"
@@ -30,6 +30,7 @@ MAX_ATTRIBUTES_BYTES = 16_384
 MAX_CITATION_REVISIONS = 10_000
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}$")
 _SHA_ID = re.compile(r"^wve_[0-9a-f]{64}$")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FORBIDDEN_ATTRIBUTE_KEYS = frozenset({
     "body", "content", "credential", "embedding", "password", "payload",
     "prompt", "secret", "text", "token", "vector",
@@ -322,6 +323,102 @@ class JepaResultProjector:
 
     provider_id = "worldview.jepa.result-projector"
 
+    @staticmethod
+    def evidence_checkpoint(retrieval_checkpoint: ModelPackage) -> ModelPackage:
+        """Derive the immutable evidence projector package for a bound retriever.
+
+        The retrieval checkpoint remains the execution identity.  The derived
+        package identifies this payload-free projection contract and pins the
+        source package by content-derived ID.
+        """
+        if not isinstance(retrieval_checkpoint, ModelPackage):
+            raise TypeError("retrieval_checkpoint must be ModelPackage")
+        compatibility = retrieval_checkpoint.compatibility
+        if ("worldview" not in retrieval_checkpoint.name.casefold() or
+                "jepa" not in retrieval_checkpoint.architecture.casefold() or
+                "retrieval" not in compatibility.tasks or
+                compatibility.input_contract != "vera.dataset-snapshot/v1" or
+                compatibility.output_contract != "vera.worldview-retrieval/v1"):
+            raise ValueError("checkpoint is not a Worldview JEPA retrieval package")
+        metadata = dict(retrieval_checkpoint.metadata)
+        metadata.update({
+            "evidence_projector": JepaResultProjector.provider_id,
+            "source_model_package_id": retrieval_checkpoint.package_id,
+        })
+        return ModelPackage(
+            name="worldview-jepa-evidence",
+            version=retrieval_checkpoint.version,
+            architecture="worldview-jepa-evidence-projection",
+            format=retrieval_checkpoint.format,
+            artifacts=retrieval_checkpoint.artifacts,
+            compatibility=ModelCompatibility(
+                tasks=("worldview.evidence",),
+                input_contract="vera.dataset-snapshot/v1",
+                output_contract=EVIDENCE_SCHEMA,
+                min_memory_bytes=0, accelerators=()),
+            framework=retrieval_checkpoint.framework,
+            framework_version=retrieval_checkpoint.framework_version,
+            opset=retrieval_checkpoint.opset,
+            tokenizer=retrieval_checkpoint.tokenizer,
+            preprocessing=retrieval_checkpoint.preprocessing,
+            source_uri=retrieval_checkpoint.source_uri,
+            source_revision=retrieval_checkpoint.package_id,
+            license=retrieval_checkpoint.license,
+            # A signature over the source package cannot authenticate this
+            # separately content-addressed projection package.
+            signature="",
+            training_run_id=retrieval_checkpoint.training_run_id,
+            evaluation_report_ids=retrieval_checkpoint.evaluation_report_ids,
+            metadata=tuple(sorted(metadata.items())))
+
+    def project_bound_reranking(
+            self, *, result: Mapping[str, Any], snapshot: DatasetSnapshot,
+            retrieval_checkpoint: ModelPackage, observed_at: str) -> WorldviewEvidence:
+        """Project an exact bound-retrieval receipt into portable evidence."""
+        if not isinstance(result, Mapping) or result.get("error") or not result.get("ok"):
+            raise ValueError("a successful bound retrieval result is required")
+        if result.get("eligible") is not True:
+            raise ValueError("bound retrieval result is not eligible")
+        provenance = result.get("provenance")
+        if not isinstance(provenance, Mapping):
+            raise ValueError("bound retrieval provenance is required")
+        if provenance.get("snapshot_id") != snapshot.snapshot_id:
+            raise ValueError("bound retrieval snapshot does not match")
+        if provenance.get("model_package_id") != retrieval_checkpoint.package_id:
+            raise ValueError("bound retrieval model package does not match")
+        provider_revision = _identifier(
+            provenance.get("provider_revision"), "provider_revision")
+        query_digest = str(result.get("query_digest") or "")
+        if query_digest.startswith("sha256:"):
+            query_digest = query_digest[7:]
+        if not _SHA256.fullmatch(query_digest):
+            raise ValueError("bound retrieval query_digest must be a canonical sha256")
+
+        raw_results = self._items(result.get("results"), "results")
+        raw_citations = self._items(result.get("citations"), "citations")
+        result_ids = [_identifier(item.get("id"), "reranking record_id")
+                      for item in raw_results]
+        if len(set(result_ids)) != len(result_ids):
+            raise ValueError("bound retrieval result IDs must be unique")
+        citation_revisions: dict[str, str] = {}
+        for item in raw_citations:
+            record_id = _identifier(item.get("record_id"), "citation record_id")
+            revision_id = _identifier(item.get("revision_id"), "citation revision_id")
+            if record_id in citation_revisions:
+                raise ValueError("bound retrieval citations must be unique")
+            citation_revisions[record_id] = revision_id
+        if set(citation_revisions) != set(result_ids):
+            raise ValueError("bound retrieval citations must exactly match results")
+
+        projected_result = dict(result)
+        projected_result["query_digest"] = query_digest
+        checkpoint = self.evidence_checkpoint(retrieval_checkpoint)
+        return self.project(
+            kind="reranking", result=projected_result, snapshot=snapshot,
+            checkpoint=checkpoint, provider_revision=provider_revision,
+            observed_at=observed_at, citation_revisions=citation_revisions,
+            support_record_ids=())
+
     def project(self, *, kind: str, result: Mapping[str, Any],
                 snapshot: DatasetSnapshot, checkpoint: ModelPackage,
                 provider_revision: str, observed_at: str,
@@ -498,6 +595,8 @@ class JepaResultProjector:
             attributes = {"rank": index + 1,
                           "concept": _integer(item.get("concept"), "reranking concept"),
                           "label": str(item.get("concept_label") or "")[:256]}
+            if result.get("query_digest"):
+                attributes["query_digest"] = result["query_digest"]
             observations.append(self._make(
                 "reranking", f"record:{record_id}", score=(float(raw_score) + 1) / 2,
                 attributes=attributes, citations=citations))

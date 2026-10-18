@@ -1,0 +1,285 @@
+{
+ "version": "v0",
+ "approved": "2026-10-10",
+ "source": ".git/vera-work/shared-planning/four-minds/CHAT-CORPUS-v0.md (owner approved all 30)",
+ "notes": "mentions: every term must appear (case-insensitive); 'a|b' = either. Cases with a fixture are skipped until fixture seeding exists. ttft budgets are advisory until the first run sets them. Fixture cases (7-10) are seeded into their own chat-corpus- memory session before the turn and archived after, and run with context.needs_memory=rules on their own request (the switch is off globally) - recorded as minds in the result.",
+ "cases": [
+  {
+   "id": 1,
+   "text": "hello, what can you help me with?",
+   "route": "chat",
+   "acquire": "none"
+  },
+  {
+   "id": 2,
+   "text": "Explain the difference between a process and a thread in two sentences.",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "process",
+    "thread"
+   ]
+  },
+  {
+   "id": 3,
+   "text": "What is 17% of 2,340?",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "397.8"
+   ]
+  },
+  {
+   "id": 4,
+   "text": "Rewrite this to sound friendlier: \"Your request is denied.\"",
+   "route": "chat",
+   "acquire": "none",
+   "not_mentions": [
+    "denied"
+   ]
+  },
+  {
+   "id": 5,
+   "text": "Give me three name ideas for a home-lab dashboard.",
+   "route": "chat",
+   "acquire": "none"
+  },
+  {
+   "id": 6,
+   "text": "What's the capital of Australia?",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "Canberra"
+   ],
+   "not_mentions": [
+    "Sydney"
+   ]
+  },
+  {
+   "id": 7,
+   "text": "What did we decide about the Redis replacement last time?",
+   "route": "chat",
+   "acquire": "memory",
+   "mentions": [
+    "Valkey"
+   ],
+   "fixture": "decided to move the cache from Redis to Valkey after the licence change",
+   "minds": {
+    "context.needs_memory": "rules"
+   }
+  },
+  {
+   "id": 8,
+   "text": "Remind me what the GPU on gpu-250 is.",
+   "route": "chat",
+   "acquire": "memory",
+   "mentions": [
+    "V100"
+   ],
+   "canvas": "estate",
+   "fixture": "gpu-250 has a Tesla V100 with 12 GB",
+   "minds": {
+    "context.needs_memory": "rules"
+   }
+  },
+  {
+   "id": 9,
+   "text": "You said something earlier about the census window — what was it?",
+   "route": "chat",
+   "acquire": "memory",
+   "mentions": [
+    "07:00",
+    "17:00"
+   ],
+   "fixture": "censuses run 07:00–17:00 on weekdays",
+   "minds": {
+    "context.needs_memory": "rules"
+   }
+  },
+  {
+   "id": 10,
+   "text": "What was the name of the student model we picked for step verification?",
+   "route": "chat",
+   "acquire": "memory",
+   "mentions": [
+    "Qwen3"
+   ],
+   "fixture": "the step_verify student is Qwen3-4B",
+   "minds": {
+    "context.needs_memory": "rules"
+   }
+  },
+  {
+   "id": 11,
+   "text": "What's the latest news on the Redis licensing?",
+   "route": "chat",
+   "acquire": "web",
+   "mentions": [
+    "Redis"
+   ],
+   "canvas": "research"
+  },
+  {
+   "id": 12,
+   "text": "Search for the current stable Python release.",
+   "route": "chat",
+   "acquire": "web",
+   "mentions": [
+    "Python"
+   ]
+  },
+  {
+   "id": 13,
+   "text": "What's the weather in London today?",
+   "route": "chat",
+   "acquire": "web",
+   "mentions": [
+    "London"
+   ]
+  },
+  {
+   "id": 14,
+   "text": "Who won the most recent Formula 1 race?",
+   "route": "chat",
+   "acquire": "web"
+  },
+  {
+   "id": 15,
+   "text": "What's the bitcoin price right now?",
+   "route": "chat",
+   "acquire": "web",
+   "mentions": [
+    "BTC|bitcoin"
+   ],
+   "canvas": "markets"
+  },
+  {
+   "id": 16,
+   "text": "Show me ETH against BTC over the last week.",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "ETH"
+   ],
+   "canvas": "markets"
+  },
+  {
+   "id": 17,
+   "text": "How is the S&P 500 doing this month?",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "S&P|SPY"
+   ],
+   "canvas": "markets"
+  },
+  {
+   "id": 18,
+   "text": "What's in my trading account?",
+   "route": "chat",
+   "acquire": "none",
+   "canvas": "trading_account"
+  },
+  {
+   "id": 19,
+   "text": "How are the nodes doing?",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "gpu-250",
+    "cpu-246",
+    "cpu-247"
+   ],
+   "canvas": "estate"
+  },
+  {
+   "id": 20,
+   "text": "Is the GPU busy?",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "gpu-250"
+   ],
+   "canvas": "estate"
+  },
+  {
+   "id": 21,
+   "text": "How much storage is left on VFS-02?",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "VFS-02"
+   ],
+   "canvas": "estate"
+  },
+  {
+   "id": 22,
+   "text": "Which containers are running on PVE01?",
+   "route": "chat",
+   "acquire": "none",
+   "canvas": "estate"
+  },
+  {
+   "id": 23,
+   "text": "What's new on the topics I track?",
+   "route": "chat",
+   "acquire": "none",
+   "canvas": "intel"
+  },
+  {
+   "id": 24,
+   "text": "Give me a brief on the Valkey topic.",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "Valkey"
+   ],
+   "canvas": "intel"
+  },
+  {
+   "id": 25,
+   "text": "What's on my calendar tomorrow?",
+   "route": "chat",
+   "acquire": "none",
+   "canvas": "calendar"
+  },
+  {
+   "id": 26,
+   "text": "Book a reminder for Friday at 9 to check the census results.",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "Friday"
+   ],
+   "canvas": "calendar"
+  },
+  {
+   "id": 27,
+   "text": "Build a small HTML page with a working stopwatch.",
+   "route": "loop",
+   "acquire": "none"
+  },
+  {
+   "id": 28,
+   "text": "Research the WebGPU browser support situation and write me a short report with sources.",
+   "route": "loop",
+   "acquire": "none"
+  },
+  {
+   "id": 29,
+   "text": "Write a Python script that counts the lines in every file of a folder, and test it.",
+   "route": "loop",
+   "acquire": "none"
+  },
+  {
+   "id": 30,
+   "text": "Don't search the web — just tell me from what you know: what is Valkey?",
+   "route": "chat",
+   "acquire": "none",
+   "mentions": [
+    "Valkey"
+   ]
+  }
+ ]
+}

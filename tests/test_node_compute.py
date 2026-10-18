@@ -120,7 +120,9 @@ def test_every_function_is_a_module_level_def_in_its_module():
     files = {"worldview_jepa": "vera/worldview/worldview_jepa.py",
              "ml_training": "vera/machine learning/ml_training.py",
              "markets_lab_capabilities": "vera/markets/markets_lab_capabilities.py",
-             "test_runner_core": "vera/evolve/test_runner_core.py"}
+             "test_runner_core": "vera/evolve/test_runner_core.py",
+             "ml_workshop": "vera/machine learning/ml_workshop.py",
+             "ml_onnx": "vera/machine learning/ml_onnx.py"}
     for name, (base, attr, _libs) in core.FUNCTIONS.items():
         tree = ast.parse(open(os.path.join(ROOT, files[base]), encoding="utf-8").read())
         top = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}

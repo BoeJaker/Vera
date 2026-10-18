@@ -12,7 +12,14 @@ ref, source, ui (where it opens), extra.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Any, Dict, List, Optional, Sequence
+
+
+def action_ref(token: Any) -> str:
+    """A non-secret, stable id for an action, derived from (never revealing) its token."""
+    t = str(token or "")
+    return ("act-" + hashlib.sha256(t.encode()).hexdigest()[:12]) if t else ""
 
 PANEL = "/intel/panel"
 
@@ -69,7 +76,9 @@ def events(*, snapshots: Sequence[Dict[str, Any]] = (), reports: Sequence[Dict[s
         out.append(_ev("intel.action", str(a.get("finished") or a.get("created") or ""),
                        f"Action: {a.get('label') or a.get('kind') or 'run'}",
                        summary=str(a.get("query") or a.get("target") or ""), status=str(a.get("status") or ""),
-                       ref=str(a.get("token") or ""), extra={"topic_id": a.get("topic_id")}))
+                       # never the token: it is the one-time key that RUNS the action, and timeline events are
+                       # shown and stored widely (review 2026-10-10) - a stable non-secret id instead
+                       ref=action_ref(a.get("token")), extra={"topic_id": a.get("topic_id")}))
     if night and night.get("ts") and not topic_id:
         st = night.get("stats") or {}
         out.append(_ev("intel.night", str(night["ts"]), f"Night batch: {st.get('topics', night.get('topics', 0))} topics",

@@ -88,35 +88,56 @@ def _pct(sorted_vals: List[float], p: float) -> float:
     return round(sorted_vals[i], 1)
 
 
+def summarize(envs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """p50/p95 of the totals and of each stage, with outcome counts, over some envelopes."""
+    totals = sorted(e["total_ms"] for e in envs)
+    stages: Dict[str, Dict[str, Any]] = {}
+    for e in envs:
+        for s in e.get("stages", []):
+            st = stages.setdefault(s["stage"], {"ms": [], "outcomes": {}})
+            st["ms"].append(s["ms"])
+            st["outcomes"][s["outcome"]] = st["outcomes"].get(s["outcome"], 0) + 1
+    return {
+        "calls": len(envs),
+        "total": {"p50": _pct(totals, 0.5), "p95": _pct(totals, 0.95)},
+        "stages": {
+            name: {"n": len(v["ms"]), "p50": _pct(sorted(v["ms"]), 0.5),
+                   "p95": _pct(sorted(v["ms"]), 0.95), "outcomes": v["outcomes"]}
+            for name, v in stages.items()},
+    }
+
+
 class Window:
-    """The last `size` envelopes per path."""
+    """The last `size` envelopes per path, and how many each path has ever had (for since())."""
 
     def __init__(self, size: int = 500):
         self.size = int(size)
         self._by_path: Dict[str, Deque[Dict[str, Any]]] = {}
+        self._added: Dict[str, int] = {}
 
     def add(self, env: Dict[str, Any]) -> None:
-        q = self._by_path.setdefault(env.get("path", "?"), deque(maxlen=self.size))
+        p = env.get("path", "?")
+        q = self._by_path.setdefault(p, deque(maxlen=self.size))
         q.append(env)
+        self._added[p] = self._added.get(p, 0) + 1
+
+    def marks(self) -> Dict[str, int]:
+        """Envelopes added per path so far; pass to since() later."""
+        return dict(self._added)
 
     def summary(self, path: str = "") -> Dict[str, Any]:
+        return {p: summarize(list(q)) for p, q in self._by_path.items() if not path or p == path}
+
+    def since(self, marks: Optional[Dict[str, int]]) -> Tuple[Dict[str, Any], Dict[str, int]]:
+        """Summaries of only the envelopes added after `marks` (FM-7.9: rows that do not
+        overlap), and the new marks. Each path's summary also says `added` (calls since the
+        marks) - more than `calls` when the window dropped some before they were read."""
+        marks = dict(marks or {})
         out: Dict[str, Any] = {}
         for p, q in self._by_path.items():
-            if path and p != path:
+            new = self._added.get(p, 0) - int(marks.get(p, 0))
+            if new <= 0:
                 continue
-            totals = sorted(e["total_ms"] for e in q)
-            stages: Dict[str, Dict[str, Any]] = {}
-            for e in q:
-                for s in e.get("stages", []):
-                    st = stages.setdefault(s["stage"], {"ms": [], "outcomes": {}})
-                    st["ms"].append(s["ms"])
-                    st["outcomes"][s["outcome"]] = st["outcomes"].get(s["outcome"], 0) + 1
-            out[p] = {
-                "calls": len(q),
-                "total": {"p50": _pct(totals, 0.5), "p95": _pct(totals, 0.95)},
-                "stages": {
-                    name: {"n": len(v["ms"]), "p50": _pct(sorted(v["ms"]), 0.5),
-                           "p95": _pct(sorted(v["ms"]), 0.95), "outcomes": v["outcomes"]}
-                    for name, v in stages.items()},
-            }
-        return out
+            envs = list(q)[-new:] if new < len(q) else list(q)
+            out[p] = dict(summarize(envs), added=new)
+        return out, self.marks()

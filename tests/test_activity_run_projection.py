@@ -198,7 +198,7 @@ def test_policy_ui_never_claims_authoritative_control():
     assert "approval pending" in overlay
 
 
-def test_run_ui_links_projection_identity_to_native_dag_authority():
+def test_run_ui_links_projection_identity_to_its_native_authority():
     from pathlib import Path
 
     root = Path(__file__).parents[1]
@@ -207,12 +207,44 @@ def test_run_ui_links_projection_identity_to_native_dag_authority():
     timeline = (root / "vera" / "activity_timeline_element.js").read_text(
         encoding="utf-8")
     overlay = (root / "vera" / "activity_overlay.js").read_text(encoding="utf-8")
-    assert '"authority": "native_dag"' in activity
+    assert '"authority": execution_owner' in activity
+    assert 'workflow_prefix="intel.idle."' in activity
     assert '"projection": "run_protocol_shadow"' in activity
-    assert '"native_url": "/workshop/panel"' in activity
+    assert 'native_url = "/intel/panel" if intel_owned else "/workshop/panel"' in activity
     assert "Execution and control remain authoritative there" in timeline
-    assert "Native DAG workshop" in timeline
-    assert "Open native DAG workshop" in overlay
+    assert "ui.native_label || 'Native runtime'" in timeline
+    assert "ui.native_label || 'native runtime'" in overlay
+
+
+def test_intel_scope_joins_only_intel_runs_with_truthful_native_owner(monkeypatch):
+    from Vera.vera.activity import activity_capabilities as activity
+    from Vera.vera.execution import run_projection
+
+    registry = ShadowRunRegistry()
+    intel_run = Run(
+        id="intel-run", kind="vera.intel.topic", workflow_id="intel.idle.topic",
+        session_id="idle-queue:job-1", trace_id="intel:job-1",
+        policy={"execution_owner": "intel.native", "authority": "shadow"})
+    registry.record(intel_run, intel_run.transition(
+        RunStatus.RUNNING, event_type="run.started"))
+    registry.record(intel_run, intel_run.transition(
+        RunStatus.COMPLETED, event_type="run.completed"))
+    dag_run = Run(id="dag-run", kind="vera.dag", workflow_id="chat-1")
+    registry.record(dag_run, dag_run.transition(
+        RunStatus.RUNNING, event_type="run.started"))
+    monkeypatch.setattr(run_projection, "SHADOW_RUNS", registry)
+
+    async def no_domain_events(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(activity, "_intel_events", no_domain_events)
+    result = asyncio.run(activity.cap_activity_timeline.__wrapped__(scope="intel"))
+    assert [event["ref"] for event in result["events"]] == ["intel-run"]
+    event = result["events"][0]
+    assert event["cap"] == "intel.job"
+    assert event["extra"]["authority"] == "intel.native"
+    assert event["ui"]["native_url"] == "/intel/panel"
+    assert event["ui"]["native_label"] == "Intelligence"
 
 
 def test_telemetry_ui_reports_local_correlation_without_claiming_export():

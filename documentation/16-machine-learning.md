@@ -293,6 +293,39 @@ to the output path or persistence stage. Graphs that fall back to finite
 differences train much more slowly — keep large experiments to the
 backprop-supported node types.
 
+### Where the work runs: the node compute pool
+
+The host gathers inputs and keeps results. The numeric work runs on the node workers through `compute.run`
+(see [Ollama cluster § 9](./04-ollama-cluster.md)):
+
+| Work | Node function | Notes |
+|---|---|---|
+| Training epochs (`ml.train`, `from_dataset`, agent rounds, sweep trials) | `ml.train` | 1 core / 1 GB per job, with threads to match |
+| `ml.train.predict`, `ml.train.evaluate` | `ml.forward` | waits ≤ 20 s for room, then the host executor |
+| `ml.run` | `ml.module_forward` | same |
+| `ml.onnx.run`, `ml.onnx.model.<slug>` | `onnx.run` | the artifact is stored once in Redis by its sha256; nodes with onnxruntime only |
+
+Each reply says where it ran (`ran_on` / `trained_on`). Export, verification and data preparation run on the host's
+executor, never on its event loop. Preparation reads the host's fabric.
+
+**Data by reference.** `ml.data.prepare` stores its arrays once in Redis (`vera:ml:data:<ref>`, npz, 24 h) and returns
+a `data_ref`. `ml.train data_ref=…`, `ml.train.from_dataset` and `ml.sweep` take the reference instead of the
+arrays, and node jobs fetch the data by it (`_blob_refs`). The default `inline=true` still returns the arrays for
+callers that want them.
+
+**Sweeps.** `ml.sweep` trains many configurations of a module side by side and ranks them:
+- **Configurations:** a grid over training settings, optionally a random sample of it (`n_random`), optionally
+  k-fold cross-validation (`folds`, with contiguous blocks computed on the node from the same data).
+- **Trials:** each trial is one node job. The scheduler spreads them by free CPU and memory, `max_parallel` at a
+  time, all from the same initial weights, and they leave the module's own weights alone.
+- **Results:** `ml.sweep.status` shows progress and the ranking by mean validation loss. `apply_best=true`
+  then trains the module once with the winner.
+
+**Exported models describe themselves.** `ml.export.onnx` records what the module's latest finished run was
+trained for (dataset, task, input features, best validation loss) in the artifact manifest. The model's
+`ml.onnx.model.<slug>` binding says so, so `model.callable` and `model.pick` show and can choose it
+([Capability framework: callable models](./01-capability-framework.md#callable-models-serves)).
+
 ## 11. Portable training, evaluation and prompt boundary
 
 The portable lifecycle begins with immutable contracts in

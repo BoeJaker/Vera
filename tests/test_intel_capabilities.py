@@ -146,7 +146,7 @@ def _load(tmp_path, *, nlp=True):
         orch.CALLS.append(("n8n.workflow.create", {"name": name, "activate": activate}))
         return {"id": "d1"}
 
-    async def fabric_browse(dataset_id, limit=200, offset=0, trace_id=None):
+    async def fabric_browse(dataset_id, limit=200, offset=0, lite=False, trace_id=None):
         data = {
             "vera.interests": [{"topic": "UK commercial real estate market", "active": True, "note": "sector", "created": "1"}],
             "vera.monitors": [{"topic": "UK commercial real estate market", "active": True, "created": "2"},
@@ -160,7 +160,9 @@ def _load(tmp_path, *, nlp=True):
             "intel.notes": [{"path": "/n/plan.md", "norm": "Plan: buy a GPU for the lab", "summary": "old", "updated": "1"}],
             "files.seen": [{"path": "/p/todo.txt", "hash": "1a6f417ab11736", "at": "1"}],   # n8n cyrb53 of "print me"
         }.get(dataset_id, [])
-        return {"records": [{"data": d} for d in data], "has_more": False}
+        page = data[offset:offset + limit]
+        return {"records": [{"id": d.get("_id", "fabric-row"), "data": d} for d in page],
+                "total": len(data), "has_more": offset + limit < len(data)}
 
     async def markets_lookup(query="", exchange="binance", limit=12, trace_id=None):
         orch.CALLS.append(("markets.lookup", {"query": query}))
@@ -222,6 +224,8 @@ def _load(tmp_path, *, nlp=True):
         raise mod._Throttled("no network in tests")
     mod._wd = no_network
     mod.WD_SPACING_S = 0.0
+    # these tests drive sweeps themselves; a new topic's immediate first sweep (SK-3.6) is tested on its own
+    mod.store().set_kv("config", dict(mod.store().get_kv("config", {}) or {}, first_sweep=False))
     return mod, orch
 
 
@@ -238,7 +242,8 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
     for name in ("intel.topic.save", "intel.sweep", "intel.timeline.get", "intel.report.build", "intel.deliver",
                  "intel.action.run", "intel.brief", "intel.ingest_dream", "intel.import.n8n", "intel.n8n.retire",
                  "intel.panel.html", "intel.summary", "intel.entities.get", "intel.asof.get", "intel.command",
-                 "intel.save", "intel.files.run", "intel.advise", "intel.session.status", "intel.notes.list"):
+                 "intel.save", "intel.files.run", "intel.advise", "intel.session.status", "intel.notes.list",
+                 "intel.models", "intel.effects", "intel.records", "intel.replay.evaluate"):
         assert name in orch.CAPABILITY_REGISTRY, name
     assert orch.UI and orch.UI[0][0][0] == "intel" and "<iframe" in orch.UI[0][1]["html"]
     fn, interval, kw = orch.SCHEDULED[0]
@@ -246,6 +251,169 @@ def test_registers_caps_panel_tick_and_profile(tmp_path):
     roles = orch.PROFILES["intel"]["roles"]
     assert roles["assess"]["model"] == "qwen3.6:35b-a3b" and roles["assess"]["pin"] == "cpu-247" and roles["assess"]["deny_gpu"]
     assert roles["enrich"]["deny_gpu"] and roles["enrich"]["model"] == "qwen3.6:35b-a3b" and roles["notes"]["pin"] == "cpu-247"
+
+
+def test_replay_evaluation_is_offline_aggregate_only(tmp_path):
+    _mod, orch = _load(tmp_path)
+    before = list(orch.CALLS)
+    result = _R(orch, "intel.replay.evaluate")
+    assert result["ok"] is True
+    assert result["accuracy"] == 1.0
+    assert result["coverage"] == 1.0
+    assert result["deterministic"] is True
+    assert result["failed_case_ids"] == []
+    assert "actual" not in result and "expected" not in result
+    assert orch.CALLS == before
+
+
+def test_model_inventory_joins_intel_consumers_without_executing_models(tmp_path):
+    mod, orch = _load(tmp_path)
+
+    async def callable_models(**kw):
+        assert kw == {"include_llms": False, "measure": False}
+        return {"models": [{"id": "nlp.ner:gliner", "cap": "nlp.ner",
+                            "selector": {"task": "gliner"}, "model": "gliner/model",
+                            "package_id": "pkg:gliner", "present_on": ["cpu-246"],
+                            "loaded_on": ["cpu-246"]}]}
+
+    orch.CAPABILITY_REGISTRY["model.callable"] = {"func": callable_models}
+    orch.OLLAMA_INSTANCES = {"cpu-247": {"models": ["qwen3.6:35b-a3b"],
+                                         "running": [{"name": "qwen3.6:35b-a3b"}]}}
+    orch.MODEL_TAGS = {}
+    orch._effective_role_profiles = lambda: {"intel": {"name": "intel", "roles": {
+        "assess": {"model": "qwen3.6:35b-a3b", "pin": "cpu-247",
+                   "job_type": "idle_intel", "deny_gpu": True}}}}
+    result = _R(orch, "intel.models")
+    assert result["schema"] == "vera.intel-model-consumers/v1"
+    assert next(row for row in result["nlp"] if row["consumer_id"] == "intel.enrich.entities")["status"] == "verified"
+    assert result["roles"][0]["present_on"] == ["cpu-247"]
+    assert orch.PROMPTS == []
+
+
+def test_effect_inventory_is_read_only_and_reports_attribution_gap(tmp_path):
+    _mod, orch = _load(tmp_path)
+    before = list(orch.CALLS)
+    result = _R(orch, "intel.effects")
+    assert result["schema"] == "vera.intel-effect-inventory/v1"
+    assert result["readiness"]["intel_attributable"] is False
+    assert "intel_attribution_missing" in result["gaps"]
+    assert result["claims"] == {"executes": False, "probes": False,
+                                "records_evidence": False, "changes_enforcement": False,
+                                "retains_payload": False}
+    assert orch.CALLS == before
+
+
+def test_intel_call_context_attributes_downstream_effect_observations(tmp_path):
+    mod, orch = _load(tmp_path)
+
+    async def probe():
+        return {"source": mod.effect_context.current_source()}
+
+    orch.CAPABILITY_REGISTRY["test.effect.probe"] = {"func": probe, "raw": probe}
+    assert _run(mod._call("test.effect.probe")) == {"source": "intel"}
+    assert mod.effect_context.current_source() == ""
+
+
+def test_effect_inventory_reads_only_intel_attributed_provider_evidence(tmp_path):
+    _mod, orch = _load(tmp_path)
+    seen = []
+
+    async def evidence(family="", source="", limit=0):
+        seen.append((family, source, limit))
+        return {"totals": {"observations": 2 if family == "telegram" else 1},
+                "source_filter": source}
+
+    orch.CAPABILITY_REGISTRY["integration.effect.shadow.evidence"] = {
+        "func": evidence, "raw": evidence}
+    result = _R(orch, "intel.effects")
+    assert seen == [
+        ("telegram", "intel", 50), ("email", "intel", 50),
+        ("homeassistant", "intel", 50), ("n8n", "intel", 50),
+        ("repository", "intel", 50), ("printing", "intel", 50),
+    ]
+    assert result["readiness"]["intel_attributable"] is True
+    assert result["readiness"]["attributed_observations"] == 7
+    by_id = {row["id"]: row for row in result["boundaries"]}
+    assert by_id["channel.phone"]["evidence_family"] == "homeassistant"
+    assert by_id["channel.print"]["evidence_family"] == "printing"
+    assert by_id["repo.acquire"]["evidence_family"] == "repository"
+    assert by_id["n8n.proposal.create"]["evidence_family"] == "n8n"
+    assert all("portable_effect_observation_missing" not in by_id[key]["gaps"]
+               for key in ("channel.phone", "channel.print", "repo.acquire",
+                           "n8n.proposal.create"))
+
+
+def test_record_reconciliation_matches_only_real_fabric_and_delivery_evidence(tmp_path):
+    mod, orch = _load(tmp_path)
+    mod.store().put_signal({"id": "sig-1", "topic_id": "topic-1", "seen": "2026-10-16T00:00:00Z"})
+    mod.store().put_signal({"id": "sig-2", "topic_id": "topic-1", "seen": "2026-10-16T00:01:00Z"})
+    mod.store().put_report({"id": "report-1", "ts": "2026-10-16T01:00:00Z",
+                            "title": "Brief", "topic_ids": ["topic-1"]}, "<p>Brief</p>")
+    mod.store().put_report({"id": "report-local-only", "ts": "2026-10-16T01:01:00Z",
+                            "title": "Local", "topic_ids": ["topic-1"]}, "<p>Local</p>")
+    mod.store().log_delivery("report-1", "fabric", "2026-10-16T01:02:00Z", True,
+                             {"channel": "fabric", "ok": True})
+    mod.store().log_delivery("report-1", "memory", "2026-10-16T01:03:00Z", True,
+                             {"channel": "memory", "ok": True})
+    # A long unrelated tail must not hide evidence for a selected report.
+    for index in range(120):
+        mod.store().log_delivery("other", "html", f"2026-10-16T02:{index % 60:02d}:00Z", True,
+                                 {"channel": "html", "ok": True})
+
+    async def browse(dataset_id="", limit=200, offset=0, lite=False):
+        rows = {
+            "intel.signals": [
+                {"id": "intel-sig-sig-1", "data": {"id": "sig-1"}},
+                {"id": "intel-sig-orphan", "data": {"id": "orphan"}},
+            ],
+            "intel.reports": [
+                {"id": "random-fabric-id", "data": {"id": "report-1"}},
+            ],
+        }[dataset_id]
+        page = rows[offset:offset + limit]
+        return {"records": page, "total": len(rows),
+                "has_more": offset + limit < len(rows)}
+
+    orch.CAPABILITY_REGISTRY["fabric.browse"] = {"func": browse, "raw": browse}
+    result = _R(orch, "intel.records", limit=20)
+    assert result["schema"] == "vera.intel-record-reconciliation/v1"
+    assert result["native_authority"] == "intel.sqlite"
+    assert result["read_only"] and not result["executes"] and not result["writes"]
+    assert result["reconciliation"]["signals"]["status"] == "gaps"
+    assert result["reconciliation"]["signals"]["missing_ids"] == ["sig-2"]
+    assert result["reconciliation"]["signals"]["unexpected_ids"] == ["orphan"]
+    reports = result["reconciliation"]["reports"]
+    assert reports["status"] == "matched"
+    assert reports["expected_shared"] == 1
+    assert reports["fabric_delivery_successes_sampled"] == 1
+    assert reports["memory"] == {
+        "delivery_successes_sampled": 1,
+        "projection_identity_available": False,
+        "status": "delivery_evidence_only",
+        "reason": "native_delivery_log_retains_no_projection_identity",
+    }
+    families = {row["id"]: row for row in result["families"]}
+    assert families["reports"]["portable_record"]["status"] == "not_revision_backed"
+    assert families["decisions_outcomes"]["shared_contract"] == "four_minds.decision_outcome"
+    assert families["signals"]["native_count"] == 2
+    assert families["reports"]["native_count"] == 2
+    assert families["actions_deliveries"]["native_count"] == 122
+
+
+def test_record_reconciliation_reports_fabric_failure_without_fabricating_missing_rows(tmp_path):
+    mod, orch = _load(tmp_path)
+    mod.store().put_signal({"id": "sig-1", "topic_id": "topic-1", "seen": "2026-10-16T00:00:00Z"})
+
+    async def unavailable(**_kw):
+        raise RuntimeError("fabric unavailable")
+
+    orch.CAPABILITY_REGISTRY["fabric.browse"] = {"func": unavailable, "raw": unavailable}
+    result = _R(orch, "intel.records", limit=20)
+    signals = result["reconciliation"]["signals"]
+    assert signals["status"] == "shared_source_unavailable"
+    assert signals["missing"] == 0
+    assert signals["coverage_complete"] is False
+    assert "fabric unavailable" in signals["error"]
 
 
 def test_the_whole_cycle(tmp_path):
@@ -315,6 +483,130 @@ def test_night_batch_brief_and_delivery(tmp_path):
     pod = next(kw for n, kw in orch.CALLS if n == "background.cap.enqueue" and kw.get("name") == "podcast.generate")
     assert pod["arguments"]["show_name"] == "Vera Signal"
     assert orch.SENT[-1]["text"].count("▸") == 3                          # the top line once, not the headlines too
+
+
+def test_the_night_refits_the_calibration_curves(tmp_path):
+    # the curves were only ever fitted on request, so the learned gate never saw a rating given after 6 Oct
+    mod, orch = _load(tmp_path)
+    _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])
+    assert not mod.store().get_kv("calibration")
+    _run(mod._start_night("2026-10-04"))
+    rec = mod.store().get_kv("calibration")
+    assert rec and rec.get("at") and "labelled" in rec
+
+
+class _FakeSvc:
+    """The idle queue as intel.night.run sees it: jobs run when drained, never on their own."""
+    def __init__(self, mod):
+        self.mod, self.jobs, self.reserved, self.released, self.drains = mod, [], None, [], 0
+
+    async def submit(self, kind, title="", *, dedupe_key="", payload=None, total=None, priority=None):
+        self.jobs.append({"id": f"{kind}:{len(self.jobs)}", "kind": kind, "state": "waiting", "payload": payload})
+        return {"queued": True, "id": self.jobs[-1]["id"]}
+
+    async def load_jobs(self):
+        return [dict(j) for j in self.jobs]
+
+    async def report_progress(self, *a, **k):
+        pass
+
+    async def submit_mode(self, mode, title, *, key, payload=None, priority=None):
+        """intel's _submit, queueing (the harness's default runs jobs at once)."""
+        return await self.submit("intel", title, dedupe_key=f"intel:{key}", payload=dict(payload or {}, mode=mode),
+                                 total=1, priority=priority)
+
+    def reserve(self, kinds, until, by=""):
+        self.reserved = (tuple(kinds), until, by)
+
+    def release_reservation(self, by=""):
+        self.released.append(by)
+
+    async def drain_once(self, busy, probe, now=None):
+        self.drains += 1
+        assert self.reserved and busy == ""                      # drained only inside the reserved window
+        w = [j for j in self.jobs if j["state"] == "waiting"]
+        if not w:
+            return {"action": "idle"}
+        await self.mod._intel_job(w[0], probe)
+        self.jobs.remove(w[0])
+        return {"action": "started", "kind": w[0]["kind"]}
+
+
+def test_night_run_reserves_the_queue_and_drains_the_batch_to_the_brief(tmp_path, monkeypatch):
+    # 12-17 Oct: the night batch waited six days for 600 s of quiet; in a scheduled window it runs regardless
+    mod, orch = _load(tmp_path)
+    _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])
+    fake = _FakeSvc(mod)
+    monkeypatch.setattr(mod, "_svc", lambda: fake)
+    monkeypatch.setattr(mod, "_submit", fake.submit_mode)
+    monkeypatch.setattr(mod, "_NIGHT_RUN_POLL_S", 0.0)
+    r = _R(orch, "intel.night.run", minutes=30)
+    assert r["ok"] and r["reason"] == "brief written" and r["ran"] >= 3 and r["remaining"] == 0, r
+    assert fake.reserved[0] == ("intel",) and fake.reserved[2] == "intel.night.run"
+    assert fake.released == ["intel.night.run"]                  # always, even when the loop ends early
+    night = mod.store().get_kv("night")
+    assert night["pending"] == [] and night["brief"] not in ("", "-")
+    assert any(e.get("type", "").endswith("night_run") or e.get("kind") == "night_run" or "night_run" in str(e)
+               for e in orch.EVENTS)
+    # a second call the same night does not start the batch again
+    r2 = _R(orch, "intel.night.run", minutes=30)
+    assert r2["ok"] and r2["ran"] == 0 and r2["reason"] == "brief written"
+
+
+def test_night_run_without_an_idle_queue_runs_inline(tmp_path, monkeypatch):
+    mod, orch = _load(tmp_path)
+    _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])
+    monkeypatch.setattr(mod, "_svc", lambda: None)
+    r = _R(orch, "intel.night.run")
+    assert r["ok"] and "inline" in r["reason"]
+    assert mod.store().get_kv("night")["brief"] not in ("", "-")
+
+
+def test_night_schedule_is_an_exclusive_cap_entry_and_idempotent(tmp_path):
+    mod, orch = _load(tmp_path)
+    calls = []
+
+    async def upsert(schedule=None, trace_id=None):
+        calls.append(schedule)
+        return {"ok": True, "schedule": dict(schedule, id="sched1"), "next": {"start": "x", "end": "y"}}
+
+    orch.CAPABILITY_REGISTRY["evolve.schedule.upsert"] = {"func": upsert, "raw": upsert, "meta": {}}
+    r = _R(orch, "intel.night.schedule", start="00:10", end="02:40", minutes=120)
+    assert r["ok"] and r["schedule"]["id"] == "sched1"
+    rec = calls[0]
+    assert rec["kind"] == "cap" and rec["target"] == {"name": "intel.night.run", "arguments": {"minutes": 120}}
+    assert rec["exclusive"] is True and rec["repeat"] == "once_per_window" and rec["days"] == [0, 1, 2, 3, 4, 5, 6]
+    assert rec["start"] == "00:10" and rec["end"] == "02:40" and "id" not in rec
+    _R(orch, "intel.night.schedule", days="0,2,4", enabled=False)
+    assert calls[1]["id"] == "sched1" and calls[1]["days"] == [0, 2, 4] and calls[1]["enabled"] is False
+
+
+def test_topics_and_sweeps_touch_the_web_map(tmp_path):
+    # web-ingress WI-10: the intel topic is the canonical topic id; its sweep's signals become members
+    mod, orch = _load(tmp_path)
+    orch.CAPABILITY_REGISTRY["fabric.map.topic.touch"] = {"func": orch.CAPABILITY_REGISTRY["tg.notify"]["func"], "raw": None}
+    calls = []
+
+    async def touch(**kw):
+        calls.append(kw)
+        return {"topic_key": kw.get("topic_id"), "members_added": len(kw.get("urls") or [])}
+    orch.CAPABILITY_REGISTRY["fabric.map.topic.touch"] = {"func": touch, "raw": touch}
+
+    async def go():
+        r = await orch.CAPABILITY_REGISTRY["intel.topic.save"]["func"](name="AI property valuation", entities=["Acme"],
+                                                                       sites=["news.example"], queries=["acme pilot"])
+        await asyncio.sleep(0); await asyncio.sleep(0)
+        t = mod.store().get_topic(r["topic"]["id"])
+        await mod.sweep_topic(t)
+        await asyncio.sleep(0); await asyncio.sleep(0)
+        return t
+
+    t = _run(go())
+    assert calls and calls[0]["topic_id"] == t["id"] and calls[0]["source"] == "intel.topic.save"
+    assert calls[0]["seeds"] == ["news.example"] and "acme pilot" in calls[0]["queries"] and calls[0]["entities"] == ["Acme"]
+    sweep = [c for c in calls if c["source"] == "intel.sweep"]
+    assert sweep and sweep[0]["role"] == "source" and any(u.startswith("https://news.example/") for u in sweep[0]["urls"])
+    assert mod._touch_topic_map(t) is None or True                      # never raises without a running loop either
 
 
 def test_drop_folders(tmp_path):
@@ -407,6 +699,42 @@ def test_nightly_job_yields_when_told(tmp_path):
     assert r.get("ok"), r                                                      # our own hold is not a reason to stop
     r = _run(mod._intel_job({"payload": {"mode": "topic", "topic_id": t["id"], "until": "2000-01-01T00:00:00Z"}}, None))
     assert r["skipped"] == "its session ended"
+
+
+def test_intel_job_wrapper_projects_the_actual_native_invocation(tmp_path, monkeypatch):
+    mod, _orch = _load(tmp_path)
+    from vera.execution.run_journal import MemoryRunJournal
+    from vera.execution.run_projection import ShadowRunRegistry
+
+    registry = ShadowRunRegistry(max_runs=20, journal=MemoryRunJournal())
+    monkeypatch.setattr(mod.intel_run, "SHADOW_RUNS", registry)
+
+    result = _run(mod._intel_job({
+        "id": "intel:native-job",
+        "preempts": "2",
+        "payload": {
+            "mode": "topic",
+            "topic_id": "private-topic",
+            "until": "2000-01-01T00:00:00Z",
+        },
+    }, None))
+
+    assert result["skipped"] == "its session ended"
+    observed = registry.get(registry.list()[0]["id"])
+    assert observed["run"]["status"] == "skipped"
+    assert observed["run"]["attempt"] == 3
+    assert observed["run"]["workflow_id"] == "intel.idle.topic"
+    assert "private-topic" not in str(observed)
+    assert "2000-01-01" not in str(observed)
+
+    registry = ShadowRunRegistry(max_runs=20, journal=MemoryRunJournal())
+    monkeypatch.setattr(mod.intel_run, "SHADOW_RUNS", registry)
+    result = _run(mod._intel_job({
+        "id": "intel:malformed-attempt", "preempts": "not-a-number",
+        "payload": {"mode": "unknown-mode"},
+    }, None))
+    assert result["ok"] is False
+    assert registry.get(registry.list()[0]["id"])["run"]["attempt"] == 1
 
 
 def test_review_regressions(tmp_path):
@@ -1061,3 +1389,84 @@ def test_narration_is_compressed_to_mp3_without_ffmpeg(tmp_path):
         w.writeframes(b"\x10\x00\xf0\xff" * 24000)
     r = _R(orch, "intel.audio.compact")
     assert r["converted"] == 1 and r["kept_wav"] == 0
+
+
+def test_decisions_send_what_they_saw_to_the_training_store(tmp_path, monkeypatch):
+    # four-minds FM-13.6: decide.record gets the inputs (a signal's richer view, else the state) so intel decisions
+    # can be rated in /decide/labels; the ledger row itself still carries only the hash
+    mod, orch = _load(tmp_path)
+    calls = []
+
+    async def fake_call(name, /, **kw):
+        calls.append((name, kw))
+        return {"ok": True}
+
+    monkeypatch.setattr(mod, "_has", lambda n: n == "decide.record")
+    monkeypatch.setattr(mod, "_call", fake_call)
+
+    async def go():
+        mod._decide("intel.signal_relevant", "relevant", state={"url": "https://a"}, ref_kind="signal", ref_id="s1",
+                    inputs={"url": "https://a", "snippet": "text"})
+        mod._decide("intel.material_change", "alert", state={"topic": "t1"}, ref_kind="snapshot", ref_id="n1")
+        await asyncio.gather(*list(mod._LEDGER_TASKS))
+
+    _run(go())
+    assert [c[0] for c in calls] == ["decide.record", "decide.record"]
+    assert calls[0][1]["inputs"] == {"url": "https://a", "snippet": "text"}
+    assert calls[1][1]["inputs"] == {"topic": "t1"}
+    assert "snippet" not in json.dumps(calls[0][1]["row"])
+
+
+def test_backfill_rebuilds_signal_inputs_and_writes_only_when_asked(tmp_path, monkeypatch):
+    mod, orch = _load(tmp_path)
+    t = _R(orch, "intel.topic.save", name="AI property valuation", entities=["Acme"])["topic"]
+    st = mod.store()
+    for i in range(3):
+        st.put_signal({"id": f"s{i}", "topic_id": t["id"], "title": f"t{i}", "url": f"https://x.example/{i}",
+                       "score": 6, "snippet": f"body {i}", "seen": mod.core.now_iso()})
+        mod._decide("intel.signal_relevant", "relevant", state={"s": i}, ref_kind="signal", ref_id=f"s{i}")
+    mod._decide("intel.enrich_worth", "model", state={}, ref_kind="signal", ref_id="gone")
+    written = []
+
+    async def put_now(d, inputs):
+        written.append((d["decision_id"], inputs))
+        return True
+
+    monkeypatch.setitem(sys.modules, "training_state", types.SimpleNamespace(put_now=put_now))
+    dry = _R(orch, "intel.decisions.backfill_inputs")
+    assert (dry["decisions"], dry["rebuilt"], dry["missing_signal"], dry["written"]) == (4, 3, 1, 0) and not written
+    out = _R(orch, "intel.decisions.backfill_inputs", dry_run=False)
+    assert out["written"] == 3 and len(written) == 3
+    assert {w[1]["topic_name"] for w in written} == {"AI property valuation"}
+    assert {w[1]["snippet"] for w in written} == {"body 0", "body 1", "body 2"}
+
+
+def test_a_set_switch_overrides_intel_config_and_an_unset_one_changes_nothing(tmp_path):
+    # four-minds FM-13.3: intel's modes as switchboard switches; intel's config stays the truth
+    mod, orch = _load(tmp_path)
+    eff = {"modes": {"intel.nlp_triage": "on", "intel.brief": "llm", "intel.auto_research": "off",
+                     "intel.material_alerts": "on", "intel.calibrated_gate": "shadow"},
+           "source": {s: "default" for s in mod.isw.SWITCHES}}
+
+    async def minds_effective(minds=None, arm=None, trace_id=None):
+        return eff
+
+    orch.CAPABILITY_REGISTRY["minds.effective"] = {"func": minds_effective, "raw": minds_effective}
+
+    async def read_twice():
+        mod._SW.update(at=0.0, over={}, task=None)
+        mod.config()                                   # starts the background read
+        await mod._SW["task"]
+        return mod.config()
+
+    base = _run(read_twice())
+    assert base["nlp"] is True and not base.get("calibration_off") and "brief_synthesize" not in base
+    eff["modes"].update({"intel.nlp_triage": "off", "intel.brief": "extractive", "intel.calibrated_gate": "off"})
+    eff["source"].update({"intel.nlp_triage": "global", "intel.brief": "global", "intel.calibrated_gate": "arm"})
+    c = _run(read_twice())
+    assert c["nlp"] is False and c["brief_synthesize"] is False
+    assert c["calibrated_gate"] is False and c["calibration_off"] is True and mod._curves() == {}
+    assert c["alerts"] == base["alerts"]               # unset: unchanged
+    # the panel can mark what the switchboard is overriding (a toggle there would do nothing)
+    assert set(_R(orch, "intel.config.get")["switch_overrides"]) == {"nlp", "brief_synthesize", "calibrated_gate",
+                                                                     "calibration_off"}

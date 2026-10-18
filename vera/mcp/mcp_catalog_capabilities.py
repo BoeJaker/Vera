@@ -419,30 +419,71 @@ def _secret_keys(rec: Dict, target: str) -> set:
             if f.get("secret") and f.get("target") == target}
 
 
-def _seal_secrets(rec: Dict) -> Dict:
-    """Return a copy with secret env/header/arg values sealed (idempotent)."""
+def _pa():
+    try:
+        from Vera.vera.platforms import platform_access as _p
+        if hasattr(_p, "keep"):
+            return _p
+    except ImportError:
+        pass
+    from vera.platforms import platform_access as _p             # tests in a worktree: the newer copy
+    return _p
+
+
+async def _seal_secrets(rec: Dict) -> Dict:
+    """Return a copy with new secret env/header/arg values in the Platforms credential store (an @secret:
+    reference kept here - owner 2026-10-11: every credential in the store); sealed here only without that store.
+    References and values already sealed stay as they are."""
     out = dict(rec)
     for target, bag in _BAGS:
         keys = _secret_keys(rec, target)
         src = dict(rec.get(bag, {}))
         for k in keys:
             if src.get(k):
-                src[k] = vsecrets.seal(src[k])
+                src[k] = await _pa().keep(_orch.CAPABILITY_REGISTRY, _pa().key_for("mcp", rec.get("id"), k), src[k],
+                                          f"MCP {rec.get('label') or rec.get('id')} {k}")
         out[bag] = src
     return out
 
 
 def _open_secrets(rec: Dict) -> Dict:
-    """Return a copy with secret env/header/arg values decrypted (internal use)."""
+    """Return a copy with secret env/header/arg values readable (internal use): references from the store,
+    old sealed values opened."""
     out = dict(rec)
     for target, bag in _BAGS:
         keys = _secret_keys(rec, target)
         src = dict(rec.get(bag, {}))
         for k in keys:
             if src.get(k):
-                src[k] = vsecrets.open_secret(src[k])
+                src[k] = _pa().open_any_sync(_orch.CAPABILITY_REGISTRY, src[k])
         out[bag] = src
     return out
+
+
+async def _adopt(dry_run: bool) -> List[Dict[str, str]]:
+    """Move MCP server secrets still sealed here into the store (platform.secrets.adopt)."""
+    r = _redis()
+    moved: List[Dict[str, str]] = []
+    for rec in await _all_raw():
+        changed = False
+        for target, bag in _BAGS:
+            src = rec.get(bag) or {}
+            for k in _secret_keys(rec, target):
+                if not _pa().needs_adopting(src.get(k)):
+                    continue
+                key = _pa().key_for("mcp", rec.get("id"), k)
+                moved.append({"record": rec.get("id"), "field": f"{bag}.{k}", "key": key})
+                if not dry_run:
+                    new = await _pa().adopt_value(_orch.CAPABILITY_REGISTRY, key, src[k],
+                                                  f"MCP {rec.get('label') or rec.get('id')} {k}")
+                    changed = changed or new != src[k]
+                    src[k] = new
+        if changed and r:
+            await r.hset(KEY_CATALOG, rec["id"], json.dumps(rec))
+    return moved
+
+
+_pa().register_adopter("mcp_catalog", _adopt)
 
 
 def _redact(rec: Dict) -> Dict:
@@ -557,7 +598,7 @@ async def upsert_server(fields: Dict[str, Any]) -> Dict[str, Any]:
         rec[bag] = {k: val for k, val in merged.items() if val is not None}
 
     try:
-        rec = _seal_secrets(rec)
+        rec = await _seal_secrets(rec)
     except RuntimeError as e:
         return {"error": str(e)}
 

@@ -256,23 +256,41 @@ async def _host_release(token: str) -> None:
         pass
 
 
-async def _node_slots(max_nodes: int) -> List[str]:
-    """Nodes that could take a gate shard right now (one shard per node)."""
+async def _node_slots(max_nodes: int, avoid: List[str] = ()) -> List[str]:
+    """Nodes that could take a gate shard right now (one shard per node), leaving out `avoid`."""
     plan = getattr(_orch, "NODE_PLAN", None)
     if plan is None or max_nodes <= 0:
         return []
     picked: List[str] = []
-    for _ in range(max_nodes):
-        p = await plan("pytest.shard", exclude=picked)
+    skipped: List[str] = []
+    while len(picked) < max_nodes:
+        p = await plan("pytest.shard", exclude=picked + skipped)
         if p["pick"] is None:
             break
-        picked.append(str(p["pick"].get("host_id")))
+        hid = str(p["pick"].get("host_id"))
+        if core.avoided(p["pick"], avoid):
+            skipped.append(hid)
+            continue
+        picked.append(hid)
     return picked
 
 
+async def _busy_avoid(cfg: Dict[str, Any]) -> List[str]:
+    """The nodes a gate leaves alone now: cfg busy_avoid while a loop or census runs (the box's
+    busy reason - the same read the Loop Lab suites wait on), else none."""
+    avoid = cfg.get("busy_avoid") or []
+    if not avoid:
+        return []
+    try:
+        why = await _ev()._box_busy_reason()
+    except Exception:
+        why = ""
+    return list(avoid) if why else []
+
+
 async def _host_shard(wt: str, files: List[str], markers: str, timeout: int,
-                      parallel: int = 1, durations: Optional[Dict[str, float]] = None
-                      ) -> Dict[str, Any]:
+                      parallel: int = 1, durations: Optional[Dict[str, float]] = None,
+                      idle: bool = False) -> Dict[str, Any]:
     """A chunk on the host: `parallel` test containers side by side (split by
     the recorded durations, each file in exactly one), one combined result. One
     process per chunk made the host the slowest runner (2026-10-05 parity: nodes
@@ -285,6 +303,8 @@ async def _host_shard(wt: str, files: List[str], markers: str, timeout: int,
         if err:
             raise ValueError(err)
         argv = ev._ut_argv(ev.DEV_IMAGE, os.path.realpath(wt), ev._ut_inner(tokens))
+        if idle:
+            argv = core.idle_docker_argv(argv)
         res = await ev._sh(argv, timeout=timeout)
         return ((res.get("out") or "") + "\n" + (res.get("err") or "")).strip()
     try:
@@ -352,17 +372,22 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
             await _orch.REDIS.set(blob_key, data, ex=3 * 3600)
         return blob_key
 
+    avoid_now: List[str] = []
+
     async def on_node(c):
         t = time.time()
         key = await put_archive()
+        extra = {"avoid": list(avoid_now)} if avoid_now else {}
         res = await run("pytest.shard", {
             "_blob_refs": {"archive": key}, "files": c["files"], "markers": markers,
             "testenv_sha": want, "timeout": timeout,
             # several pytest processes per node chunk (each file still once)
             "parallel": cfg["node_parallel"],
+            # yield the CPU to the node's inference (pool idle_priority; older nodes ignore it)
+            "idle": bool(cfg["idle_priority"]),
             "durations": {f: durations.get(f) for f in c["files"] if durations.get(f) is not None}},
             label=f"gate chunk {rid} ({len(c['files'])} files)", max_wait_s=30,
-            host_fallback=False)
+            host_fallback=False, **extra)
         out = res["out"]
         if "__VERA_RC=" not in out:
             raise RuntimeError("no result from pytest")
@@ -376,7 +401,8 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
     async def on_host(c):
         t = time.time()
         res = await _host_shard(wt, c["files"], markers, timeout,
-                                parallel=cfg["host_parallel"], durations=durations)
+                                parallel=cfg["host_parallel"], durations=durations,
+                                idle=bool(cfg["idle_priority"]))
         if res.get("error"):
             raise RuntimeError(res["error"] + " " + res.get("detail", ""))
         return {"parsed": res["parsed"], "out": res["out"], "runner": "host",
@@ -397,7 +423,11 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
             # its node in the same step as its pick, so they spread)
             if pending and run is not None and plan is not None:
                 ready = [c for c in pending if not c["host_only"]]
-                slots = await _node_slots(min(cfg["max_nodes"], len(ready))) if ready else []
+                # while a loop or census runs, leave the busy_avoid nodes to its inference
+                avoid_now[:] = await _busy_avoid(cfg) if ready else []
+                n = min(cfg["max_nodes"], len(ready))
+                slots = ((await _node_slots(n, avoid_now)) if avoid_now else (await _node_slots(n))) \
+                    if ready else []
                 for _ in slots:
                     c = next((x for x in pending if not x["host_only"]), None)
                     if c is None:
@@ -458,6 +488,8 @@ async def run_pooled(rec: Dict[str, Any], branch: str, *, markers: str = "critic
     await emit_event({"type": "evolve.unittest.done", "branch": label, "ok": merged["ok"],
                       "passed": merged["passed"], "failed": merged["failed"],
                       "errors": merged["errors"], "pool": True})
+    log.info("test pool [%s] %s in %.0fs: %s", label, merged["summary"], time.time() - t0,
+             core.placement(report))
     text = "\n".join(f"[{x['runner']}] {x.get('summary') or x.get('error')}" for x in report)
     res = {**merged, "code": merged["rc"], "image": ev.DEV_IMAGE, "branch": label,
            "out": text, "repo": "vera", "pool": {"shards": report,
@@ -519,19 +551,26 @@ async def cap_test_pool_status(trace_id=None) -> Dict:
                 "default 3), min_files (int - below this a run is not split, default 40), "
                 "chunks (int - chunks a run is split into, default 12), node_parallel / "
                 "host_parallel (int 1-8 - pytest processes per chunk on a node / on the "
-                "host, defaults 4 / 3). Output: {ok, config}.",
+                "host, defaults 4 / 3), idle_priority (bool - shards yield the CPU to "
+                "inference: SCHED_IDLE + nice 19 on nodes, --cpu-shares 2 on the host; "
+                "default false), busy_avoid (list or comma string of node names / host ids a "
+                "gate leaves alone while a loop or census runs; default none). "
+                "Output: {ok, config}.",
 )
 async def cap_test_pool_config_set(enabled: Optional[bool] = None, max_nodes: Optional[int] = None,
                                    min_files: Optional[int] = None, chunks: Optional[int] = None,
                                    node_parallel: Optional[int] = None,
-                                   host_parallel: Optional[int] = None, trace_id=None) -> Dict:
+                                   host_parallel: Optional[int] = None,
+                                   idle_priority: Optional[bool] = None,
+                                   busy_avoid: Any = None, trace_id=None) -> Dict:
     r = _orch.REDIS
     if r is None:
         return {"ok": False, "error": "no Redis"}
     cfg = await _pool_config()
     for k, v in (("enabled", enabled), ("max_nodes", max_nodes), ("min_files", min_files),
                  ("chunks", chunks), ("node_parallel", node_parallel),
-                 ("host_parallel", host_parallel)):
+                 ("host_parallel", host_parallel), ("idle_priority", idle_priority),
+                 ("busy_avoid", busy_avoid)):
         if v is not None:
             cfg[k] = v
     cfg = core.merge_pool_config(cfg)

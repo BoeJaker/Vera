@@ -427,7 +427,7 @@ async def record_agent_turn(
         model       = model,
         metadata    = {"agent_name": agent_name, "agent_id": agent_id, "role": "human"},
     )
-    await MEMORY.store(human_rec)
+    await MEMORY.store(human_rec, producer_kind="conversation")
     # Link session root → human message
     sess_root = _SESSIONS.get(session_id, {}).get("node_id", "")
     if sess_root and sess_root != human_id:
@@ -460,7 +460,7 @@ async def record_agent_turn(
             "role":       "ai",
         },
     )
-    await MEMORY.store(ai_rec)
+    await MEMORY.store(ai_rec, producer_kind="conversation")
     if sess_root and sess_root != ai_id:
         await _link_nodes(sess_root, ai_id, "SESSION_CONTENT",
                           {"agent": agent_name, "role": "ai"}, session_id=session_id)
@@ -579,7 +579,7 @@ async def record_dag_execution(
             "state_keys": result_keys[:20],
         },
     )
-    await MEMORY.store(dag_rec)
+    await MEMORY.store(dag_rec, producer_kind="workflow")
 
     if sess_root:
         await _link_nodes(sess_root, dag_id, "SESSION_CONTENT",
@@ -616,7 +616,7 @@ async def record_dag_execution(
                     metadata    = {"agent_name": agent_name, "role": "human",
                                    "dag_trigger": True},
                 )
-                await MEMORY.store(trigger_rec)
+                await MEMORY.store(trigger_rec, producer_kind="conversation")
                 if sess_root:
                     await _link_nodes(sess_root, trigger_id, "SESSION_CONTENT",
                                       {"role": "human"}, session_id=session_id)
@@ -655,7 +655,7 @@ async def record_dag_execution(
                 "parallel": is_parallel,
             },
         )
-        await MEMORY.store(step_rec)
+        await MEMORY.store(step_rec, producer_kind="workflow")
         rel = "STARTS" if prev_id == dag_id else "THEN"
         await _link_nodes(prev_id, step_id, rel,
                           {"step": i, "cap": cap_name}, session_id=session_id)
@@ -2960,7 +2960,6 @@ async def _startup():
     await asyncio.sleep(1.0)
     extend_capability_decorator()
     apply_default_memory_modes()
-    patch_capability_for_memory()
     log.info("vera_memory_hooks ready")
 
 

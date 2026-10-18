@@ -48,7 +48,16 @@ DEFAULT_FILE_S = 1.0
 #: Pool config (json): {"enabled": bool, "max_nodes": int, "min_files": int}.
 POOL_KEY = "vera:evolve:test_pool"
 POOL_DEFAULTS = {"enabled": False, "max_nodes": 3, "min_files": 40, "chunks": 12,
-                 "node_parallel": 4, "host_parallel": 3}
+                 "node_parallel": 4, "host_parallel": 3,
+                 # Gates beside a census (compute-roles K, owner 11 Oct 2026): a gate's shards share
+                 # the CPU the census's inference uses. idle_priority = shards run at SCHED_IDLE +
+                 # nice 19 on the nodes and with --cpu-shares 2 on the host, so inference always
+                 # preempts them; busy_avoid = node names/host ids a gate does not use while a loop
+                 # or census is running (cpu-246/247 share their physical cores with the 35B).
+                 # Both off until measured (K1).
+                 "idle_priority": False, "busy_avoid": []}
+#: The docker --cpu-shares of an idle-priority host shard (default 1024).
+IDLE_CPU_SHARES = 2
 #: Per-runner lease for the host's container runner (replaces the one-gate lease).
 HOST_RUNNER_LEASE = "vera:evolve:runner:host"
 
@@ -67,9 +76,33 @@ def merge_pool_config(raw: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 cfg[k] = max(1, min(64, int(v)))
             elif k in ("node_parallel", "host_parallel"):
                 cfg[k] = max(1, min(8, int(v)))
+            elif k == "idle_priority":
+                cfg[k] = bool(v)
+            elif k == "busy_avoid":
+                vals = v.split(",") if isinstance(v, str) else list(v or [])
+                cfg[k] = [str(x).strip() for x in vals if str(x).strip()][:16]
         except (TypeError, ValueError):
             pass
     return cfg
+
+
+def idle_docker_argv(argv: Sequence[str], shares: int = IDLE_CPU_SHARES) -> List[str]:
+    """`docker run ...` with --cpu-shares inserted after `run` (unchanged when there is no `run`
+    or the argv already sets cpu shares)."""
+    out = list(argv)
+    if any(str(a).startswith("--cpu-shares") or a == "-c" for a in out) or "run" not in out:
+        return out
+    i = out.index("run")
+    return out[:i + 1] + ["--cpu-shares", str(int(shares))] + out[i + 1:]
+
+
+def avoided(pick: Dict[str, Any], avoid: Sequence[str]) -> bool:
+    """Whether a node pick ({host, host_id, ...}) is one of `avoid` (names or host ids, any case)."""
+    want = {str(a).strip().lower() for a in avoid or [] if str(a).strip()}
+    if not want:
+        return False
+    names = {str(pick.get(k) or "").strip().lower() for k in ("host", "host_id", "name", "node")}
+    return bool(want & (names - {""}))
 
 
 # ── the node's test venv ──────────────────────────────────────────────────────
@@ -341,6 +374,23 @@ def merge_junit(xmls: Sequence[str]) -> str:
 ARCHIVE_EXCLUDE = (".git", "node_modules", ".venv", "venv", "__pycache__", ".pytest_cache")
 
 
+def yield_cpu(pid: int) -> bool:
+    """Put a shard's pytest process at SCHED_IDLE + nice 19 (pool idle_priority): it then runs
+    only on cycles the node's inference leaves. Set right after spawn; anything it starts later
+    inherits it. Lowering priority needs no privilege. False when the platform has no SCHED_IDLE."""
+    ok = False
+    try:
+        os.setpriority(os.PRIO_PROCESS, pid, 19)
+        ok = True
+    except (AttributeError, OSError):
+        pass
+    try:
+        os.sched_setscheduler(pid, os.SCHED_IDLE, os.sched_param(0))
+    except (AttributeError, OSError):
+        return False
+    return ok
+
+
 def node_run_shard(inputs: Dict[str, Any], progress, should_stop) -> Dict[str, Any]:
     """compute.run entry (node_compute_core.FUNCTIONS["pytest.shard"]).
 
@@ -390,9 +440,12 @@ def node_run_shard(inputs: Dict[str, Any], progress, should_stop) -> Dict[str, A
                    "--junitxml", junit, "-p", "no:cacheprovider", "-q"]
             if markers:
                 cmd += ["-m", markers]
-            procs.append((subprocess.Popen(cmd, cwd=app, env=dict(base_env, HOME=home),
-                                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                           start_new_session=True), junit))
+            pr = subprocess.Popen(cmd, cwd=app, env=dict(base_env, HOME=home),
+                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                  start_new_session=True)
+            if inputs.get("idle"):
+                yield_cpu(pr.pid)
+            procs.append((pr, junit))
         outs = [b""] * len(procs)
         import threading
 
@@ -436,3 +489,19 @@ def node_run_shard(inputs: Dict[str, Any], progress, should_stop) -> Dict[str, A
                 "processes": len(groups), "python": st.get("python", "")}
     finally:
         shutil.rmtree(run, ignore_errors=True)
+
+
+def placement(shards) -> str:
+    """Where a gate's chunks ran, one line: "host 4, Ollama 5, Ollama-C 3 (1 requeued)".
+    17 Oct 2026: after the Vera VM ran out of memory under a gate, nothing in vera.log said
+    whether its chunks ran on the VM or on the nodes."""
+    counts = {}
+    requeued = 0
+    for s in shards or ():
+        if s.get("requeued"):
+            requeued += 1
+            continue
+        r = str(s.get("runner") or "?")
+        counts[r] = counts.get(r, 0) + 1
+    out = ", ".join("%s %d" % (k, counts[k]) for k in sorted(counts, key=lambda k: (k != "host", k)))
+    return (out or "no chunks") + (" (%d requeued)" % requeued if requeued else "")
