@@ -305,3 +305,19 @@ def test_the_writer_notes_which_record_holds_a_content_hash():
     rows = {c[1]: c[2] for c in pool.calls if c[0] == "many"}
     assert rows["web_content"] == [("abc", "https://h.example/x", "p_1")] and "web_hosts" not in rows
     assert "DO UPDATE SET record_id = COALESCE(web_content.record_id" in rc.NOTE_RECORD
+
+
+
+def test_web_search_prefetches_behind_its_switch():
+    import ast
+    src = (ROOT / "vera" / "web" / "web_capabilities.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    fn = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_web_search")
+    assert "_prefetch_top" in ast.dump(fn)
+    pre = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "_prefetch_top")
+    d = ast.dump(pre)
+    assert "web.search.prefetch" in d and "reader_read" in d and "_spawn" in d and "wait_for" in d
+    from vera.minds import switchboard_core as SB
+    assert SB.REGISTRY["web.search.prefetch"].default == "off"
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert "def switch(feature_id: str" in caps and '_SW["modes"] = dict(modes)' in caps
