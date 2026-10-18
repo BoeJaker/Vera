@@ -29,7 +29,14 @@ UNSAFE_PREFIXES = ("exec.", "sys.", "secrets.", "keydrop.", "evolve.", "sandbox.
                    "provision.", "autoenroll.", "census.control", "minds.switch", "backup.", "ssh.", "ide.", "git.",
                    "vscode.", "netctl.", "foundry.", "broker.", "markets.trade", "commerce.order", "mesh.", "esp32.",
                    "homeassistant.", "ha.", "operator.", "browser.", "telegram.", "email.", "delivery.", "board.item.",
-                   "cron.", "schedule.", "evolve", "decide.purge", "chat.replay.purge", "fabric.chroma_reset")
+                   "cron.", "schedule.", "evolve", "decide.purge", "chat.replay.purge", "fabric.chroma_reset",
+                   # 18 Oct review of the live catalogue: secret stores, host files, the printer, certificates
+                   "secstore.", "vault.", "openbao.", "pki.", "fs.", "print.", "printer.", "jobs.", "auth.", "identity.",
+                   "redis.", "acct.", "accounts.", "netscan.")
+#: a name with any of these parts touches credentials or private keys - never offered
+SENSITIVE_WORDS = frozenset({"secret", "secrets", "token", "tokens", "password", "passwords", "credential",
+                             "credentials", "key", "keys", "kv", "apikey", "api_key", "cookie", "cookies", "session_key",
+                             "private", "otp", "totp", "mfa", "2fa", "seal", "unseal", "cert", "certs", "pem"})
 READ_WORDS = frozenset({
     "get", "list", "search", "status", "report", "read", "query", "stats", "show", "info", "find", "describe",
     "health", "map", "seek", "browse", "explain", "summary", "lookup", "fetch", "preview", "inspect", "history",
@@ -37,7 +44,7 @@ READ_WORDS = frozenset({
     "translate", "summarize", "summarise", "answer", "ask", "resolve", "validate", "diff", "view", "latest", "quote",
     "price", "prices", "news", "weather", "forecast", "analyze", "analyse", "catalog", "catalogue", "tree", "grep",
     "stat", "overview", "ner", "nli", "zeroshot", "sentiment", "langid", "qa", "frame", "timeline", "graph", "trend",
-    "trends", "lookup", "define", "convert", "calc", "calculate", "math", "time", "date", "now", "research", "related",
+    "trends", "lookup", "define", "convert", "calc", "calculate", "math", "time", "date", "research", "related",
     "neighbours", "similar", "recall", "select", "pick", "callable", "inventory", "versions", "rows", "last", "doc",
     "docs", "help", "schema", "capabilities"})
 CHANGE_WORDS = frozenset({
@@ -48,7 +55,20 @@ CHANGE_WORDS = frozenset({
     "import", "export", "upload", "train", "build", "generate", "spawn", "claim", "drop", "archive", "restore",
     "trade", "order", "buy", "sell", "pay", "notify", "enqueue", "schedule", "dispatch", "open", "close", "mount",
     "attach", "detach", "connect", "disconnect", "replace", "patch", "merge", "split", "seed", "ingest", "backfill",
-    "reap", "prune", "wipe", "format", "flash", "reboot", "shutdown", "grant", "revoke", "rotate", "seal", "unseal"})
+    "reap", "prune", "wipe", "format", "flash", "reboot", "shutdown", "grant", "revoke", "rotate", "seal", "unseal",
+    # 18 Oct (first live sample: link_memory, graph_normalize passed): more verbs that change state
+    "link", "unlink", "normalize", "normalise", "tag", "untag", "mark", "record", "store", "learn", "sync", "refresh",
+    "rebuild", "reindex", "index", "compact", "migrate", "fade", "forget", "label", "rate", "toggle", "assign", "bind",
+    "unbind", "retire", "fold", "ack", "acknowledge", "consolidate", "dedupe", "dedup", "repair", "fix", "heal",
+    "enrich", "annotate", "crawl", "harvest", "capture", "snapshot", "warm", "preload", "load", "unload", "evict",
+    "invalidate", "flush", "kick", "trigger", "fire", "emit", "publish", "subscribe", "unsubscribe", "watch", "enable",
+    "arm", "disarm", "lock", "unlock", "queue", "retry", "replay", "rerun", "resolve_conflict", "reconcile",
+    "rollback", "rehearse", "promote", "demote", "accept", "decline", "vote", "feedback", "note", "remember",
+    "ingest", "observe", "learn", "plan", "act", "do", "make", "author", "draft", "compose", "render", "speak",
+    "synthesize", "synthesise", "transcribe", "say", "play", "reply", "respond", "chat", "message", "call", "invoke",
+    "set_mode", "switch", "swap", "assess", "judge", "grade", "review", "bench", "benchmark", "probe", "test", "verify",
+    "eval", "evaluate", "sweep", "tune", "optimize", "optimise", "compile", "package", "release", "land", "gate",
+    "auto", "now", "recover", "reprocess", "process", "summarise_now"})
 RRF_K = 60
 
 
@@ -63,6 +83,8 @@ def safe(name: str, entry: Mapping[str, Any]) -> Tuple[bool, str]:
     n = str(name or "")
     if n.startswith(UNSAFE_PREFIXES):
         return False, "a family that acts on the system"
+    if any(w in SENSITIVE_WORDS for w in _words(n)):
+        return False, "touches credentials or keys"
     c = entry.get("contract") or {}
     eff = {str(e) for e in (c.get("effects") or [])}
     if eff:
@@ -74,9 +96,11 @@ def safe(name: str, entry: Mapping[str, Any]) -> Tuple[bool, str]:
         return True, "contract: " + ",".join(sorted(eff))
     ws = _words(n)
     last = ws[-1] if ws else ""
-    if any(w in CHANGE_WORDS for w in ws[1:]) or last in CHANGE_WORDS:
+    # any part of the name a change (18 Oct: "graph" in the middle let memory.graph_normalize through) ...
+    if any(w in CHANGE_WORDS for w in ws):
         return False, "its name reads as a change"
-    if last in READ_WORDS or any(w in READ_WORDS for w in ws[1:]):
+    # ... and the action - the last part - must read as a lookup
+    if last in READ_WORDS:
         return True, "its name reads as a lookup"
     return False, "unsure - left out"
 
