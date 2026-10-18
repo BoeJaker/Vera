@@ -2769,8 +2769,12 @@ async def _run_crawl_impl(crawl_id: str, ds_id: str, seed_url: str, config: Dict
                 "tags": extra_tags + ["web", "discovery"] + llm_tags,
             }
             try:
-                await ingest_fn(ds_id, [record], source="fabric_discovery",
-                                tags=extra_tags + ["web", "discovery"] + llm_tags)
+                if _defer_t3:     # one entity pass, in the deferred t3 job - not a second one in the post-ingest pipeline
+                    await ingest_fn(ds_id, [record], source="fabric_discovery",
+                                    tags=extra_tags + ["web", "discovery"] + llm_tags, post_entities=False)
+                else:
+                    await ingest_fn(ds_id, [record], source="fabric_discovery",
+                                    tags=extra_tags + ["web", "discovery"] + llm_tags)
                 pages_fetched += 1
             except Exception as e:
                 log.warning("ingest page %s: %s", page_url, e)
