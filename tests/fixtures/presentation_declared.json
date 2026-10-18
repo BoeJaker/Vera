@@ -482,6 +482,58 @@
    "rows": "results"
   }
  },
+ "cap_ontology.list": {
+  "draw": {
+   "columns": [
+    "from",
+    "relation",
+    "to",
+    "strength",
+    "confidence",
+    "auto",
+    "description",
+    "updated_at"
+   ]
+  },
+  "empty": "No capability relations match",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "relations"
+  }
+ },
+ "cap_ontology.matrix": {
+  "draw": {
+   "columns": [
+    "from",
+    "relation",
+    "to",
+    "strength",
+    "confidence",
+    "auto",
+    "description"
+   ]
+  },
+  "empty": "No relations among these capabilities",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "cells"
+  }
+ },
+ "cap_ontology.stats": {
+  "form": "numbers",
+  "kind": "kv",
+  "map": {
+   "pick": {
+    "auto": "auto",
+    "caps": "total_caps",
+    "caps covered": "covered_caps",
+    "manual": "manual",
+    "relations": "total"
+   }
+  }
+ },
  "catalog.browse.index": {
   "kind": "composite",
   "parts": [
@@ -620,6 +672,26 @@
   "kind": "table",
   "map": {
    "rows": "domains"
+  }
+ },
+ "dag.store_list": {
+  "draw": {
+   "columns": [
+    "name",
+    "category",
+    "description",
+    "use_count",
+    "last_used",
+    "avg_runtime_ms",
+    "author",
+    "updated_at"
+   ]
+  },
+  "empty": "No stored DAGs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "dags"
   }
  },
  "dash.health.summary": {
@@ -1535,6 +1607,89 @@
   "form": "terminal",
   "kind": "terminal"
  },
+ "exec.code.langs": {
+  "draw": {
+   "columns": [
+    "id",
+    "available",
+    "allowed",
+    "bin",
+    "ext"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "languages"
+  }
+ },
+ "exec.llm.models": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "status",
+      "latency_ms",
+      "has_gpu",
+      "backend",
+      "url"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "instances"
+    },
+    "title": "Instances"
+   },
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "instance_label",
+      "parameter_size",
+      "family",
+      "quantization",
+      "size_bytes",
+      "backend"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "models"
+    },
+    "title": "Models"
+   }
+  ]
+ },
+ "exec.sandbox.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "policy"
+  }
+ },
+ "exec.ssh.hosts.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "host",
+    "port",
+    "user",
+    "auth",
+    "tags",
+    "updated_at"
+   ]
+  },
+  "empty": "No SSH hosts stored",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "hosts"
+  }
+ },
  "fabric.api.list": {
   "draw": {
    "columns": [
@@ -1746,6 +1901,129 @@
   "map": {
    "rows": "surfaces"
   }
+ },
+ "foundry.features": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "status",
+    "default",
+    "targets",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "features"
+  }
+ },
+ "foundry.image.list": {
+  "draw": {
+   "columns": [
+    "id",
+    "os",
+    "version",
+    "type",
+    "arch",
+    "status",
+    "is_latest",
+    "size"
+   ]
+  },
+  "empty": "No OS images catalogued",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "images"
+  }
+ },
+ "foundry.jobs": {
+  "draw": {
+   "columns": [
+    "name",
+    "target",
+    "image",
+    "status",
+    "vmid",
+    "features",
+    "id"
+   ]
+  },
+  "empty": "No provision jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
+ "foundry.pxe.config": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "foundry.pxe.macs": {
+  "draw": {
+   "columns": [
+    "mac",
+    "hostname",
+    "ip",
+    "status",
+    "profile_id"
+   ]
+  },
+  "empty": "No machines in the waiting room",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "macs"
+  }
+ },
+ "foundry.pxe.status": {
+  "kind": "kv",
+  "map": {
+   "fields": "$"
+  }
+ },
+ "foundry.security.standards": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "name",
+      "control_count",
+      "description"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "profiles"
+    },
+    "title": "Profiles"
+   },
+   {
+    "draw": {
+     "columns": [
+      "title",
+      "severity",
+      "standard",
+      "id",
+      "why"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "controls"
+    },
+    "title": "Controls"
+   }
+  ]
  },
  "ha.health": {
   "form": "status",
@@ -2809,6 +3087,94 @@
    "rows": "sprites"
   }
  },
+ "ml.catalogue": {
+  "draw": {
+   "columns": [
+    "name",
+    "family",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "layers"
+  }
+ },
+ "ml.data.list": {
+  "draw": {
+   "columns": [
+    "dataset_id",
+    "record_count",
+    "is_internal",
+    "updated_at"
+   ]
+  },
+  "empty": "No datasets",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "datasets"
+  }
+ },
+ "ml.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "id",
+    "param_count",
+    "nodes",
+    "edges",
+    "tags",
+    "updated_at",
+    "description"
+   ]
+  },
+  "empty": "No ML modules saved",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "modules"
+  }
+ },
+ "ml.onnx.list": {
+  "draw": {
+   "columns": [
+    "slug",
+    "module_id",
+    "dtype",
+    "node_count",
+    "size_kb",
+    "created",
+    "cap_name"
+   ]
+  },
+  "empty": "No ONNX artifacts",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "artifacts"
+  }
+ },
+ "ml.train.status": {
+  "draw": {
+   "columns": [
+    "job_id",
+    "module_id",
+    "status",
+    "epoch",
+    "progress",
+    "best_val_loss",
+    "created_at"
+   ]
+  },
+  "empty": "No training jobs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "jobs"
+  }
+ },
  "n8n.config.get": {
   "kind": "kv",
   "map": {
@@ -2836,6 +3202,42 @@
   "kind": "table",
   "map": {
    "rows": "alive"
+  }
+ },
+ "netscan.map.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "node_count",
+    "edge_count",
+    "description",
+    "updated_at",
+    "map_id"
+   ]
+  },
+  "empty": "No saved network maps",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "maps"
+  }
+ },
+ "netscan.osint.campaign.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "hit_count",
+    "query_count",
+    "description",
+    "updated_at",
+    "campaign_id"
+   ]
+  },
+  "empty": "No OSINT campaigns",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "campaigns"
   }
  },
  "nodes.agent.status": {
@@ -3117,6 +3519,51 @@
    "rows": "nodes"
   }
  },
+ "operator.connect.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "group",
+    "type",
+    "source",
+    "url",
+    "driveable",
+    "detail"
+   ]
+  },
+  "empty": "Nothing to connect to",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "connectables"
+  }
+ },
+ "operator.mission.list": {
+  "kind": "kv",
+  "map": {
+   "fields": "missions"
+  }
+ },
+ "operator.runs": {
+  "draw": {
+   "columns": [
+    "goal",
+    "target",
+    "reason",
+    "steps",
+    "errors",
+    "duration_s",
+    "completed",
+    "started_at"
+   ]
+  },
+  "empty": "No operator runs",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "runs"
+  }
+ },
  "perf.scan": {
   "form": "status",
   "kind": "status"
@@ -3129,6 +3576,80 @@
    "value": "stalled_ms",
    "values": "events"
   }
+ },
+ "print.config.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "config"
+  }
+ },
+ "print.printers": {
+  "draw": {
+   "columns": [
+    "name",
+    "transport",
+    "port",
+    "baud",
+    "width_mm",
+    "is_default",
+    "node_id",
+    "updated_at"
+   ]
+  },
+  "empty": "No printers configured",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "printers"
+  }
+ },
+ "print.status": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "name",
+      "transport",
+      "port",
+      "width_mm",
+      "is_default"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "printers"
+    },
+    "title": "Printers"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "$"
+    },
+    "title": "Subsystem"
+   }
+  ]
+ },
+ "print.subs.get": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "subs"
+    },
+    "title": "Printing"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "subs.sources"
+    },
+    "title": "Sources"
+   }
+  ]
  },
  "project.list": {
   "draw": {
@@ -3146,6 +3667,193 @@
   "kind": "table",
   "map": {
    "rows": "projects"
+  }
+ },
+ "provision.components": {
+  "draw": {
+   "columns": [
+    "label",
+    "key",
+    "port",
+    "python",
+    "heavy",
+    "needs_vera_url",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "components"
+  }
+ },
+ "provision.overview": {
+  "kind": "composite",
+  "parts": [
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "addr",
+      "backends",
+      "gpu",
+      "target"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "targets.nodes"
+    },
+    "title": "Nodes"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "kind",
+      "target"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "targets.docker_engines"
+    },
+    "title": "Docker engines"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "cluster_id",
+      "target"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "targets.proxmox_clusters"
+    },
+    "title": "Proxmox clusters"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "key",
+      "group",
+      "backends",
+      "gpu",
+      "desc"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "payloads.components"
+    },
+    "title": "Components"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "key",
+      "image",
+      "desc"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "payloads.stacks"
+    },
+    "title": "Stacks"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "key",
+      "system",
+      "desc"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "payloads.security"
+    },
+    "title": "Security"
+   },
+   {
+    "draw": {
+     "columns": [
+      "label",
+      "key",
+      "desc"
+     ]
+    },
+    "form": "table",
+    "kind": "table",
+    "map": {
+     "rows": "payloads.special"
+    },
+    "title": "Special"
+   }
+  ]
+ },
+ "provision.store.status": {
+  "draw": {
+   "columns": [
+    "store",
+    "state",
+    "status",
+    "container",
+    "image",
+    "reachable"
+   ]
+  },
+  "empty": "No stores on this host",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "stores"
+  }
+ },
+ "provision.stores": {
+  "draw": {
+   "columns": [
+    "label",
+    "key",
+    "image",
+    "desc",
+    "gpus_hint",
+    "special"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "stores"
+  }
+ },
+ "provision.targets": {
+  "draw": {
+   "columns": [
+    "label",
+    "key",
+    "default_port",
+    "needs_sudo",
+    "register",
+    "desc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "targets"
   }
  },
  "pxstore.backend.status": {
@@ -3532,6 +4240,45 @@
    "fields": "$"
   }
  },
+ "spritegen.capabilities": {
+  "kind": "composite",
+  "parts": [
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "tiers"
+    },
+    "title": "Tiers"
+   },
+   {
+    "kind": "kv",
+    "map": {
+     "fields": "style_descriptors"
+    },
+    "title": "Styles"
+   }
+  ]
+ },
+ "spritegen.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "char_id",
+    "style",
+    "sprite_size",
+    "colors",
+    "brief",
+    "archived",
+    "created_at"
+   ]
+  },
+  "empty": "No characters defined",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "characters"
+  }
+ },
  "syslog.errors": {
   "form": "log",
   "kind": "log",
@@ -3574,6 +4321,139 @@
  "topology.snapshot": {
   "form": "vgraph",
   "kind": "graph"
+ },
+ "ui.caps.scopes": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "whitelist_count",
+    "blacklist_count",
+    "effective_count"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "scopes"
+  }
+ },
+ "ui.directive.vocab": {
+  "draw": {
+   "columns": [
+    "name",
+    "surface",
+    "policy",
+    "undo",
+    "event",
+    "args",
+    "doc"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "directives"
+  }
+ },
+ "ui.panel.list": {
+  "draw": {
+   "columns": [
+    "label",
+    "id",
+    "mode",
+    "tab_order",
+    "dynamic",
+    "has_html",
+    "has_js",
+    "ui_caps"
+   ]
+  },
+  "empty": "No panels registered",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "panels"
+  }
+ },
+ "ui.places": {
+  "draw": {
+   "columns": [
+    "name",
+    "panel",
+    "pane",
+    "sub"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "places"
+  }
+ },
+ "ui.policy.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "policy"
+  }
+ },
+ "ui.script.list": {
+  "draw": {
+   "columns": [
+    "name",
+    "state",
+    "by",
+    "version",
+    "doc",
+    "runs",
+    "last_run",
+    "shipped"
+   ]
+  },
+  "empty": "No UI scripts",
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "scripts"
+  }
+ },
+ "ui.tabs.retired": {
+  "draw": {
+   "columns": [
+    "name",
+    "panel",
+    "pane",
+    "sub",
+    "section"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "tabs"
+  }
+ },
+ "ui.theme.get": {
+  "kind": "kv",
+  "map": {
+   "fields": "vars"
+  }
+ },
+ "ui.themes": {
+  "draw": {
+   "columns": [
+    "name",
+    "label",
+    "type",
+    "accent",
+    "builtin"
+   ]
+  },
+  "form": "table",
+  "kind": "table",
+  "map": {
+   "rows": "themes"
+  }
  },
  "workshop.agent_loop.trace": {
   "form": "status-matrix",

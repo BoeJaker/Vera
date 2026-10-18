@@ -1772,6 +1772,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "ml.catalogue",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "layers"}, "draw": {"columns": ["name", "family", "desc"]}}},
         http_method="GET", http_path="/ml/catalogue", http_tags=["ml"],
         memory="off", silent=True,
         description="Return the full layer catalogue and architecture templates.",
@@ -1863,6 +1864,7 @@ if _CAP_AVAILABLE:
 
     @capability(
         "ml.list",
+        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "modules"}, "draw": {"columns": ["name", "id", "param_count", "nodes", "edges", "tags", "updated_at", "description"]}, "empty": "No ML modules saved"}},
         http_method="GET", http_path="/ml/list", http_tags=["ml"],
         memory="off", silent=True,
         description="List all saved ML modules (reads from Data Fabric).",

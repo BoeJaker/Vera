@@ -2177,6 +2177,7 @@ def _payload_catalog_special() -> List[Dict]:
 
 @capability(
     "provision.overview",
+    contract={"presentation": {"kind": "composite", "parts": [{"kind": "table", "form": "table", "map": {"rows": "targets.nodes"}, "draw": {"columns": ["label", "addr", "backends", "gpu", "target"]}, "title": "Nodes"}, {"kind": "table", "form": "table", "map": {"rows": "targets.docker_engines"}, "draw": {"columns": ["label", "kind", "target"]}, "title": "Docker engines"}, {"kind": "table", "form": "table", "map": {"rows": "targets.proxmox_clusters"}, "draw": {"columns": ["label", "cluster_id", "target"]}, "title": "Proxmox clusters"}, {"kind": "table", "form": "table", "map": {"rows": "payloads.components"}, "draw": {"columns": ["label", "key", "group", "backends", "gpu", "desc"]}, "title": "Components"}, {"kind": "table", "form": "table", "map": {"rows": "payloads.stacks"}, "draw": {"columns": ["label", "key", "image", "desc"]}, "title": "Stacks"}, {"kind": "table", "form": "table", "map": {"rows": "payloads.security"}, "draw": {"columns": ["label", "key", "system", "desc"]}, "title": "Security"}, {"kind": "table", "form": "table", "map": {"rows": "payloads.special"}, "draw": {"columns": ["label", "key", "desc"]}, "title": "Special"}]}},
     http_method="GET", http_path="/provision/overview", http_tags=["nodes", "provision"],
     memory="off", silent=True,
     description="One-call catalog for UNIFORM provisioning: every target "

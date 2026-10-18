@@ -1515,6 +1515,7 @@ async def dag_store_save(
 
 @capability(
     "dag.store_list", memory="off",
+    contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "dags"}, "draw": {"columns": ["name", "category", "description", "use_count", "last_used", "avg_runtime_ms", "author", "updated_at"]}, "empty": "No stored DAGs"}},
     http_method="GET", http_path="/dag/store/list", http_tags=["dag"],
     description="List all stored DAGs. Filter by category or tag.",
 )
