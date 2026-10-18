@@ -1,4 +1,22 @@
 {
+ "activity.timeline": {
+  "draw": {
+   "attrs": {
+    "auto": "15",
+    "scope": "{scope}"
+   },
+   "tag": "vera-activity-timeline"
+  },
+  "form": "element",
+  "kind": "timeline",
+  "map": {
+   "events": "events",
+   "kind": "kind",
+   "t": "ts",
+   "text": "title"
+  },
+  "title": "Activity \u00b7 {scope}"
+ },
  "agent.list": {
   "draw": {
    "columns": [

@@ -2740,10 +2740,10 @@
   const EL_SRC = { 'vera-git-graph': 'git_graph', 'vera-author-map': 'author_map', 'vera-node-workers': 'node_workers', 'vera-test-activity-timeline': 'test_activity_timeline', 'vera-error-radar': 'error_radar',
     'vera-branch-pipeline': 'branch_pipeline', 'vera-task-matrix': 'task_matrix', 'vera-bench-compare': 'bench_compare', 'vera-ollama-map': 'ollama_map', 'vera-ci-ops': 'ci_ops', 'vera-agent-loop-output': 'agent_loop_output',
     'vera-live-event-stream': 'live_event_stream', 'vera-system-log': 'system_log', 'vera-intel-timeline': 'intel_timeline',
-    'vera-node-activity': 'node_activity', 'vera-node-models': 'node_models' };
+    'vera-node-activity': 'node_activity', 'vera-node-models': 'node_models', 'vera-activity-timeline': 'activity_timeline' };
   const EL_NAME = { 'vera-git-graph': 'commit graph', 'vera-author-map': 'authorship', 'vera-node-workers': 'node workers', 'vera-test-activity-timeline': 'test activity', 'vera-error-radar': 'error radar', 'vera-branch-pipeline': 'branch pipeline', 'vera-task-matrix': 'task matrix', 'vera-bench-compare': 'bench compare', 'vera-ollama-map': 'routing map', 'vera-ci-ops': 'CI command centre',
     'vera-live-event-stream': 'live event stream', 'vera-system-log': 'system log', 'vera-intel-timeline': 'intel timeline',
-    'vera-node-activity': 'node activity', 'vera-node-models': 'node models' };
+    'vera-node-activity': 'node activity', 'vera-node-models': 'node models', 'vera-activity-timeline': 'activity timeline' };
   const elOf = (d, o) => { const dr = (o && o.draw) || (o && o.record && o.record.draw) || {}; const tag = String(dr.tag || (d && d.tag) || '').toLowerCase(); return { tag, attrs: dr.attrs || (d && d.attrs) || {} }; };
   R.element = (d, H, o) => { const e = elOf(d, o); if (!/^vera-[a-z0-9-]+$/.test(e.tag)) return wrap('element', '<div class="vb-el-pick"><b>A page element</b><span>draw.tag names it:</span>' + Object.keys(EL_NAME).map((t) => '<code>' + esc(t) + '</code><i>' + esc(EL_NAME[t]) + '</i>').join('') + '</div>');
     return wrap('element', '<div class="vb-el" style="height:' + Math.max(90, (H || 200) - 4) + 'px"><slot name="el"><span class="vb-lbl">' + esc(EL_NAME[e.tag] || e.tag) + '</span></slot></div>'); };
@@ -2755,7 +2755,9 @@
     const host = document.createElement('div'); host.setAttribute('slot', 'el'); host.style.cssText = 'width:100%;height:100%;overflow:auto;min-height:0';
     /* an element that can take the answer it was opened from (seed) starts with it - an event stream opened from obs.events shows
        those events at once instead of waiting for the next ones */
-    const go = () => { const x = document.createElement(e.tag); Object.keys(e.attrs || {}).forEach((k) => x.setAttribute(k, String(e.attrs[k]))); x.style.display = 'block'; host.appendChild(x);
+    /* an attribute may name a field of the answer it was opened from: {scope} -> the answer's scope (activity.timeline) */
+    const fillAttr = (v) => { const m = /^\{([a-z_][a-z0-9_]*)\}$/i.exec(String(v)); if (!m) return String(v); const d = rec && rec.data; return d && typeof d === 'object' && !Array.isArray(d) && d[m[1]] != null ? String(d[m[1]]) : ''; };
+    const go = () => { const x = document.createElement(e.tag); Object.keys(e.attrs || {}).forEach((k) => { const v = fillAttr(e.attrs[k]); if (v !== '') x.setAttribute(k, v); }); x.style.display = 'block'; host.appendChild(x);
       if (typeof x.seed === 'function' && rec && rec.data != null) { try { x.seed(rec.data); } catch (_) { /* the element runs as it would */ } } };
     const base = (el.base || '').replace(/\/$/, ''), src = EL_SRC[e.tag];
     if (window.customElements && customElements.get(e.tag)) go();
