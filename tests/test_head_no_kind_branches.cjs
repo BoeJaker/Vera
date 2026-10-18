@@ -40,13 +40,13 @@ t('a result declares (its line; no acts of its own)', !!rd && /fabric\.query/.te
 t('a running result declares too', (() => { const e = {}; V.BLOCK.result({ cap: 'a.b', running: true }, 'm', 'result:x', e); return !!(e._decl || {})['result:x'] && Array.isArray(e._decl['result:x'].acts); })());
 t('Refresh in the head and the menu comes from the item\'s source, and runs canvas.run on a trace',
   HEAD.includes("const src = sourceOf(b); if (src.cap) hx('data-act=\"rerun\"', 'Refresh', 'Run ' + src.cap + ' again with the same arguments');")
-  && MENU.includes("const src = sourceOf(b); if (src.cap && !inHead('[data-act=\"rerun\"]')) h += row('rerun', 'Refresh',")
+  && MENU.includes("const src = sourceOf(b);") && MENU.includes("refresh: !!src.cap && !inHead('[data-act=\"rerun\"]')") && MENU.includes("refresh: () => row('rerun', 'Refresh',")   /* WSU-58 S6 */
   && SRC.includes("if (act === 'rerun') { const c = sourceOf(this._blockOf(key)); if (!c.cap) return;")
   && SRC.includes(".then((tr) => this.call('canvas.run', { cap: c.cap, args: c.args || {}, key }, { trace: tr.tid })"));
 t('sourceOf is VeraItem.normalise\'s rule: its own source, else a result\'s call', SRC.includes("const sourceOf = (b) => { b = b || {}; if (b.source && typeof b.source === 'object') return b.source;"));
 
 /* a declared Behind marks the layer buttons as the item's own: the generic pair and the pill's ly follow the declaration */
-t('the generic Behind / Front give way to declared ones; the pill\'s ⇣ ⇡ follow the declaration', HEAD.includes("const dLay = (d.acts || []).some((a) => a.act === 'layer-behind');")
+t('the generic Behind / Front give way to declared ones; the pill\'s ⇣ ⇡ follow the declaration', HEAD.includes("const dLay = dacts.some((a) => a.act === 'layer-behind');")
   && HEAD.includes("if (!dLay && desk && ((this._layer || {})[key] || this._max === key))") && HEAD.includes("+ (dLay && desk ? '<span class=\"ly\" data-act=\"layer-behind\""));
 t('the menu never repeats a declared action it already lists (Behind / Front)', MENU.includes("!(x.act && !x.aid && h.includes('data-act=\"' + x.act + '\"'))"));
 

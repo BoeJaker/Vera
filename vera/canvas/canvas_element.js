@@ -30,6 +30,10 @@
  * ────────────────────────────────────────────────────────────────────────────*/
 (function () {
   const root = typeof window !== 'undefined' ? window : globalThis;
+  /* THE ITEM CONTRACT (window.VeraItem, /ui/vera-item.js): the route serves it in front of this file (canvas_capabilities
+     _canvas_element_js), Node loads it beside it. The bodies register with it below (BODY_SPEC); the head's row and the
+     item's menu are read from it (WSU-58 S6). */
+  const VI = root.VeraItem || (typeof module !== 'undefined' && typeof require === 'function' ? require('../ui/vera_item.js') : null);
   /* the item z bands (DEEP-29 11A.4 Decision 6): the same table as VeraItem.Z (/ui/vera-item.js) and vera-item.css, held to
      it by tests/test_canvas_z_bands.cjs. A desk item's z-index is only ever one of these. The stylesheet below writes
      var(--z-<band>,<n>) for an item-level z; a small literal (0-8) is the held column's own chrome or a card's insides,
@@ -205,6 +209,16 @@
   /* a capability that only reads, by its name - what an app or a widget may call on its own (the chat's rule, _widgetReadable) */
   const readShaped = (cap) => /(\.(get|list|status|load|history|read|stats|metrics|recent|tail|search|find|show|info|summary|query|health|state|series|events|nodes|jobs|runs|overview|chart|agenda|month)$|^obs\.|^sysmon\.|^perf\.|^nodes\.|^docker\.(ps|stats)$|^git\.log$|^markets\.(overview|chart|lookup|quote|quotes|sentiment\.map|news\.feed)$|^cal\.events\.list$|^ollama\.instances$|^syslog\.errors$|^evolve\.sandbox\.(logs|diff)$|^netscan\.graph$)/.test(String(cap || ''));   /* the last five: the reads of the first composites (DA-07c) and the network map (DA-04c (d)), by name */
   const declare = (el, key, d) => { if (el && key) (el._decl || (el._decl = {}))[String(key)] = d || {}; return ''; };
+  /* THE KIT'S ACTIONS, DECLARED BY THE BODY THAT DREW THE KIT'S CARD (WSU-58 S6): a code item, a file card, a diagram, the
+     fences of a document. The kit owns which buttons its card has (VeraOut.barActions over the card the body has just made);
+     the body hands them to its item as it is drawn - the first card it drew - and the head reads them from there (el._kitNow,
+     cleared before each item is drawn). Returns the html, so a renderer can declare in an expression. */
+  const kitDeclare = (el, html) => {
+    if (!el || el._kitNow || typeof document === 'undefined' || !document.createElement) return html;
+    const VO = root.VeraOut; if (!VO || typeof VO.barActions !== 'function' || !/class="code-card/.test(String(html || ''))) return html;
+    try { const tp = document.createElement('template'); tp.innerHTML = html; const kc = tp.content && tp.content.querySelector('.code-card[data-cb]'); if (kc) el._kitNow = VO.barActions(kc); } catch (e) { /* no kit actions */ }
+    return html;
+  };
   /* WHERE AN ITEM CAME FROM (WSU-58 S3) - VeraItem.normalise's rule (/ui/vera-item.js, item_core.py): its own source, else a
      result's capability call. Any item with a capability behind it gets the head's Refresh (it runs that call again). */
   const sourceOf = (b) => { b = b || {}; if (b.source && typeof b.source === 'object') return b.source;
@@ -1005,7 +1019,7 @@
       const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
       const h1 = md.match(/^\s*#{1,2}\s+(.+?)\s*(\n|$)/);
       const shown = h1 && c.title && norm(h1[1]) === norm(c.title) ? md.slice(h1[0].length) : md;
-      const body = VO && typeof VO.render === 'function' ? VO.render(shown, { canvas: false }) : mdx(shown);
+      const body = VO && typeof VO.render === 'function' ? kitDeclare(el, VO.render(shown, { canvas: false })) : mdx(shown);
       let row = '';
       if (VO && typeof VO.proseMenu === 'function' && key) {
         const own = (act, ico, label, tip) => `<button class="mact" data-act="${act}" title="${esc(tip)}">${(VO.icons && VO.icons[ico]) || ''}<span>${label}</span></button>`;
@@ -1236,14 +1250,14 @@
       const fk = VO && vid && typeof VO.fileKind === 'function' ? VO.fileKind(c.lang) : '';
       if (fk && typeof VO.fileCard === 'function') {
         const streaming = !!(el && el._liveOv && el._liveOv[key]);
-        return `<div class="vc-codewrap vc-filewrap">${VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming, title: String(c.title || c.filename || ''), bar: false })}</div>`;
+        return `<div class="vc-codewrap vc-filewrap">${kitDeclare(el, VO.fileCard(fk, String(c.lang || ''), String(c.code || ''), { id: vid, canvas: false, cls: 'vc-kit', incomplete: streaming, title: String(c.title || c.filename || ''), bar: false }))}</div>`;
       }
       if (VO && vid && typeof VO.card === 'function') {
         const streaming = !!(el && el._liveOv && el._liveOv[key]);
         const live = prev ? `<div class="vc-live vc-preview" data-live="preview" data-key="${esc(key)}" data-lang="${esc(String(c.lang || ''))}"><span class="vc-dim">rendering…</span></div>` : null;
         // autoPrev off: the canvas decides what is drawn - a page it switched to source stays source (owner, 2026-10-03:
         // "the source button on html in the canvas doent open the source": the kit drew the page straight back over it)
-        const cardHtml = VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false, bar: false });
+        const cardHtml = kitDeclare(el, VO.card(String(c.lang || ''), String(c.code || ''), { id: vid, filename: String(c.filename || c.path || ''), canvas: false, body: live, prevOn: prev, cls: 'vc-kit', incomplete: streaming, autoPrev: false, bar: false }));
         return `<div class="vc-codewrap" data-code="1"${c.path || c.filename ? ` data-path="${esc(c.path || c.filename)}"` : ''}>${cardHtml}</div>`;
       }
       // (without the kit on the page: the canvas's own numbered body and Preview switch)
@@ -1296,7 +1310,7 @@
          redraws as it is typed, a source that does not parse says so under the box and the last good drawing stays */
       const ui = key && el && el._dgUi && el._dgUi[key] && el._dgUi[key].open ? el._dgUi[key] : null;
       /* lead: first in the head, ahead of the kit's actions - a narrow card (under 640 px keeps four) still shows it */
-      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui, lead: true, replaces: 'edit' };   /* the code kit's own Edit would be a second edit button */
+      const EDA = { act: 'dgedit', label: ui ? 'Editing' : 'Edit source', title: ui ? 'Leave the editor without saving (Esc)' : 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', on: !!ui };   /* lead, and replaces the code kit's Edit (a second edit button): registered, BODY_SPEC.diagram */
       const ACTS = [{ act: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { act: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' }, { act: 'dgsrc', label: 'Source', title: 'Show the source' }];
       if (ui) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · editing', acts: [EDA].concat(ACTS) })
         + `<div class="vc-dgedw" data-w="canvas.diagram.edit"><div class="vc-dged" data-dged="${esc(key)}"><div class="vc-dged-l">`
@@ -1305,8 +1319,8 @@
         + `<div class="vc-dged-bar"><button type="button" class="vc-dged-save" data-act="dgsave"${ui.err ? ' disabled' : ''} title="Write this source into the item">Save</button><button type="button" data-act="dgcancel" title="Leave without writing anything (Esc)">Cancel</button><span class="vc-dim">redraws as you type</span></div></div>`
         + `<div class="vc-dged-r vc-diag"><div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div></div></div></div>` + cap;
       if (key && VO && typeof VO.diagram === 'function') return declare(el, key, { acts: [EDA] }) + `<div class="vc-codewrap vc-diagwrap" data-w="canvas.diagram">`
-        + VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit', bar: false,
-          body: `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div>` }) + `</div>` + cap;
+        + kitDeclare(el, VO.diagram(src, { id: 'cvd-' + key, title, canvas: false, cls: 'vc-kit', bar: false,
+          body: `<div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div>` })) + `</div>` + cap;
       if (key) return declare(el, key, { sub: '<i class="dot' + (live ? ' on' : ' wait') + '"></i>mermaid · ' + src.split('\n').length + ' lines', acts: ACTS.concat([EDA]) })
         + `<div class="vc-diag" data-w="canvas.diagram"><div class="vc-live" data-live="mermaid" data-key="${esc(key)}" data-title="${esc(title)}"><span class="vc-dim">drawing…</span></div><pre class="vc-pre vc-dgsrc" hidden><code>${esc(src)}</code></pre></div>` + cap;
       return `<vera-mermaid class="vc-mm" bare title="${esc(title)}">${esc(src)}</vera-mermaid>` + cap;
@@ -1517,7 +1531,7 @@
       const report = String(c.report || ''), live = String(c.live || '');
       /* what it is doing, in words: the step it is on while it runs; how it ended once it has */
       const head = state === 'done' ? 'Research complete' : state === 'error' ? 'Research failed' : (c.writing ? 'Writing the report' : 'Researching');
-      const VO = root.VeraOut; const draw = (s) => (VO && typeof VO.render === 'function' ? VO.render(s, { canvas: false }) : mdx(s));
+      const VO = root.VeraOut; const draw = (s) => (VO && typeof VO.render === 'function' ? kitDeclare(el, VO.render(s, { canvas: false })) : mdx(s));
       const chip = (k, v) => `<span class="vc-rr-chip"><i>${esc(k)}</i>${esc(v)}</span>`;
       /* the run's outline - its plan written as prose, kept by the chat (WSU-77) - formatted, under the method's chips */
       const outline = String(c.outline || '').trim();
@@ -1748,6 +1762,44 @@
       return `<div class="vc-codewrap">${head}${body}</div>`;
     },
   };
+  /* EVERY BODY REGISTERS (DEEP-29 11A.4 Decision 4; WSU-58 S6): what is static about a kind - its views, how it fits its
+     card, the smallest size it is usable at, the actions it can declare (label and title as drawn, lead: first in the head,
+     replaces: the kit action it stands for, kit: one of the shared kit's own, in the order the head ranks them). What is live
+     - its line (sub), which actions show now, on / off, a label that flips - it still declares as it is drawn (declare,
+     kitDeclare). fit and minSize are declared for the layout (S8) and not read yet. */
+  const KIT_ACTS = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'].map((v) => ({ id: 'vo:' + v, kit: true }));
+  const CPREV = { id: 'cprev', label: 'Preview', title: 'Draw it here - a sandboxed frame, no network' };
+  const LINK = { id: 'link', label: 'Open in a tab ↗', title: 'a link of its own: open, or download' };
+  const BODY_SPEC = {
+    code: { views: ['code', 'structure', 'both'], actions: [CPREV].concat(KIT_ACTS) },
+    markdown: { actions: KIT_ACTS },
+    research: { actions: KIT_ACTS },
+    diagram: { fit: 'fill', actions: [{ id: 'dgedit', label: 'Edit source', title: 'Edit the mermaid source beside the drawing - it redraws as you type; Save writes it', lead: true, replaces: 'edit' },
+      { id: 'dgopen', label: 'Open in the chat ↗', title: "Open it in the chat — the chat's own diagram pop-out" }, { id: 'dgcopy', label: 'Copy', title: 'Copy the mermaid source' },
+      { id: 'dgsrc', label: 'Source', title: 'Show the source' }].concat(KIT_ACTS) },
+    explode: { fit: 'fill', minSize: 'm', actions: [{ id: 'xpsync', label: 'Clear the lit spans', title: 'Light the whole of the bound source again' }] },
+    session: { fit: 'fill', minSize: 'm', actions: [{ id: 'tattach', label: 'Attach', title: 'Open a shell on this host' }, { id: 'tdetach', label: 'Detach', title: 'Detach — the item keeps its host; Attach opens a new shell' },
+      { id: 'tshare', label: 'Share', title: "Copy the terminal's address" }] },
+    notebook: { actions: [{ id: 'nbrun', label: 'Run', title: "Run the cell through the notebook's exec" }, { id: 'nbopen', label: 'Open the notebook ↗', title: 'Open the notebook at this cell' }] },
+    panel: { fit: 'fill', minSize: 'm', actions: [{ id: 'layer-behind', label: 'Behind', title: 'Fill the free desk, under the other items' }, { id: 'layer-front', label: 'Front', title: 'Fill the free desk, over the other items' },
+      { id: 'prefresh', label: 'Refresh', title: 'Reload the panel' }, { id: 'pquery', label: 'Query', title: 'panel.query - what the panel holds' },
+      { id: 'pdispatch', label: 'Dispatch', title: 'panel.dispatch - drive it' }, { id: 'pstand', label: 'Standalone ↗', title: 'Open it in a tab of its own' }] },
+    app: { views: ['table', 'cards', 'drawn'], actions: [{ id: 'appread', label: 'Refresh', title: 'Read it again now' }, { id: 'appact', label: 'an action of the app', title: "one of the app manifest's actions" },
+      { id: 'appcsv', label: 'Copy CSV', title: 'Copy the rows shown, as CSV' }, { id: 'appopen', label: 'Open the panel ↗', title: 'Open the page this app comes from' }] },
+    html: { actions: [CPREV, LINK] },
+    records: { views: ['graph', 'list', 'cards', 'table'] },
+    table: { views: ['table', 'cards', 'list', 'chart', 'graph'] },
+    entities: { views: ['chips', 'list', 'graph'] },
+    json: { views: ['tree', 'flat', 'validate'] },
+    kv: { views: ['fields', 'graph'] },
+    widget: { fit: 'content' },
+  };
+  if (VI) Object.keys(BLOCK).filter((k) => k[0] !== '_').forEach((k) => VI.registerBody(k, BODY_SPEC[k] || {}));
+  /* a declared action with what its kind registered for it filled in (what it declares now wins) */
+  const actOf = (kind, a) => { if (!a || !a.act || !VI) return a; const s = VI.action(kind, a.act); if (!s) return a; const o = Object.assign({}, s, a); delete o.id; return o; };
+  const declActs = (kind, d) => ((d && d.acts) || []).map((a) => actOf(kind, a));
+  /* the order the head ranks the kit's actions in: the code body's registration (the kit's own card) */
+  const kitRank = () => (VI ? VI.body('code').actions : KIT_ACTS).filter((a) => a.kit).map((a) => a.id.slice(3));
 
   const CSS = `
   :host{display:block;margin:6px 0;
@@ -4304,37 +4356,49 @@
       /* a narrow card's row keeps lock, pill, ⋯ and drop, and a pill open under the pointer shows only ⋯ (WSU-79): the row's
          other controls are here instead (never in both) */
       const narrow = c.offsetWidth <= 320; const peek = c.classList.contains('pill-open') && !c.classList.contains('desk-win');
-      let h = '';
-      if ((narrow || peek) && hd('hdview')) h += row('hdview', 'View…', hd('hdview').title);
-      if (peek && hd('lock')) h += row('lock', hd('lock').classList.contains('on') ? 'Unlock' : 'Lock it where it is', hd('lock').title, hd('lock').classList.contains('on'));
-      if ((narrow || peek) && hd('max')) h += row('max', c.classList.contains('maxed') ? 'Restore' : desk ? 'Fill the free desk' : 'Maximise it', hd('max').title);
-      if (!bid) h += row('park', 'Park', 'Park it below the flow') + row('pin', b.state === 'pinned' ? 'Unpin' : 'Pin above the flow', b.state === 'pinned' ? 'Unpin - back into the flow' : 'Pin it above the flow', b.state === 'pinned');
-      h += row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size');
-      if (bid) h += row('up', 'Move up', 'Move it up - canvas.move') + row('down', 'Move down', 'Move it down - canvas.move');
-      if (desk && this._deskPosGet()[key]) h += row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement');
-      if (!desk && !bid) h += row('open', c.classList.contains('openin') ? 'Fold it back' : 'Open in place', c.classList.contains('openin') ? 'Fold it back' : 'Open in place - the column makes room');
-      if (desk && !bid) h += row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line');
-      h += c.classList.contains('cmp-front') ? row('cmpsep', 'Take it out of the group', 'Show it as a card of its own; the group keeps its other tabs')
-        : this._sepGet()[key] ? row('cmpjoin', 'Combine with similar items', 'Put it back with the items of its kind on its topic, as a tab') : '';
-      if (ca.explode && !inHead('[data-act="explode"]')) h += row('explode', ca.explode.on ? 'Back to the source' : 'Explode', ca.explode.on ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', ca.explode.on);
-      if (ca.edit && !inHead('[data-act="edit"]')) h += row('edit', ca.edit.on ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', ca.edit.on);
-      if (ca.ctx) h += row('ctx', ca.ctx.on ? '✓ In context' : 'Put in context', ca.ctx.on ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ca.ctx.on);
-      const src = sourceOf(b); if (src.cap && !inHead('[data-act="rerun"]')) h += row('rerun', 'Refresh', 'Run ' + src.cap + ' again with the same arguments');
-      if (peek) h += row('remove', 'Take it off the desk', 'Take it off the desk');
-      /* FULL SIZE, IN FRONT OR BEHIND - ANY ITEM (owner 2026-10-17: "like the ui panels on the desk id like to be able to send full
-         screen to the front and back"): a chart, a table, a list fills the free desk over the other items or under them, as a
-         panel does; pressed again it goes back among them */
-      if (desk && !inHead('[data-act="layer-behind"]')) h += '<hr>' + row('layer-behind', 'Full size, behind', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'Full size, in front', 'Fill the free desk, over the other items', L === 'front' || this._max === key);
-      /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
-      { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
-        if (dv.length) h += '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
-          return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-layer-key="${k}" title="${esc((on ? 'Close ' : 'Open ') + d.label.toLowerCase() + (d.note ? ' - ' + d.note : '') + ' (a widget beside it)')}">${esc(d.label)}</button>`; }).join(''); }
+      /* THE ENTRIES ARE VeraItem's (WSU-58 S6): which apply here (o) and their one order is VeraItem.menu; how each is drawn
+         is the canvas's own (R). The body's own follow (own, below). */
+      const src = sourceOf(b);
+      const o = { view: (narrow || peek) && !!hd('hdview'), lock: peek && !!hd('lock'), max: (narrow || peek) && !!hd('max'),
+        park: !bid, pin: !bid, size: true, up: !!bid, down: !!bid, arrange: !!(desk && this._deskPosGet()[key]), inplace: !desk && !bid, fold: desk && !bid,
+        group: c.classList.contains('cmp-front') || !!this._sepGet()[key], explode: !!ca.explode && !inHead('[data-act="explode"]'),
+        edit: !!ca.edit && !inHead('[data-act="edit"]'), context: !!ca.ctx, refresh: !!src.cap && !inHead('[data-act="rerun"]'), drop: peek,
+        layer: desk && !inHead('[data-act="layer-behind"]'), dive: true };
+      const R = {
+        view: () => row('hdview', 'View…', hd('hdview').title),
+        lock: () => row('lock', hd('lock').classList.contains('on') ? 'Unlock' : 'Lock it where it is', hd('lock').title, hd('lock').classList.contains('on')),
+        max: () => row('max', c.classList.contains('maxed') ? 'Restore' : desk ? 'Fill the free desk' : 'Maximise it', hd('max').title),
+        park: () => row('park', 'Park', 'Park it below the flow'),
+        pin: () => row('pin', b.state === 'pinned' ? 'Unpin' : 'Pin above the flow', b.state === 'pinned' ? 'Unpin - back into the flow' : 'Pin it above the flow', b.state === 'pinned'),
+        size: () => row('size', 'Size: ' + (c.dataset.size || 'm'), 'The next size'),
+        up: () => row('up', 'Move up', 'Move it up - canvas.move'),
+        down: () => row('down', 'Move down', 'Move it down - canvas.move'),
+        arrange: () => row('desk-auto', 'Back to the arrangement', 'Placed by hand - give it back to the arrangement'),
+        inplace: () => row('open', c.classList.contains('openin') ? 'Fold it back' : 'Open in place', c.classList.contains('openin') ? 'Fold it back' : 'Open in place - the column makes room'),
+        fold: () => row('fold', c.classList.contains('ufold') ? 'Unfold' : 'Fold', 'Fold it to its header line'),
+        group: () => c.classList.contains('cmp-front') ? row('cmpsep', 'Take it out of the group', 'Show it as a card of its own; the group keeps its other tabs')
+          : row('cmpjoin', 'Combine with similar items', 'Put it back with the items of its kind on its topic, as a tab'),
+        explode: () => row('explode', ca.explode.on ? 'Back to the source' : 'Explode', ca.explode.on ? 'Back to the source alone - the diagram goes' : 'See it as a structured diagram, bound to this item by span', ca.explode.on),
+        edit: () => row('edit', ca.edit.on ? 'Editing' : 'Edit', 'Edit its text - saved through canvas.update', ca.edit.on),
+        context: () => row('ctx', ca.ctx.on ? '✓ In context' : 'Put in context', ca.ctx.on ? 'In context - click to release it' : 'Put it in context (pins it, so it never leaves focus)', ca.ctx.on),
+        refresh: () => row('rerun', 'Refresh', 'Run ' + src.cap + ' again with the same arguments'),
+        drop: () => row('remove', 'Take it off the desk', 'Take it off the desk'),
+        /* FULL SIZE, IN FRONT OR BEHIND - ANY ITEM (owner 2026-10-17: "like the ui panels on the desk id like to be able to send full
+           screen to the front and back"): a chart, a table, a list fills the free desk over the other items or under them, as a
+           panel does; pressed again it goes back among them */
+        layer: () => '<hr>' + row('layer-behind', 'Full size, behind', 'Fill the free desk, under the other items', L === 'behind') + row('layer-front', 'Full size, in front', 'Fill the free desk, over the other items', L === 'front' || this._max === key),
+        /* its deep dives (WSU-42): each a widget item beside it; a row lit when that dive is open, pressing it again closes it */
+        dive: () => { const dv = divesOf(b, this); const have = new Set(((this._doc && this._doc.blocks) || []).map((x) => String(x.key || '')));
+          return dv.length ? '<hr><div class="hd-lbl">Deep dive</div>' + dv.map((d) => { const on = have.has('dive:' + d.id + ':' + key);
+            return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-layer-key="${k}" title="${esc((on ? 'Close ' : 'Open ') + d.label.toLowerCase() + (d.note ? ' - ' + d.note : '') + ' (a widget beside it)')}">${esc(d.label)}</button>`; }).join('') : ''; },
+      };
+      let h = VI.menu(b.type, { source: src }, o).map((id) => (R[id] ? R[id]() : '')).join('');
       /* the body's own: what it declared as it was drawn, or the kit's actions for its card - never one the menu has above */
       const SKIP_VO = new Set(['explode', 'canvas']);
-      const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; let o = '';
-        (d.acts || []).filter((x) => kk !== key || !(x.act && !x.aid && h.includes('data-act="' + x.act + '"'))).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : x.aid ? '[data-app-action="' + x.aid + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { if (x.aid) { o += `<button class="ib" data-act="appact" data-app-action="${esc(x.aid)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label)}</button>`; return; } o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
+      const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; const kb = kk === key ? b : (this._blockOf(kk) || {}); const da = declActs(kb.type, d); let o = '';
+        da.filter((x) => kk !== key || !(x.act && !x.aid && h.includes('data-act="' + x.act + '"'))).filter((x) => kk !== key || !inHead(x.href ? 'a[href="' + String(x.href).replace(/"/g, '') + '"]' : x.aid ? '[data-app-action="' + x.aid + '"]' : '[data-act="' + x.act + '"]')).forEach((x) => { if (x.aid) { o += `<button class="ib" data-act="appact" data-app-action="${esc(x.aid)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label)}</button>`; return; } o += x.href ? `<a class="ib" href="${esc(x.href)}"${x.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(x.title || x.label)}">${esc(x.label)}</a>` : row(x.act, x.label, x.title, x.on, kk); });
         const card = this._kitCard(host, lead); const VO = root.VeraOut; const kit = card && VO && typeof VO.barActions === 'function' ? VO.barActions(card) : { acts: [], menus: [] };
-        const repl = new Set((d.acts || []).map((x) => x.replaces).filter(Boolean));   /* a declared action standing for a kit one (replaces) */
+        const repl = new Set(da.map((x) => x.replaces).filter(Boolean));   /* a declared action standing for a kit one (replaces) */
         kit.acts.filter((x) => !SKIP_VO.has(x.vo) && !repl.has(x.vo) && (kk !== key || !inHead('[data-vo-act="' + x.vo + '"]'))).forEach((x) => { o += `<button class="ib${x.on ? ' on' : ''}" data-act="vo" data-vo-act="${esc(x.vo)}" data-layer-key="${esc(kk)}" title="${esc(x.title || x.label)}">${esc(x.label || x.vo)}</button>`; });
         return o + (d.menus || []).concat(kit.menus).map((m) => `<div class="hd-dd">${m}</div>`).join(''); };
       const mine = own(key, c, true); if (mine) h += '<hr>' + mine;
@@ -5672,14 +5736,15 @@
         const key = String(b.key);
         const dec = decisionOf(b); const isNow = !!dec && !dec.answer;
         const editing = this._editKey === key;
-        let inner;
+        let inner; this._kitNow = null;   /* the kit's actions the body declares as it draws (kitDeclare) */
         if (editing) inner = editHtml(b);
         else {
           try { inner = fn(c, b.size, key, this); }
           catch (e) { inner = `<div class="err">Could not render a ${esc(b.type)} block.</div>`; }
           // a decision draws its ask above its own body; a bare question (a note that is only its question) is the ask alone
-          if (dec) inner = askHtml(dec) + (b.type === 'loop' || c[textFieldOf(b.type)] ? inner : '');
+          if (dec) { const keep = b.type === 'loop' || c[textFieldOf(b.type)]; if (!keep) this._kitNow = null; inner = askHtml(dec) + (keep ? inner : ''); }
         }
+        const kitNow = this._kitNow; this._kitNow = null;
         const title = blockTitle(b);
         const size = ITEM_SIZES.includes(b.size) ? b.size : 'm';
         const a = b.anchor && typeof b.anchor === 'object' ? b.anchor : null; const mid = a ? String(a.turn || a.mid || '') : '';
@@ -5758,36 +5823,40 @@
             const ctxOn = inF && (F || b.state === 'pinned');
             (this._cardActs || (this._cardActs = {}))[key] = { explode: xplodable ? { on: xploded } : null, edit: editable ? { on: editing } : null, ctx: bid ? null : { on: ctxOn } };
             const hb = (act, ic, ttl, on) => `<span class="hb${on ? ' on' : ''}" data-act="${act}" role="button" tabindex="0" title="${esc(ttl)}">${HDI[ic]}</span>`;
-            const ctl = [];
-            if (vw.views.length > 1) ctl.push(hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')));
-            if (desk && this._winKeepGet()[key]) ctl.push(hb('dock', 'restore', 'Back to the desk: no longer a window - it is placed with the others again (Esc)', true));
-            if (desk) ctl.push(hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked));
-            if (!maxed && !bid) ctl.push(desk ? hb('pill', 'pill', 'Minimise it to a pill on the border - a click on the pill opens it again')
-              : hb('fold', 'pill', ufold ? 'Open it again' : 'Fold it to this line - it stays folded until you open it', ufold));
-            ctl.push(hb('max', maxed ? 'restore' : 'max', maxed ? 'Restore it' : desk ? 'Fill the free desk with it' : 'Maximise it in the canvas - it stays there until you restore it', maxed));
-            ctl.push(hb('hdmore', 'more', 'More: park, pin, size, the arrangement, in context, deep dives - and what does not fit in the head'));
-            ctl.push(hb('remove', 'drop', desk ? 'Take it off the desk' : 'Take it off the canvas'));
-            const nn = ctl.length - (vw.views.length > 1 ? 1 : 0) - 1;   /* below 320 px the row keeps lock, pill, more, drop */
+            /* THE ROW IS VeraItem's (WSU-58 S6): which controls and in what order - view (more than one view), dock (a kept
+               window), lock (the desk), pill (the desk) or fold (the column) unless maximised or keyless, max, more, drop -
+               is VeraItem.controls; how each is drawn is the canvas's own */
+            const HB = {
+              view: () => hb('hdview', vw.cur in HDI ? vw.cur : 'list', 'View: ' + (VIEW_LABEL[vw.cur] || vw.cur) + ' - see it as ' + vw.views.filter((v) => v !== vw.cur).map((v) => VIEW_LABEL[v].toLowerCase()).join(', ')),
+              dock: () => hb('dock', 'restore', 'Back to the desk: no longer a window - it is placed with the others again (Esc)', true),
+              lock: () => hb('lock', locked ? 'lock' : 'unlock', locked ? 'Locked where it is - nothing moves or resizes it; click to free it' : 'Lock it where it is: the desk will not move or resize it', locked),
+              pill: () => hb('pill', 'pill', 'Minimise it to a pill on the border - a click on the pill opens it again'),
+              fold: () => hb('fold', 'pill', ufold ? 'Open it again' : 'Fold it to this line - it stays folded until you open it', ufold),
+              max: () => hb('max', maxed ? 'restore' : 'max', maxed ? 'Restore it' : desk ? 'Fill the free desk with it' : 'Maximise it in the canvas - it stays there until you restore it', maxed),
+              more: () => hb('hdmore', 'more', 'More: park, pin, size, the arrangement, in context, deep dives - and what does not fit in the head'),
+              drop: () => hb('remove', 'drop', desk ? 'Take it off the desk' : 'Take it off the canvas'),
+            };
+            const row = VI.controls(b.type, { views: vw.views, window: desk && !!this._winKeepGet()[key], lock: desk, pill: !maxed && !bid, fold: !desk });
+            const ctl = row.map((id) => HB[id]());
+            const nn = ctl.length - (row.includes('view') ? 1 : 0) - 1;   /* below 320 px the row keeps lock, pill, more, drop */
             /* THE CONTROLS OF WHAT IS IN IT, IN ITS HEAD (owner, 2026-10-16: "the unified header should have controls relevant to
                whatever is in it not the same controls for everything - i dont want everything to be chucked into the ⋯ menu"):
                after the title, the item's own actions as buttons - a code card's Copy, Run, Edit, Preview; a terminal's Attach
                and Share; a panel's Refresh and Query; Refresh on an item with a source (a result's call); Edit and Explode where they apply - most used first.
                A narrow card shows the first few (data-pri); only what does not fit is in the more menu. */
             const ax = []; const hx = (attrs, label, title, on) => ax.push(`<button type="button" class="hx${on ? ' on' : ''}" ${attrs} title="${esc(title || label)}">${esc(label)}</button>`);
-            let kit = null; const VO = root.VeraOut;
-            if (typeof document !== 'undefined' && document.createElement && VO && typeof VO.barActions === 'function' && /class="code-card/.test(inner)) {
-              try { const tp = document.createElement('template'); tp.innerHTML = inner; const kc = tp.content.querySelector('.code-card[data-cb]'); if (kc) kit = VO.barActions(kc); } catch (e) { kit = null; } }
-            const RANK = ['copy', 'run', 'edit', 'preview', 'dsrc', 'present', 'outline', 'fpop', 'pop', 'dpop', 'save', 'dsvg', 'dpng'];
+            /* the kit's actions: declared by the body that drew the kit's card (kitDeclare), ranked as the code body registered them */
+            const kit = kitNow; const RANK = kitRank(); const dacts = declActs(b.type, d);
             /* a declared action marked lead goes first, ahead of the kit's: it is the one a narrow card keeps (data-pri) */
             const dact = (a) => { if (a.href) ax.push(`<a class="hx" href="${esc(a.href)}"${a.download ? ' download' : ' target="_blank" rel="noopener"'} title="${esc(a.title || a.label)}">${esc(a.label)}</a>`); else hx(`data-act="${esc(a.act)}"` + (a.aid ? ` data-app-action="${esc(a.aid)}"` : ''), a.label, a.title, a.on); };
             /* a declared action that replaces a kit action (replaces: 'edit' - the diagram's Edit source for the code kit's Edit) leaves it out */
-            const repl = new Set((d.acts || []).map((a) => a.replaces).filter(Boolean));
-            (d.acts || []).filter((a) => a.lead).forEach(dact);
+            const repl = new Set(dacts.map((a) => a.replaces).filter(Boolean));
+            dacts.filter((a) => a.lead).forEach(dact);
             if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane' && !repl.has(a.vo)).sort((a, b) => (RANK.indexOf(a.vo) + 99) % 99 - (RANK.indexOf(b.vo) + 99) % 99)
               .forEach((a) => hx(`data-act="vo" data-vo-act="${esc(a.vo)}"`, a.label || a.vo, a.title, a.on));
-            (d.acts || []).filter((a) => !a.lead).forEach(dact);
+            dacts.filter((a) => !a.lead).forEach(dact);
             /* an item filling the desk (layered or maximised) gains Behind / Front - unless it declared its own (a panel always shows them) */
-            const dLay = (d.acts || []).some((a) => a.act === 'layer-behind');
+            const dLay = dacts.some((a) => a.act === 'layer-behind');
             if (!dLay && desk && ((this._layer || {})[key] || this._max === key)) { const L1 = this._max === key ? 'front' : this._layer[key];
               hx('data-act="layer-behind"', 'Behind', 'Behind the other items, still filling the free desk - again to put it back among them', L1 === 'behind'); hx('data-act="layer-front"', 'Front', 'Over the other items, filling the free desk - again to put it back among them', L1 === 'front'); }
             /* an item with a capability behind it (sourceOf - a result's call) runs it again */
@@ -8475,7 +8544,7 @@
     }
   }
 
-  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, version: 6 };
+  const api = { divesOf, place, autoCols, unitsOf, fuseOf, checkRoutes, decisionOf, suggestionsOf, canExplode, nowText, sizeOfHeight, turnOrder, isAged, foldOf, ADD_KINDS, NOTE_MENU, ADD_WHAT, fromClipboard, blockTitle, railRows, foldOf, ITEM_SIZES, KIND_GLYPH, BLOCK, splitHl, codeLintHtml, appRows, appView, appCsv, appRowsHtml, appBarHtml, appActText, appActArgs, resultView, genericView, jsonTree, runStrip, langRunCmd, unwrap, hostRowsOf, panelRowsOf, pickerHtml, mdx, readerHtml, recGraph, aspectFor, FORM_ASPECT, SHAPE_ASPECT, TYPE_ASPECT, viewsOf, actOf, version: 6 };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.VeraCanvas = Object.assign(root.VeraCanvas || {}, api);
   if (typeof customElements !== 'undefined' && !customElements.get('vera-canvas')) {

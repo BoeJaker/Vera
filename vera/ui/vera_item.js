@@ -9,15 +9,25 @@
      transition(item, event)       the face state after an event (pill, unpill, open, max, restore, send_back, drag, ...)
      registerBody(kind, spec)      a body declares {draw, views, fit, minSize, actions}; the container draws the head
      body(kind)                    the declared spec, or the default one (one view, fit 'content', minSize 's')
-     controls(kind, o)             the head's standard row for a kind, in the ADR's order: view, lock, pill, max, more, drop;
-                                   o.narrow (<320 px) keeps lock, pill, more, drop
-     menu(kind, item)              the more-menu: the standard entries, then the body's own actions
+     controls(kind, o)             the head's standard row for a kind, in the ADR's order: view, (dock), lock, pill, max, more,
+                                   drop; o.narrow (<320 px) keeps lock, pill, more, drop. A host says what applies (WSU-58 S6):
+                                   o.views (the item's own views - more than one draws view), o.window (a kept window: dock),
+                                   o.lock / o.pill / o.max / o.more false (left out), o.fold (the column's fold for pill)
+     menu(kind, item, o)           the more-menu: the standard entries, then the body's own actions. With o, the host's whole
+                                   menu in its one order (MENU_ALL), each entry there when o[entry] is true
+     action(kind, id)              a body's registered action (its static label, title, lead, replaces, kit), or null
      Z                             the z-order bands (vera-item.css carries the same table as custom properties)
      z(band, n)                    the z-index for a band; tiles and windows take an offset n inside their range
 
    Bodies never draw a head. A kind that is not registered still gets the full container. */
 (function (root) {
   'use strict';
+  /* loaded once per page: a host script that carries this file too (the canvas element, the dashboard - their routes put it
+     in front of them) finds the first copy and keeps its registered bodies */
+  if (root.VeraItem && typeof root.VeraItem.registerBody === 'function') {
+    if (typeof module !== 'undefined' && module.exports) module.exports = root.VeraItem;
+    return;
+  }
 
   var STATES = ['now', 'pinned', 'parked', 'hidden'];
   var FACES = ['pill', 'tile', 'window', 'full'];
@@ -138,16 +148,36 @@
 
   var ROW = ['view', 'lock', 'pill', 'max', 'more', 'drop'];
   var ROW_NARROW = ['lock', 'pill', 'more', 'drop'];
+  /* the head's one row (WSU-58 S6: the canvas head and the dashboard tile draw theirs from this). dock (a window kept as a
+     window goes back to the desk) sits after view; fold is the column's pill (it folds the item to its head line). */
   function controls(kind, o) {
-    o = o || {}; var b = body(kind);
-    return (o.narrow ? ROW_NARROW : ROW).filter(function (c) { return c !== 'view' || b.views.length > 1; });
+    o = o || {}; var b = body(kind); var views = Array.isArray(o.views) ? o.views : b.views; var row = [];
+    if (views.length > 1) row.push('view');
+    if (o.window) row.push('dock');
+    if (o.lock !== false) row.push('lock');
+    if (o.pill !== false) row.push(o.fold ? 'fold' : 'pill');
+    if (o.max !== false) row.push('max');
+    if (o.more !== false) row.push('more');
+    row.push('drop');
+    return o.narrow ? row.filter(function (c) { return has(ROW_NARROW, c) || c === 'fold'; }) : row;
   }
 
   var MENU = ['park', 'size', 'arrange', 'fold', 'group', 'explode', 'edit', 'context', 'refresh', 'dive', 'open', 'copy'];
-  function menu(kind, item) {
-    var b = body(kind), it = item || {};
-    var std = MENU.filter(function (m) { return m !== 'refresh' || (isObj(it.source) && !!it.source.cap); });
+  /* the host's whole menu, in its one order: first what a narrow or peeking head could not show (view, lock, max), then the
+     ADR's entries as the canvas has them - park, pin, size, move up / down (a keyless block), back to the arrangement, open in
+     place (the column), fold, group, explode, edit, in context, refresh, take it off (a peeking pill), full size behind / in
+     front, the deep dives - then open and copy where a host has them; the body's own actions follow */
+  var MENU_ALL = ['view', 'lock', 'max', 'park', 'pin', 'size', 'up', 'down', 'arrange', 'inplace', 'fold', 'group', 'explode',
+                  'edit', 'context', 'refresh', 'drop', 'layer', 'dive', 'open', 'copy'];
+  function menu(kind, item, o) {
+    var b = body(kind), it = item || {}; var src = isObj(it.source) && !!it.source.cap;
+    var std = o ? MENU_ALL.filter(function (m) { return !!o[m] && (m !== 'refresh' || src); })
+                : MENU.filter(function (m) { return m !== 'refresh' || src; });
     return std.concat(b.actions.map(function (a) { return a.id; }).filter(function (id) { return !has(std, id); }));
+  }
+  function action(kind, id) {
+    var acts = body(kind).actions; for (var i = 0; i < acts.length; i++) if (acts[i].id === id) return clone(acts[i]);
+    return null;
   }
 
   /* HOW AN ITEM CHANGES FACE (Decision 3; WSU-58 S2) = item_core.transition, held to the same answers by the shared cases
@@ -223,9 +253,9 @@
   }
 
   var api = { STATES: STATES, FACES: FACES, SIZES: SIZES, LAYERS: LAYERS, VIEWS: VIEWS, SETTABLE: SETTABLE, Z: Z, z: z,
-              ROW: ROW, ROW_NARROW: ROW_NARROW, MENU: MENU, faceOf: faceOf, normalise: normalise, applySet: applySet,
-              registerBody: registerBody, body: body, bodies: bodies, controls: controls, menu: menu,
-              EVENTS: EVENTS, FACE_EVENTS: FACE_EVENTS, LAYOUT_EVENTS: LAYOUT_EVENTS, faceState: faceState, transition: transition };
+            ROW: ROW, ROW_NARROW: ROW_NARROW, MENU: MENU, MENU_ALL: MENU_ALL, faceOf: faceOf, normalise: normalise, applySet: applySet,
+            registerBody: registerBody, body: body, bodies: bodies, controls: controls, menu: menu, action: action,
+            EVENTS: EVENTS, FACE_EVENTS: FACE_EVENTS, LAYOUT_EVENTS: LAYOUT_EVENTS, faceState: faceState, transition: transition };
   root.VeraItem = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof window !== 'undefined' ? window : globalThis);

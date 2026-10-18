@@ -14,7 +14,11 @@ t('every wired tile gets the item head', () => { assert(S.includes('      addPop
 t('the row is the item row, in order; a section divider keeps more and drop', () => {
   const i = S.indexOf('function itemHead(w)'); const B = S.slice(i, i + 2000);
   const o = ["hb('pill'", "hb('max'", "hb('drop'"].map((x) => B.indexOf(x)); assert(o.every((x) => x > 0)); assert.deepStrictEqual(o, o.slice().sort((a, b) => a - b)); assert(!B.includes("hb('more'"));
-  assert(B.includes("(sec ? '' :"));
+  /* WSU-58 S6 (owner O4): the row is VeraItem.controls - no lock, no more; a section divider keeps drop only */
+  assert(B.includes("VI.controls('widget', { views: [], lock: false, more: false, pill: !sec, max: !sec })"));
+  const VI = require('../vera/ui/vera_item.js');
+  assert.deepStrictEqual(VI.controls('widget', { views: [], lock: false, more: false, pill: true, max: true }), ['pill', 'max', 'drop']);
+  assert.deepStrictEqual(VI.controls('widget', { views: [], lock: false, more: false, pill: false, max: false }), ['drop']);
 });
 t('the tile\'s own buttons stay in its head (its hide button is the drop control\'s twin); the row shows on hover, focus, arranging, floating', () => {
   assert(S.includes("'.widget > .w-head > .w-actions > .vd-dup{display:none!important}',") && S.includes("if (isHideBtn(x)) x.classList.add('vd-dup');") && !S.includes('function tileMenu('));

@@ -52,15 +52,21 @@ t('the shared kit is asked for a headless card at every canvas call, and lists a
   assert(/function barActions\(c\)/.test(KIT) && /function actOn\(c, name, b\)/.test(KIT) && /css: CSS, barActions, actOn \};/.test(KIT));
 });
 t('one head: glyph, title, the body\'s line, badges - then the standard row in the ADR\'s order', () => {
-  const i = SRC.indexOf("const ctl = [];"), j = SRC.indexOf("const nn = ctl.length", i); assert(i > 0 && j > i);
+  /* WSU-58 S6: the row and its order are VeraItem.controls; the head draws each control (HB) in that order */
+  const i = SRC.indexOf("const HB = {"), j = SRC.indexOf("const nn = ctl.length", i); assert(i > 0 && j > i);
   const order = ["hb('hdview'", "hb('lock'", "hb('pill'", "hb('max'", "hb('hdmore'", "hb('remove'"].map((s) => SRC.indexOf(s, i));
   assert(order.every((x) => x > i && x < j), 'every control in the row'); assert.deepStrictEqual(order, order.slice().sort((a, b) => a - b), 'in order');
+  assert(SRC.includes('const ctl = row.map((id) => HB[id]());'));
+  const VI = require('../vera/ui/vera_item.js'); assert.deepStrictEqual(VI.controls('table', { views: ['table', 'cards'], lock: true, pill: true }), ['view', 'lock', 'pill', 'max', 'more', 'drop']);
   assert(SRC.includes("(d.sub ? `<span class=\"it-sub\">${d.sub}</span>` : '')"));
   assert(!/class="it-ft"|OWN_HEAD|\.ownhead|own-fold|_ownBtns|data-act="ownbtn"/.test(SRC), 'no rail, no own-head kinds, no re-pressed buttons');
 });
 t('the menu holds the rest in order, then the body\'s declared actions, the kit\'s, its dropdowns and each pane\'s', () => {
   const a = SRC.indexOf('    _hdMenu(key, btn) {'), b = SRC.indexOf('    _viewMenu(key, btn) {'); const M = SRC.slice(a, b);
   const seq = ["row('park'", "row('size'", "row('desk-auto'", "row('open'", "row('fold'", "row('cmpsep'", "row('explode'", "row('edit'", "row('ctx'", "row('rerun'", "data-act=\"dive\"", 'const own = (kk, host, lead)'].map((s) => M.indexOf(s));
+  /* WSU-58 S6: the entries and their order are VeraItem.menu's (MENU_ALL); each is drawn by R in that order */
+  { const VI = require('../vera/ui/vera_item.js'); const ids = ['park', 'size', 'arrange', 'inplace', 'fold', 'group', 'explode', 'edit', 'context', 'refresh', 'dive'];
+    const at = ids.map((x) => VI.MENU_ALL.indexOf(x)); assert(at.every((x) => x >= 0)); assert.deepStrictEqual(at, at.slice().sort((a, b) => a - b)); assert(M.includes('let h = VI.menu(b.type, { source: src }, o)')); }
   assert(seq.every((x) => x > 0), JSON.stringify(seq)); assert.deepStrictEqual(seq, seq.slice().sort((x, y) => x - y));
   assert(M.includes('VO.barActions(card)') && M.includes("data-act=\"vo\" data-vo-act=") && M.includes("c.querySelectorAll('.fu-p[data-key]')"));
   assert(SRC.includes("if (act === 'vo') {") && SRC.includes('VO.actOn(card, btn.dataset.voAct)'));

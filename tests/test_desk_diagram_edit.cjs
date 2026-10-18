@@ -39,13 +39,15 @@ t('Save is the one write: canvas.update with the new source (and code/source whe
 t('Esc in the box is Cancel', /dataset\.dgSrc == null \|\| ev\.key !== 'Escape'[\s\S]{0,200}data-act="dgcancel"/.test(C));
 t('the parse check uses the element\'s own parser', C.includes('inner._build(src, t)'));
 // fix 1: a narrow card keeps "Edit source" in its head - it is declared lead, and the head draws a lead action first
+/* WSU-58 S6: lead and replaces are static - the diagram registers them (VeraItem.registerBody) and the head fills them in (actOf) */
+const lead = (a) => !!(a && mod.actOf('diagram', a).lead === true);
 { const el = host(); draw(el); const e = el._decl[KEY].acts.find((a) => a.act === 'dgedit');
-  t('narrow card: "Edit source" is declared lead (closed)', !!(e && e.lead === true));
-  const el2 = host({}); draw(el2); t('narrow card: "Editing" is declared lead (open)', el2._decl[KEY].acts[0].lead === true);
+  t('narrow card: "Edit source" is declared lead (closed)', lead(e));
+  const el2 = host({}); draw(el2); t('narrow card: "Editing" is declared lead (open)', el2._decl[KEY].acts[0].act === 'dgedit' && lead(el2._decl[KEY].acts[0]));
   const had = globalThis.VeraOut; globalThis.VeraOut = { diagram: () => '<div class="code-card"></div>' };   /* the kit's card path */
   const el3 = host(); const h3 = draw(el3); globalThis.VeraOut = had;
-  t('...on the kit card path too', h3.includes('vc-diagwrap') && el3._decl[KEY].acts.find((a) => a.act === 'dgedit').lead === true, h3.slice(0, 80)); }
-t('the head draws lead actions before the kit\'s (data-pri 0 survives the 640 px rule)', /\(d\.acts \|\| \[\]\)\.filter\(\(a\) => a\.lead\)\.forEach\(dact\);\s*if \(kit\) kit\.acts/.test(C) && C.includes('(d.acts || []).filter((a) => !a.lead).forEach(dact);'));
+  t('...on the kit card path too', h3.includes('vc-diagwrap') && lead(el3._decl[KEY].acts.find((a) => a.act === 'dgedit')), h3.slice(0, 80)); }
+t('the head draws lead actions before the kit\'s (data-pri 0 survives the 640 px rule)', /dacts\.filter\(\(a\) => a\.lead\)\.forEach\(dact\);\s*if \(kit\) kit\.acts/.test(C) && C.includes('dacts.filter((a) => !a.lead).forEach(dact);') && C.includes('const dacts = declActs(b.type, d);'));
 // fix 2: the box keeps its focus and caret across the redraws after opening
 t('opening focuses the box: now, next frame, ~120 ms', /const dgFocus = \(el, key, force\) => \{[\s\S]{0,1200}go\(\); requestAnimationFrame\(go\); setTimeout\(go, 120\); \};/.test(C));
 t('...with the caret it had (selection restored)', /const dgFocus[\s\S]{0,1000}ta\.setSelectionRange\(s, e\)/.test(C));
@@ -53,10 +55,10 @@ t('...called right after the open render', C.includes("if (ui.open) dgFocus(this
 t('...and again after each placement while it held the focus', C.includes("this.addEventListener('vera:canvas:placed', () => { const m = this._dgUi || {}; Object.keys(m).forEach((k) => { if (m[k] && m[k].open && m[k].had) dgFocus(this, k, false); }); });"));
 t('the caret is tracked as it is typed / moved', C.includes("['input', 'keyup', 'pointerup', 'select'].forEach((t) => body.addEventListener(t, dgCaret));"));
 // ONE edit button: Edit source stands for the code kit's own Edit (replaces), so the kit's is left out of the head and the menu
-t('Edit source replaces the kit’s Edit', /act: 'dgedit'[^\n]*replaces: 'edit' \}/.test(C));
+t('Edit source replaces the kit’s Edit', /id: 'dgedit'[^\n]*lead: true, replaces: 'edit' \}/.test(C));   /* registered: BODY_SPEC.diagram */
 t('...the head leaves a replaced kit action out', C.includes("if (kit) kit.acts.filter((a) => a.vo !== 'explode' && a.vo !== 'canvas' && a.vo !== 'pane' && !repl.has(a.vo)).sort("));
 t('...and so does the item menu', C.includes("kit.acts.filter((x) => !SKIP_VO.has(x.vo) && !repl.has(x.vo) && (kk !== key ||"));
 { const el = {}; mod.BLOCK.diagram({ mermaid: SRC }, 'l', 'diagram:rep', el); const d = (el._decl || {})['diagram:rep'] || {};
-  t('...as the diagram declares it', (d.acts || []).some((a) => a.act === 'dgedit' && a.replaces === 'edit')); }
+  t('...as the diagram declares it', (d.acts || []).some((a) => a.act === 'dgedit' && mod.actOf('diagram', a).replaces === 'edit')); }
 console.log(fails ? fails + ' FAILED' : 'all passed');
 process.exit(fails ? 1 : 0);
