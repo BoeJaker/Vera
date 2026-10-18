@@ -408,3 +408,37 @@ def test_only_the_holder_releases_its_reservation():
     assert SVC.reservation(now=0.0) is not None
     SVC.release_reservation("a")
     assert SVC.reservation(now=0.0) is None
+
+
+
+def test_a_tick_drops_duplicate_copies_of_one_key(store):
+    """Copies that got past submit (a failed read, two timers racing) are collapsed by the runner."""
+    for i, t in enumerate((30, 10, 20)):
+        store["j%d" % i] = IQ.make_job("j%d" % i, IQ.KIND_NARRATOR, "quick take", enqueued_at=t)
+        store["j%d" % i]["dedupe_key"] = "narrator:quick"
+
+    async def go():
+        return await SVC.drain_once("busy", _busy)          # busy: nothing starts, the collapse still runs
+
+    run(go())
+    assert sorted(store) == ["j1"]                          # the oldest copy keeps its place
+
+
+def test_submit_does_not_enqueue_when_it_cannot_read_the_queue(monkeypatch, store):
+    """An unreadable store looked like an empty queue, so every hourly producer added another copy."""
+    store["old"] = IQ.make_job("old", IQ.KIND_NARRATOR, "quick take", enqueued_at=1)
+    store["old"]["dedupe_key"] = "narrator:quick"
+
+    async def broken_load():
+        SVC._LOAD_OK = False
+        return []
+
+    monkeypatch.setattr(SVC, "load_jobs", broken_load)
+
+    async def go():
+        return await SVC.submit(IQ.KIND_NARRATOR, "quick take", dedupe_key="narrator:quick")
+
+    res = run(go())
+    SVC._LOAD_OK = True
+    assert res["queued"] is False and "could not read" in res["reason"]
+    assert sorted(store) == ["old"]

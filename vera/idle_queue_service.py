@@ -174,16 +174,25 @@ def _redis():
     return getattr(_orch, "REDIS", None)
 
 
+#: whether the last load_jobs() really read the store - an unreadable store returns [] (the panel must
+#: degrade quietly) but `submit` must not take that [] as "nothing queued" and enqueue a duplicate
+_LOAD_OK = True
+
+
 async def load_jobs() -> List[Dict[str, Any]]:
     """Every job, waiting or running. Bad rows are skipped, never fatal."""
+    global _LOAD_OK
     r = _redis()
     if r is None:
+        _LOAD_OK = False
         return []
     try:
         raw = await r.hgetall(REDIS_KEY)
     except Exception as e:
         log.debug("idle queue load: %s", e)
+        _LOAD_OK = False
         return []
+    _LOAD_OK = True
     out: List[Dict[str, Any]] = []
     for v in (raw or {}).values():
         try:
@@ -260,7 +269,15 @@ async def submit(kind: str, title: str = "", *, dedupe_key: str = "",
     jobs to run back-to-back the moment it went quiet - turning a queue that
     exists to protect the box into a thundering herd aimed at it.
     """
-    existing = jobs if jobs is not None else await load_jobs()
+    global _LOAD_OK
+    if jobs is not None:
+        existing = jobs
+    else:
+        _LOAD_OK = True                    # load_jobs clears it when the read fails
+        existing = await load_jobs()
+        if not _LOAD_OK:
+            # an unread queue is not an empty one: enqueueing now is how one key became twelve jobs (18 Oct)
+            return {"queued": False, "reason": "the queue store is unavailable (could not read it to dedupe)"}
     key = dedupe_key or "%s:%s" % (kind, title)
     for j in existing:
         if (j.get("dedupe_key") == key
@@ -464,10 +481,17 @@ async def drain_once(busy_reason: str,
     #    notice. This only moves records BACK to waiting - it never starts
     #    anything, so the gate below still decides whether the box is free.
     _live = {_RUNNING["id"]} if (_still_running() and _RUNNING.get("id")) else set()
-    for _orphan in _iq.stranded(await load_jobs(), _live):
+    _jobs0 = await load_jobs()
+    for _orphan in _iq.stranded(_jobs0, _live):
         await save_job(_iq.requeue_stranded(_orphan, t))
         log.warning("idle queue: requeued %s (%s) - it was marked running with "
                     "no live runner", _orphan.get("id"), _orphan.get("kind"))
+    # ...and collapse copies of one dedupe key that got past submit (18 Oct 2026: twelve of one re-index)
+    _dups = _iq.duplicates(_jobs0)
+    for _dup in _dups:
+        await drop_job(_dup)
+    if _dups:
+        log.info("idle queue: dropped %d duplicate job(s): %s", len(_dups), ", ".join(_dups))
 
     # 1. Activity wins - take the node back before considering anything new.
     #    But only for kinds that CAN be pre-empted: a dream or a narration is
