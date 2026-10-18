@@ -221,3 +221,12 @@ def test_deferred_passes_find_crawl_records_by_the_crawls_own_id():
     row = conn.execute("SELECT id, text FROM fabric_records WHERE dataset_id=? AND json_extract(data, '$.id')=?",
                        ("web.gaps", "p_abc")).fetchone()
     assert row["id"] == "uuid-1" and row["text"] == "body"
+
+
+
+def test_a_dedupe_skip_needs_the_record_to_still_exist():
+    src = (ROOT / "vera" / "fabric" / "discovery.py").read_text(encoding="utf-8")
+    i = src.index('_dec = _pc.dedupe_decision(_chash, await _ingress_lookup(_chash), ds_id, rid)')
+    block = src[i:i + 700]
+    assert 'asyncio.to_thread(_record_row, ds_id, rid) is None' in block
+    assert block.index("_record_row") < block.rindex('if _dec["action"] == "skip":')
