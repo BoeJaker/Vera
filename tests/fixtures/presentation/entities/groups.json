@@ -1,0 +1,67 @@
+{
+ "cap": "demo.understand",
+ "args": {},
+ "presentation": {
+  "kind": "entities",
+  "map": {
+   "groups": "groups"
+  },
+  "status": "declared"
+ },
+ "result": {
+  "groups": [
+   {
+    "group": "People",
+    "entities": [
+     {
+      "text": "Ada",
+      "type": "PERSON",
+      "count": 2
+     },
+     {
+      "text": "Bob",
+      "type": "PERSON"
+     }
+    ]
+   },
+   {
+    "group": "Places",
+    "entities": [
+     {
+      "text": "London",
+      "type": "GPE",
+      "count": "3"
+     }
+    ]
+   }
+  ]
+ },
+ "expect": {
+  "element": "entities",
+  "kind": "entities",
+  "title": "demo.understand",
+  "forms": [
+   "pills"
+  ],
+  "data": [
+   {
+    "name": "Ada",
+    "type": "PERSON",
+    "count": 2,
+    "group": "People"
+   },
+   {
+    "name": "Bob",
+    "type": "PERSON",
+    "count": 1,
+    "group": "People"
+   },
+   {
+    "name": "London",
+    "type": "GPE",
+    "count": 3,
+    "group": "Places"
+   }
+  ]
+ }
+}

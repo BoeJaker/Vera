@@ -504,45 +504,14 @@
   }
   function ladderSizes() { return sizeLadder().map(function (s) { return s.size; }); }
   /* ── the form's sample ──
-     A record with no source, or one the element will not read on its own (a name that is not read-shaped), still
-     draws: window.VeraWidget.sample(form) when the element offers it, else enough of the form's SHAPE to draw it here.
-     The tile says "sample" in its chip. Nothing on a dashboard is ever blank. */
-  var SHAPE_OF = { counter: 'level', hero: 'level', level: 'level', meter: 'level', gauge: 'level', radial: 'level', ring: 'level', rate: 'level', bar: 'level', tank: 'level', turbine: 'level',
-    trace: 'series', sparkline: 'series', line: 'series', area: 'series', step: 'series', chart: 'series', horizon: 'series', candles: 'series',
-    bars: 'values', thermo: 'values', heat: 'values', pills: 'values', kv: 'values', column: 'values', ranked: 'values', histogram: 'values', 'meter-panel': 'values', form: 'values',
-    donut: 'parts', stack: 'parts', parts: 'parts', matrix: 'matrix',
-    log: 'events', lane: 'events', feed: 'events', timeline: 'events', pulse: 'events',
-    table: 'items', list: 'items', cards: 'items', rows: 'items', files: 'items', checklist: 'items', tree: 'items', gallery: 'items', people: 'items', node: 'items',
-    stepper: 'stages', pipeline: 'stages', stages: 'stages', program: 'stages', calendar: 'calendar', agenda: 'calendar',
-    string: 'string', terminal: 'string', announcement: 'string', ask: 'string',
-    graph: 'graph', pipes: 'graph', topology: 'graph', flow: 'graph', minigraph: 'graph', context_graph: 'graph', scatter: 'points', globe: 'points' };
-  var SAMPLE = {
-    series: [12, 18, 15, 22, 27, 24, 31, 36, 33, 41, 38, 44, 47, 43, 52, 49, 55, 58, 54, 62, 60, 66, 63, 62],
-    level: { value: 62, min: 0, max: 100, unit: '%', delta: 4 },
-    values: { ct126: 71, ct121: 54, pxstore: 42, ct130: 33 },
-    parts: { running: 26, paused: 3, stopped: 4 },
-    matrix: { ct126: { cpu: 'ok', mem: 'ok', disk: 'warn' }, ct121: { cpu: 'ok', mem: 'warn', disk: 'ok' }, ct130: { cpu: 'down', mem: 'down', disk: 'down' } },
-    events: [{ t: '2026-09-13T14:38:00', kind: 'memory', text: 'memory.select · 2 injected' }, { t: '2026-09-13T14:39:00', kind: 'err', text: 'ct130 connect timeout' },
-      { t: '2026-09-13T14:40:00', kind: 'cap', text: 'code.author wrote 2 files' }, { t: '2026-09-13T14:41:00', kind: 'loop', text: 'loop v7 · step 5 · waiting on you' }],
-    items: [{ name: 'ct126', status: 'ok', value: '18 ms' }, { name: 'ct121', status: 'ok', value: '22 ms' }, { name: 'pxstore', status: 'ok', value: '31 ms' }, { name: 'ct130', status: 'down', value: 'timeout' }],
-    stages: { stages: [{ name: 'recall', done: true }, { name: 'read', done: true }, { name: 'author', current: true }, { name: 'verify' }, { name: 'land' }] },
-    calendar: [{ when: '2026-09-13T09:00', title: 'heartbeat' }, { when: '2026-09-13T12:00', title: 'model sync' }, { when: '2026-09-14T03:00', title: 'dream cycle' }],
-    string: 'sample — the record has no readable source yet',
-    points: [{ x: 1, y: 3 }, { x: 2, y: 5 }, { x: 3, y: 4 }, { x: 4, y: 8 }, { x: 5, y: 7 }, { x: 6, y: 9 }, { x: 7, y: 8 }],
-    // the context galaxy's shape: every family of an assembled context, a record's relevance, the edges it cites
-    graph: { nodes: [{ id: 'q1', label: 'the question', family: 'context', score: 0.95 }, { id: 'm1', label: 'memory · boot path', family: 'memory', score: 0.82 },
-      { id: 'm2', label: 'memory · re-embed', family: 'memory', score: 0.61 }, { id: 'v1', label: 'vector · fabric', family: 'vector', score: 0.7 }, { id: 'v2', label: 'vector · sandbox', family: 'vector', score: 0.42, included: false },
-      { id: 'g1', label: 'graph · ct126', family: 'graph', score: 0.55 }, { id: 'c1', label: 'cap · code.read', family: 'cap', score: 0.74 }, { id: 'r1', label: 'run · loop v7', family: 'run', score: 0.48 },
-      { id: 's1', label: 'skill · fixer', family: 'skill', score: 0.66 }],
-      rels: [{ from: 'm1', to: 'q1', kind: 'cite' }, { from: 'v1', to: 'q1', kind: 'cite' }, { from: 'c1', to: 'r1', kind: 'ran' }, { from: 'g1', to: 'm1', kind: 'links' }],
-      links: [{ source: 'm1', target: 'q1' }, { source: 'v1', target: 'q1' }, { source: 'c1', target: 'r1' }, { source: 'g1', target: 'm1' }] }
-  };
+     The sample face is the widget element's own (window.VeraWidget.sample, drawn by <vera-widget> itself); the dashboard
+     keeps no copy of the forms' shapes or samples (DO-0.3 - its SHAPE_OF / SAMPLE disagreed with the element's). And a
+     tile shows it ONLY while the dashboard is being configured (edit mode, or the tile's configure sheet open): at rest a
+     tile never draws sample values as though they were read - its element (no-sample) says it is reading, that the read
+     failed, or that there is nothing to show. */
   function sampleFor(form) {
-    if (window.VeraWidget && typeof window.VeraWidget.sample === 'function') { try { var s = window.VeraWidget.sample(form); if (s != null) return s; } catch (e) { /* the shape's own below */ } }
-    var f = String(form || '').toLowerCase(), shape = '';
-    if (window.VeraWidget && typeof window.VeraWidget.forms === 'function') { var x = window.VeraWidget.forms().filter(function (y) { return y.id === f; })[0]; shape = (x && x.shape) || ''; }
-    if (!shape) shape = SHAPE_OF[f] || '';
-    return SAMPLE[shape];
+    if (window.VeraWidget && typeof window.VeraWidget.sample === 'function') { try { var s = window.VeraWidget.sample(form); if (s != null) return s; } catch (e) { /* none */ } }
+    return undefined;
   }
   // the record as the element is handed it: with the form's sample when it cannot read, marked sample
   function withSample(rec) {
@@ -551,9 +520,8 @@
     var readable = src ? (window.VeraWidget && typeof window.VeraWidget.readable === 'function' ? window.VeraWidget.readable(src) : true) : false;
     if (readable) return rec;
     var o = {}; Object.keys(rec).forEach(function (k) { o[k] = rec[k]; }); o.sample = true;
-    // an element with a sample of its own draws its sample face itself (marked, with the Read button for a source
-    // that waits for a click) — it is only handed the shape's sample as data when it has none
-    if (!(window.VeraWidget && typeof window.VeraWidget.sample === 'function')) { var s = sampleFor(rec.form); if (s !== undefined) o.data = s; }
+    // the element draws its sample face itself (marked, with the Read button for a source that waits for a click) - while
+    // the dashboard is configured; at rest it says the source is not read (DO-0.3: no sample data is handed over here)
     return o;
   }
   function panelRecord(panelId, wid, label) {
@@ -1163,7 +1131,14 @@
        scenes, composites and panels keep the height their author gave them - they are drawn to fill what they get.
        A height YOU set (the resize corner) is never touched; neither is one a layout saved before this, where it
        differs from the file's. ── */
-    var FIT_CAT = { level: 'level', series: 'series', values: 'values', parts: 'parts', events: 'events', items: 'items', stages: 'stages' };
+    /* WHICH TILES FOLLOW THEIR CONTENT'S HEIGHT, by form: the dashboard's own layout rule (it was read off SHAPE_OF, a second
+       copy of the widget's shapes that DO-0.3 removed - these are exactly the forms and categories that table gave) */
+    var FIT_OF = { counter: 'level', hero: 'level', level: 'level', meter: 'level', gauge: 'level', radial: 'level', ring: 'level', rate: 'level', bar: 'level', tank: 'level', turbine: 'level',
+      trace: 'series', sparkline: 'series', line: 'series', area: 'series', step: 'series', chart: 'series', horizon: 'series', candles: 'series',
+      bars: 'values', thermo: 'values', heat: 'values', pills: 'values', kv: 'values', column: 'values', ranked: 'values', histogram: 'values', 'meter-panel': 'values', form: 'values',
+      donut: 'parts', stack: 'parts', parts: 'parts', log: 'events', lane: 'events', feed: 'events', timeline: 'events', pulse: 'events',
+      table: 'items', list: 'items', cards: 'items', rows: 'items', files: 'items', checklist: 'items', tree: 'items', gallery: 'items', people: 'items', node: 'items',
+      stepper: 'stages', pipeline: 'stages', stages: 'stages', program: 'stages' };
     function fitCategory(form) {
       var f = String(form || '').toLowerCase();
       if (/^(section|panel|composite|element|vgraph|graph|map|globe|topology|pipes|context_graph|cellmap|matrix|heat|calendar|month|schedule|calnav|iso)$/.test(f) || /@iso$|iso/.test(f)) return '';
@@ -1173,7 +1148,7 @@
       if (f === 'status') return 'status';
       if (/^(ranked|bars|kv)$/.test(f)) return 'rowsv';   // (thermo and temps stand their readings side by side: their author's height)
       if (/^(thermo|temps|gauge|column|histogram|pulse)$/.test(f)) return '';
-      return FIT_CAT[SHAPE_OF[f]] || '';
+      return FIT_OF[f] || '';
     }
     function itemsOf(w) {
       var el = w.querySelector(':scope > .w-body > vera-widget') || w.querySelector('vera-widget'); if (!el) return null;
@@ -1324,7 +1299,7 @@
       state.editing = !state.editing;
       grid.classList.toggle('editing', state.editing);
       if (state.editing) gridVars();
-      widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); });
+      widgets().forEach(function (w) { w.setAttribute('draggable', state.editing ? 'true' : 'false'); sampleGate(w); recordChip(w); });
       var b = $(opts.editBtn);
       if (b) {
         b.textContent = state.editing ? '✓ Done' : '⚙ Configure';
@@ -1590,11 +1565,11 @@
       var probs = w.dataset.problems ? w.dataset.problems.split('\n').filter(Boolean) : [];
       // what the body's element says of its face (data-state, carried here by widget:rendered): the head says "reading…",
       // "sample" or "read failed" so the body never needs a tag over its content
-      var ws = w.dataset.wstate || '', sampled = !!w.dataset.sample || ws === 'sample';
-      var sw = sampled ? 'sample' : (ws === 'reading' ? 'reading…' : (ws === 'failed' ? 'read failed' : ''));   // first, so a narrow head's ellipsis never hides it
+      var cfg = state.editing || !!w.dataset.configuring, ws = w.dataset.wstate || '', sampled = cfg && (!!w.dataset.sample || ws === 'sample');   // the sample: only while configuring (DO-0.3)
+      var sw = sampled ? 'sample' : (ws === 'reading' ? 'reading…' : (ws === 'failed' ? 'read failed' : (!cfg && w.dataset.sample ? 'not read' : '')));   // first, so a narrow head's ellipsis never hides it
       chip.textContent = (sw ? sw + ' · ' : '') + text + (w.dataset.checking ? ' · checking…' : '') + (probs.length ? ' · ' + probs.length + ' problem' + (probs.length === 1 ? '' : 's') : '');
       chip.classList.toggle('sample', sampled); chip.classList.toggle('reading', ws === 'reading'); chip.classList.toggle('failed', ws === 'failed'); chip.classList.toggle('checking', !!w.dataset.checking); chip.classList.toggle('bad', !!probs.length);
-      chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? ' · drawn from the form\'s sample: the source cannot be read' : '')
+      chip.title = 'record ' + (r.id || w.dataset.wid) + ' · ' + text + (w.dataset.sample ? (cfg ? ' · drawn from the form\'s sample: the source cannot be read' : ' · the source is not read on its own') : '')
         + (w.dataset.checking ? ' · widget.validate is checking this record' : '') + (probs.length ? '\nwidget.validate: ' + probs.join(' · ') : '');
       ensureCfg(w); ensureOpen(w, r); ensureDive(w);
       if (r.form) w.dataset.form = r.form;
@@ -1650,6 +1625,12 @@
        page's markup is retired under the drawing — moved into a hidden holder, ids intact, so the page's updaters go
        on writing into it — and the element draws the record at the size the span picks; a record that returns to
        the page body brings the markup back. */
+    /* THE SAMPLE ONLY WHILE CONFIGURING (DO-0.3): a tile's element carries no-sample unless the dashboard is in edit mode
+       or this tile's configure sheet is open */
+    function sampleGate(w, el) {
+      el = el || (w && w.querySelector(':scope > .w-body vera-widget')); if (!el) return;
+      if (state.editing || (w && w.dataset.configuring)) el.removeAttribute('no-sample'); else if (!el.hasAttribute('no-sample')) el.setAttribute('no-sample', '');
+    }
     function drawTile(w, rec) {
       if (!w || !rec || typeof rec !== 'object') return;
       var body = w.querySelector(':scope > .w-body'); if (!body) return;
@@ -1658,7 +1639,7 @@
       var el = body.querySelector(':scope > vera-widget');
       if (w.dataset.record) {                       // a record tile: the element is the body
         if (rec.form === 'context_graph') ensureContextGraph();
-        if (el) el.setAttribute('record', JSON.stringify(shown));
+        if (el) { sampleGate(w, el); el.setAttribute('record', JSON.stringify(shown)); }
         return;
       }
       var holder = body.querySelector(':scope > .w-page');
@@ -1677,7 +1658,7 @@
       }
       if (!el) { el = document.createElement('vera-widget'); el.className = 'vd-draw'; el.setAttribute('bare', ''); el.setAttribute('dive-on-click', ''); el.setAttribute('item-drawer', ''); body.appendChild(el); }   // a click on the face: the data drawer (item-drawer), ⤢ the deep dive   // the tile's own head carries the title (the board's tile is one head)
       var sp = effSpan(spanOf(w)); el.setAttribute('size', sizeForSpan(sp[0], sp[1]));
-      el.setAttribute('record', JSON.stringify(shown));
+      sampleGate(w, el); el.setAttribute('record', JSON.stringify(shown));
       w.dataset.converted = '1';
     }
 
@@ -1705,6 +1686,11 @@
     }
     function configure(wid, anchor) {
       var rec = recordOf(wid), w = byIdAnywhere(wid); if (!rec || !w) return Promise.resolve(null);
+      w.dataset.configuring = '1'; sampleGate(w);   // its sample face while its sheet is open (DO-0.3)
+      var settled = function (x) { delete w.dataset.configuring; sampleGate(w); recordChip(w); return x; };
+      return configureOpen(wid, anchor, rec, w).then(settled, function (e) { settled(null); throw e; });
+    }
+    function configureOpen(wid, anchor, rec, w) {
       var was = withId(rec, wid);
       var back = function () { drawTile(w, was); recordChip(w); return null; };
       if (window.VeraWidgetConfig && typeof window.VeraWidgetConfig.open === 'function') {
@@ -1716,7 +1702,7 @@
         } catch (e) { p = Promise.reject(e); }
         return Promise.resolve(p).then(function (r) { return (r && typeof r === 'object') ? applyRecord(wid, r) : back(); }, back);
       }
-      return openSheet(wid, was);
+      return Promise.resolve(openSheet(wid, was));
     }
     /* Save: the record goes back into the layout — a user tile's in place, a page or file tile's as its edit — and
        the tile follows it: the title (when the head's title is plain text — a page head with its own spans inside is
@@ -1864,6 +1850,7 @@
       var sp0 = effSpan(spanOf(widget));   /* read against the grid's own width */
       el.setAttribute('size', sizeForSpan(sp0[0], sp0[1]));   // the span picks the size (the Sizes board), not the pixels
       var shown = withSample(record); if (shown.sample) widget.dataset.sample = '1';   // no readable source: the form's sample, said so
+      if (!state.editing) el.setAttribute('no-sample', '');   // the sample face only while configuring (DO-0.3)
       el.setAttribute('record', JSON.stringify(shown));
       widget.querySelector('.w-body').appendChild(el);
       widget.querySelector('[data-vd-hide]').onclick = function () { hide(wid); };

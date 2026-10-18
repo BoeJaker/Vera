@@ -28,38 +28,28 @@ T('the size ladder is the Sizes board: each size with the span it lands at', () 
   VD.sizeLadder().forEach((s) => assert.strictEqual(VD.sizeForSpan(s.span[0], s.span[1]), s.size, s.size + ' round-trips through the span rule'));
   eq(VD.ladderSizes(), ['s', 'm', 'l', 'xl'], 'the editor is handed the names (VeraWidgetConfig sizes)');
 });
-T('without the element, the sample is the shape\'s own: every drawn family has one', () => {
-  assert(Array.isArray(VD.sample('trace')) && VD.sample('trace').length > 10, 'series');
-  assert.strictEqual(typeof VD.sample('counter').value, 'number', 'level');
-  assert(Object.keys(VD.sample('thermo')).length >= 3 && Object.values(VD.sample('thermo')).every((v) => typeof v === 'number'), 'values');
-  assert(VD.sample('donut').running > 0, 'parts');
-  assert(VD.sample('log').every((r) => r.t && r.text), 'events');
-  assert(VD.sample('table').every((r) => r.name), 'items');
-  assert(VD.sample('stepper').stages.length >= 4, 'stages');
-  assert(VD.sample('agenda').every((r) => r.when && r.title), 'calendar');
-  assert.strictEqual(typeof VD.sample('terminal'), 'string', 'string');
-  assert(VD.sample('scatter').every((p) => 'x' in p && 'y' in p), 'points');
-  assert(VD.sample('matrix').ct126.cpu, 'matrix');
-  const g = VD.sample('context_graph'); assert(g.nodes.length >= 6 && g.rels.length >= 3 && g.links.length === g.rels.length, 'graph: nodes, rels (the context graph) and links (pipes)');
-  assert(new Set(g.nodes.map((x) => x.family)).size >= 5, 'the galaxy sample has families to ring');
-  assert(g.nodes.some((x) => x.included === false), 'one related-not-injected record (hollow)');
-  assert.strictEqual(VD.sample('panel'), undefined, 'a panel has no sample'); assert.strictEqual(VD.sample('composite'), undefined, 'nor a composite');
+T('the dashboard keeps no sample of its own: without the element there is none (DO-0.3 - the element\'s is the one)', () => {
+  ['trace', 'counter', 'thermo', 'donut', 'log', 'table', 'stepper', 'agenda', 'terminal', 'scatter', 'matrix', 'context_graph', 'panel', 'composite'].forEach((f) => assert.strictEqual(VD.sample(f), undefined, f));
+  assert(!/var SHAPE_OF = |var SAMPLE = /.test(src), 'no SHAPE_OF / SAMPLE copies in the dashboard');
 });
-T('the element\'s own sample and forms win when they are there', () => {
+T('the element\'s own sample is the one the dashboard hands on', () => {
   const W = boot({ sample: (f) => (f === 'trace' ? [1, 2, 3] : null), forms: () => [{ id: 'oddform', shape: 'level' }], readable: () => false });
-  eq(W.sample('trace'), [1, 2, 3], 'VeraWidget.sample first');
-  assert.strictEqual(typeof W.sample('oddform').value, 'number', 'a form the element names by shape falls to the shape\'s sample');
+  eq(W.sample('trace'), [1, 2, 3], 'VeraWidget.sample');
+  assert.strictEqual(W.sample('oddform'), undefined, 'nothing of its own for a form the element has no sample for');
 });
-T('a record is handed to the element with its sample only when its source cannot be read', () => {
+T('a record is handed to the element marked sample when its source cannot be read - never with sample data (DO-0.3)', () => {
   const W = boot({ readable: (c) => /^obs\./.test(c), forms: () => [] });
   const live = W.withSample({ form: 'counter', source: 'obs.pending' }); assert.strictEqual(live.data, undefined, 'a readable source: the element reads it'); assert(!live.sample);
-  const none = W.withSample({ form: 'counter', title: 'x' }); assert.strictEqual(none.data.value, 62); assert.strictEqual(none.sample, true, 'no source: the sample, said so');
-  const write = W.withSample({ form: 'trace', source: 'code.write' }); assert(Array.isArray(write.data) && write.sample, 'a write-shaped source is not read: the sample');
+  const none = W.withSample({ form: 'counter', title: 'x' }); assert.strictEqual(none.data, undefined); assert.strictEqual(none.sample, true, 'no source: marked, the element draws its face');
+  const write = W.withSample({ form: 'trace', source: 'code.write' }); assert(write.data === undefined && write.sample, 'a write-shaped source is not read: marked');
   const inline = W.withSample({ form: 'trace', data: [9, 8] }); eq(inline.data, [9, 8]); assert(!inline.sample, 'inline data stays');
   assert.strictEqual(W.withSample({ form: 'panel', panel: 'x' }).sample, undefined, 'a panel is not sampled');
-  const cg = W.withSample({ form: 'context_graph', title: 'Context galaxy' }); assert(cg.data.nodes.length && cg.sample, 'the context graph without a session draws its sample');
   const E = boot({ readable: () => false, forms: () => [], sample: () => [1, 2] });
   const own = E.withSample({ form: 'trace', title: 'x' }); assert.strictEqual(own.data, undefined, 'an element with its own sample face draws it itself'); assert.strictEqual(own.sample, true, 'the tile still says sample');
+});
+T('the sample face only while configuring: edit mode or the tile\'s sheet open, else no-sample on the element (DO-0.3)', () => {
+  ['function sampleGate(w, el) {', "if (state.editing || (w && w.dataset.configuring)) el.removeAttribute('no-sample');", "w.dataset.configuring = '1'; sampleGate(w);",
+   "if (!state.editing) el.setAttribute('no-sample', '');", "sampleGate(w); recordChip(w); });"].forEach((x) => assert(src.includes(x), x));
 });
 T('the behaviour the browser smoke drives is in the text', () => {
   for (const s of [

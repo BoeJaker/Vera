@@ -746,10 +746,19 @@ except Exception as e:
                 "even while its rank fluctuates in/out of the visible top-N). "
                 "Output: {hosts:{host_id:{containers:[{id,name,image,cpu_pct,"
                 "mem_mb,mem_limit_mb,history:[{t,cpu_pct,mem_mb}]}], "
-                "total_running, updated_at, error}}}.",
+                "total_running, updated_at, error}}, top:[{host,id,name,image,"
+                "cpu_pct,mem_mb,mem_limit_mb}] (every host's, busiest first, "
+                f"at most {DOCKER_STATS_TOP_N})}}.",
+    contract={"presentation": {"kind": "table", "form": "ranked", "map": {"values": "top", "name": "name", "value": "cpu_pct"},
+                               "title": "Busiest containers · CPU %", "empty": "no running container sampled"}},
 )
 async def cap_docker_stats_top(trace_id=None) -> Dict:
-    return {"hosts": _DOCKER_STATS_CACHE}
+    # the busiest across every host as one list (DO-0.3: what the desk ranks); the trend stays under hosts
+    top = [dict({k: v for k, v in c.items() if k != "history"}, host=hid)
+           for hid, h in list(_DOCKER_STATS_CACHE.items()) for c in ((h or {}).get("containers") or [])
+           if isinstance(c, dict)]
+    top.sort(key=lambda c: -(c.get("cpu_pct") or 0))
+    return {"hosts": _DOCKER_STATS_CACHE, "top": top[:DOCKER_STATS_TOP_N]}
 
 
 @capability(

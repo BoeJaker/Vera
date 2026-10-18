@@ -34,7 +34,7 @@ CAP_HINTS: Dict[str, Dict[str, Any]] = {
 }
 #: the CI forms draw their answer whole (ci_view_core's payload): no rows companion beside them
 CI_FORMS = ("status-matrix", "race-green", "test-grid", "ci-board", "run-track", "run-compare", "ci-pulse", "ci-fleet", "ci-run",
-            "census-commits", "loop-perf", "census-live", "census-timeline", "trend-layers")
+            "census-commits", "element", "loop-perf", "census-live", "census-timeline", "trend-layers")
 _ROW_KEYS = ("data", "result", "items", "rows", "results", "entries", "events", "points", "series", "values")
 _TIME = ("t", "ts", "time", "when", "at", "timestamp", "created_at", "started_at", "hour", "date")
 _TEXT = ("text", "msg", "message", "line", "event", "summary", "title")
@@ -340,7 +340,7 @@ PRESENT_KINDS: Dict[str, Dict[str, Any]] = {
     "timeline": {"element": "widget", "form": "gantt", "content": ["spans"], "views": ["gantt", "stepper", "table"]},
     "matrix": {"element": "widget", "form": "heat", "content": ["cells"], "views": ["heat", "matrix", "table"]},
     "parts": {"element": "widget", "form": "donut", "content": ["parts"], "views": ["donut", "treemap", "waffle", "table"]},
-    "entities": {"element": "entities", "form": "json", "content": ["groups", "entities"], "views": ["chips", "list", "graph"]},
+    "entities": {"element": "entities", "form": "pills", "content": ["groups", "entities"], "views": ["chips", "list", "graph"]},
     "receipt": {"element": "receipt", "form": "", "content": [], "views": []},
     "job": {"element": "job", "form": "", "content": ["job_id"], "views": []},
     "composite": {"element": "composite", "form": "", "content": [], "views": []},
@@ -831,6 +831,83 @@ def _arranged_at(c: Any, path: Any, d: dict, grouped: bool) -> Any:
     return c
 
 
+# ENTITIES (DO-0.3) - present.js entitiesOf, field for field: one row {name, type, count, group} per name of a type
+def _nil(x: Any) -> bool:
+    return x is None or x is _MISSING
+
+
+def entities_of(groups: Any, ents: Any) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen: Dict[str, Dict[str, Any]] = {}
+
+    def put(e: Any, grp: Optional[str]) -> None:
+        if not _is_obj(e):
+            return
+        t0 = e.get("text") if not _nil(e.get("text")) else e.get("word") if not _nil(e.get("word")) else e.get("name")
+        if _nil(t0) or isinstance(t0, (dict, list, bool)):
+            return
+        name = _js_str(t0).strip()
+        if not name:
+            return
+        ty = next((e.get(k) for k in ("type", "entity", "entity_group") if not _nil(e.get(k))), e.get("label"))
+        typ = "" if (_nil(ty) or isinstance(ty, (dict, list, bool))) else _js_str(ty)
+        n = _keyed_num(e.get("count"))
+        k = name + "\u0000" + typ
+        if k in seen:
+            seen[k]["count"] += 1 if n is None else n
+            return
+        r = {"name": name, "type": typ, "count": 1 if n is None else n, "group": (typ or "other") if grp is None else grp}
+        seen[k] = r
+        out.append(r)
+
+    if isinstance(groups, list):
+        for g in groups:
+            if not _is_obj(g) or not isinstance(g.get("entities"), list):
+                continue
+            gv, nv = g.get("group"), g.get("name")
+            gn = _js_str(gv) if not _nil(gv) and not isinstance(gv, (dict, list)) else (_js_str(nv) if not _nil(nv) and not isinstance(nv, (dict, list)) else None)
+            for e in g["entities"]:
+                put(e, gn)
+    elif isinstance(ents, list):
+        for e in ents:
+            put(e, None)
+    return out
+
+
+def _js_str(x: Any) -> str:
+    """String(x) as the page writes it (a whole float without its .0, true / false)."""
+    if isinstance(x, bool):
+        return "true" if x else "false"
+    if isinstance(x, float) and math.isfinite(x) and x.is_integer():
+        return str(int(x))
+    return str(x)
+
+
+# NO SAMPLE FACE ON THE DESK (DO-0.3) - present.js formEmpty: a declared form whose content is there but empty, an empty
+# answer, or an answer that is only an error, is the declaration's empty line (the error's own words when it is one)
+FORM_CONTENT = ("rows", "series", "values", "events", "stages", "parts", "bars", "cells", "days", "points", "nodes", "text")
+_ERR_KEYS = ("error", "ok", "detail", "hint", "message")
+
+
+def _err_of(c: Any) -> str:
+    return c["error"].strip() if (_is_obj(c) and isinstance(c.get("error"), str) and c["error"].strip() and c.get("ok") is not True) else ""
+
+
+def _form_empty(c: Any, m: dict, P: dict, args: Optional[dict]) -> Optional[Dict[str, Any]]:
+    def line(err: str) -> Dict[str, Any]:
+        return {"records": [], "empty": err or (_fill(P["empty"], args) if P.get("empty") else "nothing to show")}
+    if _empty(c):
+        return line("")
+    err = _err_of(c)
+    ck = next((k for k in FORM_CONTENT if isinstance(m.get(k), str) and m.get(k)), None)
+    if ck:
+        v = pick(c, m[ck])
+        if v is _MISSING:
+            return line(err) if err else None
+        return line(err) if _empty(v) else None
+    return line(err) if (err and all(k in _ERR_KEYS for k in c)) else None
+
+
 def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size: str, max_records: int) -> Dict[str, Any]:
     K = PRESENT_KINDS[P["kind"]]
     m = P.get("map") if _is_obj(P.get("map")) else {}
@@ -856,6 +933,9 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
         # (a composite's part drops out, as a plain table part with no rows does)
         if rows_form and _empty(pick(c, m.get("rows") or "")):
             return {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+        fe = _form_empty(c, m, P, args)   # any form: nothing in the answer, or only its error (DO-0.3)
+        if fe:
+            return fe
         if opts and P["kind"] in ("table", "records", "reading") and P["form"] in OPT_ROW_FORMS:
             # DA-01e (3): the options read here, the rest of draw is the form's
             g = opts["group_by"].strip() if P["kind"] == "table" and isinstance(opts.get("group_by"), str) else ""
@@ -910,8 +990,10 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
             d["checks"] = _as_rows(val("checks"))
         rec("status", d)
     elif kind == "metric":
+        # the trend is the series too, so the metric's trace view draws it (DO-0.3)
         rec("ring" if m.get("max") else "hero", c,
-            {"value": m.get("value"), "max": m.get("max"), "unit": m.get("unit"), "trend": m.get("trend")})
+            dict({"value": m.get("value"), "max": m.get("max"), "unit": m.get("unit"), "trend": m.get("trend")},
+                 **({"series": m["trend"]} if m.get("trend") else {})))
     elif kind == "series":
         if m.get("keyed") is True:
             ks = keyed_series(val("points"), m.get("t"), m.get("v"))
@@ -973,7 +1055,10 @@ def _declared(cap: str, c: Any, P: dict, args: Optional[dict], title: str, size:
     elif kind == "calendar":
         rec("schedule", renamed(_as_rows(val("events")), ["start", "end", "title"]))
     elif kind == "entities":
-        rec("json", {"groups": val("groups")} if m.get("groups") else {"entities": val("entities")})
+        es = entities_of(val("groups") if m.get("groups") else None, None if m.get("groups") else val("entities"))
+        if not es:
+            return {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}
+        rec("pills", es)
     # DA-01e (1): the new kinds read to their form's own data - nothing left in it to draw: the empty line
     elif kind in ("timeline", "matrix", "parts"):
         nothing = {"records": [], "empty": _fill(P["empty"], args) if P.get("empty") else "nothing to show"}

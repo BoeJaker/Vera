@@ -1467,7 +1467,6 @@
   "multi-line": "lines",
   "cores": "cellmap",
   "core-matrix": "cellmap",
-  "status-matrix": "cellmap",
   "cpumap": "cellmap"
  }
 }

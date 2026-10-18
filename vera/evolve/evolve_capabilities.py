@@ -9311,17 +9311,27 @@ async def _sandbox_routing_drift() -> Dict[str, Any]:
                         "VERA_SANDBOX_IDLE_PAUSE_S) is reported as such WITHOUT being "
                         "woken by this check — only real use wakes it (the drift check "
                         "is skipped while paused, for the same reason). Output: "
-                        "{sandbox, probe, up, paused, routing_drift}.")
+                        "{sandbox, probe, up, paused, routing_drift, verdict: up|paused|down|none, "
+                        "checks:[{name, status}]}.",
+            contract={"presentation": {"kind": "status", "map": {"verdict": "verdict", "checks": "checks"},
+                                       "title": "Dev sandbox"}})
 async def evolve_sandbox_status(trace_id=None):
     port = await _dev_port()
     sb = await _get_sandbox()
     probe = await _sandbox_probe(auto_unpause=False) if sb else {"reachable": False}
     up = bool(sb) and probe.get("reachable", False)
     drift = await _sandbox_routing_drift() if up else {"ok": True, "checked": False}
+    paused = bool(probe.get("paused"))
+    # what the status card draws (DO-0.3): one verdict, and the three things it is made of
+    verdict = "up" if up else ("paused" if paused else ("down" if sb else "none"))
+    checks = [{"name": "sandbox registered", "status": "ok" if sb else "none"},
+              {"name": "dev port %s reachable" % port, "status": "ok" if up else ("paused" if paused else "down")},
+              {"name": "routing matches prod", "status": ("ok" if drift.get("ok") else "warn") if drift.get("checked") else "not checked"}]
     return {"sandbox": sb, "probe": probe,
             "up": up,
-            "paused": bool(probe.get("paused")),
+            "paused": paused,
             "routing_drift": drift,
+            "verdict": verdict, "checks": checks,
             "idle_pause_s": _SANDBOX_IDLE_PAUSE_S,
             "dev_port": port, "prod_port": PROD_PORT, "dev_redis_db": DEV_REDIS_DB}
 

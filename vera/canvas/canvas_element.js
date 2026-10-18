@@ -1013,8 +1013,8 @@
       + `${seg('sort', [['rank', 'ranked', 'as the source ranked them'], ['newest', 'newest'], ['title', 'A–Z']])}${seg('view', (canGraph ? [['graph', '◈', 'graph - the query, the datasets, the records, the tags and names they share']] : []).concat([['list', '☰', 'list'], ['cards', '▦', 'cards'], ['table', '☷', 'table']]))}</div>`
       + (st.namesOpen ? (() => { const wjson = (title, rows) => esc(JSON.stringify({ form: 'ranked', title, data: rows }));
           return `<div class="vc-rbx-names" data-rec-key="${K}" data-w="canvas.records.names">`
-            + (entList.length ? `<div class="vc-rbx-nw" data-pick="ent"><h5>names the pages share</h5><vera-widget bare size="m" record="${wjson('Names', entList.map((n) => ({ name: n, value: entN[n] })))}"></vera-widget></div>` : '')
-            + (domList.length > 1 ? `<div class="vc-rbx-nw" data-pick="dom"><h5>sites</h5><vera-widget bare size="m" record="${wjson('Sites', domList.map((d) => ({ name: d, value: doms[d] })))}"></vera-widget></div>` : '')
+            + (entList.length ? `<div class="vc-rbx-nw" data-pick="ent"><h5>names the pages share</h5><vera-widget bare no-sample size="m" record="${wjson('Names', entList.map((n) => ({ name: n, value: entN[n] })))}"></vera-widget></div>` : '')
+            + (domList.length > 1 ? `<div class="vc-rbx-nw" data-pick="dom"><h5>sites</h5><vera-widget bare no-sample size="m" record="${wjson('Sites', domList.map((d) => ({ name: d, value: doms[d] })))}"></vera-widget></div>` : '')
             + `</div>`; })() : '')
       + (entList.length ? `<div class="vc-rbx-facets vc-rbx-efacets"><span class="vc-rbx-fl">names</span>${entList.map((n) => `<button class="${st.ent === n ? 'on' : ''}" data-rec-act="ent" data-rec-key="${K}" data-rec-arg="${esc(n)}">${esc(n)}<i>${entN[n]}</i></button>`).join('')}</div>` : '')
       + (domList.length > 1 ? `<div class="vc-rbx-facets">${domList.map((d) => `<button class="${st.dom === d ? 'on' : ''}" data-rec-act="dom" data-rec-key="${K}" data-rec-arg="${esc(d)}">${esc(d)}<i>${doms[d]}</i></button>`).join('')}</div>` : '')
@@ -1414,14 +1414,14 @@
         const md = rec.data && typeof rec.data === 'object' && !Array.isArray(rec.data) ? rec.data : null;
         if (form === 'candles' && md && md.symbol) { const prov = md.provider || String(md.key || '').split(':')[0] || 'yahoo';
           return `<div class="vc-wid vc-mchart-w" data-w="canvas.chart"><div class="vc-live" data-live="mchart" data-key="${esc(key)}" data-symbol="${esc(md.symbol)}" data-provider="${esc(prov)}" data-tf="${esc(md.timeframe || '1d')}"><span class="vc-dim">opening the ${esc(md.symbol)} chart…</span></div></div>`; }
-        return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || (rec.draw && rec.draw.size) || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ' · sample'}${rcap ? `<button class="vc-wid-b" data-wid-act="refresh" data-wid-key="${esc(key)}" title="Read ${esc(rcap)} again and redraw">refresh</button>` : ''}</div></div>`;
+        return `<div class="vc-wid" data-w="canvas.widget"><div class="vc-live" data-live="widget" data-key="${esc(key)}" data-size="${esc(size || (rec.draw && rec.draw.size) || 'm')}"><span class="vc-dim">${esc(form)}…</span></div><div class="vc-cap mono">${esc(form)}${src ? ' · ' + esc(src) : ''}${rcap ? `<button class="vc-wid-b" data-wid-act="refresh" data-wid-key="${esc(key)}" title="Read ${esc(rcap)} again and redraw">refresh</button>` : ''}</div></div>`;
       }
       /* `root` rather than a bare `window`: the module is loaded as a script in the page AND required directly by
          the tests, and the branch above already guards `typeof customElements` for the same reason. A bare window
          here made the widget path the one drawing that could not be tested at all. */
       if (rec && root.VeraWidget && typeof root.VeraWidget.draw === 'function') {
         try {
-          const out = root.VeraWidget.draw(form, rec.data, size || (rec.draw && rec.draw.size) || 'm');
+          const out = root.VeraWidget.draw(form, rec.data, size || (rec.draw && rec.draw.size) || 'm', { sample: false });   /* never the sample (DO-0.3) */
           if (out != null) return typeof out === 'string' ? out : (out.outerHTML || '');
         } catch (e) { /* fall through to the record card */ }
       }
@@ -7647,7 +7647,7 @@
             inner.addEventListener('vm:rendered', () => this._diagramGrew(key, inner)); this._mermaidInto(inner, key); }
           // `bare`: the widget draws its figure and nothing else. Its own frame inside a canvas item was a box in a
           // box — and it lives in a second shadow root, so no rule of ours could reach it (owner, 2026-09-24).
-          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); inner.setAttribute('item-drawer', ''); const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = '';
+          else if (kind === 'widget') { inner = document.createElement('vera-widget'); inner.setAttribute('size', h.dataset.size || 'm'); inner.setAttribute('bare', ''); inner.setAttribute('item-drawer', ''); inner.setAttribute('no-sample', '');   /* a desk item never shows sample data (DO-0.3) */ const rc = this._contentOf(key); if (rc) { inner.record = rc.record || rc; try { inner._recJson = JSON.stringify(rc.record || rc); } catch (e) {} } h.textContent = '';
             /* the estate graph in a widget (vgraph) styles itself in the page's head; here it is in this shadow tree */
             if (rc && /vgraph/.test(String((rc.record || rc).form || ''))) this._adoptGraphCss();
             // a chip-faced widget is as wide as its face: the card takes that width and the rest of the row is free
