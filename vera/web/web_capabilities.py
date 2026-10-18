@@ -1598,6 +1598,13 @@ async def cap_info_seek(question: str = "", need: str = "auto", since: str = "",
                        "listed: 'latest' asks for new)")
     elif known.get("_error"):
         checked.append("fabric index: " + str(known["_error"])[:80])
+    elif not known.get("pages"):
+        try:    # nothing Vera has read before: the demand a targeted crawl fills (web-ingress WI-14a)
+            _ing = sys.modules.get("ingress_capabilities") or sys.modules.get("Vera.vera.fabric.ingress_capabilities")
+            if _ing is not None:
+                _ing.record_gap(subject, caller="info.seek")
+        except Exception as _e:  # noqa: BLE001
+            log.debug("info.seek gap: %s", _e)
     intel = await intel_task
     if intel.get("tracked"):
         tp = intel.get("topic") or {}

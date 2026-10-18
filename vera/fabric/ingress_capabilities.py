@@ -23,12 +23,14 @@ try:
     from Vera.vera.fabric import ingress_core as ic
     from Vera.vera.fabric import ingress_receipts_core as rc
     from Vera.vera.fabric import ingress_topic_core as tc
+    from Vera.vera.fabric import ingress_search_core as sc
     from Vera.vera.fabric import ingress_writer as iw
     from Vera.vera.web import web_client as _wc
 except ImportError:                       # loaded from its file under a stand-in orchestration (tests)
     from vera.fabric import ingress_core as ic
     from vera.fabric import ingress_receipts_core as rc
     from vera.fabric import ingress_topic_core as tc
+    from vera.fabric import ingress_search_core as sc
     from vera.fabric import ingress_writer as iw
     from vera.web import web_client as _wc
 
@@ -570,3 +572,67 @@ async def cap_map_topic(topic_id: str = "", limit: int = 500, members: bool = Fa
     if members:
         out["member_rows"] = [_plain(m) for m in ms]
     return out
+
+
+# ── the targeted index's query and its gaps (WI-14a) ──────────────────────────
+
+def record_gap(question: str, *, caller: str = "info.seek") -> bool:
+    """A question the page index had nothing on - the demand that seeds a targeted crawl (PLAN §13.3)."""
+    return record_query(question, engine="index", caller=caller, result_urls=[], purpose="gap")
+
+
+@capability("fabric.map.search", http_method="POST", http_path="/fabric/map/search", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="What Vera has already read on something: the page index's full-text hits ranked with the web "
+                        "map - members of a named topic first, recently checked pages and pages that were new when "
+                        "found a little higher - each with since when Vera has known it, when it was last checked, "
+                        "how often it was fetched and changed. Input: query (str!), topic_id (str: an intel topic id), "
+                        "limit (int, default 10). Output: {ok, results:[{url, title, excerpt, score, known_since, "
+                        "last_checked, fetches, changes, novelty, kind, topic_member}], index_ms}.")
+async def cap_map_search(query: str = "", topic_id: str = "", limit: int = 10, trace_id=None):
+    q = " ".join(str(query or "").split())
+    if not q:
+        return {"error": "query required"}
+    lim = max(1, min(int(limit or 10), 50))
+    t0 = time.monotonic()
+    idx = await _call("discovery.recall_index.search", query=q, limit=lim * 3) if _has("discovery.recall_index.search") else {}
+    index_ms = int((time.monotonic() - t0) * 1000)
+    pages = list((idx or {}).get("pages") or [])
+    keys = {str(p.get("url") or ""): ic.url_key(str(p.get("url") or "")) for p in pages}
+    rows: Dict[str, Dict[str, Any]] = {}
+    members: List[str] = []
+    pool = _pool()
+    if pool is not None and keys:
+        try:
+            async with pool.acquire() as conn:
+                for r in await conn.fetch("SELECT url_key, first_seen, last_seen, fetches, changes, novelty, kind "
+                                          "FROM web_urls WHERE url_key = ANY($1)", list(set(keys.values()))):
+                    rows[r["url_key"]] = dict(r)
+                if topic_id:
+                    members = [r[0] for r in await conn.fetch(
+                        "SELECT url_key FROM web_topic_members WHERE topic_key = $1 AND url_key = ANY($2)",
+                        tc.topic_key(topic_id), list(set(keys.values())))]
+        except Exception as e:  # noqa: BLE001
+            log.debug("map search join: %s", e)
+    return {"ok": bool((idx or {}).get("ok", bool(pages))), "query": q,
+            "results": sc.rank(pages, rows, members, keys=keys, limit=lim), "index_ms": index_ms}
+
+
+@capability("fabric.map.gaps", http_method="GET", http_path="/fabric/map/gaps", http_tags=["fabric", "ingress"],
+            memory="off", silent=True,
+            description="Questions the page index could not answer (info.seek found nothing Vera had read before), "
+                        "grouped, most asked first - the demand a targeted crawl should go and fill. Input: days "
+                        "(int, default 7), limit (int, default 50). Output: {gaps:[{query, times, last, callers}]}.")
+async def cap_map_gaps(days: int = 7, limit: int = 50, trace_id=None):
+    pool = _pool()
+    if pool is None:
+        return {"error": "the web map's store is not connected", "gaps": []}
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT query, count(*) AS n, max(ts) AS last, array_agg(DISTINCT caller) AS callers FROM web_queries "
+                "WHERE purpose = 'gap' AND ts > NOW() - make_interval(days => $1) GROUP BY query ORDER BY n DESC, last DESC "
+                "LIMIT $2", max(1, min(int(days or 7), 90)), max(1, min(int(limit or 50), 500)))
+    except Exception as e:  # noqa: BLE001
+        return {"error": str(e)[:160], "gaps": []}
+    return {"gaps": sc.gap_rows([dict(r) for r in rows])}
