@@ -57,7 +57,7 @@ def test_the_hash_routes_on_load_and_on_change(src):
     assert "location.hash" in r and "if(page)nav(page);" in r, "the page's loader must run even when it is the page on screen"
     assert "ENTITY[kind].open(id,extra)" in r
     assert "window.addEventListener('hashchange',routeHash);" in src
-    assert "if(!routeHash()&&_curSec()==='work')nav('work');" in src, "on load: the deep link wins over the default page"
+    assert "if(!routeHash()&&_curSec()==='overview')nav('overview');" in src, "on load: the deep link wins over the default page"
     nav = _fn(src, "nav")
     assert "history.replaceState(null,'',location.pathname+location.search+'#'+sec)" in nav, "the address bar names the page"
 
