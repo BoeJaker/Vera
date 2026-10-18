@@ -868,6 +868,7 @@ html.vpb-nav-hosted body{padding-left:0}
        A broken measure reads BROKEN, never 0%; every number names its source; controls only in the drill. -->
   <div class="card" id="tst-card">
     <div class="card-h"><span class="card-t">Tests</span><span class="hint">every scheduled test &middot; from <code>decide.tests.status</code></span><span class="hint" id="tst-at" style="margin-left:auto"></span></div>
+    <div class="olv-live"><span class="olv-live-k">live</span><vera-live-strip id="tst-live" none="no gate, protected run or declared test right now"></vera-live-strip></div>
     <div class="olv-tiles" id="tst-tiles"></div>
     <div id="tst-rows"><div class="hint">loading the tests&hellip;</div></div>
     <vera-drill class="olv-drill" id="tst-drill" url></vera-drill>
@@ -876,6 +877,10 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card-h"><span class="card-t">Over time</span><span class="hint">runs and windows of every test &middot; the measures they report</span></div>
     <div class="olv-lanes" id="tst-lanes"></div>
     <div id="tst-tl-host"></div>
+  </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Race to green</span><span class="hint" id="tst-race-hint">each branch's gate attempts, oldest left &middot; a red cell opens its failing tests &middot; <code>evolve.unittest.history</code></span></div>
+    <div id="tst-race"></div>
   </div>
   <div class="card">
     <div class="card-h"><span class="card-t">Candidate matrix</span><span class="hint" id="tst-mx-hint">applications &times; candidates &middot; accuracy &middot; grey under 30 outcomes &middot; <code>decide.matrix.report</code></span></div>
@@ -1302,7 +1307,7 @@ async function loadOverviewPage(){
   if(_olvOn==null)_olvLoad();
   try{await _olvScript()}catch(e){$('olv-tl-host').innerHTML='<div class="hint">the timeline did not load: '+esc(e.message)+'</div>';return}
   OLV_LANES.forEach(L=>VeraTimeline.registerLane(_olvSpec(L)));
-  _olvKit();
+  _olvKit();_olvLive();
   document.querySelectorAll('#olv-range button').forEach(b=>b.classList.toggle('on',b.dataset.r===_olvRange));
   $('olv-lanes').innerHTML=OLV_LANES.map(L=>'<button class="'+(_olvOn.has(L.lane)?'on':'')+'" onclick="olvLane(\''+L.lane+'\')" title="show or hide the '+esc(L.label.toLowerCase())+' lane"><i style="background:'+L.c+'"></i>'+esc(L.label)+'</button>').join('');
   const r=OLV_RANGES[_olvRange],ids=OLV_LANES.filter(L=>_olvOn.has(L.lane)).map(L=>L.lane).join(',');
@@ -1384,9 +1389,15 @@ function _olvKit(){
     title:(r,id)=>r?(r.branch||'')+' · '+(r.ok?'green':'red'):id,
     tabs:[{id:'detail',label:'Detail'},{id:'failures',label:'Failures'}],
     render:(r,tab)=>{
-      if(tab==='failures')return (r.failures||[]).length?'<pre>'+esc((r.failures||[]).map(f=>typeof f==='string'?f:JSON.stringify(f)).join('\n'))+'</pre>':'';
+      if(tab==='failures')return (r.failures||[]).length?(r.failures||[]).map(f=>typeof f==='string'?'<pre>'+esc(f)+'</pre>':
+        '<div style="border-bottom:1px solid var(--border);padding:4px 0"><b style="color:var(--err)">'+esc(f.kind||'failure')+'</b> <code>'+esc(f.node_id||'')+'</code>'+
+        (f.description?'<pre>'+esc(String(f.description).slice(0,1500))+'</pre>':'')+'</div>').join('')+(r.failures_truncated?'<div class="hint">more failures than shown (truncated)</div>':''):'';
       return _olvRow('branch',r.branch)+_olvRow('pipeline',r.pipeline_id||'(a run of its own)')+_olvRow('summary',r.summary)+_olvRow('paths',r.paths)+_olvRow('when',_olvWhen(r.ts))+open('ship')+_olvPinBar('ll.tests',r);
     }});
+}
+let _olvLiveOn=false;
+function _olvLive(){
+  if(_olvLiveOn)return;_olvLiveOn=true;
   const live=$('olv-live');live.setRecords(OLV_LIVE);
   live.addEventListener('live:select',e=>{const d=e.detail;
     if(d.drill==='event')$('olv-drill').open('event',d.id,{rec:d.item,root:true});else nav(d.record==='gates'?'releases':'work')});
@@ -1438,6 +1449,12 @@ function _tstHeadline(t){
 }
 function _tstHealthChip(h){return '<span class="tst-h '+esc(h)+'" style="color:'+(TST_HEALTH[h]||'#8b93a1')+'">'+esc(h)+'</span>'}
 function _tstEntryIds(){return ((_tstData&&_tstData.tests)||[]).flatMap(t=>(t.entries||[]).map(e=>e.id))}
+/* what is going now: running gates and protected runs (evolve.release.status) and declared tests (sys.activity.status) */
+const TST_LIVE=[
+  {live:'gates',label:'Gates',source:{cap:'evolve.release.status',args:{}},every:20,map:{items:'census.gates',where:{state:'running'},id:'id',label:'branch',sub:'gate {id}',started:'since',color:'#a78bfa'}},
+  {live:'protected',label:'Protected',source:{cap:'evolve.release.status',args:{}},every:20,map:{items:'census.protected',id:'run_id',label:'title',sub:'protected - a release waits',started:'started_at',color:'#e0a458'}},
+  {live:'declared',label:'Declared',source:{cap:'sys.activity.status',args:{}},every:30,map:{items:'declared',id:'id',label:'label',sub:'{kind} · {by}',started:'since',color:'#6db87a'}},
+];
 function _tstLanes(){
   const ids=_tstEntryIds(),now=Date.now(),start=new Date(now-8*864e5).toISOString(),end=new Date(now+3*864e5).toISOString();
   const base=[
@@ -1446,13 +1463,20 @@ function _tstLanes(){
     {lane:'tst.runs',label:'Test runs',group:'Tests',type:'bar',color:'#6db87a',live:60,source:{cap:'evolve.schedule.history',args:{limit:200}},
      map:{items:'runs',t:'started_at',end:'finished_at',id:'id',where:{schedule_id:ids},tip:'{title} · {result} · {reason} · {detail}',color:{field:'result',map:TST_RESULT,else:'#8b93a1'}}},
   ];
+  base.push(
+    {lane:'tst.protected',label:'Protected hold',group:'Tests',type:'bar',color:'#e0a458',live:60,source:{cap:'evolve.release.status',args:{}},
+     map:{items:'census.protected',t:'started_at',id:'run_id',tip:'{title} - a release waits while it runs',color:'#e0a458'}},
+    {lane:'tst.activity',label:'Declared tests',group:'Tests',type:'bar',color:'#6db87a',live:60,source:{cap:'sys.activity.status',args:{}},
+     map:{items:'declared',t:'since',id:'id',where:{kind:'test'},tip:'{label} · {by}',color:'#6db87a'}});
   const series=TST_SERIES.map(S=>({lane:S.lane,label:S.label,group:'Measures',type:'strip',color:S.c,live:300,source:{cap:S.cap,args:S.args},map:{items:S.items,t:S.t,value:S.value,tip:S.tip,color:S.c}}));
   return base.concat(series);
 }
 async function loadTestsPage(){
   try{await Promise.all([_olvScript(),_olvLib('vera-matrix.js',()=>window.VeraMatrix&&customElements.get('vera-matrix'))])}
   catch(e){$('tst-rows').innerHTML='<div class="hint">the kit did not load: '+esc(e.message)+'</div>';return}
-  _tstKit();
+  _olvKit();_tstKit();                       // the Overview's kinds too: a gate's test run drills as 'test-run'
+  const lv=$('tst-live');if(!lv._tstOn){lv._tstOn=true;lv.setRecords(TST_LIVE);
+    lv.addEventListener('live:select',e=>{const d=e.detail;if(d.record==='gates')nav('releases')})}
   await tstRefresh();
   clearInterval(_tstTimer);_tstTimer=setInterval(()=>{if(_curSec()==='tests')tstRefresh();else{clearInterval(_tstTimer);_tstTimer=null}},60000);
 }
@@ -1477,11 +1501,27 @@ async function tstRefresh(){
   document.querySelectorAll('#tst-rows tr.tst-r').forEach(tr=>tr.addEventListener('click',()=>$('tst-drill').open('test',tr.dataset.test,{root:true})));
   _tstTimeline();
   _tstMatrix();
+  _tstRace();
+}
+/* race to green: every branch's gate attempts in order, from the unit-test history (adopt gates carry a pipeline id) */
+async function _tstRace(){
+  const h=await VeraDrill.call('evolve.unittest.history',{limit:300}).catch(e=>({error:e.message}));
+  if(!h||h.error||!Array.isArray(h.runs)){$('tst-race').innerHTML=VeraStates.html('error','could not read evolve.unittest.history'+(h&&h.error?': '+h.error:''));return}
+  const by={};h.runs.filter(r=>r.pipeline_id&&r.branch).forEach(r=>(by[r.branch]=by[r.branch]||[]).push(r));
+  const branches=Object.keys(by).map(b=>({b,runs:by[b].sort((x,y)=>Date.parse(x.ts)-Date.parse(y.ts))})).sort((x,y)=>Date.parse(y.runs[y.runs.length-1].ts)-Date.parse(x.runs[x.runs.length-1].ts)).slice(0,25);
+  const cells=[];branches.forEach(({b,runs})=>runs.forEach((r,i)=>cells.push({branch:b,attempt:'#'+(i+1),n:i+1,v:r.ok?'green':'red',ts:r.ts,summary:r.summary||'',pipeline:r.pipeline_id})));
+  const firstGreen=branches.filter(x=>x.runs[0]&&x.runs[0].ok).length,retried=branches.filter(x=>x.runs.length>1).length;
+  $('tst-race-hint').innerHTML=esc(branches.length+' branches · '+firstGreen+' green first time · '+retried+' needed more than one gate')+' · <code>evolve.unittest.history</code>';
+  let el=$('tst-raceel');
+  if(!el){$('tst-race').innerHTML='<vera-matrix id="tst-raceel"></vera-matrix>';el=$('tst-raceel');
+    el.addEventListener('matrix:select',e=>{const c=e.detail.cell;if(c&&c.ts)$('tst-drill').open('test-run',c.ts,{root:true,tab:c.v==='red'?'failures':''})})}
+  el.record={map:{cells:'cells',row:'branch',col:'attempt',value:'v',cols_order:'n',tip:'{branch} · gate {attempt} · {v} · {summary} · pipeline {pipeline}'},
+    colour:{green:'#3fae6c',red:'#f87171','*':'#5a6270'},ok:['green'],data:{cells}};
 }
 function _tstTimeline(){
   const lanes=_tstLanes();lanes.forEach(s=>VeraTimeline.registerLane(s));
   if(_tstOn==null){try{const s=JSON.parse(localStorage.getItem('looplab-tests-lanes')||'null');if(Array.isArray(s))_tstOn=new Set(s)}catch(_){}
-    if(!_tstOn)_tstOn=new Set(['tst.windows','tst.runs'].concat(TST_SERIES.filter(S=>S.on).map(S=>S.lane)))}
+    if(!_tstOn)_tstOn=new Set(['tst.windows','tst.runs','tst.protected','tst.activity'].concat(TST_SERIES.filter(S=>S.on).map(S=>S.lane)))}
   $('tst-lanes').innerHTML=lanes.map(L=>'<button class="'+(_tstOn.has(L.lane)?'on':'')+'" onclick="tstLane(\''+L.lane+'\')" title="'+esc((L.source||{}).cap||'')+'"><i style="background:'+L.color+'"></i>'+esc(L.label)+'</button>').join('');
   let tl=$('tst-tl');
   if(!tl){$('tst-tl-host').innerHTML='<vera-timeline id="tst-tl" from="-7d" to="+2d"></vera-timeline>';tl=$('tst-tl');
