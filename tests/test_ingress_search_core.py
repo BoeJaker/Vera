@@ -165,3 +165,16 @@ def test_concept_seeds_follow_vera62s_terms():
     assert eff == [{"idx": 5, "label": "UK Lab Space", "population_at_first_seed": 5, "population_now": 9, "change": 4,
                     "seedings": 2, "pages": 7}]
     assert sc.seed_effect([{"concept_idx": 7, "population_at": 3}], {})[0]["change"] is None
+
+
+def test_the_web_map_pane_is_read_only_and_lives_in_the_fabric_panel():
+    caps = (ROOT / "vera" / "fabric" / "ingress_capabilities.py").read_text(encoding="utf-8")
+    assert '"web-map", "Web map"' in caps and 'mode="element"' in caps and '<iframe src="/fabric/map/panel"' in caps
+    page = (ROOT / "vera" / "fabric" / "web_map_panel.html").read_text(encoding="utf-8")
+    for path in ("/fabric/map/stats", "/fabric/map/metrics/history", "/fabric/map/topics", "/fabric/map/gaps",
+                 "/fabric/map/concept_seeds"):
+        assert path in page, path
+    assert "<button" not in page and "method: 'POST'" not in page and "gaps/fill" not in page     # no controls
+    fab = (ROOT / "vera" / "fabric" / "fabric_panel.html").read_text(encoding="utf-8")
+    assert 'id="fnav-webmap"' in fab and 'id="fsec-webmap"' in fab and "'/fabric/map/panel'" in fab
+    assert fab.count("'webmap'") >= 2

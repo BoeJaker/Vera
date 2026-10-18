@@ -224,6 +224,7 @@ code{font-family:var(--mono);font-size:.9em}
     <button data-label="Stats" data-desc="Fabric statistics and NLP routing" data-desc-long="Fabric statistics, and the system-wide LLM NLP switch: off by default, so ingestion, discovery and background loops extract entities with regex and spaCy only." type="button" class="nav-btn" id="fnav-stats" data-section="stats"    onclick="fabSection('stats')" title="Stats"><span class="gl">∑</span>Stats</button>
     <button data-label="Skills" data-desc="Build skills and ontologies from data" data-desc-long="Skills &amp; ontology builder: a skill is a reusable knowledge artefact built from datasets - records are sampled and an LLM extracts concepts and relations into a structured ontology." type="button" class="nav-btn" id="fnav-skills" data-section="skills"   onclick="fabSection('skills')" title="Skills"><span class="gl">✦</span>Skills</button>
     <button data-label="WorldView" data-desc="The world-model view" data-desc-long="WorldView: the world-model view of what the fabric has learned." type="button" class="nav-btn" id="fnav-worldview" data-section="worldview" onclick="fabSection('worldview')" title="WorldView"><span class="gl">◈</span>WorldView</button>
+    <button data-label="Web map" data-desc="What Vera fetched from the internet" data-desc-long="The web map: hosts, fetches by caller, topic maps, open gaps, the index's nightly metrics and worldview concept seeds. Read-only." type="button" class="nav-btn" id="fnav-webmap" data-section="webmap" onclick="fabSection('webmap')" title="Web map"><span class="gl">◇</span>Web map</button>
     <button data-label="Vectors" data-desc="Browse the vector stores" data-desc-long="The vector browser: browse the embeddings in the fabric's vector stores." type="button" class="nav-btn" id="fnav-vectors" data-section="vectors"   onclick="fabSection('vectors')" title="Vectors"><span class="gl">⬡</span>Vectors</button>
     <button data-label="Blob Store" data-desc="The object store (Garage/Ceph)" data-desc-long="The blob store: the fabric's S3 object store (Garage or Ceph) - its status and objects; when not enabled it shows the settings to turn it on." type="button" class="nav-btn" id="fnav-objects" data-section="objects"   onclick="fabSection('objects')" title="Blob Store (Garage/Ceph)"><span class="gl">⛁</span>Blobs</button>
   </nav>
@@ -1393,6 +1394,11 @@ code{font-family:var(--mono);font-size:.9em}
             allow="clipboard-read;clipboard-write"></iframe>
   </div>
 
+  <!-- WEB MAP - the ingress gateway's map of the internet (web-ingress WI-11), lazy iframe, read-only -->
+  <div id="fsec-webmap" style="display:none;height:calc(100vh - 80px);padding:0;overflow:hidden;position:relative">
+    <iframe id="fsec-webmap-frame" src="about:blank" style="width:100%;height:100%;border:none"></iframe>
+  </div>
+
   <div id="fsec-vectors" style="display:none;height:calc(100vh - 80px);padding:0;overflow:hidden;position:relative">
     <iframe id="fsec-vectors-frame" src="about:blank"
             style="width:100%;height:100%;border:none;display:block;background:#181614"
@@ -1723,7 +1729,7 @@ async function fabObjectsUpload(input){
 
 function fabSection(name){
   _fabSection=name;
-  ['dash','datasets','sources','discover','query','iot','graph','memgraph','loom','schedule','bus','stats','skills','worldview','vectors','objects'].forEach(function(s){
+  ['dash','datasets','sources','discover','query','iot','graph','memgraph','loom','schedule','bus','stats','skills','worldview','webmap','vectors','objects'].forEach(function(s){
     var el=document.getElementById('fsec-'+s),btn=document.getElementById('fnav-'+s);
     if(el) {
       if (s === name) {
@@ -1780,6 +1786,13 @@ function fabSection(name){
     var mgf=document.getElementById('fsec-memgraph-frame');
     if(mgf&&mgf.src==='about:blank'){
       mgf.src=API+'/memgraph/panel';
+    }
+  }
+  // Lazy-load the Web map iframe on first visit
+  if(name==='webmap'){
+    var wmf=document.getElementById('fsec-webmap-frame');
+    if(wmf&&wmf.src==='about:blank'){
+      wmf.src=API+'/fabric/map/panel';
     }
   }
   // Lazy-load Vector Browser iframe on first visit
@@ -6238,7 +6251,7 @@ window.addEventListener('vg:action', function(ev){
   var B = window.VeraPanelBridge;
 
   var SECTIONS = ['dash','datasets','sources','discover','query','iot','graph','memgraph',
-                  'loom','schedule','bus','stats','skills','worldview','vectors','objects'];
+                  'loom','schedule','bus','stats','skills','worldview','webmap','vectors','objects'];
 
   function _set(id, v){
     if(v===undefined || v===null) return false;
