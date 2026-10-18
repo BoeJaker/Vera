@@ -159,13 +159,8 @@ async def cap_decide_tests_status(refresh: bool = False, trace_id=None) -> Dict[
     return out
 
 
-@APP.get("/decide/tests", include_in_schema=False)
-async def _tests_page():
-    from fastapi.responses import HTMLResponse
-    p = _HERE / "tests_panel.html"
-    if p.exists():
-        return HTMLResponse(p.read_text(encoding="utf-8"))
-    return HTMLResponse("<pre>tests_panel.html not found</pre>", status_code=404)
+# The stop-gap page (/decide/tests, tests_panel.html) retired 18 Oct: Loop Lab's own Tests section (looplab-control
+# S2) draws the tests from decide.tests.status and the report caps.
 
 
 
