@@ -6071,7 +6071,7 @@ async def _run_local(cap,task_id,payload,trace_id,bg=""):
         fut=PENDING_RESULTS.get(task_id)
         if fut and not fut.done(): fut.set_result({"error":"cancelled","cancelled":True})
         return
-    inner = asyncio.ensure_future(cap["raw"](**payload,trace_id=trace_id))
+    inner = asyncio.ensure_future(cap["raw"](**_filter_kwargs_for_func(cap["raw"], {**payload, "trace_id": trace_id})))
     RUNNING_TASKS[task_id] = inner
     try:
         result = await inner
@@ -6535,7 +6535,10 @@ async def worker_loop(worker_id: str):
                             async def _run_cap(_bg=bg_label):
                                 if _bg:
                                     BACKGROUND_LLM.set(_bg)
-                                return await cap["raw"](**payload, trace_id=trace_id)
+                                # only what the cap accepts, as the host's local path does (D01-6): a stray key from
+                                # an older dispatcher must not fail the task
+                                return await cap["raw"](**_filter_kwargs_for_func(
+                                    cap["raw"], {**payload, "trace_id": trace_id}))
                             inner = asyncio.ensure_future(_run_cap())
                             RUNNING_TASKS[task_id] = inner
 
@@ -7638,6 +7641,11 @@ def capability(
                         if _off_cls:
                             _OFFLOAD_INFLIGHT[_off_cls] = _OFFLOAD_INFLIGHT.get(_off_cls, 0) + 1
                             _OFFLOAD_SENT[_off_cls] = _OFFLOAD_SENT.get(_off_cls, 0) + 1
+                        # Wrapper-private arguments never travel with the task (D01-6, found by web-ingress 18 Oct):
+                        # `_timeout` used to be popped only AFTER dispatch, so a node worker called the cap with it and
+                        # any cap without **kwargs failed "unexpected keyword argument '_timeout'". `_local` likewise.
+                        _t = float(kw.pop("_timeout", 0) or 0) or _cap_timeout(name)
+                        kw.pop("_local", None)
                         try:
                             task_id=await dispatch_task(name,kw,tid,bg=BACKGROUND_LLM.get("") or "")
                         except Exception:
@@ -7649,8 +7657,7 @@ def capability(
                         # 30s blanket default caused every llm.generate inside
                         # a DAG to fail with a useless "task timed out" error.
                         # Honour an explicit `_timeout` field in payload kw if
-                        # the caller has special needs.
-                        _t = float(kw.pop("_timeout", 0)) or _cap_timeout(name)
+                        # the caller has special needs (read before dispatch, above).
                         try:
                             result =await wait_for_result(task_id, timeout=_t)
                         finally:
