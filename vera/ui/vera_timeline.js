@@ -224,7 +224,10 @@
     if (hit && (hit.pending || now - hit.at < 5000)) return hit.p;
     var p = fetch((root._veraBase || '') + '/mcp/call', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Vera-Surface': 'timeline; trigger=auto' },
                   body: JSON.stringify({ name: src.cap, arguments: src.args || {} }) })
-      .then(function (r) { return r.json(); }).then(function (j) { return j && j.content !== undefined ? j.content : j; });
+      .then(function (r) { return r.json(); }).then(function (j) {
+        // an answer with no content is a failed read (e.g. 404 unknown capability), never an empty lane
+        if (j && j.content === undefined && (j.detail || j.error)) throw new Error(String(j.detail || j.error));
+        return j && j.content !== undefined ? j.content : j; });
     var rec = { p: p, pending: true, at: now }; READS[key] = rec;
     p.then(function () { rec.pending = false; rec.at = Date.now(); }, function () { delete READS[key]; });
     return p;

@@ -108,6 +108,21 @@ def vote(question: Mapping[str, Any], label_probs: Mapping[str, float]) -> Tuple
     return best, round(probs[best], 4)
 
 
+def cells(apps: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """The matrix as flat records (vera-44, 18 Oct: the Loop Lab K2 matrix is record-driven): one cell per
+    application x candidate, plus the application's live decision as candidate "live" with live=True."""
+    out: List[Dict[str, Any]] = []
+    for q, a in apps.items():
+        lv = a.get("live") or {}
+        out.append({"application": q, "candidate": "live", "accuracy": lv.get("accuracy"), "n": lv.get("n"),
+                    "agreement": None, "outcomes_n": lv.get("n") or 0, "ms_p50": None, "live": True})
+        for c in a.get("candidates") or []:
+            out.append({"application": q, "candidate": c.get("candidate"), "accuracy": c.get("accuracy"),
+                        "n": c.get("n"), "agreement": c.get("agreement"), "outcomes_n": c.get("outcomes_n") or 0,
+                        "ms_p50": c.get("ms_p50"), "live": False})
+    return out
+
+
 def report(shadow: Mapping[str, Any], candidates: Sequence[str], pending: Mapping[str, str]) -> Dict[str, Any]:
     """One table per application: each candidate's n, agreement with the live decision, accuracy on outcomes (when
     there are outcomes), latency - and the candidates never scored there."""
@@ -125,7 +140,7 @@ def report(shadow: Mapping[str, Any], candidates: Sequence[str], pending: Mappin
         scored = {r["candidate"] for r in rows}
         apps[q] = {"live": live.get(q) or {}, "candidates": rows,
                    "untested": [c for c in candidates if c not in scored]}
-    return {"applications": apps, "pending": dict(pending),
+    return {"applications": apps, "pending": dict(pending), "cells": cells(apps),
             "pairs_scored": sum(len(a["candidates"]) for a in apps.values()),
             "pairs_untested": sum(len(a["untested"]) for a in apps.values())}
 

@@ -23,6 +23,7 @@ from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY  # noqa: E402
 def test_both_names_are_one_module_object():
     assert sys.modules["dag_workshop_capabilities"] is dw
     assert sys.modules["Vera.vera.dag.dag_workshop_capabilities"] is dw
+    assert importlib.import_module("vera.dag.dag_workshop_capabilities") is dw     # the worktree-relative name too
     assert importlib.import_module("Vera.vera.dag.dag_workshop_capabilities") is dw
     from Vera.vera.dag import dag_workshop_capabilities as again
     assert again is dw
