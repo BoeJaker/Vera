@@ -1,0 +1,200 @@
+{
+ "source": "vera/security/certs_panel.html render() at 0b5368be",
+ "cases": [
+  {
+   "data": {
+    "certs": [
+     {
+      "name": "vera.lan",
+      "source": "service",
+      "where": "https://vera:8999",
+      "issuer_kind": "step-ca",
+      "names": [
+       "vera.lan",
+       "vera",
+       "192.168.0.138",
+       "a",
+       "b"
+      ],
+      "not_after": 1793000000,
+      "days_left": 21,
+      "state": "renew soon"
+     },
+     {
+      "name": "pve01 <api>",
+      "source": "service",
+      "where": "https://pve01:8006",
+      "issuer_kind": "self-signed",
+      "names": [
+       "pve01"
+      ],
+      "not_after": 1890000000,
+      "days_left": 1145,
+      "state": "ok"
+     },
+     {
+      "name": "old-ipa",
+      "source": "freeipa",
+      "where": "IPA CA",
+      "issuer_kind": "FreeIPA",
+      "names": [],
+      "not_after": 1700000000,
+      "days_left": -1080,
+      "state": "superseded"
+     },
+     {
+      "name": "*.example.net",
+      "source": "netctl",
+      "where": "netctl",
+      "issuer_kind": "Let's Encrypt",
+      "names": [
+       "*.example.net"
+      ],
+      "not_after": 1791500000,
+      "days_left": 4,
+      "state": "expiring"
+     },
+     {
+      "name": "pbs",
+      "source": "service",
+      "where": "https://pbs:8007",
+      "issuer_kind": "",
+      "names": [],
+      "not_after": null,
+      "days_left": null,
+      "state": "unreachable"
+     }
+    ],
+    "counts": {
+     "ok": 1,
+     "renew soon": 1,
+     "superseded": 1,
+     "expiring": 1,
+     "unreachable": 1
+    },
+    "findings": [
+     {
+      "severity": "error",
+      "subject": "*.example.net",
+      "message": "expires in 4 days",
+      "detail": "netctl renews at 7 days - check its timer"
+     },
+     {
+      "severity": "warn",
+      "subject": "vera.lan",
+      "message": "renew within 30 days",
+      "detail": ""
+     },
+     {
+      "severity": "info",
+      "message": "pbs unreachable"
+     }
+    ],
+    "skipped": [
+     "integrations: none with https"
+    ],
+    "checked_at": 1792400000,
+    "cached": true
+   },
+   "showOld": false
+  },
+  {
+   "data": {
+    "certs": [
+     {
+      "name": "vera.lan",
+      "source": "service",
+      "where": "https://vera:8999",
+      "issuer_kind": "step-ca",
+      "names": [
+       "vera.lan",
+       "vera",
+       "192.168.0.138",
+       "a",
+       "b"
+      ],
+      "not_after": 1793000000,
+      "days_left": 21,
+      "state": "renew soon"
+     },
+     {
+      "name": "pve01 <api>",
+      "source": "service",
+      "where": "https://pve01:8006",
+      "issuer_kind": "self-signed",
+      "names": [
+       "pve01"
+      ],
+      "not_after": 1890000000,
+      "days_left": 1145,
+      "state": "ok"
+     },
+     {
+      "name": "old-ipa",
+      "source": "freeipa",
+      "where": "IPA CA",
+      "issuer_kind": "FreeIPA",
+      "names": [],
+      "not_after": 1700000000,
+      "days_left": -1080,
+      "state": "superseded"
+     },
+     {
+      "name": "*.example.net",
+      "source": "netctl",
+      "where": "netctl",
+      "issuer_kind": "Let's Encrypt",
+      "names": [
+       "*.example.net"
+      ],
+      "not_after": 1791500000,
+      "days_left": 4,
+      "state": "expiring"
+     },
+     {
+      "name": "pbs",
+      "source": "service",
+      "where": "https://pbs:8007",
+      "issuer_kind": "",
+      "names": [],
+      "not_after": null,
+      "days_left": null,
+      "state": "unreachable"
+     }
+    ],
+    "counts": {},
+    "findings": [],
+    "skipped": [],
+    "checked_at": 1792400000,
+    "cached": false
+   },
+   "showOld": true
+  },
+  {
+   "data": {
+    "certs": [],
+    "counts": {},
+    "findings": [],
+    "checked_at": 0
+   },
+   "showOld": false
+  }
+ ],
+ "out": [
+  {
+   "findings": "<div class=\"finding\"><span class=\"pill err\">error</span>\n      <div>expires in 4 days <span class=\"muted\">netctl renews at 7 days - check its timer</span></div></div><div class=\"finding\"><span class=\"pill warn\">warn</span>\n      <div>renew within 30 days </div></div><div class=\"finding\"><span class=\"pill \">info</span>\n      <div>pbs unreachable </div></div>",
+   "certs": "<table><tr><th>Name</th><th>Where</th><th>Issuer</th><th>Covers</th><th>Expires</th><th>Days left</th><th>State</th></tr><tr><td><span data-entity=\"cert:vera.lan\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">vera.lan</span></td><td class=\"muted\">service · https://vera:8999</td>\n      <td>step-ca</td><td><code>vera.lan, vera, 192.168.0.138, a</code></td>\n      <td class=\"num\">2026-10-26</td><td class=\"num\">21</td>\n      <td><span class=\"pill warn\">renew soon</span></td></tr><tr><td><span data-entity=\"cert:pve01 &lt;api&gt;\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">pve01 &lt;api&gt;</span></td><td class=\"muted\">service · https://pve01:8006</td>\n      <td>self-signed</td><td><code>pve01</code></td>\n      <td class=\"num\">2029-11-22</td><td class=\"num\">1145</td>\n      <td><span class=\"pill ok\">ok</span></td></tr><tr><td><span data-entity=\"cert:*.example.net\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">*.example.net</span></td><td class=\"muted\">netctl · netctl</td>\n      <td>Let&#39;s Encrypt</td><td><code>*.example.net</code></td>\n      <td class=\"num\">2026-10-08</td><td class=\"num\">4</td>\n      <td><span class=\"pill warn\">expiring</span></td></tr><tr><td><span data-entity=\"cert:pbs\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">pbs</span></td><td class=\"muted\">service · https://pbs:8007</td>\n      <td></td><td><code></code></td>\n      <td class=\"num\"></td><td class=\"num\"></td>\n      <td><span class=\"pill \">unreachable</span></td></tr></table>",
+   "meta": "checked 2026-10-19T08:53:20.000Z (cached) · integrations: none with https"
+  },
+  {
+   "findings": "<div class=\"muted\">No certificate problems found.</div>",
+   "certs": "<table><tr><th>Name</th><th>Where</th><th>Issuer</th><th>Covers</th><th>Expires</th><th>Days left</th><th>State</th></tr><tr><td><span data-entity=\"cert:vera.lan\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">vera.lan</span></td><td class=\"muted\">service · https://vera:8999</td>\n      <td>step-ca</td><td><code>vera.lan, vera, 192.168.0.138, a</code></td>\n      <td class=\"num\">2026-10-26</td><td class=\"num\">21</td>\n      <td><span class=\"pill warn\">renew soon</span></td></tr><tr><td><span data-entity=\"cert:pve01 &lt;api&gt;\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">pve01 &lt;api&gt;</span></td><td class=\"muted\">service · https://pve01:8006</td>\n      <td>self-signed</td><td><code>pve01</code></td>\n      <td class=\"num\">2029-11-22</td><td class=\"num\">1145</td>\n      <td><span class=\"pill ok\">ok</span></td></tr><tr><td><span data-entity=\"cert:old-ipa\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">old-ipa</span></td><td class=\"muted\">FreeIPA · IPA CA</td>\n      <td>FreeIPA</td><td><code></code></td>\n      <td class=\"num\">2023-11-14</td><td class=\"num\">-1080</td>\n      <td><span class=\"pill \">superseded</span></td></tr><tr><td><span data-entity=\"cert:*.example.net\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">*.example.net</span></td><td class=\"muted\">netctl · netctl</td>\n      <td>Let&#39;s Encrypt</td><td><code>*.example.net</code></td>\n      <td class=\"num\">2026-10-08</td><td class=\"num\">4</td>\n      <td><span class=\"pill warn\">expiring</span></td></tr><tr><td><span data-entity=\"cert:pbs\" title=\"Everything the estate knows about this certificate\" style=\"cursor:pointer;border-bottom:1px dotted var(--dim)\">pbs</span></td><td class=\"muted\">service · https://pbs:8007</td>\n      <td></td><td><code></code></td>\n      <td class=\"num\"></td><td class=\"num\"></td>\n      <td><span class=\"pill \">unreachable</span></td></tr></table>",
+   "meta": "checked 2026-10-19T08:53:20.000Z"
+  },
+  {
+   "findings": "<div class=\"muted\">No certificate problems found.</div>",
+   "certs": "<div class=\"empty\">No certificates found.</div>",
+   "meta": "checked 1970-01-01T00:00:00.000Z"
+  }
+ ]
+}

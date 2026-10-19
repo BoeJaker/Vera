@@ -930,51 +930,28 @@
   "kind": "status"
  },
  "certs.list": {
-  "kind": "composite",
-  "parts": [
-   {
-    "kind": "parts",
-    "map": {
-     "parts": "counts"
-    },
-    "title": "By state"
+  "draw": {
+   "attrs": {
+    "counts": "1"
    },
-   {
-    "draw": {
-     "columns": [
-      "severity",
-      "subject",
-      "message"
-     ]
-    },
-    "empty": "No findings",
-    "form": "table",
-    "kind": "table",
-    "map": {
-     "rows": "findings"
-    },
-    "title": "Findings"
-   },
-   {
-    "draw": {
-     "columns": [
-      "name",
-      "where",
-      "issuer_kind",
-      "days_left",
-      "state",
-      "source"
-     ]
-    },
-    "empty": "No certificates",
-    "form": "table",
-    "kind": "table",
-    "map": {
-     "rows": "certs"
-    },
-    "title": "Certificates"
-   }
-  ]
+   "columns": [
+    "name",
+    "where",
+    "issuer_kind",
+    "days_left",
+    "state",
+    "source"
+   ],
+   "ref": "cert:{name}",
+   "tag": "vera-certs"
+  },
+  "empty": "No certificates",
+  "form": "element",
+  "kind": "table",
+  "map": {
+   "rows": "certs"
+  },
+  "title": "Certificates"
  },
  "ci.board": {
   "form": "ci-board",
