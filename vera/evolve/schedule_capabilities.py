@@ -416,6 +416,8 @@ def _bg_word(res: Any) -> str:
     if res.get("skipped"):
         return "skipped"                  # A1: a guard said not now - not a failure
     if "passed" in res or "summary" in res and "ok" in res:
+        if res.get("partial"):                 # did its work but left some (a background window out of time)
+            return "partial"
         return "green" if res.get("ok", res.get("passed")) else "red"
     if res.get("ok") is False:
         return "failed"
@@ -1311,11 +1313,20 @@ async def cap_background_window(minutes: int = 90, kinds: str = "", trace_id=Non
             await asyncio.sleep(_BG_WINDOW_POLL_S)
     finally:
         svc.release_reservation("evolve.background.window")
-    left = len([j for j in await _waiting() if j.get("state") == "waiting"])
-    await emit_event({"type": "evolve.background.window", "ran": ran, "remaining": left, "reason": reason})
-    return {"ok": True, "ran": ran, "remaining": left, "kinds": sorted(seen),
-            "minutes": round((time.time() - t0) / 60, 1), "reason": reason,
-            "summary": "ran %d background job(s), %d left (%s)" % (ran, left, reason)}
+    rest = [j for j in await _waiting() if j.get("state") == "waiting"]
+    left = len(rest)
+    # what it could not reach, said plainly (vera-d2, board item bfa5efe9: "green" with 23 jobs left, 8.7 h old)
+    by: Dict[str, int] = {}
+    for j in rest:
+        k = str(j.get("title") or j.get("kind") or "?").split(" (")[0][:60]
+        by[k] = by.get(k, 0) + 1
+    oldest_h = round(max([(time.time() - float(j.get("enqueued_at") or time.time())) / 3600 for j in rest] or [0]), 1)
+    left_txt = "; ".join("%d x %s" % (n, k) for k, n in sorted(by.items(), key=lambda x: -x[1])[:6])
+    await emit_event({"type": "evolve.background.window", "ran": ran, "remaining": left, "reason": reason, "left_by": by})
+    return {"ok": True, "partial": bool(left), "ran": ran, "remaining": left, "left_by": by, "oldest_left_h": oldest_h,
+            "kinds": sorted(seen), "minutes": round((time.time() - t0) / 60, 1), "reason": reason,
+            "summary": ("ran %d background job(s), %d left (%s)" % (ran, left, reason))
+                       + ("; left: %s; the oldest has waited %s h" % (left_txt, oldest_h) if left else "")}
 
 
 
