@@ -56,7 +56,8 @@ def test_the_caps_fetch_behind_the_shared_slot_and_record_on_the_host():
     tree = ast.parse(src)
     fb = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_fetch_batch")
     seg = ast.get_source_segment(src, fb)
-    assert "_host_slot(" in seg and "accept_encoding()" in seg and "is_internal(" in seg
+    client = src[src.index("def _fetch_client("):src.index("async def _fetch_batch(")]   # one client per loop (19 Oct)
+    assert "_host_slot(" in seg and "accept_encoding()" in client and "is_internal(" in seg
     assert "record_fetch_result" not in seg and "WRITER" not in seg                 # nothing recorded on the node
     fm = next(n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "cap_crawl_fetch_many")
     seg = ast.get_source_segment(src, fm)
