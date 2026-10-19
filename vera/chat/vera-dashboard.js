@@ -300,6 +300,10 @@
       '.widget.vd-temp{outline:1px dashed var(--acc,#7aa2f7);outline-offset:-1px}',
       '.widget .vd-temp-tag{font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--acc,#7aa2f7);border:1px solid currentColor;border-radius:8px;padding:0 5px;margin-right:4px;align-self:center}',
       '.widget .w-title[draggable=true]{cursor:grab}',
+      // DO-6: a record tile's ⋯ - its one entry today "Open on desk"
+      '.vd-more-pop{position:fixed;z-index:var(--z-menu,240);background:var(--bg1,#14181d);border:1px solid var(--border,#2a2f37);border-radius:6px;padding:4px;display:flex;flex-direction:column;min-width:150px;box-shadow:0 6px 18px rgba(0,0,0,.4)}',
+      '.vd-more-pop button{all:unset;cursor:pointer;padding:5px 8px;border-radius:4px;font-size:11.5px;color:var(--text,#dce1e8)}',
+      '.vd-more-pop button:hover{background:var(--bg2,#1c2026)}',
       // ⚙ — the record's editor on every tile; lit while the grid is being edited
       '.w-iconbtn.vd-cfg{font-size:12px}',
       '.dash-grid.editing .w-iconbtn.vd-cfg{color:var(--acc,#5a9e8f)}',
@@ -1863,6 +1867,7 @@
         '<div class="w-head"><span class="w-grip">⠿</span><span class="w-dot ok"></span>' +
         '<span class="w-title">' + esc(record.title || record.name || record.form || 'widget') + '</span>' +
         '<span class="w-actions">' + ((o2 && o2.temp) ? '<span class="vd-temp-tag" title="summoned by the search - it goes when the search is cleared">summoned</span><button class="w-iconbtn" data-vd-keep title="Keep it on the dashboard">📌</button>' : '') +
+        '<button class="w-iconbtn" data-vd-more title="More: open it on the desk">⋯</button>' +
         '<button class="w-iconbtn" data-vd-hide title="Hide">×</button>' +
         ((o2 && o2.fromFile) ? '' : '<button class="w-iconbtn" data-vd-remove title="Remove widget">🗑</button>') + '</span></div>' +
         '<div class="w-body" style="padding:8px;position:relative;min-height:0"></div>' +
@@ -1888,6 +1893,7 @@
       widget.querySelector('[data-vd-hide]').onclick = function () { hide(wid); };
       var rm = widget.querySelector('[data-vd-remove]'); if (rm) rm.onclick = function () { if (widget.dataset.temp) unsummon(wid); else removeDynamic(wid); };
       var kp = widget.querySelector('[data-vd-keep]'); if (kp) kp.onclick = function () { keepSummoned(wid); };
+      var mo = widget.querySelector('[data-vd-more]'); if (mo) mo.onclick = function (e) { e.stopPropagation(); moreMenu(wid, mo); };
       itemDrag(widget, wid);
       grid.appendChild(widget);
       if (o2 && o2.fromFile) { state.records[wid] = record; }
@@ -2011,6 +2017,28 @@
       });
     }
 
+    /* DO-6 - OPEN ON DESK (the tile's ⋯; owner yes, 19 Oct): the tile's record goes to the desk as an item - the same record, the
+       item contract the drag carries. The desk is another frame, so the record waits in the desk's inbox (localStorage
+       vera.desk.inbox) and the chat lands it on its desk at once if it is open, or when it next opens. */
+    var DESK_INBOX = 'vera.desk.inbox';
+    function toDesk(wid) {
+      var rec = recordOf(wid); if (!rec) return false;
+      var list; try { list = JSON.parse(localStorage.getItem(DESK_INBOX) || '[]'); } catch (e) { list = []; } if (!Array.isArray(list)) list = [];
+      var ttl = rec.title || rec.name || rec.form || 'widget';   /* the title in the content too: the desk's widget body reads it there */
+      list.push({ kind: 'widget', title: ttl, content: { record: rec, title: ttl }, source: { dashboard: key, wid: wid }, at: Date.now() });
+      try { localStorage.setItem(DESK_INBOX, JSON.stringify(list.slice(-20))); return true; } catch (e) { return false; }
+    }
+    function moreMenu(wid, btn) {
+      var had = document.querySelector('.vd-more-pop'); if (had) { had.remove(); if (had.dataset.wid === wid) return; }
+      var pop = document.createElement('div'); pop.className = 'vd-more-pop'; pop.dataset.wid = wid;
+      pop.innerHTML = '<button data-vd-todesk title="Put this on the desk in the chat - the same record">Open on desk</button>';
+      var r = btn.getBoundingClientRect(); pop.style.top = Math.round(r.bottom + 4) + 'px'; pop.style.left = Math.max(4, Math.round(r.right - 160)) + 'px';
+      document.body.appendChild(pop);
+      pop.querySelector('[data-vd-todesk]').onclick = function () { var ok = toDesk(wid); this.textContent = ok ? '✓ on the desk' : 'could not reach the desk'; setTimeout(function () { pop.remove(); }, 900); };
+      var off = function (ev) { if (pop.contains(ev.target) || ev.target === btn) return; pop.remove(); document.removeEventListener('mousedown', off, true); };
+      document.addEventListener('mousedown', off, true);
+    }
+
     function removeDynamic(wid) {
       var w = grid.querySelector(':scope > [data-wid="' + wid + '"]'); if (w) w.remove();
       delete state.dynamic[wid]; state.hidden.delete(wid);
@@ -2048,6 +2076,18 @@
     });
     applyLayout();
     if (withLoader) restoreDynamic();
+    /* DO-6 - SEND TO DASHBOARD (the desk's ⋯; owner yes, 19 Oct): the desk is another frame and cannot reach this grid, so it
+       leaves the item's record in this dashboard's inbox (localStorage vera.dash.<key>.inbox; the desk writes the main one's).
+       It is drained when the page loads and whenever another frame writes it (a storage event); each record lands as a tile
+       through placeRecord, lit, as a picked record does. */
+    var IKEY = SKEY + '.inbox';
+    function drainInbox() {
+      var list; try { list = JSON.parse(localStorage.getItem(IKEY) || '[]'); } catch (e) { list = []; }
+      if (!Array.isArray(list) || !list.length) return;
+      try { localStorage.removeItem(IKEY); } catch (e) { return; }
+      list.forEach(function (x) { if (x && x.record && typeof x.record === 'object') { try { placeRecord(x.record); } catch (e) { /* a bad record stays out */ } } });
+    }
+    if (key === 'main') { drainInbox(); window.addEventListener('storage', function (e) { if (e.key === IKEY && e.newValue) drainInbox(); }); }
 
     /* ── the layout file: this grid's widgets as records (vera/widgets/layouts/<key>.json) ──
        The file is the DEFAULT layout. Under the user's persisted state it: names every page tile's record (the chip,
