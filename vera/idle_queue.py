@@ -44,6 +44,8 @@ what makes pre-emption testable without a live Ollama node.
 
 from __future__ import annotations
 
+import time
+
 from typing import Any, Dict, Iterable, List, Optional
 
 #: Job states. `waiting` is the interesting one — it is what the UI shows.
@@ -186,12 +188,28 @@ def with_progress(job: Optional[Dict[str, Any]], done: Any = None,
     return j
 
 
-def pending(jobs: Optional[Iterable[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-    """Everything still waiting, in the order it will run."""
+#: A waiting job gains priority as it waits (19 Oct 2026, vera-d2's board item bfa5efe9): strict priority let 20
+#: default-priority shadow judges wait 8.7 h with 0 attempts while a 90-minute background window ran 80 other jobs.
+#: Every hour waited takes AGE_BOOST_PER_H off its priority number, at most AGE_BOOST_MAX - so equal-age jobs keep
+#: their order, and an old default job overtakes fresh bulk work but never a narration that has waited as long.
+AGE_BOOST_PER_H = 10
+AGE_BOOST_MAX = 60
+
+
+def effective_priority(job: Dict[str, Any], now: Optional[float] = None) -> float:
+    t = time.time() if now is None else float(now)
+    try:
+        waited_h = max(0.0, t - float(job.get("enqueued_at") or t)) / 3600.0
+    except (TypeError, ValueError):
+        waited_h = 0.0
+    return float(job.get("priority", DEFAULT_PRIORITY)) - min(AGE_BOOST_MAX, AGE_BOOST_PER_H * waited_h)
+
+
+def pending(jobs: Optional[Iterable[Dict[str, Any]]], now: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Everything still waiting, in the order it will run: priority, raised by how long each has waited."""
     out = [j for j in (jobs or [])
            if isinstance(j, dict) and j.get("state") == WAITING]
-    out.sort(key=lambda j: (j.get("priority", DEFAULT_PRIORITY),
-                            j.get("enqueued_at", 0)))
+    out.sort(key=lambda j: (effective_priority(j, now), j.get("enqueued_at", 0)))
     return out
 
 
