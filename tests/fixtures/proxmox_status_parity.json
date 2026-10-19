@@ -1,0 +1,177 @@
+{
+ "source": "vera/proxmox/proxmox_panel.html render() at 0ebf4359",
+ "cases": [
+  {
+   "status": {
+    "cluster": {
+     "name": "home",
+     "quorate": true
+    },
+    "counts": {
+     "running": 2
+    },
+    "nodes": [
+     {
+      "node": "pve1",
+      "status": "online",
+      "cpu": 0.42,
+      "maxcpu": 16,
+      "mem": 34359738368,
+      "maxmem": 68719476736,
+      "uptime": 900000
+     },
+     {
+      "node": "pve2",
+      "status": "offline",
+      "cpu": 0,
+      "maxcpu": 8,
+      "mem": 0,
+      "maxmem": 0,
+      "uptime": 0
+     }
+    ],
+    "guests": [
+     {
+      "vmid": 104,
+      "name": "vera",
+      "type": "qemu",
+      "node": "pve1",
+      "status": "running",
+      "cpu": 0.91,
+      "mem": 60000000000,
+      "maxmem": 64000000000
+     },
+     {
+      "vmid": 146,
+      "name": "ha <x>",
+      "type": "lxc",
+      "node": "pve1",
+      "status": "stopped",
+      "cpu": 0,
+      "mem": 0,
+      "maxmem": 2000000000
+     },
+     {
+      "vmid": 900,
+      "name": "tpl",
+      "type": "qemu",
+      "node": "pve2",
+      "status": "stopped",
+      "template": 1
+     },
+     {
+      "vmid": 148,
+      "name": "",
+      "type": "lxc",
+      "node": "pve2",
+      "status": "running",
+      "cpu": 0.7,
+      "mem": 1500000000,
+      "maxmem": 2000000000
+     }
+    ],
+    "storage": [
+     {
+      "storage": "local",
+      "node": "pve1",
+      "disk": 50000000000,
+      "maxdisk": 100000000000,
+      "status": "available"
+     },
+     {
+      "storage": "local",
+      "node": "pve2",
+      "disk": 10000000000,
+      "maxdisk": 100000000000,
+      "status": "available"
+     },
+     {
+      "storage": "nfs",
+      "node": "pve1",
+      "disk": 950000000000,
+      "maxdisk": 1000000000000,
+      "status": "unknown"
+     }
+    ]
+   },
+   "temps": {
+    "hosts": [
+     {
+      "label": "gpu-node",
+      "max_c": 88,
+      "temps": {
+       "Package id 0": 88,
+       "Core 0": 80,
+       "Core 1": 79,
+       "Core 2": 75,
+       "Core 3": 74,
+       "nvme0": 52,
+       "nvme1": 50
+      }
+     },
+     {
+      "label": "cpu-246",
+      "max_c": 61,
+      "temps": {
+       "Tctl": 61
+      }
+     },
+     {
+      "label": "empty",
+      "max_c": 0,
+      "temps": {}
+     }
+    ]
+   }
+  },
+  {
+   "status": {
+    "cluster": {},
+    "nodes": [
+     {
+      "node": "solo",
+      "status": "online",
+      "cpu": 0.05,
+      "maxcpu": 4,
+      "mem": 1000000000,
+      "maxmem": 8000000000,
+      "uptime": 7300
+     }
+    ],
+    "guests": [],
+    "storage": []
+   },
+   "temps": null
+  },
+  {
+   "status": {
+    "cluster": {
+     "name": "q",
+     "quorate": false
+    },
+    "counts": {},
+    "nodes": [],
+    "guests": [
+     {
+      "vmid": 7,
+      "name": "x",
+      "type": "qemu",
+      "node": "a",
+      "status": "running",
+      "cpu": 0.7,
+      "mem": 7000000000,
+      "maxmem": 10000000000
+     }
+    ]
+   },
+   "temps": {
+    "hosts": []
+   }
+  }
+ ],
+ "html": [
+  "<div class=\"section-h\">Nodes <span class=\"count\">2</span> <span class=\"pill run\">quorate</span> <span style=\"flex:0;color:var(--t3)\">home</span></div><div class=\"grid\"><div class=\"card\">\n      <div class=\"hd\"><span class=\"nm\">🖥 <span data-entity=\"host:pve1\">pve1</span></span>\n        <span class=\"pill run\">online</span></div>\n      <div class=\"metric\"><div class=\"lab\"><span>CPU</span><span>42%</span></div>\n    <div class=\"bar\"><i style=\"width:42%\"></i></div></div>\n      <div class=\"metric\"><div class=\"lab\"><span>Mem</span><span>32G / 64G</span></div>\n    <div class=\"bar\"><i style=\"width:50%\"></i></div></div>\n      <div class=\"hd\"><span class=\"sub\" style=\"margin-left:0\">up 10d 10h</span></div>\n    </div><div class=\"card\">\n      <div class=\"hd\"><span class=\"nm\">🖥 <span data-entity=\"host:pve2\">pve2</span></span>\n        <span class=\"pill stop\">offline</span></div>\n      <div class=\"metric\"><div class=\"lab\"><span>CPU</span><span>0%</span></div>\n    <div class=\"bar\"><i style=\"width:2%\"></i></div></div>\n      <div class=\"metric\"><div class=\"lab\"><span>Mem</span><span>0 / 0</span></div>\n    <div class=\"bar\"><i style=\"width:2%\"></i></div></div>\n      <div class=\"hd\"><span class=\"sub\" style=\"margin-left:0\">up —</span></div>\n    </div></div><div class=\"section-h\">Core Temps <span class=\"count\">2</span></div><div class=\"grid\"><div class=\"card\">\n        <div class=\"hd\"><span class=\"nm\">🌡 gpu-node</span><span class=\"pill stop\">88°C max</span></div>\n        <div class=\"metric\"><div class=\"lab\"><span>Package id 0</span><span>88°C</span></div>\n    <div class=\"bar hi\"><i style=\"width:88%\"></i></div></div><div class=\"metric\"><div class=\"lab\"><span>Core 0</span><span>80°C</span></div>\n    <div class=\"bar mid\"><i style=\"width:80%\"></i></div></div><div class=\"metric\"><div class=\"lab\"><span>Core 1</span><span>79°C</span></div>\n    <div class=\"bar mid\"><i style=\"width:79%\"></i></div></div><div class=\"metric\"><div class=\"lab\"><span>Core 2</span><span>75°C</span></div>\n    <div class=\"bar mid\"><i style=\"width:75%\"></i></div></div><div class=\"metric\"><div class=\"lab\"><span>Core 3</span><span>74°C</span></div>\n    <div class=\"bar mid\"><i style=\"width:74%\"></i></div></div><div class=\"metric\"><div class=\"lab\"><span>nvme0</span><span>52°C</span></div>\n    <div class=\"bar\"><i style=\"width:52%\"></i></div></div>\n        <div class=\"sub\" style=\"margin-top:4px;color:var(--t3)\">+1 more sensors</div>\n      </div><div class=\"card\">\n        <div class=\"hd\"><span class=\"nm\">🌡 cpu-246</span><span class=\"pill run\">61°C max</span></div>\n        <div class=\"metric\"><div class=\"lab\"><span>Tctl</span><span>61°C</span></div>\n    <div class=\"bar\"><i style=\"width:61%\"></i></div></div>\n        \n      </div></div><div class=\"section-h\">Guests <span class=\"count\">3</span> · running 2</div><div class=\"grid\"><div class=\"card\">\n      <div class=\"hd\">\n        <span class=\"nm\">🗔 <span data-entity=\"guest:104\">vera</span></span>\n        <span class=\"pill run\">running</span>\n      </div>\n      <div class=\"hd\"><span class=\"sub\" style=\"margin-left:0;color:var(--t2)\">qemu · 104 · pve1</span></div>\n      <div class=\"metric\"><div class=\"lab\"><span>CPU</span><span>91%</span></div>\n    <div class=\"bar hi\"><i style=\"width:91%\"></i></div></div>\n      <div class=\"metric\"><div class=\"lab\"><span>Mem</span><span>56G / 60G</span></div>\n    <div class=\"bar hi\"><i style=\"width:94%\"></i></div></div>\n      <div class=\"guest-actions\">\n        <button class=\"btn sm\" onclick=\"guest('pve1','qemu',104,'shutdown')\">Shutdown</button>\n             <button class=\"btn sm danger\" onclick=\"guest('pve1','qemu',104,'stop')\">Stop</button>\n             <button class=\"btn sm gho\" onclick=\"guest('pve1','qemu',104,'reboot')\">Reboot</button>\n      </div>\n      <div class=\"guest-actions\">\n        <button class=\"btn sm\"  onclick=\"openConsole('pve1','qemu',104,'term','vera')\">⌨ Terminal</button>\n        <button class=\"btn sm\"  onclick=\"openConsole('pve1','qemu',104,'vnc','vera')\">🖵 Desktop</button>\n      </div>\n    </div><div class=\"card\">\n      <div class=\"hd\">\n        <span class=\"nm\">📦 <span data-entity=\"guest:146\">ha <x></span></span>\n        <span class=\"pill stop\">stopped</span>\n      </div>\n      <div class=\"hd\"><span class=\"sub\" style=\"margin-left:0;color:var(--t2)\">lxc · 146 · pve1</span></div>\n      \n      \n      <div class=\"guest-actions\">\n        <button class=\"btn sm pri\" onclick=\"guest('pve1','lxc',146,'start')\">Start</button>\n      </div>\n      <div class=\"guest-actions\">\n        <button class=\"btn sm\" disabled onclick=\"openConsole('pve1','lxc',146,'term','ha &lt;x&gt;')\">⌨ Terminal</button>\n        <button class=\"btn sm\" disabled onclick=\"openConsole('pve1','lxc',146,'vnc','ha &lt;x&gt;')\">🖵 Desktop</button>\n      </div>\n    </div><div class=\"card\">\n      <div class=\"hd\">\n        <span class=\"nm\">📦 <span data-entity=\"guest:148\">vm148</span></span>\n        <span class=\"pill run\">running</span>\n      </div>\n      <div class=\"hd\"><span class=\"sub\" style=\"margin-left:0;color:var(--t2)\">lxc · 148 · pve2</span></div>\n      <div class=\"metric\"><div class=\"lab\"><span>CPU</span><span>70%</span></div>\n    <div class=\"bar mid\"><i style=\"width:70%\"></i></div></div>\n      <div class=\"metric\"><div class=\"lab\"><span>Mem</span><span>1.4G / 1.9G</span></div>\n    <div class=\"bar mid\"><i style=\"width:75%\"></i></div></div>\n      <div class=\"guest-actions\">\n        <button class=\"btn sm\" onclick=\"guest('pve2','lxc',148,'shutdown')\">Shutdown</button>\n             <button class=\"btn sm danger\" onclick=\"guest('pve2','lxc',148,'stop')\">Stop</button>\n             <button class=\"btn sm gho\" onclick=\"guest('pve2','lxc',148,'reboot')\">Reboot</button>\n      </div>\n      <div class=\"guest-actions\">\n        <button class=\"btn sm\"  onclick=\"openConsole('pve2','lxc',148,'term','148')\">⌨ Terminal</button>\n        <button class=\"btn sm\"  onclick=\"openConsole('pve2','lxc',148,'vnc','148')\">🖵 Desktop</button>\n      </div>\n    </div></div><div class=\"section-h\">Storage</div><div class=\"grid\"><div class=\"card\"><div class=\"hd\"><span class=\"nm\">💾 local</span>\n        <span class=\"pill run\">available</span></div>\n        <div class=\"metric\"><div class=\"lab\"><span>Used</span><span>47G / 93G</span></div>\n    <div class=\"bar\"><i style=\"width:50%\"></i></div></div></div><div class=\"card\"><div class=\"hd\"><span class=\"nm\">💾 nfs</span>\n        <span class=\"pill stop\">unknown</span></div>\n        <div class=\"metric\"><div class=\"lab\"><span>Used</span><span>885G / 931G</span></div>\n    <div class=\"bar hi\"><i style=\"width:95%\"></i></div></div></div></div>",
+  "<div class=\"section-h\">Nodes <span class=\"count\">1</span>  <span style=\"flex:0;color:var(--t3)\"></span></div><div class=\"grid\"><div class=\"card\">\n      <div class=\"hd\"><span class=\"nm\">🖥 <span data-entity=\"host:solo\">solo</span></span>\n        <span class=\"pill run\">online</span></div>\n      <div class=\"metric\"><div class=\"lab\"><span>CPU</span><span>5%</span></div>\n    <div class=\"bar\"><i style=\"width:5%\"></i></div></div>\n      <div class=\"metric\"><div class=\"lab\"><span>Mem</span><span>954M / 7.5G</span></div>\n    <div class=\"bar\"><i style=\"width:13%\"></i></div></div>\n      <div class=\"hd\"><span class=\"sub\" style=\"margin-left:0\">up 2h 1m</span></div>\n    </div></div><div class=\"section-h\">Guests <span class=\"count\">0</span> · running 0</div><div class=\"grid\"></div>",
+  "<div class=\"section-h\">Nodes <span class=\"count\">0</span> <span class=\"pill warn\">no quorum</span> <span style=\"flex:0;color:var(--t3)\">q</span></div><div class=\"grid\"></div><div class=\"section-h\">Guests <span class=\"count\">1</span> · running 0</div><div class=\"grid\"><div class=\"card\">\n      <div class=\"hd\">\n        <span class=\"nm\">🗔 <span data-entity=\"guest:7\">x</span></span>\n        <span class=\"pill run\">running</span>\n      </div>\n      <div class=\"hd\"><span class=\"sub\" style=\"margin-left:0;color:var(--t2)\">qemu · 7 · a</span></div>\n      <div class=\"metric\"><div class=\"lab\"><span>CPU</span><span>70%</span></div>\n    <div class=\"bar mid\"><i style=\"width:70%\"></i></div></div>\n      <div class=\"metric\"><div class=\"lab\"><span>Mem</span><span>6.5G / 9.3G</span></div>\n    <div class=\"bar mid\"><i style=\"width:70%\"></i></div></div>\n      <div class=\"guest-actions\">\n        <button class=\"btn sm\" onclick=\"guest('a','qemu',7,'shutdown')\">Shutdown</button>\n             <button class=\"btn sm danger\" onclick=\"guest('a','qemu',7,'stop')\">Stop</button>\n             <button class=\"btn sm gho\" onclick=\"guest('a','qemu',7,'reboot')\">Reboot</button>\n      </div>\n      <div class=\"guest-actions\">\n        <button class=\"btn sm\"  onclick=\"openConsole('a','qemu',7,'term','x')\">⌨ Terminal</button>\n        <button class=\"btn sm\"  onclick=\"openConsole('a','qemu',7,'vnc','x')\">🖵 Desktop</button>\n      </div>\n    </div></div>"
+ ]
+}
