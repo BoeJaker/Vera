@@ -16,8 +16,8 @@ def test_inventory_is_source_bound_and_does_not_move_execution_authority():
     result = build_execution_producer_path_baseline(ROOT)
     assert result["schema"] == "vera.execution-producer-path-baseline/v1"
     assert result["counts"] == {
-        "paths": 16, "families": 5, "roles": 6,
-        "native_executors": 7, "projections": 3,
+        "paths": 19, "families": 5, "roles": 6,
+        "native_executors": 8, "projections": 4,
         "definition_only": 1, "gaps": len(GAPS),
     }
     assert result["authority_moved"] is False
@@ -35,6 +35,7 @@ def test_native_execution_and_projection_are_not_conflated():
     assert paths["dream.run-projection"]["authority"] == "run-protocol"
     assert paths["schedule.calendar-action"]["role"] == "native-executor"
     assert paths["schedule.run-projection"]["role"] == "projection"
+    assert paths["schedule.workflow-trigger-projection"]["role"] == "projection"
     assert paths["dag.workflow-definition"]["role"] == "definition"
 
 
@@ -47,6 +48,8 @@ def test_every_path_reports_all_five_required_coverage_dimensions():
     assert paths["dag.stored-run"]["cancellation"] == "absent"
     assert paths["dream.cycle"]["artifacts"] == "native"
     assert paths["schedule.calendar-action"]["effects"] == "native"
+    assert paths["schedule.user-notification"]["effects"] == "native"
+    assert paths["schedule.user-notification"]["cancellation"] == "absent"
 
 
 def test_flow_builder_is_truthfully_definition_only():
