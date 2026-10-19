@@ -79,9 +79,9 @@ def test_once_per_window_and_every():
     assert sc.is_due(e, _t(2026, 9, 21, 9, 15), FREE)[1] == "previous run still going"
     e["last_finished_at"] = sc.iso(_t(2026, 9, 21, 8, 50))
     assert sc.is_due(e, _t(2026, 9, 21, 9, 15), FREE) == (True, "due")
-    # An exclusive non-census schedule waits for the census; a non-exclusive one does not.
+    # A non-census schedule waits for the census, exclusive or not (owner 19 Oct 2026: no clashes).
     assert sc.is_due(e, _t(2026, 9, 21, 9, 15), dict(FREE, census_running=True))[1] == "census in flight"
-    assert sc.is_due(dict(e, exclusive=False), _t(2026, 9, 21, 9, 15), dict(FREE, census_running=True))[0]
+    assert sc.is_due(dict(e, exclusive=False), _t(2026, 9, 21, 9, 15), dict(FREE, census_running=True))[1] == "census in flight"
 
 
 def test_one_shot():
@@ -100,10 +100,10 @@ def test_plan_tick_starts_one_census_and_fences_exclusive_work():
     n = weekday(kind="cap", target={"name": "obs.provenance"}, repeat="once_per_window", exclusive=False)
     plan = sc.plan_tick([c1, c2, s, n], MON, FREE)
     kinds = [(p["schedule_id"], p["kind"]) for p in plan]
-    assert kinds == [(c1["id"], "census"), (n["id"], "cap")]      # one census; suite fenced; cap not
-    assert sc.plan_tick([c1, c2, s, n], MON, dict(FREE, census_running=True)) == \
-        [{"schedule_id": n["id"], "kind": "cap", "target": n["target"], "title": n["title"], "reason": "due"}]
-    assert len(sc.plan_tick([n, n, n, n], MON, FREE, max_starts=2)) == 2
+    assert kinds == [(c1["id"], "census")]      # one census; the suite and the cap wait for it (owner 19 Oct)
+    assert sc.plan_tick([c1, c2, s, n], MON, dict(FREE, census_running=True)) == []
+    cs = dict(n, kind="claude_session")              # a claude_session request uses no compute - max_starts caps it
+    assert len(sc.plan_tick([cs, cs, cs, cs], MON, FREE, max_starts=2)) == 2
 
 
 def test_parked_on_our_own_yield_resumes_when_the_window_is_open():

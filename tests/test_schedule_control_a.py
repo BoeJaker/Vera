@@ -70,7 +70,8 @@ def test_declared_activity_holds_exclusive_starts_and_censuses():
     now = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
     st = {"declared_busy": "probe dg-boe-rate"}
     assert core.is_due(_rec(), now, st)[1].startswith("declared activity")
-    assert core.is_due(_rec(exclusive=False), now, st)[0] is True
+    assert core.is_due(_rec(exclusive=False), now, st)[1].startswith("declared activity")   # owner 19 Oct: no clashes
+    assert core.is_due(_rec(kind="claude_session", target={"session": "any", "what": "brief"}), now, st)[0] is True
     census = _rec(kind="census", target={"template": "default"}, repeat="continuous")
     assert core.is_due(census, now, st)[1].startswith("declared activity")
 
@@ -78,8 +79,8 @@ def test_declared_activity_holds_exclusive_starts_and_censuses():
 # ── A3 ────────────────────────────────────────────────────────────────────────
 def test_one_exclusive_run_at_a_time():
     now = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
-    assert core.is_due(_rec(), now, {"exclusive_running": 1}) == (False, "another exclusive scheduled run is going")
-    assert core.is_due(_rec(exclusive=False), now, {"exclusive_running": 1})[0] is True
+    assert core.is_due(_rec(), now, {"exclusive_running": 1}) == (False, "the previous scheduled run is still using compute")
+    assert core.is_due(_rec(exclusive=False), now, {"scheduled_running": 1})[0] is False     # owner 19 Oct: no clashes
     tests = _rec(kind="tests", target={"branch": "bleeding-edge"})
     assert core.is_due(tests, now, {"exclusive_running": 1})[0] is False
 
@@ -90,7 +91,7 @@ def test_plan_tick_starts_at_most_one_exclusive_run():
     b = _rec(id="b", title="b", target={"name": "memory.perf.probe"})
     c = _rec(id="c", title="c", exclusive=False, target={"name": "obs.health"})
     plan = core.plan_tick([a, b, c], now, {})
-    assert [p["schedule_id"] for p in plan] == ["a", "c"]
+    assert [p["schedule_id"] for p in plan] == ["a"]           # one run at a time, exclusive or not (owner 19 Oct)
 
 
 def test_window_end_stops_non_census_runs_that_asked():

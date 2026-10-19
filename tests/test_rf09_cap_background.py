@@ -27,13 +27,13 @@ def _rec(kind, **kw):
 
 def test_no_census_while_an_exclusive_cap_runs():
     due, why = core.is_due(_rec("census"), NOW, {"exclusive_running": 1})
-    assert not due and "exclusive scheduled cap" in why
+    assert not due and "still using compute" in why
     assert core.is_due(_rec("census"), NOW, {"exclusive_running": 0})[0]
 
 
-def test_exclusive_cap_waits_for_agent_loops_but_not_a_shared_one():
+def test_a_cap_waits_for_agent_loops_exclusive_or_not():
     assert core.is_due(_rec("cap"), NOW, {"loops_running": 1}) == (False, "an agent loop is running")
-    assert core.is_due(_rec("cap", exclusive=False), NOW, {"loops_running": 1})[0]
+    assert core.is_due(_rec("cap", exclusive=False), NOW, {"loops_running": 1}) == (False, "an agent loop is running")
     assert core.is_due(_rec("cap"), NOW, {"loops_running": 0})[0]
 
 
