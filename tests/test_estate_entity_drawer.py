@@ -40,7 +40,10 @@ def test_machines_storage_and_certificates_offer_the_drawer():
     assert 'data-entity="pool:${esc(p.name)}"' in storage
     certs = read("vera", "security", "certs_panel.html")
     assert '<script src="/ui/vera-entity-drawer.js"></script>' in certs
-    assert 'data-entity="cert:${esc(c.name)}"' in certs
+    # the certificate rows are <vera-certs> since Wave 1 of the desk output redesign: the panel draws through it
+    assert '<vera-certs id="certs"></vera-certs>' in certs and '<script src="/ui/elements/certs.js"></script>' in certs
+    el = read("vera", "security", "certs_element.js")
+    assert 'data-entity="cert:${esc(c.name)}"' in el and "window.veraEntityDrawer.open(ref)" in el
 
 
 def test_every_kind_the_panel_can_open_has_a_reader_or_says_so():

@@ -177,7 +177,9 @@ async def _timed(coro, what: str) -> Any:
 
 @capability(
     "certs.list",
-    contract={"presentation": {"kind": "composite", "parts": [{"kind": "parts", "map": {"parts": "counts"}, "title": "By state"}, {"kind": "table", "form": "table", "map": {"rows": "findings"}, "draw": {"columns": ["severity", "subject", "message"]}, "title": "Findings", "empty": "No findings"}, {"kind": "table", "form": "table", "map": {"rows": "certs"}, "draw": {"columns": ["name", "where", "issuer_kind", "days_left", "state", "source"]}, "title": "Certificates", "empty": "No certificates"}]}},
+    # the certs panel's own findings + every certificate on the desk - <vera-certs>, seeded with the answer (Wave 1: panel-derived);
+    # `counts` adds the by-state row the former composite showed; the certificate table stays a view, certificates as estate refs
+    contract={"presentation": {"kind": "table", "form": "element", "map": {"rows": "certs"}, "draw": {"tag": "vera-certs", "attrs": {"counts": "1"}, "columns": ["name", "where", "issuer_kind", "days_left", "state", "source"], "ref": "cert:{name}"}, "title": "Certificates", "empty": "No certificates"}},
     http_method="GET", http_path="/certs/list", http_tags=["security", "estate"],
     memory="off", silent=True,
     description="One certificate list across the estate: the certificate each known HTTPS service "
@@ -207,6 +209,15 @@ async def cap_certs_list(refresh: bool = False, trace_id=None) -> Dict[str, Any]
     value["checked_at"] = int(time.time())
     _CACHE.update(at=time.time(), value=value)
     return dict(value, cached=False)
+
+
+# the panel's findings + certificate cards as one element (the panel draws through it; the desk mounts it for certs.list)
+@APP.get("/ui/elements/certs.js", include_in_schema=False)
+async def _certs_js():
+    from fastapi.responses import Response
+    p = Path(__file__).parent / "certs_element.js"
+    return Response(p.read_text(encoding="utf-8") if p.exists() else "console.error('certs_element.js not found')",
+                    media_type="application/javascript")
 
 
 @APP.get("/certs/panel", include_in_schema=False)
