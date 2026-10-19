@@ -80,8 +80,9 @@ def trainable(rows: Sequence[Mapping[str, Any]], positive: str) -> Tuple[bool, s
         return False, f"{len(gold)} gold examples (< {MIN_GOLD})", counts
     if min(pos, neg) < MIN_CLASS:
         return False, f"a class has {min(pos, neg)} examples (< {MIN_CLASS})", counts
-    if counts["test"] < 5:
-        return False, f"{counts['test']} test examples (< 5)", counts
+    # no floor on the export's own test split: the report is a stratified k-fold CV over every gold row (MIN_CLASS
+    # keeps >= 2 of each class per fold). 19 Oct: output.claim_supported had 120 gold (38 / 82) but 1 test row, and
+    # the old "< 5 test examples" rule kept it from training.
     return True, "ok", counts
 
 
