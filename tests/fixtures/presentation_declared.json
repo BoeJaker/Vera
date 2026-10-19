@@ -5016,6 +5016,29 @@
    "rows": "targets"
   }
  },
+ "proxmox.status": {
+  "draw": {
+   "attrs": {
+    "cluster": "{cluster_id}"
+   },
+   "columns": [
+    "name",
+    "type",
+    "vmid",
+    "node",
+    "status"
+   ],
+   "ref": "guest:{vmid}",
+   "tag": "vera-proxmox-status"
+  },
+  "empty": "no Proxmox guest",
+  "form": "element",
+  "kind": "table",
+  "map": {
+   "rows": "guests"
+  },
+  "title": "Proxmox cluster"
+ },
  "pxstore.backend.status": {
   "draw": {
    "columns": [

@@ -334,6 +334,12 @@ async def cap_cluster_delete(id: str = "", trace_id=None) -> Dict:
     "proxmox.status",
     http_method="POST", http_path="/proxmox/status", http_tags=["proxmox"],
     memory="off", silent=True,
+    # the Proxmox panel's own cards (nodes, core temps, guests, storage) on the desk - <vera-proxmox-status>, seeded with the
+    # answer (Wave 1: panel-derived; display only, the panel keeps guest power + consoles); the guest table stays a view of it
+    contract={"presentation": {"kind": "table", "form": "element", "map": {"rows": "guests"},
+                               "draw": {"tag": "vera-proxmox-status", "attrs": {"cluster": "{cluster_id}"},
+                                        "columns": ["name", "type", "vmid", "node", "status"], "ref": "guest:{vmid}"},
+                               "empty": "no Proxmox guest", "title": "Proxmox cluster"}},
     description="Live cluster snapshot via /cluster/resources + /cluster/status. "
                 "Input: cluster_id (str; none: the first registered cluster). Output: {cluster:{name,quorate}, "
                 "nodes:[{node,status,cpu,maxcpu,mem,maxmem,uptime}], "
@@ -1474,6 +1480,15 @@ async def cap_fw_rule_delete(cluster_id: str = "", scope: str = "guest",
 # ═════════════════════════════════════════════════════════════════════════════
 #  PANEL
 # ═════════════════════════════════════════════════════════════════════════════
+# the panel's cards as one element (the panel draws through it; the desk mounts it for a proxmox.status answer)
+@APP.get("/ui/elements/proxmox_status.js", include_in_schema=False)
+async def _proxmox_status_js():
+    from fastapi.responses import Response
+    p = _HERE / "proxmox_status_element.js"
+    return Response(p.read_text(encoding="utf-8") if p.exists() else "console.error('proxmox_status_element.js not found')",
+                    media_type="application/javascript")
+
+
 @APP.get("/proxmox/panel", include_in_schema=False)
 async def _proxmox_panel():
     p = _HERE / "proxmox_panel.html"

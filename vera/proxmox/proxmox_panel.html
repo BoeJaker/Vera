@@ -56,34 +56,7 @@ a{color:var(--ac)}
 .empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;height:100%;color:var(--t2);text-align:center;padding:24px}
 .empty h2{color:var(--t1);font-size:15px}
 
-.section-h{display:flex;align-items:center;gap:8px;margin:6px 2px 8px;color:var(--t2);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
-.section-h .count{color:var(--t3)}
-.section-h::after{content:"";flex:1;height:1px;background:var(--bd)}
-
-/* responsive card grid */
-.grid{display:grid;grid-template-columns:1fr;gap:10px;margin-bottom:18px}
-@media(min-width:560px){.grid{grid-template-columns:repeat(2,1fr)}}
-@media(min-width:920px){.grid{grid-template-columns:repeat(3,1fr)}}
-@media(min-width:1300px){.grid{grid-template-columns:repeat(4,1fr)}}
-
-.card{background:var(--s2);border:1px solid var(--bd);border-radius:9px;padding:12px;display:flex;flex-direction:column;gap:9px}
-.card .hd{display:flex;align-items:center;gap:8px}
-.card .hd .nm{font-weight:700;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.card .hd .sub{color:var(--t3);font-size:11px;margin-left:auto;white-space:nowrap}
-
-.pill{font-size:10px;padding:2px 8px;border-radius:20px;border:1px solid;white-space:nowrap;flex-shrink:0}
-.pill.run{color:var(--ok);border-color:var(--ok);background:rgba(94,201,160,.08)}
-.pill.stop{color:var(--t2);border-color:var(--t3)}
-.pill.warn{color:var(--warn);border-color:var(--warn)}
-
-.bar{height:7px;border-radius:4px;background:var(--s3);overflow:hidden}
-.bar>i{display:block;height:100%;border-radius:4px;background:var(--ac);transition:width .4s}
-.bar.hi>i{background:var(--err)}
-.bar.mid>i{background:var(--warn)}
-.metric{display:flex;flex-direction:column;gap:4px}
-.metric .lab{display:flex;justify-content:space-between;font-size:10.5px;color:var(--t2)}
-
-.guest-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+/* the node / temp / guest / storage cards: their look lives in <vera-proxmox-status> (proxmox_status_element.js) */
 
 /* ── Slide-over (settings / add cluster) ───────────────────────────────── */
 #scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:.18s;z-index:40}
@@ -185,7 +158,6 @@ let con = { term:null, fit:null, ws:null, rfb:null, deeplink:'' };
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const pct = (a,b) => b>0 ? Math.min(100, Math.round(a/b*100)) : 0;
 
 function toast(msg, isErr){
   const t=$('#toast'); t.textContent=msg; t.className='toast on'+(isErr?' err':'');
@@ -199,9 +171,6 @@ async function api(path, method='GET', body){
   if(!r.ok) throw new Error('HTTP '+r.status);
   return r.json();
 }
-function fmtBytes(n){ if(!n) return '0'; const u=['B','K','M','G','T']; let i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(n<10&&i>0?1:0)+u[i]; }
-function fmtUptime(s){ if(!s) return '—'; const d=Math.floor(s/86400),h=Math.floor(s%86400/3600); return d?`${d}d ${h}h`:`${h}h ${Math.floor(s%3600/60)}m`; }
-function barClass(p){ return p>=88?'bar hi':p>=65?'bar mid':'bar'; }
 
 /* ── Clusters ──────────────────────────────────────────────────────────── */
 async function loadClusters(){
@@ -235,93 +204,14 @@ async function refresh(){
   }catch(e){ toast('status failed: '+e.message,true); }
 }
 
+/* the cards are <vera-proxmox-status> (vera/proxmox/proxmox_status_element.js): this panel's own render(), moved once so the
+   desk draws a proxmox.status answer the same way. The panel keeps its timer, toasts, guest power and consoles: `actions`
+   draws the buttons, and they call guest() / openConsole() below as before. */
 function render(){
   if(!SNAP){ return; }
-  const c=SNAP.cluster||{};
-  const quor = c.quorate===true?'<span class="pill run">quorate</span>'
-             : c.quorate===false?'<span class="pill warn">no quorum</span>':'';
-  let h=`<div class="section-h">Nodes <span class="count">${SNAP.nodes.length}</span> ${quor} <span style="flex:0;color:var(--t3)">${esc(c.name||'')}</span></div><div class="grid">`;
-  SNAP.nodes.forEach(n=>{
-    const cp=pct(n.cpu*100,(n.maxcpu||1)*100)||Math.round((n.cpu||0)*100);
-    const mp=pct(n.mem,n.maxmem);
-    const up = n.status==='online';
-    h+=`<div class="card">
-      <div class="hd"><span class="nm">🖥 ${veraEstate.chip(veraEstate.refFor({node:n.node}), n.node)}</span>
-        <span class="pill ${up?'run':'stop'}">${esc(n.status||'?')}</span></div>
-      ${metric('CPU',Math.round((n.cpu||0)*100)+'%',Math.round((n.cpu||0)*100))}
-      ${metric('Mem',fmtBytes(n.mem)+' / '+fmtBytes(n.maxmem),mp)}
-      <div class="hd"><span class="sub" style="margin-left:0">up ${fmtUptime(n.uptime)}</span></div>
-    </div>`;
-  });
-  h+='</div>';
-
-  // Core temps (obs.node_temps — CPU/IPMI/drive sensors over SSH). Shown as
-  // its own section rather than fused into each node card above: PVE's node
-  // name and the SSH host registry's label aren't reliably the same string,
-  // so a per-node join would silently miss hosts as often as it'd match them.
-  const tempHosts = (TEMPS&&TEMPS.hosts||[]).filter(t=>Object.keys(t.temps||{}).length)
-    .sort((a,b)=>(b.max_c||0)-(a.max_c||0));
-  if(tempHosts.length){
-    h+=`<div class="section-h">Core Temps <span class="count">${tempHosts.length}</span></div><div class="grid">`;
-    tempHosts.forEach(t=>{
-      const sensors=Object.entries(t.temps).sort((a,b)=>b[1]-a[1]);
-      const top=sensors.slice(0,6);
-      const cls=t.max_c>=85?'stop':t.max_c>=70?'warn':'run';
-      h+=`<div class="card">
-        <div class="hd"><span class="nm">🌡 ${esc(t.label)}</span><span class="pill ${cls}">${t.max_c}°C max</span></div>
-        ${top.map(([name,val])=>metric(esc(name), val+'°C', Math.min(100,val))).join('')}
-        ${sensors.length>top.length?`<div class="sub" style="margin-top:4px;color:var(--t3)">+${sensors.length-top.length} more sensors</div>`:''}
-      </div>`;
-    });
-    h+='</div>';
-  }
-
-  const guests=SNAP.guests.filter(g=>!g.template);
-  h+=`<div class="section-h">Guests <span class="count">${guests.length}</span> · running ${SNAP.counts&&SNAP.counts.running||0}</div><div class="grid">`;
-  guests.forEach(g=>{
-    const run=g.status==='running';
-    const mp=pct(g.mem,g.maxmem);
-    h+=`<div class="card">
-      <div class="hd">
-        <span class="nm">${g.type==='lxc'?'📦':'🗔'} ${veraEstate.chip('guest:'+g.vmid, g.name||('vm'+g.vmid))}</span>
-        <span class="pill ${run?'run':'stop'}">${esc(g.status)}</span>
-      </div>
-      <div class="hd"><span class="sub" style="margin-left:0;color:var(--t2)">${g.type} · ${g.vmid} · ${esc(g.node)}</span></div>
-      ${run?metric('CPU',Math.round((g.cpu||0)*100)+'%',Math.round((g.cpu||0)*100)):''}
-      ${run?metric('Mem',fmtBytes(g.mem)+' / '+fmtBytes(g.maxmem),mp):''}
-      <div class="guest-actions">
-        ${run
-          ? `<button class="btn sm" onclick="guest('${g.node}','${g.type}',${g.vmid},'shutdown')">Shutdown</button>
-             <button class="btn sm danger" onclick="guest('${g.node}','${g.type}',${g.vmid},'stop')">Stop</button>
-             <button class="btn sm gho" onclick="guest('${g.node}','${g.type}',${g.vmid},'reboot')">Reboot</button>`
-          : `<button class="btn sm pri" onclick="guest('${g.node}','${g.type}',${g.vmid},'start')">Start</button>`}
-      </div>
-      <div class="guest-actions">
-        <button class="btn sm" ${run?'':'disabled'} onclick="openConsole('${g.node}','${g.type}',${g.vmid},'term','${esc(g.name||g.vmid)}')">⌨ Terminal</button>
-        <button class="btn sm" ${run?'':'disabled'} onclick="openConsole('${g.node}','${g.type}',${g.vmid},'vnc','${esc(g.name||g.vmid)}')">🖵 Desktop</button>
-      </div>
-    </div>`;
-  });
-  h+='</div>';
-
-  if(SNAP.storage&&SNAP.storage.length){
-    const seen=new Set();
-    h+=`<div class="section-h">Storage</div><div class="grid">`;
-    SNAP.storage.forEach(s=>{
-      const key=s.storage+'@'+s.node; if(seen.has(s.storage))return; seen.add(s.storage);
-      const dp=pct(s.disk,s.maxdisk);
-      h+=`<div class="card"><div class="hd"><span class="nm">💾 ${esc(s.storage)}</span>
-        <span class="pill ${s.status==='available'?'run':'stop'}">${esc(s.status||'')}</span></div>
-        ${metric('Used',fmtBytes(s.disk)+' / '+fmtBytes(s.maxdisk),dp)}</div>`;
-    });
-    h+='</div>';
-  }
-  $('#content').innerHTML=h;
-}
-
-function metric(lab,val,p){
-  return `<div class="metric"><div class="lab"><span>${lab}</span><span>${esc(val)}</span></div>
-    <div class="${barClass(p)}"><i style="width:${Math.max(2,p)}%"></i></div></div>`;
+  let el=$('#content vera-proxmox-status');
+  if(!el){ el=document.createElement('vera-proxmox-status'); el.setAttribute('refresh','0'); el.setAttribute('actions',''); $('#content').innerHTML=''; $('#content').appendChild(el); }
+  el.seed({status:SNAP, temps:TEMPS});
 }
 
 const POWER_VERB={start:'Start',stop:'Stop (power off, no shutdown)',shutdown:'Shut down',reboot:'Reboot',suspend:'Suspend',resume:'Resume'};
@@ -484,5 +374,6 @@ boot();
 <script src="/ui/vera-ui.js"></script>
 <script src="/ui/vera-estate.js"></script>
 <script src="/ui/vera-entity-drawer.js"></script>
+<script src="/ui/elements/proxmox_status.js"></script>
 </body>
 </html>

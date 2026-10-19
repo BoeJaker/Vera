@@ -80,8 +80,11 @@ def test_connections_enrol_and_the_graph_open_the_machine():
 
 def test_the_proxmox_panel_cards_open_the_machine():
     p = read("vera", "proxmox", "proxmox_panel.html")
-    assert "veraEstate.chip(veraEstate.refFor({node:n.node}), n.node)" in p
-    assert "veraEstate.chip('guest:'+g.vmid, g.name||('vm'+g.vmid))" in p
+    # the cards are <vera-proxmox-status> since Wave 1 of the desk output redesign: the panel draws through it
+    e = read("vera", "proxmox", "proxmox_status_element.js")
+    assert "el=document.createElement('vera-proxmox-status')" in p and '<script src="/ui/elements/proxmox_status.js"></script>' in p
+    assert "veraEstate.chip(veraEstate.refFor({node:n.node}), n.node)" in e
+    assert "veraEstate.chip('guest:'+g.vmid, g.name||('vm'+g.vmid))" in e
     assert "await veraEstate.machines()" in p, "the list is loaded before the cards draw"
     assert EST in p and DRW in p
 
