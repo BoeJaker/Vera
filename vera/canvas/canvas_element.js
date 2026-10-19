@@ -627,6 +627,19 @@
     ui.i = ((ui.i || 0) + d + ms.length) % ms.length; ms.forEach((m, k) => m.classList.toggle('cur', k === ui.i)); mdShow(ms[ui.i]);
     const n = wrap.querySelector('.vc-mdn'); if (n) n.textContent = (ui.i + 1) + ' of ' + ms.length;
   }
+  /* DO-6 - the record a widget item carries (the widget body's rule: the content itself when it has a form or a draw block,
+     else content.record), and the main dashboard's inbox: the dashboard is another frame, so the record waits in
+     localStorage vera.dash.main.inbox and the dashboard lands it as a tile when it is open (a storage event) or next opens */
+  function recordOfItem(c) {
+    const isRec = (x) => !!(x && typeof x === 'object' && (x.draw || (typeof x.form === 'string' && x.form)));
+    return isRec(c) ? c : (c && isRec(c.record) ? Object.assign({}, c.record, c.title ? { title: c.title } : {}) : null);
+  }
+  function toDashInbox(rec, from) {
+    if (!rec || typeof localStorage === 'undefined') return false; const K = 'vera.dash.main.inbox';
+    let list; try { list = JSON.parse(localStorage.getItem(K) || '[]'); } catch (e) { list = []; } if (!Array.isArray(list)) list = [];
+    list.push({ record: rec, from: Object.assign({ desk: true }, from || {}), at: Date.now() });
+    try { localStorage.setItem(K, JSON.stringify(list.slice(-20))); return true; } catch (e) { return false; }
+  }
   /* A SCRIPT CARRIED AS BASE64 (D14-F2, the 18 Oct live loop): a loop writes a file as `echo <base64> | base64 -d > f.py && python3
      f.py`, and the card showed the blob. The blob folds to a mark in the command and the script it carries is shown decoded under
      it. Only printable UTF-8 text counts as a script; anything else stays as it was. */
@@ -4681,6 +4694,9 @@
               return `<button class="ib${on ? ' on' : ''}" data-act="dive" data-dive="${esc(d.id)}" data-dive-model="1" data-layer-key="${k}" title="${esc(on ? 'Close ' + d.label.toLowerCase() : d.label + ' ' + d.of + ' - ' + d.note + ', run now (' + d.cap + '), beside it')}">${esc(d.label)} <span class="vc-dim">· model</span></button>`; }).join('') : ''; },
       };
       let h = VI.menu(b.type, { source: src }, o).map((id) => (R[id] ? R[id]() : '')).join('');
+      /* DO-6 - SEND TO DASHBOARD (owner yes, 19 Oct): a widget that carries a record goes onto the Dashboard as a tile of the same
+         record - it reads its source there. After the standard entries (VeraItem's MENU_ALL is pinned by test_element_registry) */
+      if (b.type === 'widget' && recordOfItem(b.content)) h += '<hr>' + row('todash', 'Send to dashboard', 'A tile of this on the Dashboard - the same record, reading its source there');
       /* the body's own: what it declared as it was drawn, or the kit's actions for its card - never one the menu has above */
       const SKIP_VO = new Set(['explode', 'canvas']);
       const own = (kk, host, lead) => { const d = (this._decl && this._decl[kk]) || {}; const kb = kk === key ? b : (this._blockOf(kk) || {}); const da = declActs(kb.type, d); let o = '';
@@ -7456,6 +7472,8 @@
         else { if (act === 'cmpsep') { this._histPush('cmpsep', key); this._joinSet(key, null); } else this._histBack('cmpjoin', key); this._sepSet(key, act === 'cmpsep'); }
         this._html = null; if (this._doc) this.render(this._doc); else this._placeNow(); return; }
       if (act === 'hdmore') return this._hdMenu(key, btn);
+      if (act === 'todash') { const ok = toDashInbox(recordOfItem((this._blockOf(key) || {}).content), { canvas: this.canvasId || '', key });
+        if (btn) { btn.textContent = ok ? '✓ on the dashboard' : 'could not reach the dashboard'; setTimeout(() => { const p = btn.closest && btn.closest('.hd-pop'); if (p) p.remove(); }, 900); } return; }
       /* a command that ran (DU-E-session): run again - asked first, in place; then the same capability with the same
          arguments, its answer written into this item (output, exit code, when) */
       /* a diagram's source edited beside its drawing (DU-E-diagram): open, Save (the one write), Cancel / Esc (no write) */

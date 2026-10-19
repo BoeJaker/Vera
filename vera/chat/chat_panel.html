@@ -9359,6 +9359,20 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
   // that launched it, added on its first event and kept current from the same stream the loop card and the graph
   // column read — the run's steps as they happen, each the capability it ran. The loop itself can write items
   // with the same caps (canvas.add · update · pin · park) as any run does.
+  /* DO-6 - OPEN ON DESK (a Dashboard tile's ⋯; owner yes, 19 Oct): the tile's record waits in localStorage vera.desk.inbox
+     (the dashboard is another frame) and lands here as a widget item of the same record on this session's desk - now, when
+     another frame writes it, or when a session loads. Only the frame with the desk column takes it, so it lands once. */
+  const _DESK_INBOX='vera.desk.inbox';
+  function _deskInboxDrain(){
+    if(!SID||!document.getElementById('canvasColumnBody')) return;
+    let list; try{ list=JSON.parse(localStorage.getItem(_DESK_INBOX)||'[]'); }catch(_){ list=[]; }
+    if(!Array.isArray(list)||!list.length) return;
+    try{ localStorage.removeItem(_DESK_INBOX); }catch(_){ return; }
+    list.forEach(x=>{ if(!x||!x.content||!x.content.record||typeof x.content.record!=='object') return;
+      const key='dash:'+String((x.source&&x.source.wid)||'tile').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,60)+':'+String(x.at||Date.now());
+      Promise.resolve(_capCall('canvas.add',{session_id:SID, kind:'widget', key, content:x.content, at:'now', size:'m'})).catch(()=>{}); });
+  }
+  window.addEventListener('storage', e=>{ if(e.key===_DESK_INBOX&&e.newValue) _deskInboxDrain(); });
   const _LOOP_RUNS={}, _loopCanvasT={}; let _loopCanvasMid='';
   function _loopCanvasEv(ev){
     if(!ev||typeof ev!=='object'||!SID) return;
@@ -18205,6 +18219,7 @@ pickerSources:async()=>{ const GL={context_graph:'◎',trace:'∿',radial:'◔',
 
   async function loadSession(sid){
     SID=sid;window._veraSessionId=sid;window._chatSessionId=sid;
+    setTimeout(()=>{ try{ _deskInboxDrain(); }catch(_){} }, 1500);   /* DO-6: a tile sent from the Dashboard while no desk was open */
     /* The two instances on the board are one chat. A session picked in the MENU instance (the history list lives
        there, the transcript does not) has to reach the CHAT instance, or the menu loads it into itself and the
        conversation never changes; and a reload should come back to the session that was picked. The chat
