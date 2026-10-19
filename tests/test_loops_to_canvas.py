@@ -31,7 +31,8 @@ def test_the_chat_puts_every_loop_on_the_session_canvas_and_keeps_it_current():
     tee = _fn("_ctxColLoopEv")
     assert "_ctxCol.appendLoopEvent(ev);" in tee and "try{ _loopCanvasEv(ev); }catch(_){}" in tee, "the same stream the loop card and the graph column read"
     ev = _fn("_loopCanvasEv")
-    assert "const rid=String(ev.run_id||ev.stream_id||ev.session_id||'run').slice(0,80);" in ev and "key:'loop:'+rid" in ev
+    # one run, one item: the loop's session names it on every event, its stream only on some (by stream first, one run became two)
+    assert "const rid=String(ev.run_id||ev.session_id||ev.stream_id||'run').slice(0,80);" in ev and "key:'loop:'+rid" in ev
     assert "R.status=(ev.ok===false||/error|failed|cancelled/.test(t))?'fail':'ok';" in ev
     assert "_loopCanvasT[rid]=setTimeout(()=>_loopCanvasFlush(rid), R.added?1500:50);" in ev, "added on the first event, then debounced updates"
     fl = _fn("_loopCanvasFlush")
