@@ -1013,6 +1013,13 @@ if _CAP_AVAILABLE:
             except asyncio.TimeoutError:
                 pass
 
+    # the panel's node list + transports bar as one element (the panel draws through it; the desk mounts it for mesh.nodes)
+    @APP.get("/ui/elements/mesh_nodes.js", include_in_schema=False)
+    async def _mesh_nodes_js():
+        p = _HERE / "mesh_nodes_element.js"
+        return Response(p.read_text(encoding="utf-8") if p.exists() else "console.error('mesh_nodes_element.js not found')",
+                        media_type="application/javascript")
+
     @APP.get("/mesh/panel", include_in_schema=False)
     async def _mesh_panel_route():
         p = _HERE / "mesh_panel.html"
@@ -1320,7 +1327,9 @@ if _CAP_AVAILABLE:
 
     @capability(
         "mesh.nodes", http_method="GET", http_path="/mesh/nodes",
-        contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "nodes"}, "draw": {"columns": ["name", "node_id", "status", "role", "board", "fw_version", "ip", "rssi", "last_seen"]}, "empty": "No mesh nodes registered"}},
+        # the Mesh panel's node list + transports bar on the desk - <vera-mesh-nodes>, seeded with the answer (Wave 1: panel-derived;
+        # display only, the panel keeps choosing a node); `detail` adds board / firmware / address / signal; the table stays a view
+        contract={"presentation": {"kind": "table", "form": "element", "map": {"rows": "nodes"}, "draw": {"tag": "vera-mesh-nodes", "attrs": {"detail": "1", "empty": "No mesh nodes registered"}, "columns": ["name", "node_id", "status", "role", "board", "fw_version", "ip", "rssi", "last_seen"]}, "empty": "No mesh nodes registered"}},
         http_tags=["mesh"], memory="off", silent=True,
         description="List all mesh nodes with computed status, modules, transports and "
                     "latest telemetry. Output: {nodes:[...], count, transports}.",

@@ -1,0 +1,180 @@
+{
+ "source": "vera/mesh/mesh_panel.html renderList() + renderTransports() at 0ebf4359",
+ "now": 1792436400000,
+ "cases": [
+  {
+   "nodes": [
+    {
+     "node_id": "esp-a1",
+     "name": "Kitchen <display>",
+     "role": "display",
+     "status": "online",
+     "last_seen": "2026-10-19T18:59:40Z",
+     "modules": {
+      "tft": {},
+      "bme280": {},
+      "pir": {},
+      "relay": {},
+      "sd": {}
+     },
+     "channels": [
+      "ws",
+      "http"
+     ],
+     "board": "esp32-s3",
+     "fw_version": "1.4.2",
+     "ip": "192.168.0.61",
+     "rssi": -58
+    },
+    {
+     "node_id": "esp-b2",
+     "name": "",
+     "role": "sensor",
+     "status": "stale",
+     "last_seen": "2026-10-19T18:20:00Z",
+     "modules": {},
+     "channels": [],
+     "board": "esp32",
+     "fw_version": "1.3.0",
+     "ip": "",
+     "rssi": null
+    },
+    {
+     "node_id": "esp-c3",
+     "name": "Garage",
+     "role": "relay",
+     "status": "offline",
+     "last_seen": "2026-10-16T07:00:00Z",
+     "modules": {
+      "relay": {}
+     },
+     "channels": [
+      "mqtt"
+     ],
+     "board": null,
+     "fw_version": null,
+     "ip": "10.0.0.9",
+     "rssi": -81
+    },
+    {
+     "node_id": "esp-d4",
+     "name": "New board",
+     "role": "",
+     "status": "new",
+     "last_seen": null,
+     "modules": {
+      "cam": {}
+     },
+     "channels": [
+      "serial"
+     ]
+    }
+   ],
+   "transports": {
+    "http": true,
+    "ws": true,
+    "mqtt": false,
+    "serial": true
+   },
+   "q": "",
+   "sel": "esp-a1"
+  },
+  {
+   "nodes": [
+    {
+     "node_id": "esp-a1",
+     "name": "Kitchen <display>",
+     "role": "display",
+     "status": "online",
+     "last_seen": "2026-10-19T18:59:40Z",
+     "modules": {
+      "tft": {},
+      "bme280": {},
+      "pir": {},
+      "relay": {},
+      "sd": {}
+     },
+     "channels": [
+      "ws",
+      "http"
+     ],
+     "board": "esp32-s3",
+     "fw_version": "1.4.2",
+     "ip": "192.168.0.61",
+     "rssi": -58
+    },
+    {
+     "node_id": "esp-b2",
+     "name": "",
+     "role": "sensor",
+     "status": "stale",
+     "last_seen": "2026-10-19T18:20:00Z",
+     "modules": {},
+     "channels": [],
+     "board": "esp32",
+     "fw_version": "1.3.0",
+     "ip": "",
+     "rssi": null
+    },
+    {
+     "node_id": "esp-c3",
+     "name": "Garage",
+     "role": "relay",
+     "status": "offline",
+     "last_seen": "2026-10-16T07:00:00Z",
+     "modules": {
+      "relay": {}
+     },
+     "channels": [
+      "mqtt"
+     ],
+     "board": null,
+     "fw_version": null,
+     "ip": "10.0.0.9",
+     "rssi": -81
+    },
+    {
+     "node_id": "esp-d4",
+     "name": "New board",
+     "role": "",
+     "status": "new",
+     "last_seen": null,
+     "modules": {
+      "cam": {}
+     },
+     "channels": [
+      "serial"
+     ]
+    }
+   ],
+   "transports": {
+    "http": true,
+    "ws": true,
+    "mqtt": true,
+    "serial": false
+   },
+   "q": "relay",
+   "sel": null
+  },
+  {
+   "nodes": [],
+   "transports": {},
+   "q": "",
+   "sel": null
+  }
+ ],
+ "html": [
+  {
+   "list": "<div class=\"nitem sel\" onclick=\"loadNode('esp-a1')\">\n      <div class=\"nt\"><span class=\"nm\"><i class=\"dot online\"></i> Kitchen &lt;display&gt;</span>\n        <span class=\"muted\">20s</span></div>\n      <div style=\"margin-top:3px\"><span class=\"pill mod\">tft</span><span class=\"pill mod\">bme280</span><span class=\"pill mod\">pir</span><span class=\"pill mod\">relay</span><span class=\"pill\">ws/http</span></div>\n    </div><div class=\"nitem \" onclick=\"loadNode('esp-b2')\">\n      <div class=\"nt\"><span class=\"nm\"><i class=\"dot stale\"></i> esp-b2</span>\n        <span class=\"muted\">40m</span></div>\n      <div style=\"margin-top:3px\"><span class=\"pill\">—</span></div>\n    </div><div class=\"nitem \" onclick=\"loadNode('esp-c3')\">\n      <div class=\"nt\"><span class=\"nm\"><i class=\"dot offline\"></i> Garage</span>\n        <span class=\"muted\">4d</span></div>\n      <div style=\"margin-top:3px\"><span class=\"pill mod\">relay</span><span class=\"pill\">mqtt</span></div>\n    </div><div class=\"nitem \" onclick=\"loadNode('esp-d4')\">\n      <div class=\"nt\"><span class=\"nm\"><i class=\"dot new\"></i> New board</span>\n        <span class=\"muted\">—</span></div>\n      <div style=\"margin-top:3px\"><span class=\"pill mod\">cam</span><span class=\"pill\">serial</span></div>\n    </div>",
+   "tx": "<span class=\"chip on\" title=\"available\">HTTP</span><span class=\"chip on\" title=\"available\">WebSocket</span><span class=\"chip off\" title=\"not configured\">MQTT</span><span class=\"chip on\" title=\"available\">Serial</span>"
+  },
+  {
+   "list": "<div class=\"nitem \" onclick=\"loadNode('esp-c3')\">\n      <div class=\"nt\"><span class=\"nm\"><i class=\"dot offline\"></i> Garage</span>\n        <span class=\"muted\">4d</span></div>\n      <div style=\"margin-top:3px\"><span class=\"pill mod\">relay</span><span class=\"pill\">mqtt</span></div>\n    </div>",
+   "tx": "<span class=\"chip on\" title=\"available\">HTTP</span><span class=\"chip on\" title=\"available\">WebSocket</span><span class=\"chip on\" title=\"available\">MQTT</span><span class=\"chip off\" title=\"not configured\">Serial</span>"
+  },
+  {
+   "list": "<span class=\"muted\">No nodes yet — onboard one above.</span>",
+   "tx": "<span class=\"chip off\" title=\"not configured\">HTTP</span><span class=\"chip off\" title=\"not configured\">WebSocket</span><span class=\"chip off\" title=\"not configured\">MQTT</span><span class=\"chip off\" title=\"not configured\">Serial</span>"
+  }
+ ]
+}
