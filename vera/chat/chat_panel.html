@@ -9394,7 +9394,12 @@ case 'share': if(x.key&&kind==='terminal') return _cvItemAct(x.key,'tshare'); br
     try{ return JSON.parse(s.slice(0,cut)+close); }catch(_){ return null; }
   }
   function _loopPreviewValue(p){
-    p=String(p||''); let v=null; try{ v=JSON.parse(p); }catch(_){ v=_jsonPrefix(p); }
+    p=String(p||'');
+    /* A BIG ANSWER REACHES THE LOOP AS ITS DIGEST (D14-F1, the 18 Oct live loop): "[STRUCTURED DATA - NOT summarised ... parse the
+       SAVED FILE ...]" then "Sample (first items): <the answer's JSON, cut>" (dag_workshop_capabilities). The instruction is for
+       the model; the data is the sample, read as any cut JSON is. */
+    const dg=/^\[STRUCTURED DATA[^\]]*\]\s*Sample \(first items\):\s*/.exec(p); if(dg) p=p.slice(dg[0].length);
+    let v=null; try{ v=JSON.parse(p); }catch(_){ v=_jsonPrefix(p); }
     if(v&&typeof v==='object') return v;
     const t=p.replace(/^[^\n]*\bwrote\b[^\n]*(act on it:|IN FULL[^\n]*)\s*/i,'').trim();
     return t.length>=20?t:null;
