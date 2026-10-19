@@ -94,7 +94,7 @@ def test_swarm_ticks_do_not_stack(src):
 
 
 def test_navigating_to_swarm_starts_the_poller(src):
-    assert "agents:agentsPoll" in src and "swarm:()=>nav('agents')" in src
+    assert "agents:()=>{agentsPoll();agbKit()}" in src and "swarm:()=>nav('agents')" in src
 
 
 # ── runs says what it is, and can be sifted ─────────────────────────────────

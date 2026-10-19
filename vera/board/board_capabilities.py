@@ -26,7 +26,13 @@ try:
 except Exception:                       # worktree / app-free import
     from vera.board import contacts_core as cc
 import json as _json
+import time
+from datetime import datetime, timezone
 import Vera.vera.capability_orchestration as _orch
+try:
+    from Vera.vera.board import board_flow_core as bfc
+except Exception:                       # worktree / app-free import
+    from vera.board import board_flow_core as bfc
 
 # agent identity -> {session_name, tool, units, note, last_seen}: who to message about an item
 CONTACTS_KEY = "vera:agents:contacts"
@@ -169,10 +175,47 @@ _INDEX_DATASET = "board_index"
 _PROVIDER: Optional[bc.FileBoardProvider] = None
 
 
+#: looplab-control §9.4 S8 (19 Oct 2026): every lane change, so the board's flow and cycle time can be read
+#: (board.flow). The board kept only created_at / updated_at before. A capped stream of {id, frm, to, by, at}.
+MOVES_KEY = "vera:board:moves"
+MOVES_MAXLEN = 50000
+
+
+async def _record_move(item_id: str, frm: str, to: str, by: str = "") -> None:
+    """Add one lane change to the record. Never raises: the move itself has happened."""
+    r = _orch.REDIS
+    if r is None or not item_id or (frm or "") == (to or ""):
+        return
+    try:
+        await r.xadd(MOVES_KEY, {"id": item_id, "frm": frm or "", "to": to or "", "by": by or "",
+                                 "at": datetime.now(timezone.utc).isoformat()},
+                     maxlen=MOVES_MAXLEN, approximate=True)
+    except Exception as e:
+        log.debug("board move record: %s", e)
+
+
+class _RecordingProvider(bc.FileBoardProvider):
+    """The file board, with every lane change recorded - a move, an upsert that changes the lane (board.sync,
+    dispatch), and a new item (from "" to its lane)."""
+
+    async def move(self, item_id: str, lane: str) -> bc.BoardItem:
+        old = await self.get(item_id)
+        it = await super().move(item_id, lane)
+        await _record_move(item_id, old.lane if old else "", lane)
+        return it
+
+    async def upsert(self, item: bc.BoardItem) -> bc.BoardItem:
+        old = await self.get(item.id) if item.id else None
+        saved = await super().upsert(item)
+        if old is None or old.lane != saved.lane:
+            await _record_move(saved.id, old.lane if old else "", saved.lane)
+        return saved
+
+
 def provider() -> bc.FileBoardProvider:
     global _PROVIDER
     if _PROVIDER is None:
-        _PROVIDER = bc.FileBoardProvider()   # → state_paths.board_dir() (out of tree)
+        _PROVIDER = _RecordingProvider()     # → state_paths.board_dir() (out of tree)
     return _PROVIDER
 
 
@@ -238,6 +281,34 @@ if True:  # capability registration (mirrors the guard style of the other module
         items = await provider().items(q)
         return {"ok": True, "items": [_item_dict(i) for i in items], "count": len(items),
                 "provider": provider().name}
+
+    @capability(
+        "board.flow", http_method="GET", http_path="/board/flow",
+        http_tags=["board"], memory="off", silent=True,
+        description="The board's flow over the last `days` (default 30): cells (unit x lane: n), days (created, "
+                    "done, moved per day), cycle (per unit: done, p50_h / p90_h created -> done, basis moves|approx|"
+                    "mixed), wip (per unit: open, oldest_h, median_h), lane_time (per lane: p50_h / p90_h spent "
+                    "there), moves (the recorded lane changes in the window, with titles), moves_recorded, "
+                    "moves_since. A unit is the item's unit:<name> label, else its plan. Lane changes are recorded "
+                    "from 19 Oct 2026 (vera:board:moves); before that a done item's finish is its updated_at "
+                    "(basis approx).",
+    )
+    async def cap_board_flow(days: int = 30, trace_id=None) -> dict:
+        items = [_item_dict(i) for i in await provider().items(bc.BoardQuery())]
+        moves = []
+        r = _orch.REDIS
+        if r is not None:
+            try:
+                moves = bfc.parse_moves(await r.xrange(MOVES_KEY, count=MOVES_MAXLEN))
+            except Exception as e:
+                log.debug("board.flow moves: %s", e)
+        out = bfc.flow(items, moves, time.time(), int(days or 30))
+        titles = {i["id"]: i.get("title") or "" for i in items}
+        for m in out["moves"]:
+            m["title"] = titles.get(m["id"], "")
+        out.update(ok=True, items=len(items), window_days=int(days or 30),
+                   source="board.items + " + MOVES_KEY)
+        return out
 
     @capability(
         "board.item.get", http_method="GET", http_path="/board/item",

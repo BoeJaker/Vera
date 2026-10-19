@@ -64,7 +64,7 @@ def test_every_rail_button_calls_nav_plainly(src):
 
 def test_the_old_pages_still_route_to_the_table_that_holds_their_data(src):
     nav = _fn(src, "nav")
-    assert "agents:agentsPoll," in nav
+    assert "agents:()=>{agentsPoll();agbKit()}," in nav
     for old in ("csessions", "swarm"):
         assert "%s:()=>nav('agents')" % old in nav, old
     assert "board:()=>{nav('agents');setAgentsMode('items')}" in nav, "the Board is the items mode of the table"
@@ -84,8 +84,8 @@ def test_nothing_on_the_page_is_folded(src):
     assert "<details" not in ag and 'class="fold"' not in ag
     assert ".fold{" not in src and ".fold>" not in src, "the fold CSS went with the last fold"
     cards = re.findall(r'<div class="card"(?: id="([a-z-]+)")?>', ag)
-    assert cards == ["agents-card", "board-lanes-card", ""], \
-        "the Agents page is its table's card, the board by lane, and the edit queue's grid: %r" % cards
+    assert cards == ["agb-card", "agents-card", "board-lanes-card", ""], \
+        "the Agents page is the kit's card (S8), its table's card, the board by lane, and the edit queue's grid: %r" % cards
     for gone in ("board-body", "board-new", "board-status", "board-fltrepo", "board-fltproj", "board-fltbranch", "cap-new"):
         assert 'id="%s"' % gone not in src, "the fold-era board view and forms are gone: #%s" % gone
 

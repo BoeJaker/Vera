@@ -438,6 +438,27 @@ html.vpb-nav-hosted body{padding-left:0}
      What the Swarm counted is the strip of pills above the table; the board's lanes
      view, the notes editor and the seats card fold up under it. -->
 <div class="sec" id="sec-agents" style="display:none">
+  <!-- S8 on the kit (looplab-control §9.4: "sessions by day, the board as units x lanes with live links, lifecycle,
+       flow, cycle time"): THE timeline (sessions on the day they were last active, items created and done a day, lane
+       moves), THE matrix units x lanes, cycle time, time in each lane and open work's age per unit - all from
+       board.flow and evolve.agents.rows. The table, the lanes and the edit queue below keep every control. -->
+  <div class="card" id="agb-card">
+    <div class="card-h"><span class="card-t">Agents &amp; board at a glance</span>
+      <span class="hint" id="agb-hint">&hellip;</span>
+      <span style="flex:1"></span>
+      <select id="agb-days" onchange="agbKit()" title="the window"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select>
+    </div>
+    <div id="agb-tl-host"></div>
+    <div class="hint" style="margin:8px 0 4px">units &times; lanes &middot; the most open work first &middot; an open lane goes from green (a few) to red (piled up); done and dropped are one colour, and a row&rsquo;s % is how much of it is finished &middot; a cell opens its items</div>
+    <div id="agb-mx" style="max-height:440px;overflow:auto"></div>
+    <div class="kp-two" style="margin-top:8px">
+      <div><div class="hint" style="margin-bottom:4px">cycle time per unit &middot; created &rarr; done, finished in the window</div><div id="agb-cycle"></div></div>
+      <div><div class="hint" style="margin-bottom:4px">time in each lane &middot; from the recorded lane moves</div><div id="agb-lanetime"></div></div>
+    </div>
+    <div class="hint" style="margin:8px 0 4px">open work per unit &middot; the oldest first</div>
+    <div id="agb-wip"></div>
+    <vera-drill class="olv-drill" id="agb-drill" url></vera-drill>
+  </div>
   <div class="card" id="agents-card">
     <div class="card-h"><span class="card-t">Agents</span><div class="seg" id="agents-mode" style="margin-left:10px"><button class="on" data-mode="sessions" onclick="setAgentsMode('sessions')" title="every agent session - Claude Code, Codex, a Vera loop, an edit-queue agent - with its items, pipelines and sandboxes">sessions</button><button data-mode="items" onclick="setAgentsMode('items')" title="every board item, live lanes first, naming its session">board items</button></div>
       <span class="hint" id="agents-status">&hellip;</span>
@@ -1270,7 +1291,7 @@ function scChip(v){return '<span class="sc" style="color:'+scColor(v)+';backgrou
 function nav(sec){
   document.querySelectorAll('#nav .btn').forEach(b=>b.classList.toggle('on',b.dataset.sec===sec));
   document.querySelectorAll('.sec').forEach(s=>s.style.display=s.id==='sec-'+sec?'':'none');
-  const f={overview:loadOverviewPage,compare:loadComparePage,work:loadWork,ship:loadShip,agents:agentsPoll,mission:missionPoll,
+  const f={overview:loadOverviewPage,compare:loadComparePage,work:loadWork,ship:loadShip,agents:()=>{agentsPoll();agbKit()},mission:missionPoll,
     tests:loadTestsPage,
     // Pages Mission control absorbed (slice 7): the compose form is a modal,
     // the theatres the live panel, the rest its table.
@@ -5334,6 +5355,109 @@ function renderBoardLanes(){
     h+='</div>';
   }
   el.innerHTML=h||'<div class="empty">No items match the filter.</div>';
+}
+/* ═══ AGENTS + BOARD on the kit (looplab-control §9.4 S8) ═══ */
+// Reads: board.flow (units x lanes, created / done a day, cycle time, open work's age, time in each lane - lane moves
+// are recorded from 19 Oct 2026, before that a finish is the item's updated_at and says "approx"), evolve.agents.rows
+// (each session on the day it was last active). Controls stay in the table and the record below (owner 10 Oct).
+let _agbFlow=null,_agbItems=[];
+const AGB_LANE_ORDER=['inbox','ready','queued_vera','in_progress','in_progress_vera','blocked','needs_review','review','done','dropped'];
+const AGB_AGENT={claude:'#e0a458',codex:'#7aa2f7',vera:'#f472b6',editor:'#b070d0'};
+function _agbUnit(i){
+  const u=(i.labels||[]).find(l=>String(l).indexOf('unit:')===0);if(u)return u.slice(5)||'(no unit)';
+  const p=String(i.plan||'').replace(/^\/+|\/+$/g,'');if(!p)return '(no unit)';
+  const parts=p.split('/').filter(x=>x&&x!=='shared-planning');
+  const n=parts.length>=2&&parts[parts.length-1].indexOf('.')>=0?parts[parts.length-2]:(parts[parts.length-1]||p).replace(/\.[^.]*$/,'');
+  const m=/^(unit|plan)-(.+)$/.exec(n);return m?m[2]:n;     // board_flow_core.unit_of
+}
+function _agbH(h){return h==null?'–':(h<48?h.toFixed(1)+' h':(h/24).toFixed(1)+' d')}
+async function agbKit(){
+  try{await Promise.all([_olvScript(),_olvLib('vera-matrix.js',()=>window.VeraMatrix&&customElements.get('vera-matrix'))])}catch(e){return}
+  const days=+(($('agb-days')||{}).value||30);
+  const f=await VeraDrill.call('board.flow',{days}).catch(e=>({error:e.message}));
+  if(!f||f.error){$('agb-mx').innerHTML=VeraStates.html('error','could not read board.flow'+(f&&f.error?' - '+f.error:''));return}
+  _agbFlow=f;_agbKinds();agbTimeline(days);agbMatrix();agbCycle();agbWip();
+  // the drills read the page's one call (_agItems); until it lands they read the board themselves
+  if(!_agItems.length){const b=await api('/board/items').catch(()=>null);_agbItems=(b&&b.items)||[]}
+  $('agb-hint').innerHTML=esc(f.items+' items · '+(f.units||[]).length+' units · lane moves recorded: '+f.moves_recorded+(f.moves_since?' since '+f.moves_since:' (recording from this release on)'))+' · <code>board.flow</code>';
+}
+function agbTimeline(days){
+  const bf={cap:'board.flow',args:{days}};
+  const lanes=[
+    {lane:'agb.sessions',label:'Sessions (last active)',group:'Agents',type:'chip',color:'#e0a458',live:300,source:{cap:'evolve.agents.rows',args:{mode:'sessions',limit:500}},map:{items:'sessions',t:'last_activity',id:'id',tip:'{agent} · {title} · {state}',color:{field:'agent',map:AGB_AGENT,else:'#8a8a8a'}}},
+    {lane:'agb.created',label:'Items created a day',group:'Board',type:'strip',color:'#7aa2f7',live:300,source:bf,map:{items:'days',t:'day',value:'created',tip:'{day} · {created} created',color:'#7aa2f7'}},
+    {lane:'agb.done',label:'Items done a day',group:'Board',type:'strip',color:'#3fae6c',live:300,source:bf,map:{items:'days',t:'day',value:'done',tip:'{day} · {done} done',color:'#3fae6c'}},
+    {lane:'agb.moves',label:'Lane moves',group:'Board',type:'mark',color:'#a78bfa',live:120,source:bf,map:{items:'moves',t:'at',id:'id',tip:'{title} · {frm} → {to} {by}',color:{field:'to',map:_LANE_COLOR,else:'#a78bfa'}}},
+  ];
+  lanes.forEach(s=>VeraTimeline.registerLane(s));
+  let tl=$('agb-tl');
+  if(!tl){$('agb-tl-host').innerHTML='<vera-timeline id="agb-tl"></vera-timeline>';tl=$('agb-tl');
+    tl.addEventListener('timeline:select',e=>{const it=e.detail.item||{},lane=(e.detail.lane&&e.detail.lane.lane)||e.detail.lane;
+      if(lane==='agb.sessions'&&it.id){if(_agMode!=='sessions')setAgentsMode('sessions');const q=$('ag-q');if(q){q.value=it.id;agentsOnChange()}$('agents-card').scrollIntoView({behavior:'smooth'})}
+      else if(it.id&&it.to)$('agb-drill').open('board-item-moves',it.id,{root:true})})}
+  tl.setAttribute('from','-'+days+'d');tl.setAttribute('to','+6h');tl.setAttribute('lanes',lanes.map(s=>s.lane).join(','));
+}
+function agbMatrix(){
+  const order={};AGB_LANE_ORDER.forEach((l,i)=>order[l]=i);
+  const open=(_agbFlow.cells||[]).filter(c=>c.lane!=='done'&&c.lane!=='dropped').map(c=>c.n);
+  // rows come in the order first seen: put the units with the most open work first
+  const openOf={};(_agbFlow.cells||[]).forEach(c=>{if(c.lane!=='done'&&c.lane!=='dropped')openOf[c.unit]=(openOf[c.unit]||0)+c.n});
+  const cells=(_agbFlow.cells||[]).map(c=>Object.assign({},c,{o:order[c.lane]!=null?order[c.lane]:99,
+    v:(c.lane==='done'||c.lane==='dropped')?'closed':c.n,tip:c.unit+' · '+c.lane+' · '+c.n+' item'+(c.n===1?'':'s')}))
+    .sort((a,b)=>(openOf[b.unit]||0)-(openOf[a.unit]||0)||(a.unit<b.unit?-1:a.unit>b.unit?1:0));
+  let el=$('agb-mxel');
+  if(!el){$('agb-mx').innerHTML='<vera-matrix id="agb-mxel"></vera-matrix>';el=$('agb-mxel');
+    el.addEventListener('matrix:select',e=>{const c=e.detail.cell;if(c)$('agb-drill').open('board-cell',c.unit+'|'+c.lane,{root:true})})}
+  el.record={map:{cells:'cells',row:'unit',col:'lane',value:'v',cols_order:'o',tip:'{tip}'},
+    colour:{scale:[1,Math.max(6,...open)],good:'low',closed:'#35594a','*':'#3a4250'},ok:['closed'],sort:'',data:{cells}};
+}
+function agbCycle(){
+  const c=_agbFlow.cycle||[],lt=_agbFlow.lane_time||[];
+  $('agb-cycle').innerHTML=c.length?'<table class="tst-t"><tr><th>unit</th><th>done</th><th>p50</th><th>p90</th><th>basis</th></tr>'+c.slice(0,14).map(r=>
+    '<tr class="tst-r" onclick="$(\'agb-drill\').open(\'board-unit\',\''+esc(r.unit)+'\',{root:true,tab:\'done\'})"><td>'+esc(r.unit)+'</td><td>'+r.done+'</td><td style="white-space:nowrap">'+_agbH(r.p50_h)+'</td><td style="white-space:nowrap">'+_agbH(r.p90_h)+'</td><td class="tst-src" title="moves: from recorded lane moves; approx: the finish is the item\'s updated_at">'+esc(r.basis)+'</td></tr>').join('')+'</table>'
+    :VeraStates.html('empty','nothing finished in this window');
+  $('agb-lanetime').innerHTML=lt.length?'<table class="tst-t"><tr><th>lane</th><th>stays</th><th>p50</th><th>p90</th></tr>'+lt.map(r=>'<tr><td style="color:'+(_LANE_COLOR[r.lane]||'inherit')+'">'+esc(r.lane)+'</td><td>'+r.n+'</td><td>'+_agbH(r.p50_h)+'</td><td>'+_agbH(r.p90_h)+'</td></tr>').join('')+'</table>'
+    :VeraStates.html('empty','no lane moves recorded yet - they are recorded from this release on');
+}
+function agbWip(){
+  const w=_agbFlow.wip||[];
+  $('agb-wip').innerHTML=w.length?'<table class="tst-t"><tr><th>unit</th><th>open</th><th>oldest</th><th>median age</th></tr>'+w.slice(0,16).map(r=>
+    '<tr class="tst-r" onclick="$(\'agb-drill\').open(\'board-unit\',\''+esc(r.unit)+'\',{root:true})"><td>'+esc(r.unit)+'</td><td>'+r.open+'</td><td>'+_agbH(r.oldest_h)+'</td><td>'+_agbH(r.median_h)+'</td></tr>').join('')+'</table>'+(w.length>16?'<div class="tst-src">+'+(w.length-16)+' more units</div>':'')
+    :VeraStates.html('empty','no open items');
+}
+function _agbItemsTable(its,cols){
+  return its.length?'<table class="tst-t"><tr><th>item</th><th>title</th><th>lane</th><th>agent</th><th>'+(cols==='done'?'took':'age')+'</th><th>updated</th></tr>'+its.map(i=>{
+    const c=Date.parse(i.created_at||''),u=Date.parse(i.updated_at||''),h=cols==='done'?(u-c)/36e5:(Date.now()-c)/36e5;
+    return '<tr class="tst-r" onclick="openBoardItem(\''+esc(i.id)+'\')"><td class="mono">'+esc(String(i.id).slice(0,26))+'</td><td>'+esc(String(i.title||'').slice(0,80))+'</td><td style="color:'+(_LANE_COLOR[i.lane]||'inherit')+'">'+esc(i.lane)+'</td><td>'+esc(i.agent||'')+'</td><td style="white-space:nowrap">'+(isNaN(h)?'–':_agbH(h))+'</td><td class="tst-src" style="white-space:nowrap">'+esc(String(i.updated_at||'').slice(0,16).replace('T',' '))+'</td></tr>'}).join('')+'</table><div class="tst-src">a row opens the record - move, claim, comment and dispatch are there</div>'
+    :VeraStates.html('empty','no items');
+}
+function _agbKinds(){
+  if(_agbKinds._on)return;_agbKinds._on=true;
+  const all=()=>_agItems.length?_agItems:_agbItems,ofUnit=u=>all().filter(i=>_agbUnit(i)===u);
+  VeraDrill.registerKind('board-cell',{label:'Board',
+    load:(id)=>{const k=id.indexOf('|'),u=id.slice(0,k),lane=id.slice(k+1);return {u,lane,items:ofUnit(u).filter(i=>i.lane===lane)}},
+    title:(c)=>c.u+' · '+c.lane+' ('+c.items.length+')',
+    tabs:[{id:'items',label:'Items'},{id:'moves',label:'Lane moves'}],
+    render:(c,tab)=>{
+      if(tab==='moves'){const ids=new Set(c.items.map(i=>i.id)),mv=((_agbFlow||{}).moves||[]).filter(m=>ids.has(m.id));
+        return mv.length?'<table class="tst-t">'+mv.slice(-60).reverse().map(m=>'<tr><td class="tst-src">'+esc(_tstAgo(m.at))+'</td><td>'+esc(m.title||m.id)+'</td><td>'+esc(m.frm||'new')+' → '+esc(m.to)+'</td><td class="tst-src">'+esc(m.by||'')+'</td></tr>').join('')+'</table>':VeraStates.html('empty','no lane moves recorded for these items in the window')}
+      return _agbItemsTable(c.items.slice().sort((a,b)=>Date.parse(a.created_at||0)-Date.parse(b.created_at||0)),c.lane==='done'?'done':'');
+    }});
+  VeraDrill.registerKind('board-unit',{label:'Unit',
+    load:(u)=>({u,items:ofUnit(u)}),
+    title:(c)=>c.u,
+    tabs:[{id:'open',label:'Open'},{id:'done',label:'Done'},{id:'lanes',label:'By lane'}],
+    render:(c,tab)=>{
+      if(tab==='done')return _agbItemsTable(c.items.filter(i=>i.lane==='done').sort((a,b)=>Date.parse(b.updated_at||0)-Date.parse(a.updated_at||0)).slice(0,60),'done');
+      if(tab==='lanes'){const by={};c.items.forEach(i=>by[i.lane]=(by[i.lane]||0)+1);
+        return '<table class="tst-t">'+AGB_LANE_ORDER.filter(l=>by[l]).map(l=>'<tr class="tst-r" onclick="$(\'agb-drill\').open(\'board-cell\',\''+esc(c.u)+'|'+esc(l)+'\')"><td style="color:'+(_LANE_COLOR[l]||'inherit')+'">'+esc(l)+'</td><td>'+by[l]+'</td></tr>').join('')+'</table>'}
+      return _agbItemsTable(c.items.filter(i=>i.lane!=='done'&&i.lane!=='dropped').sort((a,b)=>Date.parse(a.created_at||0)-Date.parse(b.created_at||0)),'');
+    }});
+  VeraDrill.registerKind('board-item-moves',{label:'Item',
+    load:(id)=>({id,item:all().find(i=>i.id===id),moves:((_agbFlow||{}).moves||[]).filter(m=>m.id===id)}),
+    title:(c)=>(c.item&&c.item.title)||c.id,
+    render:(c)=>(c.moves.length?'<table class="tst-t">'+c.moves.map(m=>'<tr><td class="tst-src">'+esc(_olvWhen(m.at))+'</td><td>'+esc(m.frm||'new')+' → '+esc(m.to)+'</td><td class="tst-src">'+esc(m.by||'')+'</td></tr>').join('')+'</table>':VeraStates.html('empty','no recorded moves in the window'))
+      +'<div style="margin-top:6px"><button class="btn sm" onclick="openBoardItem(\''+esc(c.id)+'\')">the record ›</button></div>'});
 }
 /* After an action (move, claim, comment, dispatch, save, resume, release):
    the table - only while Agents is on screen. */
