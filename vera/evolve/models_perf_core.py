@@ -16,6 +16,8 @@ Two rules the sections keep, and this module encodes:
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import statistics
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
@@ -70,6 +72,108 @@ def job_group(job_type: Any) -> str:
 
 def _key(model: Any, node: Any) -> str:
     return "%s@%s" % (model or "?", node or "?")
+
+
+def _digest(value: Any) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"),
+                     ensure_ascii=False, default=str)
+    return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+
+
+def four_minds_view(ledger: Dict[str, Any], ledger_stats: Dict[str, Any],
+                    sense: Dict[str, Any], recovery_eval: Dict[str, Any]) -> Dict[str, Any]:
+    """Payload-free operator projection of the current decision evidence."""
+    rows = []
+    for decision in list((ledger or {}).get("decisions") or [])[:30]:
+        if not isinstance(decision, dict):
+            continue
+        outcome = decision.get("outcome") if isinstance(decision.get("outcome"), dict) else None
+        missing = ["route evidence", "context evidence"]
+        if outcome is None:
+            missing.append("outcome")
+        if decision.get("decider") in ("student", "llm") and not decision.get("package"):
+            missing.append("model package")
+        if decision.get("decider") == "student" and not decision.get("node"):
+            missing.append("compute node")
+        rows.append({
+            "decision_id": str(decision.get("decision_id") or ""),
+            "at": str(decision.get("ts") or ""),
+            "question": str(decision.get("question_id") or ""),
+            "surface": str(decision.get("surface") or ""),
+            "origin": str(decision.get("origin") or ""),
+            "decider": str(decision.get("decider") or ""),
+            "implementation": str(decision.get("implementation") or ""),
+            "package": str(decision.get("package") or ""),
+            "node": str(decision.get("node") or ""),
+            "mode": str(decision.get("mode") or ""),
+            "minds_digest": str(decision.get("minds_digest") or ""),
+            "run_id": str(decision.get("run_id") or ""),
+            "session_id": str(decision.get("session_id") or ""),
+            "decision_ms": _f(decision.get("ms")),
+            "answer_digest": _digest(decision.get("answer")),
+            "state_digest": str(decision.get("state_hash") or ""),
+            "outcome": ({
+                "at": str(outcome.get("ts") or ""),
+                "source": str(outcome.get("source") or ""),
+                "strength": str(outcome.get("strength") or ""),
+                "label_digest": _digest(outcome.get("label")),
+            } if outcome else None),
+            "missing": missing,
+        })
+    questions = list((ledger_stats or {}).get("questions") or [])
+    decisions = sum(int(row.get("decisions") or 0) for row in questions)
+    with_outcome = sum(int(row.get("with_outcome") or 0) for row in questions)
+    evaluation = recovery_eval if isinstance(recovery_eval, dict) else {}
+    metrics = evaluation.get("metrics") if isinstance(evaluation.get("metrics"), dict) else {}
+    required_metrics = (
+        "regression_detection_rate", "evidence_recovery_rate",
+        "rollback_identity_rate", "rollback_completion_rate",
+    )
+    evaluation_ok = bool(
+        evaluation.get("evidence_scope") == "frozen_fixture_conformance" and
+        evaluation.get("decision") == "insufficient_for_production" and
+        all(not isinstance(metrics.get(key), bool) and
+            isinstance(metrics.get(key), (int, float)) and
+            float(metrics[key]) == 1.0 for key in required_metrics))
+    sense_stats = (sense or {}).get("stats") if isinstance((sense or {}).get("stats"), dict) else {}
+    return {
+        "native_owner": "decision ledger",
+        "runtime_join_status": "not produced",
+        "decisions": decisions,
+        "with_outcome": with_outcome,
+        "outcome_coverage": round(with_outcome / decisions, 3) if decisions else None,
+        "recent": rows,
+        "recent_count": len(rows),
+        "sense": {
+            "calls": int(sense_stats.get("calls") or 0),
+            "cached": int(sense_stats.get("cached") or 0),
+            "degraded": int(sense_stats.get("degraded") or 0),
+            "cards_version": str((sense or {}).get("cards_version") or ""),
+            "cards_embedded": bool((sense or {}).get("cards_embedded")),
+        },
+        "gaps": [
+            "Route revision, deployment and portable package evidence are not stored with ledger decisions.",
+            "Context and JEPA evidence identities are not joined to the exact decision input.",
+            "Sense retains card version and health, but not exact provider, deployment and package identity.",
+            "The joined envelope is available as a pure contract but no runtime producer persists it yet.",
+        ],
+        "frozen_evaluation": {
+            "evaluation_id": str(evaluation.get("evaluation_id") or ""),
+            "case_count": int(evaluation.get("case_count") or 0),
+            "metrics": dict(evaluation.get("metrics") or {}),
+            "conformant": evaluation_ok,
+            "scope": str(evaluation.get("evidence_scope") or ""),
+            "recovery_scope": str(evaluation.get("recovery_scope") or ""),
+            "rollback_scope": str(evaluation.get("rollback_scope") or ""),
+            "production_ready": bool(evaluation.get("production_ready")),
+            "routes_executed": bool(evaluation.get("routes_executed")),
+            "rollback_executed": bool(evaluation.get("rollback_executed")),
+        },
+        "authority_changed": False,
+        "controls": False,
+        "sources": ["decide.ledger", "decide.ledger.stats", "sense.stats",
+                    "frozen Four Minds evidence evaluation"],
+    }
 
 
 # ── Models ─────────────────────────────────────────────────────────────────────────────────────────────────
@@ -184,7 +288,8 @@ def student_rows(reports: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def models_view(passive: Dict[str, Any], route: Dict[str, Any], bench: Dict[str, Any], node_perf: Dict[str, Any],
-                reports: Dict[str, Dict[str, Any]], now: Optional[datetime] = None) -> Dict[str, Any]:
+                reports: Dict[str, Dict[str, Any]], now: Optional[datetime] = None,
+                four_minds: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     stats = (route or {}).get("stats") or []
     runs = sorted([bench_row(b, now) for b in (bench or {}).get("results") or []], key=lambda b: str(b["at"]), reverse=True)
@@ -201,6 +306,7 @@ def models_view(passive: Dict[str, Any], route: Dict[str, Any], bench: Dict[str,
             issues.append({"what": "benchmark %s (%s)" % (b["id"], b["model"]), "why": b["broken"], "tone": "bad"})
     live = [r for r in rows if r["tps"] is not None and r["calls"] >= 50 and not r["stale"]]
     return {"models": rows, "matrix": role_matrix(stats), "benchmarks": runs, "students": students,
+            "four_minds": dict(four_minds or {}),
             "issues": issues, "nodes": [{"id": n.get("id"), "label": n.get("label"), "status": n.get("status"),
                                          "gpu": n.get("has_gpu"), "hw": n.get("hw") or {}, "ping_ms": n.get("ping_ms"),
                                          "loaded": [m.get("model") for m in n.get("loaded") or []]}
