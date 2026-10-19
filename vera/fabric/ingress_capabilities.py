@@ -982,13 +982,32 @@ async def _release_self(key: str, field: str) -> None:
         log.debug("crawl reservation release: %s", e)
 
 
+#: 19 Oct 2026: the crawl held prod's event loop - py-spy on the main thread found _fetch_batch in 11 of 15 samples, the
+#: Loop Lab's readings took 45 s+ and the mirror read nothing. Two causes: a new AsyncClient per batch (its TLS context
+#: is built synchronously, ~1 s of CPU) and each page's body decoded and cut on the loop. One client per event loop now,
+#: and the row is built in a worker thread.
+_FETCH_CLIENT: Dict[Any, Any] = {}
+
+
+def _fetch_client():
+    import httpx
+    loop = asyncio.get_running_loop()
+    c = _FETCH_CLIENT.get(loop)
+    if c is None or c.is_closed:
+        headers = dict(getattr(_wc, "BROWSER_HEADERS", {}) or {})
+        headers["Accept-Encoding"] = ic.accept_encoding()
+        c = httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers,
+                              limits=httpx.Limits(max_connections=32, max_keepalive_connections=16))
+        _FETCH_CLIENT.clear()                       # one loop per process: drop a client of a loop that has gone
+        _FETCH_CLIENT[loop] = c
+    return c
+
+
 async def _fetch_batch(us: List[str], max_chars: int, validators: Optional[Dict[str, Dict[str, str]]] = None) -> Dict[str, Any]:
     import socket
-    import httpx
-    headers = dict(getattr(_wc, "BROWSER_HEADERS", {}) or {})
-    headers["Accept-Encoding"] = ic.accept_encoding()
     out: List[Dict[str, Any]] = []
-    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True, headers=headers) as c:
+    c = _fetch_client()
+    if True:
         for u in us:
             if not u.startswith(("http://", "https://")) or ic.is_internal(u, INTERNAL_HOSTS):
                 out.append(cc.failed_row(u, "refused: not an external http(s) URL"))
@@ -997,12 +1016,13 @@ async def _fetch_batch(us: List[str], max_chars: int, validators: Optional[Dict[
             t0, at = time.monotonic(), time.time()
             try:
                 resp = await c.get(u, headers=(validators or {}).get(u) or None)
-                out.append(cc.fetch_row(u, final_url=str(resp.url), status=resp.status_code,
-                                        content_type=resp.headers.get("content-type", ""), body=resp.text,
-                                        elapsed_ms=int((time.monotonic() - t0) * 1000),
-                                        etag=resp.headers.get("etag", ""),
-                                        last_modified=resp.headers.get("last-modified", ""), max_chars=max_chars,
-                                        fetched_at=at))
+                ms = int((time.monotonic() - t0) * 1000)
+                # decoding the body (charset detection) and cutting it are CPU work: off the event loop
+                out.append(await asyncio.to_thread(
+                    lambda r=resp, u=u, ms=ms, at=at: cc.fetch_row(
+                        u, final_url=str(r.url), status=r.status_code, content_type=r.headers.get("content-type", ""),
+                        body=r.text, elapsed_ms=ms, etag=r.headers.get("etag", ""),
+                        last_modified=r.headers.get("last-modified", ""), max_chars=max_chars, fetched_at=at)))
             except Exception as e:  # noqa: BLE001
                 out.append(cc.fetch_row(u, elapsed_ms=int((time.monotonic() - t0) * 1000), error=str(e)[:200],
                                         fetched_at=at))
