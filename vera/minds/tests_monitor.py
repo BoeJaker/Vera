@@ -78,7 +78,7 @@ async def _h_memory() -> Dict[str, Any]:
         return {"probe_rows": 0, "error": d.get("error")}
     r = rows[0]
     seek = (r.get("paths") or {}).get("memory.seek") or {}
-    return {"at": r.get("ts"), "sha": r.get("sha_short"), "seek_p50_ms": (seek.get("total") or {}).get("p50"),
+    return {"at": r.get("ts"), "completed_at": r.get("ts"), "sha": r.get("sha_short"), "seek_p50_ms": (seek.get("total") or {}).get("p50"),
             "seek_p95_ms": (seek.get("total") or {}).get("p95"),
             "quality": (r.get("extra") or {}).get("quality")}
 
@@ -92,6 +92,7 @@ async def _h_chat_corpus() -> Dict[str, Any]:
     status = summ.get("status") or {}
     cases = summ.get("cases") or 0
     return {"run": d.get("run") or {}, "running": d.get("running"),
+            "completed_at": (d.get("run") or {}).get("finished") or None,
             "cases": cases, "status": status, "pass_rate": summ.get("pass_rate"), "ttft_ms": summ.get("ttft_ms"),
             "failed_n": len(summ.get("failed") or []), "errors_n": len(summ.get("errors") or []),
             "broken": bool(cases) and status.get("error", 0) == cases}
@@ -151,12 +152,29 @@ async def cap_decide_tests_status(refresh: bool = False, trace_id=None) -> Dict[
     hist = await _call("evolve.schedule.history", limit=300)
     heads = await headlines(force=bool(refresh))
     out = TC.status(lst.get("schedules") or [], hist.get("runs") or [], lst.get("next") or {},
-                    datetime.now(timezone.utc), heads)
+                    datetime.now(timezone.utc), heads, background=await _background())
     out["headlines_at"] = datetime.fromtimestamp(_CACHE["at"], timezone.utc).isoformat(timespec="seconds") \
         if _CACHE["at"] else None
     if lst.get("error") or hist.get("error"):
         out["error"] = lst.get("error") or hist.get("error")
     return out
+
+
+async def _background() -> Dict[str, Any]:
+    """The background queue the matrix's judges wait in (vera-d2, 19 Oct): depth, oldest wait, four-minds jobs."""
+    d = await _call("background.status")
+    q = (d or {}).get("queue") or {}
+    w = q.get("waiting") or []
+    mine = [x for x in w if (x.get("kind") or "").split(":")[0] in ("cap",) and any(
+        k in str(x.get("title") or "") for k in ("shadow judge", "call-site", "decide", "matrix"))]
+    kinds: Dict[str, int] = {}
+    for x in w:
+        kk = (x.get("kind") or "").split(":")[0]
+        kinds[kk] = kinds.get(kk, 0) + 1
+    return {"depth": q.get("depth"), "oldest_wait_s": max((x.get("waiting_for_s") or 0) for x in w) if w else 0,
+            "four_minds_waiting": len(mine),
+            "four_minds_oldest_wait_s": max((x.get("waiting_for_s") or 0) for x in mine) if mine else 0,
+            "by_kind": kinds, "running": q.get("running"), "error": (d or {}).get("error")}
 
 
 # The stop-gap page (/decide/tests, tests_panel.html) retired 18 Oct: Loop Lab's own Tests section (looplab-control
@@ -189,8 +207,11 @@ async def cap_decide_series_snapshot(trace_id=None) -> Dict[str, Any]:
         return {"ok": False, "error": "postgres unavailable"}
     report = await _call("decide.matrix.report", days=7)
     health = await _call("worldview.health")
+    tests = await cap_decide_tests_status(refresh=True)
     rows = [(_SER.KINDS["matrix"], _SER.matrix_row(report)), (_SER.KINDS["claims"], _SER.claims_row(report)),
-            (_SER.KINDS["worldview"], _SER.worldview_row(health))]
+            (_SER.KINDS["worldview"], _SER.worldview_row(health)),
+            ("series.tests", {t["id"]: {"health": t.get("health"), "headline": t.get("headline")}
+                              for t in (tests or {}).get("tests") or []} or None)]
     stored = []
     async with pool.acquire() as conn:
         for st in _SERIES_DDL:
@@ -256,3 +277,15 @@ async def cap_decide_claims_history(days: int = 30, trace_id=None) -> Dict[str, 
 )
 async def cap_worldview_spread_history(days: int = 30, trace_id=None) -> Dict[str, Any]:
     return await _series(_SER.KINDS["worldview"], days)
+
+
+
+@capability(
+    "decide.tests.history", http_method="GET", http_path="/decide/tests/history", http_tags=["minds"],
+    memory="off", silent=True,
+    description="Every four-minds test's health and report headline over time (vera-d2, 19 Oct: trends without "
+                "scraping), one row per decide.series.snapshot: {rows: [{ts, <test id>: {health, headline}}]} newest "
+                "first. Input: days (int, default 30).",
+)
+async def cap_decide_tests_history(days: int = 30, trace_id=None) -> Dict[str, Any]:
+    return await _series("series.tests", days)
