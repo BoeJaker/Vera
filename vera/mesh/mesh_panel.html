@@ -62,12 +62,7 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--acc)}
 .pill{display:inline-block;background:var(--bg0);border:1px solid var(--border);border-radius:10px;padding:1px 6px;font-size:9px;color:var(--dim2);margin:1px}
 .pill.mod{border-color:var(--acc4);color:var(--acc4)}
 /* node list */
-.nlist{display:flex;flex-direction:column;gap:4px}
-.nitem{padding:6px 7px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg0);cursor:pointer}
-.nitem:hover{border-color:var(--acc)}
-.nitem.sel{border-color:var(--acc);background:var(--bg2)}
-.nitem .nt{display:flex;align-items:center;gap:6px;justify-content:space-between}
-.nitem .nm{font-size:11.5px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* .nlist / .nitem: their look lives in <vera-mesh-nodes> (mesh_nodes_element.js) */
 .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;display:inline-block}
 .dot.online{background:var(--ok)}.dot.stale{background:var(--warn)}.dot.offline{background:var(--err)}.dot.new{background:var(--info)}
 /* graph */
@@ -93,6 +88,7 @@ td{padding:3px 5px;border-bottom:1px solid var(--bg2);vertical-align:middle}
 code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px solid var(--border);border-radius:3px;padding:1px 4px;color:var(--acc3)}
 </style>
 <link rel="stylesheet" href="/ui/vera-panel.css">
+<script src="/ui/elements/mesh_nodes.js"></script>
 </head>
 <body>
 <div class="hdr">
@@ -225,7 +221,7 @@ code{font-family:var(--mono);font-size:10px;background:var(--bg0);border:1px sol
     <div class="card" style="flex:1;min-height:120px;display:flex;flex-direction:column">
       <h2>Nodes <span class="muted" id="nodeCount" style="margin-left:auto"></span></h2>
       <input id="nodeSearch" placeholder="filter nodes…" oninput="renderList()" style="margin-bottom:7px">
-      <div class="nlist" id="nodeList"><span class="muted">Loading…</span></div>
+      <vera-mesh-nodes id="nodeList" refresh="0" select list-only></vera-mesh-nodes>
     </div>
   </div>
 
@@ -927,27 +923,15 @@ function inspectorFocused(){
   return !!(i && a && i.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName));
 }
 
+/* the transports bar and the node list are <vera-mesh-nodes> (vera/mesh/mesh_nodes_element.js): this panel's own code, moved
+   once so the desk draws a mesh.nodes answer the same way. The panel keeps choosing a node: `select` makes a row call loadNode(). */
 function renderTransports(tx){
-  const order=[['http','HTTP'],['ws','WebSocket'],['mqtt','MQTT'],['serial','Serial']];
-  document.getElementById('txBar').innerHTML = order.map(([k,lbl])=>
-    `<span class="chip ${tx[k]?'on':'off'}" title="${tx[k]?'available':'not configured'}">${lbl}</span>`).join('');
+  document.getElementById('txBar').innerHTML = VeraMeshNodes.txHtml(tx);
 }
 
 // ── Node list ────────────────────────────────────────────────────────────────
 function renderList(){
-  const q=(document.getElementById('nodeSearch').value||'').toLowerCase();
-  const el=document.getElementById('nodeList');
-  const rows=_nodes.filter(n=>!q || (n.name||'').toLowerCase().includes(q) || (n.node_id||'').toLowerCase().includes(q)
-     || (n.role||'').toLowerCase().includes(q));
-  if(!rows.length){ el.innerHTML='<span class="muted">No nodes yet — onboard one above.</span>'; return; }
-  el.innerHTML = rows.map(n=>{
-    const mods=Object.keys(n.modules||{}).slice(0,4).map(m=>`<span class="pill mod">${esc(m)}</span>`).join('');
-    return `<div class="nitem ${_sel===n.node_id?'sel':''}" onclick="loadNode('${esc(n.node_id)}')">
-      <div class="nt"><span class="nm"><i class="dot ${n.status}"></i> ${esc(n.name||n.node_id)}</span>
-        <span class="muted">${ago(n.last_seen)}</span></div>
-      <div style="margin-top:3px">${mods}<span class="pill">${esc((n.channels||[]).join('/')||'—')}</span></div>
-    </div>`;
-  }).join('');
+  document.getElementById('nodeList').seed({nodes:_nodes, query:document.getElementById('nodeSearch').value||'', selected:_sel});
 }
 
 // ── Node graph (radial tree by reported uplink) ──────────────────────────────

@@ -3809,6 +3809,10 @@
  },
  "mesh.nodes": {
   "draw": {
+   "attrs": {
+    "detail": "1",
+    "empty": "No mesh nodes registered"
+   },
    "columns": [
     "name",
     "node_id",
@@ -3819,10 +3823,11 @@
     "ip",
     "rssi",
     "last_seen"
-   ]
+   ],
+   "tag": "vera-mesh-nodes"
   },
   "empty": "No mesh nodes registered",
-  "form": "table",
+  "form": "element",
   "kind": "table",
   "map": {
    "rows": "nodes"
