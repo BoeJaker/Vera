@@ -321,3 +321,14 @@ def test_every_two_label_question_is_trained_and_the_box_is_never_waited_for(mon
     seen.clear()
     asyncio.run(st.nightly_pass())
     assert seen == ["loop.step_done"], "the rest are done tonight; the failed one is tried again"
+
+
+
+def test_a_question_with_a_tiny_export_test_split_still_trains():
+    """19 Oct: output.claim_supported had 120 gold (38 supported / 82 not) and one row in the export's test split;
+    the CV report does not use that split, so it must not block training."""
+    rows = [{"id": f"c{i}", "gold": "supported" if i < 38 else "unsupported",
+             "split": "test" if i == 0 else "train"} for i in range(120)]
+    ok, why, counts = core.trainable(rows, "supported")
+    assert ok, why
+    assert counts["test"] == 1 and counts["positive"] == 38
