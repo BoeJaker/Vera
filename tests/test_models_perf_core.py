@@ -39,6 +39,29 @@ SHADOW = {"loop.step_verify": {"question_id": "loop.step_verify", "live_vs_outco
                                    "llm:qwen3:1.7b@cpu-247": {"n": 13, "agreement": 0.769, "vs_outcomes": {"n": 3, "accuracy": 1.0}}}},
           "intel.enrich_worth": {"error": "no data"}}
 
+LEDGER = {"decisions": [{
+    "decision_id": "dec_" + "1" * 32, "ts": "2026-10-18T10:00:00Z",
+    "question_id": "loop.step_verify", "surface": "agent_loop", "origin": "user",
+    "decider": "student", "implementation": "knn:minilm", "package": "student.knn",
+    "node": "cpu-246", "mode": "student_first", "minds_digest": "switch-v1",
+    "run_id": "run-1", "session_id": "session-1", "ms": 12,
+    "answer": "private-answer", "state_hash": "state-digest",
+    "state_ref": {"secret": "private-state"},
+    "outcome": {"ts": "2026-10-18T10:01:00Z", "source": "run.gate",
+                "strength": "strong", "label": "private-outcome", "detail": {"secret": "x"}},
+}]}
+LEDGER_STATS = {"questions": [{"question_id": "loop.step_verify", "decisions": 4, "with_outcome": 3}]}
+SENSE = {"stats": {"calls": 9, "cached": 4, "degraded": 1},
+         "cards_version": "cards-v2", "cards_embedded": True}
+RECOVERY = {"evaluation_id": "fmreval_123", "case_count": 2,
+            "evidence_scope": "frozen_fixture_conformance",
+            "recovery_scope": "evidence_reconstruction_only",
+            "rollback_scope": "route_identity_rehearsal_only",
+            "decision": "insufficient_for_production", "production_ready": False,
+            "routes_executed": False, "rollback_executed": False,
+            "metrics": {"regression_detection_rate": 1.0, "evidence_recovery_rate": 1.0,
+                        "rollback_identity_rate": 1.0, "rollback_completion_rate": 1.0}}
+
 
 def test_job_groups():
     assert [M.job_group(j) for j in ("loop_coder", "chat", "idle_decide", "plan_enrich", "code", "")] == \
@@ -93,6 +116,34 @@ def test_models_view_summary_and_issues():
     whats = [i["what"] for i in v["issues"]]
     assert whats[0] == "benchmarks" and "56 days" in v["issues"][0]["why"]
     assert any(w.startswith("benchmark bench-c3f7a031") for w in whats)
+
+
+def test_four_minds_view_is_payload_free_and_keeps_missing_joins_visible():
+    view = M.four_minds_view(LEDGER, LEDGER_STATS, SENSE, RECOVERY)
+    assert view["native_owner"] == "decision ledger"
+    assert view["runtime_join_status"] == "not produced"
+    assert view["outcome_coverage"] == 0.75
+    assert view["frozen_evaluation"]["conformant"] is True
+    row = view["recent"][0]
+    assert row["package"] == "student.knn" and row["node"] == "cpu-246"
+    assert row["outcome"]["strength"] == "strong"
+    assert row["missing"] == ["route evidence", "context evidence"]
+    assert row["answer_digest"].startswith("sha256:")
+    encoded = repr(view)
+    for secret in ("private-answer", "private-state", "private-outcome", "'secret': 'x'"):
+        assert secret not in encoded
+    assert view["authority_changed"] is view["controls"] is False
+
+
+def test_four_minds_view_reports_absent_outcome_and_model_placement():
+    decision = dict(LEDGER["decisions"][0], outcome=None, package="", node="")
+    view = M.four_minds_view({"decisions": [decision]}, {}, {}, {})
+    assert view["outcome_coverage"] is None
+    assert view["frozen_evaluation"]["conformant"] is False
+    assert view["recent"][0]["missing"] == [
+        "route evidence", "context evidence", "outcome", "model package", "compute node"]
+    incomplete = dict(RECOVERY, metrics={"regression_detection_rate": 1.0})
+    assert M.four_minds_view({}, {}, {}, incomplete)["frozen_evaluation"]["conformant"] is False
 
 
 CENSUS = {"runs": [

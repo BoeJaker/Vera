@@ -16,8 +16,10 @@ from Vera.vera.capability_orchestration import CAPABILITY_REGISTRY, capability
 
 try:
     from Vera.vera.evolve import models_perf_core as core
+    from Vera.vera.minds.evidence_recovery_evaluation import frozen_recovery_fixture
 except ImportError:                                        # pragma: no cover
     from vera.evolve import models_perf_core as core       # type: ignore
+    from vera.minds.evidence_recovery_evaluation import frozen_recovery_fixture  # type: ignore
 
 log = logging.getLogger("vera.evolve.models_perf")
 
@@ -48,13 +50,24 @@ def _d(v: Any) -> Dict[str, Any]:
 async def cap_models_view(bench_limit: int = 60, trace_id=None) -> Dict[str, Any]:
     status = _d(await _call("decide.student.status"))
     questions = [q for q in status.get("questions") or [] if isinstance(q, str)][:16]
-    passive, route, bench, nodes, *reports = await asyncio.gather(
+    passive, route, bench, nodes, ledger, ledger_stats, sense, *reports = await asyncio.gather(
         _call("bench.passive"), _call("ollama.route_stats"),
         _call("bench.results", limit=max(1, min(int(bench_limit or 60), 200))), _call("bench.node_perf"),
+        _call("decide.ledger", limit=30), _call("decide.ledger.stats"), _call("sense.stats"),
         *[_call("decide.shadow.report", question_id=q) for q in questions])
-    out = core.models_view(_d(passive), _d(route), _d(bench), _d(nodes),
-                           {q: _d(r) for q, r in zip(questions, reports)})
-    out["errors"] = [str(x.get("error")) for x in (passive, route, bench, nodes) if isinstance(x, dict) and x.get("error")]
+    try:
+        recovery_eval = frozen_recovery_fixture()
+    except Exception as exc:
+        log.debug("models/perf: frozen Four Minds evaluation failed: %s", exc)
+        recovery_eval = {"error": str(exc)}
+    minds = core.four_minds_view(
+        _d(ledger), _d(ledger_stats), _d(sense), _d(recovery_eval))
+    out = core.models_view(
+        _d(passive), _d(route), _d(bench), _d(nodes),
+        {q: _d(r) for q, r in zip(questions, reports)}, four_minds=minds)
+    out["errors"] = [str(x.get("error")) for x in
+                     (passive, route, bench, nodes, ledger, ledger_stats, sense)
+                     if isinstance(x, dict) and x.get("error")]
     out["student_switch"] = {"enabled": status.get("enabled"), "window": status.get("window"), "guard": status.get("guard")}
     return out
 

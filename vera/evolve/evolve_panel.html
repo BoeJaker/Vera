@@ -849,6 +849,10 @@ html.vpb-nav-hosted body{padding-left:0}
     <div class="card"><div class="card-h"><span class="card-t">Which model serves which job</span><span class="hint">seconds a call · tokens a second · ollama.route_stats</span></div><div id="mdl-matrix" class="hint">loading…</div></div>
     <div class="card"><div class="card-h"><span class="card-t">Students</span><span class="hint">small models learning Vera's yes/no decisions, scored in shadow · decide.shadow.report</span></div><div id="mdl-students" class="hint">loading…</div></div>
   </div>
+  <div class="card">
+    <div class="card-h"><span class="card-t">Decision provenance</span><span class="hint">native ledger ownership, model placement, outcomes and the evidence still missing from each decision</span></div>
+    <div id="mdl-minds" class="hint">loading…</div>
+  </div>
   <!-- Routing (looplab-control §9.4 S6; owner 18 Oct: "better vis over the routing history and why things were routed where
        they were"): THE matrix of job type x node (live speed from ollama.route_stats), every recent decision with its
        reason (ollama.request_log: route_reason, rule, estimate vs actual, queue, GPU residency), THE drill for a cell (the
@@ -2231,6 +2235,7 @@ async function loadModels(){
       +(r.agrees_not_right?' <span style="color:#f87171" title="agrees with the live answer but is wrong against what happened - it copies the live path">copies live</span>':'')+'</td>'
       +'<td class="mono" style="text-align:right">'+(r.ms_p50!=null?kpS(r.ms_p50/1000):'-')+'</td></tr>').join('')+'</tbody></table>'
       +'<a class="hint" style="cursor:pointer" onclick="_mdlStAll=!_mdlStAll;loadModels()">'+(_mdlStAll?'show the leader and top two per question':'show all '+(d.students||[]).filter(r=>r.n>0).length+' implementations')+'</a>':'<span class="hint">no shadow scores yet</span>');
+  renderMindsEvidence(d.four_minds||{});
   const bn=d.benchmarks||[];
   $('mdl-bench').innerHTML=bn.length?'<table class="kp-tbl"><thead><tr><th>when</th><th>model @ node</th><th>score</th><th style="text-align:right">gen tok/s</th><th style="text-align:right">first token</th></tr></thead><tbody>'
     +bn.slice(0,30).map(b=>'<tr><td class="mono">'+esc(String(b.at).slice(0,10))+(b.age_days!=null?' <span class="hint">'+Math.round(b.age_days)+' d ago</span>':'')+'</td><td>'+esc(kpShort(b.model))+' <span class="hint">@ '+esc(b.node)+'</span></td>'
@@ -2240,6 +2245,26 @@ async function loadModels(){
     +(d.nodes||[]).map(n=>{const hw=n.hw||{};return '<tr><td class="mono">'+esc(n.id)+' <span style="color:'+(n.status==='online'?'#4ade80':'#f87171')+'">'+esc(n.status||'')+'</span></td><td>'+esc(hw.gpu_name||((hw.cpu_cores?hw.cpu_cores+' cores':'')+(hw.ram_gb?' · '+hw.ram_gb+' GB':'')))+'</td><td>'+esc((n.loaded||[]).map(kpShort).join(' · ')||'-')+'</td><td class="mono" style="text-align:right">'+(n.ping_ms!=null?Math.round(n.ping_ms)+' ms':'-')+'</td></tr>'}).join('')+'</tbody></table>':'<span class="hint">no nodes</span>';
   if(_mdlSel){const i=rows.findIndex(r=>r.key===_mdlSel);if(i>=0)mdlOpen(i,true)}
   // the table's rows are the filtered list: mdlOpen(i) indexes the same list
+}
+function renderMindsEvidence(m){
+  const rows=m.recent||[], ev=m.frozen_evaluation||{}, metrics=ev.metrics||{}, sense=m.sense||{};
+  const coverage=m.outcome_coverage==null?'-':Math.round(m.outcome_coverage*100)+'%';
+  const tiles=kpTile('Native owner',m.native_owner||'unknown','routing and persistence stay here')
+    +kpTile('Outcome coverage',coverage,(m.with_outcome||0)+' of '+(m.decisions||0)+' ledger decisions')
+    +kpTile('Joined runtime evidence',m.runtime_join_status==='not produced'?'not produced':m.runtime_join_status||'unknown','missing joins remain visible; no inferred envelope',m.runtime_join_status==='not produced')
+    +kpTile('Offline contract check',ev.conformant?'conformant':'incomplete',(ev.case_count||0)+' synthetic cases · not production readiness',!ev.conformant);
+  const gaps=(m.gaps||[]).map(g=>kpNote(esc(g),'warn')).join('');
+  const evalText='<div class="hint" style="margin:8px 0">Offline check <span class="mono">'+esc(String(ev.evaluation_id||'').slice(0,18))+'</span> · regression '+esc(kpN(metrics.regression_detection_rate,2))+' · recovery '+esc(kpN(metrics.evidence_recovery_rate,2))+' · rollback identity '+esc(kpN(metrics.rollback_identity_rate,2))+' · routes executed: '+(ev.routes_executed?'yes':'no')+' · rollback executed: '+(ev.rollback_executed?'yes':'no')+' · production ready: '+(ev.production_ready?'yes':'no')+'</div>';
+  const table=rows.length?'<table class="kp-tbl"><thead><tr><th>when / decision</th><th>question / surface</th><th>decider</th><th>placement</th><th>outcome</th><th>missing joins</th></tr></thead><tbody>'
+    +rows.map(r=>{const o=r.outcome||{};return '<tr><td class="mono">'+esc(String(r.at||'').replace('T',' ').slice(0,16))+'<br><span class="hint" title="'+esc(r.decision_id||'')+'">'+esc(String(r.decision_id||'').slice(0,16))+'</span></td>'
+      +'<td><b>'+esc(r.question||'-')+'</b><br><span class="hint">'+esc(r.surface||'-')+' · '+esc(r.origin||'-')+'</span></td>'
+      +'<td>'+esc(r.decider||'-')+'<br><span class="mono hint">'+esc(r.implementation||'-')+'</span><br><span class="hint">mode '+esc(r.mode||'-')+' · '+esc(kpN(r.decision_ms,1))+' ms</span></td>'
+      +'<td><span class="mono">'+esc(r.package||'no package')+'</span><br><span class="hint">'+esc(r.node||'no node')+'</span></td>'
+      +'<td>'+(r.outcome?'<span title="label retained only as a digest">'+esc(o.strength||'observed')+'</span><br><span class="hint">'+esc(o.source||'-')+'</span>':'<span class="hint">none</span>')+'</td>'
+      +'<td>'+esc((r.missing||[]).join(' · ')||'none')+'</td></tr>'}).join('')+'</tbody></table>':'<div class="empty">No recent decisions are available. Ledger ownership and evidence gaps remain shown above.</div>';
+  $('mdl-minds').innerHTML='<div class="kp-tiles">'+tiles+'</div>'
+    +'<div class="hint" style="margin:8px 0">Sense: '+esc(kpN(sense.calls))+' calls · '+esc(kpN(sense.cached))+' cached · '+esc(kpN(sense.degraded))+' degraded · cards '+esc(sense.cards_version||'unknown')+'. This view is read-only and never routes or activates a model.</div>'
+    +gaps+evalText+table;
 }
 function mdlOpen(i,keep){
   const all=((_mdl||{}).models||[]), shown=_mdlAll?all:all.filter(x=>x.calls>=MDL_MIN_CALLS||x.key===_mdlSel), r=shown[i]; if(!r)return;
