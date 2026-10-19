@@ -5207,7 +5207,9 @@ async def _commit_attribution_map(limit: int = 500) -> Dict[str, Dict[str, Any]]
 
 
 @capability("evolve.git.graph", memory="off", silent=True,
-            contract={"presentation": {"kind": "table", "form": "table", "map": {"rows": "commits"}, "draw": {"columns": ["subject", "author", "date", "refs", "hash"]}}},
+            # the Loop Lab's commit graph on the desk - <vera-git-graph>, seeded with the answer (desk Wave 3), `dated` for the author +
+            # date the table showed; the table stays a view of it
+            contract={"presentation": {"kind": "table", "form": "element", "map": {"rows": "commits"}, "draw": {"tag": "vera-git-graph", "attrs": {"dated": "1", "repo": "{repo}", "limit": "{limit}"}, "columns": ["subject", "author", "date", "refs", "hash"]}, "title": "Commit graph"}},
             http_method="GET", http_path="/evolve/git/graph", http_tags=["evolve"],
             description="Real commit graph for a repo — every commit (across ALL "
                         "branches) with its parents and ref decorations, newest-"

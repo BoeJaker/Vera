@@ -94,6 +94,7 @@
 .attr.clk{cursor:pointer}
 .attr.clk:hover{background:var(--acc,var(--ac,#5a9e8f));color:#111;border-color:transparent}
 .empty{padding:14px;text-align:center;color:var(--dim2,var(--t3,#8a7e70))}
+.row .when{margin-left:auto;padding-left:6px;flex-shrink:0;white-space:nowrap;font-size:9.5px;color:var(--dim2,var(--t3,#8a7e70))}
 </style>
 <div class="hdr"><span class="ttl">Commit graph</span><span class="count" id="count"></span></div>
 <div class="wrap" id="wrap"></div>`;
@@ -135,6 +136,9 @@
         (window.__VERA_BASE__ || ('http://' + location.hostname + ':8999'));
     }
     setRepo(id) { this._repo = id || 'vera'; this.refresh(); }
+    /* draw a given evolve.git.graph answer ({commits, error}) - the desk mounts the graph for that answer (desk Wave 3); the
+       poll and the repo events still refresh it as on the Loop Lab page */
+    seed(x) { if (!x || typeof x !== 'object') return; this._render(x.commits || [], x.error); }
 
     _connectWs() {
       if (this._unsubEvents) return;
@@ -259,6 +263,9 @@
           (refs ? '<span class="refs">' + refs + '</span>' : '') +
           '<span class="subj">' + this._esc(c.subject || '') + '</span>' +
           attrHtml +
+          // `dated`: who and when (the desk's table of evolve.git.graph showed both; the Loop Lab page does not set it)
+          (this.hasAttribute('dated') && (c.author || c.date) ? '<span class="when" title="' + this._esc([c.author, c.date].filter(Boolean).join(' · ')) + '">'
+            + this._esc([c.author, String(c.date || '').slice(0, 16).replace('T', ' ')].filter(Boolean).join(' · ')) + '</span>' : '') +
           '</div>';
       }).join('');
       wrap.innerHTML = '<div style="position:relative">' + edgeSvg +

@@ -1756,19 +1756,26 @@
  },
  "evolve.git.graph": {
   "draw": {
+   "attrs": {
+    "dated": "1",
+    "limit": "{limit}",
+    "repo": "{repo}"
+   },
    "columns": [
     "subject",
     "author",
     "date",
     "refs",
     "hash"
-   ]
+   ],
+   "tag": "vera-git-graph"
   },
-  "form": "table",
+  "form": "element",
   "kind": "table",
   "map": {
    "rows": "commits"
-  }
+  },
+  "title": "Commit graph"
  },
  "evolve.improve.list": {
   "draw": {

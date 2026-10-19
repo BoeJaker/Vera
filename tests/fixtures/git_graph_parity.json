@@ -1,0 +1,95 @@
+{
+ "source": "vera/git_graph_element.js _render() at 0c0b0d51",
+ "cases": [
+  {
+   "commits": [
+    {
+     "hash": "e6872c1b11",
+     "parents": [
+      "d4079ecd22",
+      "0ebf435933"
+     ],
+     "author": "BoeJaker",
+     "date": "2026-10-19T19:48:00+01:00",
+     "refs": [
+      "HEAD -> bleeding-edge"
+     ],
+     "subject": "Loop Lab: merge feat/w1-next2 (pipeline 59a9e061)",
+     "attribution": {
+      "controller": "claude_code",
+      "session_id": "claude:a787bb48",
+      "via": "pipeline",
+      "pipeline_id": "59a9e061"
+     }
+    },
+    {
+     "hash": "d4079ecd22",
+     "parents": [
+      "7a1fcde544"
+     ],
+     "author": "BoeJaker",
+     "date": "2026-10-19T19:30:00+01:00",
+     "refs": [
+      "loop-lab/feat-w1-next2"
+     ],
+     "subject": "test_estate_unify_4: the Proxmox cards chip <the estate>"
+    },
+    {
+     "hash": "7a1fcde544",
+     "parents": [
+      "0ebf435933"
+     ],
+     "author": "BoeJaker",
+     "date": "2026-10-19T19:00:00+01:00",
+     "refs": [],
+     "subject": "Desk Wave 1: the Proxmox panel's cards",
+     "attribution": {
+      "controller": "autonomous"
+     }
+    },
+    {
+     "hash": "0ebf435933",
+     "parents": [
+      "f64265f366"
+     ],
+     "author": "vera",
+     "date": "2026-10-19T12:00:00+01:00",
+     "refs": [
+      "main",
+      "origin/main"
+     ],
+     "subject": "Loop Lab: merge feat/inventory"
+    },
+    {
+     "hash": "f64265f366",
+     "parents": [],
+     "author": "vera",
+     "date": "2026-10-18T12:00:00+01:00",
+     "refs": [],
+     "subject": "root"
+    }
+   ]
+  },
+  {
+   "commits": []
+  },
+  {
+   "commits": [],
+   "error": "repo not found"
+  }
+ ],
+ "out": [
+  {
+   "rows": "<div style=\"position:relative\"><svg width=\"40\" height=\"110\" style=\"position:absolute;left:0;top:0;pointer-events:none\"><path d=\"M8,11 C8,22 8,22 8,33\" stroke=\"#5a9e8f\" stroke-width=\"1.5\" fill=\"none\" opacity=\"0.75\"/><path d=\"M8,33 C8,44 8,44 8,55\" stroke=\"#5a9e8f\" stroke-width=\"1.5\" fill=\"none\" opacity=\"0.75\"/><path d=\"M8,55 C8,66 8,66 8,77\" stroke=\"#5a9e8f\" stroke-width=\"1.5\" fill=\"none\" opacity=\"0.75\"/><path d=\"M8,11 C8,44 8,44 8,77\" stroke=\"#5a9e8f\" stroke-width=\"1.5\" fill=\"none\" opacity=\"0.75\"/><path d=\"M8,77 C8,88 8,88 8,99\" stroke=\"#5a9e8f\" stroke-width=\"1.5\" fill=\"none\" opacity=\"0.75\"/></svg><div style=\"position:relative\"><div class=\"row\"><svg width=\"40\" height=\"22\" style=\"flex-shrink:0\"><circle cx=\"8\" cy=\"11\" r=\"4\" fill=\"#5a9e8f\"/></svg><span class=\"hash\">e6872c1</span><span class=\"refs\"><span class=\"ref \">bleeding-edge</span></span><span class=\"subj\">Loop Lab: merge feat/w1-next2 (pipeline 59a9e061)</span><span class=\"attr claude\" title=\"claude_code · pipeline · claude:a787bb48 · pipeline 59a9e061\">claude_code</span></div><div class=\"row\"><svg width=\"40\" height=\"22\" style=\"flex-shrink:0\"><circle cx=\"8\" cy=\"11\" r=\"4\" fill=\"#5a9e8f\"/></svg><span class=\"hash\">d4079ec</span><span class=\"refs\"><span class=\"ref looplab\">loop-lab/feat-w1-next2</span></span><span class=\"subj\">test_estate_unify_4: the Proxmox cards chip &lt;the estate&gt;</span></div><div class=\"row\"><svg width=\"40\" height=\"22\" style=\"flex-shrink:0\"><circle cx=\"8\" cy=\"11\" r=\"4\" fill=\"#5a9e8f\"/></svg><span class=\"hash\">7a1fcde</span><span class=\"subj\">Desk Wave 1: the Proxmox panel's cards</span><span class=\"attr autonomous\" title=\"autonomous\">autonomous</span></div><div class=\"row\"><svg width=\"40\" height=\"22\" style=\"flex-shrink:0\"><circle cx=\"8\" cy=\"11\" r=\"4\" fill=\"#5a9e8f\"/></svg><span class=\"hash\">0ebf435</span><span class=\"refs\"><span class=\"ref main\">main</span><span class=\"ref main\">main</span></span><span class=\"subj\">Loop Lab: merge feat/inventory</span></div><div class=\"row\"><svg width=\"40\" height=\"22\" style=\"flex-shrink:0\"><circle cx=\"8\" cy=\"11\" r=\"4\" fill=\"#5a9e8f\"/></svg><span class=\"hash\">f64265f</span><span class=\"subj\">root</span></div></div></div>",
+   "count": "5 commits"
+  },
+  {
+   "rows": "<div class=\"empty\">No commits.</div>",
+   "count": ""
+  },
+  {
+   "rows": "<div class=\"empty\">repo not found</div>",
+   "count": ""
+  }
+ ]
+}
