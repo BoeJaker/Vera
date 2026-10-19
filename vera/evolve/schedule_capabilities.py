@@ -406,6 +406,9 @@ _BG_TASKS: set = set()
 #: RF-09: run id -> schedule id of the EXCLUSIVE background runs (cap schedules) still going. A census
 #: does not start while one runs; the tick passes the count to schedule_core as `exclusive_running`.
 _EXCLUSIVE_BG: Dict[str, str] = {}
+#: run id -> schedule id of EVERY background run that uses compute (owner 19 Oct: nothing scheduled starts until the
+#: previous run has finished with the box). The tick passes the count as `scheduled_running`.
+_COMPUTE_BG: Dict[str, str] = {}
 
 
 def _bg_word(res: Any) -> str:
@@ -472,6 +475,9 @@ def _in_background(run_id: str, rec: Dict[str, Any], coro, *, exclusive: bool = 
                    follow_cap: str = "") -> None:
     if exclusive:
         _EXCLUSIVE_BG[run_id] = rec.get("id", "")
+    computes = core.uses_compute(rec)
+    if computes:
+        _COMPUTE_BG[run_id] = rec.get("id", "")
 
     async def _go():
         try:
@@ -501,6 +507,8 @@ def _in_background(run_id: str, rec: Dict[str, Any], coro, *, exclusive: bool = 
     t.add_done_callback(lambda _t: _RUN_TASKS.pop(run_id, None))
     if exclusive:
         t.add_done_callback(lambda _t: _EXCLUSIVE_BG.pop(run_id, None))
+    if computes:
+        t.add_done_callback(lambda _t: _COMPUTE_BG.pop(run_id, None))
 
 
 def _bg(run_id: str, rec: Dict[str, Any], coro, label: str, follow_cap: str = "") -> Dict[str, Any]:
@@ -667,6 +675,7 @@ async def run_tick(*, force_ids: Optional[List[str]] = None, now: Optional[datet
     cfg = await _get_config()
     state = await box_state()
     state["exclusive_running"] = len(_EXCLUSIVE_BG)        # RF-09: exclusive cap runs in flight
+    state["scheduled_running"] = len(_COMPUTE_BG)          # every scheduled run still using compute
     state["quiet"] = core.in_quiet(now, cfg.get("quiet_windows"), cfg.get("timezone") or core.DEFAULT_TZ)
     await _finalize_census_if_done(state)
     if not state.get("census_running"):
@@ -1275,6 +1284,27 @@ def _idle_svc():
         return None
 
 
+async def _queue_hard_hold() -> str:
+    """Why NO background job may start, even in a reserved window: a census or an agent loop holds the box.
+    19 Oct 2026: shadow judges ran 13:00-18:00 beside the 13:30-17:42 census - a reserved window drops the quiet
+    gate, and the census check went with it."""
+    try:
+        st = await box_state()
+    except Exception:
+        return ""
+    if st.get("census_running") and not st.get("census_parked_by_us"):
+        return "a census is running"
+    if int(st.get("loops_running") or 0) > 0:
+        return "an agent loop is running"
+    return ""
+
+
+def _register_queue_hold() -> None:
+    svc = _idle_svc()
+    if svc is not None and hasattr(svc, "register_hard_hold"):
+        svc.register_hard_hold(_queue_hard_hold)
+
+
 @capability("evolve.background.window", memory="off",
             http_method="POST", http_path="/evolve/background/window", http_tags=["evolve", "schedule", "background"],
             description="Run the background queue NOW for up to `minutes` (default 90, max 600): reserve it for every "
@@ -1285,6 +1315,7 @@ async def cap_background_window(minutes: int = 90, kinds: str = "", trace_id=Non
     svc = _idle_svc()
     if svc is None or not hasattr(svc, "reserve"):
         return {"ok": False, "error": "the idle queue service is not loaded"}
+    _register_queue_hold()
     only = {k.strip() for k in (kinds or "").split(",") if k.strip()}
     budget = max(5, min(int(minutes or 90), 600)) * 60
     t0 = time.time()
@@ -1398,3 +1429,9 @@ async def releases_data(days: int = 7, limit: int = 60) -> Dict[str, Any]:
                         "node_sync, edge_ahead, counts}.")
 async def cap_releases_view(days: int = 7, limit: int = 60, trace_id=None) -> Dict[str, Any]:
     return await releases_data(days=days, limit=limit)
+
+
+try:                                     # the queue's hard hold, as soon as both modules are loaded
+    _register_queue_hold()
+except Exception as _e:                  # pragma: no cover
+    log.debug("queue hard hold: %s", _e)

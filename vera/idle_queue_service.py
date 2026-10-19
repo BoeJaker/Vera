@@ -111,6 +111,26 @@ def release_reservation(by: str = "") -> None:
         _RESERVATION.clear()
 
 
+#: A probe that says why NO job may start, even in a reserved window ("a census is running"), or "". Registered by
+#: the scheduler (schedule_capabilities._queue_hard_hold); unregistered means no hold.
+_HARD_HOLD: Dict[str, Any] = {}
+
+
+def register_hard_hold(fn: Callable[[], Awaitable[str]]) -> None:
+    _HARD_HOLD["fn"] = fn
+
+
+async def hard_hold() -> str:
+    fn = _HARD_HOLD.get("fn")
+    if fn is None:
+        return ""
+    try:
+        return str(await fn() or "")
+    except Exception as e:                   # an unreadable hold must not stop the queue for good
+        log.debug("idle queue hard hold: %s", e)
+        return ""
+
+
 def reservation(now: Optional[float] = None) -> Optional[Dict[str, Any]]:
     """The reservation in force, or None (an expired one is cleared here)."""
     if not _RESERVATION:
@@ -514,7 +534,11 @@ async def drain_once(busy_reason: str,
     if _RUNNING:
         _RUNNING.clear()               # task finished; clear the slot
 
-    # 2. Otherwise start the next job, if the box has been quiet long enough.
+    # 2. Otherwise start the next job, if the box has been quiet long enough - and never beside a census or a loop,
+    #    reserved window or not (19 Oct 2026: judges ran through a census under a reservation).
+    hold = await hard_hold()
+    if hold:
+        return {"action": "idle", "reason": hold, "depth": len(_iq.pending(await load_jobs()))}
     jobs = await load_jobs()
     if held:
         # A reserved window: only the reserved kinds may start, and the quiet gate does not apply to them.

@@ -648,7 +648,13 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
     if state.get("quiet") and not rec.get("quiet_ok"):
         return False, "quiet hour %s (background queue)" % state["quiet"]
     # A2: a declared activity (a probe, a manual benchmark) holds the box like a loop does.
-    if (kind == "census" or rec.get("exclusive", True)) and state.get("declared_busy"):
+    # Owner 19 Oct 2026: "make sure there are no clashes and scheduled items cant start untill the previous has
+    # completed/is no longer using compute". `exclusive` only made exclusive entries wait for each other, so a
+    # non-exclusive entry started beside a census or another run (18 Oct: three Claims pass 2 judges at once; gap
+    # fill inside the crawl test). Now every entry that uses compute waits; only a claude_session request does not
+    # (its session declares its own work).
+    uses = uses_compute(rec)
+    if (kind == "census" or uses) and state.get("declared_busy"):
         return False, "declared activity: %s" % state["declared_busy"]
     # Box gating. A census is one loop on prod's GPU; nothing else may run
     # beside it (HANDOVER §4.1-4.2), and a census needs the box to itself.
@@ -669,17 +675,22 @@ def is_due(rec: Dict[str, Any], now: datetime, state: Dict[str, Any]) -> Tuple[b
             return False, "census in flight"
         if int(state.get("loops_running") or 0) > 0:
             return False, "an agent loop is running"
-        if int(state.get("exclusive_running") or 0) > 0:
-            return False, "an exclusive scheduled cap is running"      # RF-09
+        if int(state.get("exclusive_running") or 0) > 0 or int(state.get("scheduled_running") or 0) > 0:
+            return False, "the previous scheduled run is still using compute"      # RF-09
         if state.get("harness_blocked"):
             return False, str(state["harness_blocked"])
-    elif rec.get("exclusive", True) and state.get("census_running"):
+    elif uses and state.get("census_running"):
         return False, "census in flight"
-    elif kind == "cap" and rec.get("exclusive", True) and int(state.get("loops_running") or 0) > 0:
+    elif kind == "cap" and uses and int(state.get("loops_running") or 0) > 0:
         return False, "an agent loop is running"                      # RF-09: caps wait for loops
-    elif rec.get("exclusive", True) and int(state.get("exclusive_running") or 0) > 0:
-        return False, "another exclusive scheduled run is going"      # A3: one exclusive run at a time
+    elif uses and (int(state.get("exclusive_running") or 0) > 0 or int(state.get("scheduled_running") or 0) > 0):
+        return False, "the previous scheduled run is still using compute"      # one run at a time
     return True, ("recover" if recovering else "due")
+
+
+def uses_compute(rec: Dict[str, Any]) -> bool:
+    """True for every entry whose run uses the box's compute - all but a claude_session request."""
+    return rec.get("kind") != "claude_session"
 
 
 def recover_after_interrupt(rec: Dict[str, Any], when: str) -> bool:
@@ -746,8 +757,8 @@ def plan_tick(schedules: Iterable[Dict[str, Any]], now: datetime, state: Dict[st
             continue
         out.append({"schedule_id": rec["id"], "kind": rec["kind"], "target": rec["target"],
                     "title": rec.get("title", ""), "reason": why})
-        if rec.get("kind") != "census" and rec.get("exclusive", True):
-            st["exclusive_running"] = int(st.get("exclusive_running") or 0) + 1   # A3: one per tick too
+        if rec.get("kind") != "census" and uses_compute(rec):
+            st["scheduled_running"] = int(st.get("scheduled_running") or 0) + 1   # one per tick too
         if rec.get("kind") == "census":
             census_taken = True
             st["census_running"] = True     # exclusive kinds see the census we just planned

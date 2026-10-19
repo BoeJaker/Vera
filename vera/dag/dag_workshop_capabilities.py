@@ -256,7 +256,7 @@ LOOP_ROUTING_PROFILE = "loop"
 # CPU model prod then has to override away on the Model Routing page. The 20B CPU
 # reasoner (gpt-oss:20b) is a heavier/slower alternative — set it here, or
 # per-instance on the Model Routing page.
-_LOOP_PLANNER_MODEL = "jaahas/qwen3.5-uncensored"
+_LOOP_PLANNER_MODEL = "jaahas/qwen3.5-uncensored:9b"
 
 register_routing_profile(
     LOOP_ROUTING_PROFILE, label="Agentic Loop", owner="dag_workshop",

@@ -87,7 +87,10 @@ async def _raw(name: str, /, **kw) -> Dict[str, Any]:
 
 async def _gate_busy() -> bool:
     st = await _raw("ollama.gate.status")
-    return any(int(n.get("held") or 0) > 0 for n in (st.get("nodes") or []) if isinstance(n, dict))
+    if any(int(n.get("held") or 0) > 0 for n in (st.get("nodes") or []) if isinstance(n, dict)):
+        return True
+    # 19 Oct 2026: a census holds the box even between its generations; the judges ran through one
+    return bool((await _raw("census.live")).get("active"))
 
 
 # What these judges are (model.callable / model.pick; four-minds owns the

@@ -199,7 +199,10 @@ class VeraConfig:
     OLLAMA_GPU_URL    : str = os.getenv("OLLAMA_GPU_URL",  "http://192.168.0.250:11435")
     OLLAMA_CPU_A_URL  : str = os.getenv("OLLAMA_CPU_A_URL","http://192.168.0.246:11435")
     OLLAMA_CPU_B_URL  : str = os.getenv("OLLAMA_CPU_B_URL","http://192.168.0.247:11435")
-    OLLAMA_MODEL      : str = os.getenv("OLLAMA_MODEL",    "jaahas/qwen3.5-uncensored")
+    # the :9b tag, not the bare name (owner 19 Oct 2026: "fix the chat model so it calls the :9b"). One blob, but the
+    # router matches tags: chat loaded ":latest", the loop asked for ":9b", read it as not resident and spilled the
+    # loop's calls to a CPU node (80-250 s each).
+    OLLAMA_MODEL      : str = os.getenv("OLLAMA_MODEL",    "jaahas/qwen3.5-uncensored:9b")
     # Context window for source-review / planning generations. qwen3.5 supports
     # up to 32k natively; raise via env if your model build allows more. Larger
     # values cost more VRAM/RAM and are slower (esp. on CPU nodes).
