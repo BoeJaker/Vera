@@ -627,6 +627,17 @@
     ui.i = ((ui.i || 0) + d + ms.length) % ms.length; ms.forEach((m, k) => m.classList.toggle('cur', k === ui.i)); mdShow(ms[ui.i]);
     const n = wrap.querySelector('.vc-mdn'); if (n) n.textContent = (ui.i + 1) + ' of ' + ms.length;
   }
+  /* A SCRIPT CARRIED AS BASE64 (D14-F2, the 18 Oct live loop): a loop writes a file as `echo <base64> | base64 -d > f.py && python3
+     f.py`, and the card showed the blob. The blob folds to a mark in the command and the script it carries is shown decoded under
+     it. Only printable UTF-8 text counts as a script; anything else stays as it was. */
+  function b64Script(cmd) {
+    const s = String(cmd || ''); const m = /echo\s+(['"]?)([A-Za-z0-9+/=]{48,})\1\s*\|\s*base64\s+(?:-d|--decode)\b/.exec(s); if (!m) return null;
+    let text = '';
+    try { const bin = typeof atob === 'function' ? atob(m[2]) : Buffer.from(m[2], 'base64').toString('binary'); text = decodeURIComponent(escape(bin)); } catch (e) { return null; }
+    if (!text.trim() || /[\x00-\x08\x0e-\x1f]/.test(text)) return null;
+    const lines = text.replace(/\n$/, '').split('\n').length;
+    return { command: s.slice(0, m.index) + 'echo ‹' + lines + ' line' + (lines === 1 ? '' : 's') + ', below› | base64 -d' + s.slice(m.index + m[0].length), text };
+  }
   /* a terminal's colours (DU-E-session): ANSI SGR codes as spans - the 8 + 8 bright colours, bold, dim, underline, reset;
      every other escape sequence dropped, never shown as text */
   const ANSI_C = ['#4b5563', '#e06c75', '#98c379', '#e5c07b', '#61afef', '#c678dd', '#56b6c2', '#d7dae0'];
@@ -1468,7 +1479,10 @@
       // the known hosts, listed under the connect row once asked for (the list is state on the element, so a render keeps it)
       const hostsOpen = !!(key && el && el._hostsOpen && el._hostsOpen[key]);
       const hosts = hostsOpen ? `<div class="vc-hosts pk" data-w="canvas.terminal.hosts">${el._hosts ? hostListHtml(el._hosts) : '<span class="vc-dim">known hosts — asking the estate…</span>'}</div>` : '';
-      declare(el, key, { sub: '<i class="dot' + (attached ? (live ? ' on' : ' wait') : '') + '"></i>' + esc(shown ? (container ? shown + ' / ' + container : shown) : 'no host yet') + ' · ' + esc(shell || (container ? 'sh' : 'login shell')) + (c.command ? ' · ' + esc(c.command) : ''),
+      /* a command that ran (its output, no shell) with no host ran in Vera's own shell: "no host yet · login shell" is the connect
+         form's wording and read as a fault (D14-F2) */
+      const ranHere = !attached && !shown && c.command && c.output != null; const b64 = c.command ? b64Script(c.command) : null; const cmdShown = b64 ? b64.command : c.command;
+      declare(el, key, { sub: '<i class="dot' + (attached ? (live ? ' on' : ' wait') : '') + '"></i>' + (ranHere ? 'ran by Vera' : esc(shown ? (container ? shown + ' / ' + container : shown) : 'no host yet') + ' · ' + esc(shell || (container ? 'sh' : 'login shell'))) + (cmdShown ? ' · ' + esc(cmdShown) : ''),
         acts: (attached ? [{ act: 'tdetach', label: 'Detach', title: 'Detach — the item keeps its host; Attach opens a new shell' }] : ws ? [{ act: 'tattach', label: 'Attach', title: 'Open a shell on this host' }] : [])
           .concat(ws ? [{ act: 'tshare', label: 'Share', title: "Copy the terminal's address" }] : []) });
       const head = '';
@@ -1478,12 +1492,13 @@
          first in place (a command can change things), the answer written into this item */
       if (!attached && c.command && c.output != null) { const rc = c.rc != null && c.rc !== '' ? +c.rc : null; const ask = !!(el && el._ranAsk && el._ranAsk[key]); const busy = !!(el && el._ranBusy && el._ranBusy[key]);
         return `<div class="vc-term vc-ran" data-w="canvas.terminal">`
-        + `<div class="vc-ran-cmd"><span class="ps">$</span><code>${esc(String(c.command))}</code>${shown ? `<span class="host">${esc(shown)}</span>` : ''}`
+        + `<div class="vc-ran-cmd"><span class="ps">$</span><code>${esc(String(cmdShown))}</code>${shown ? `<span class="host">${esc(shown)}</span>` : ''}`
         + (rc != null && isFinite(rc) ? `<span class="vc-rc ${rc === 0 ? 'ok' : 'bad'}" title="exit code">exit ${rc}</span>` : '')
-        + (c.cap && key ? (busy ? '<span class="vc-dim">running\u2026</span>' : `<button class="ib" data-act="tagain" title="Run ${esc(String(c.command))} again${shown ? ' on ' + esc(shown) : ''}">run again</button>`) : '')
+        + (c.cap && key ? (busy ? '<span class="vc-dim">running\u2026</span>' : `<button class="ib" data-act="tagain" title="Run ${esc(String(cmdShown))} again${shown ? ' on ' + esc(shown) : ''}">run again</button>`) : '')
         + (ws ? '<button class="ib" data-act="tattach" title="Open a shell on this host">open a shell</button>' : '') + `</div>`
-        + (ask ? `<div class="vc-ran-ask">Run <code>${esc(String(c.command))}</code> again${shown ? ' on <b>' + esc(shown) + '</b>' : ''}? <button class="ib" data-act="tagainok">run it</button><button class="ib" data-act="tagainno">no</button></div>` : '')
+        + (ask ? `<div class="vc-ran-ask">Run <code>${esc(String(cmdShown))}</code> again${shown ? ' on <b>' + esc(shown) + '</b>' : ''}? <button class="ib" data-act="tagainok">run it</button><button class="ib" data-act="tagainno">no</button></div>` : '')
         + (c.ran_at ? `<div class="vc-ran-when vc-dim">ran again ${esc(String(c.ran_at).slice(11, 19))}</div>` : '')
+        + (b64 ? `<pre class="vc-pre vc-b64" title="the script the command carried as base64, decoded"><code>${esc(b64.text.slice(0, 8000))}</code></pre>` : '')
         + `<pre class="vc-pre vc-out"><code>${ansiHtml(String(c.output).slice(0, 8000)) || '<span class="vc-dim">(no output)</span>'}</code></pre></div>`; }
       const conn = attached ? `<div class="vc-live" data-live="term" data-key="${esc(key)}" data-ws="${esc(ws)}"><span class="vc-dim">connecting…</span></div>`
         : `<div class="vc-tconnect" data-w="canvas.terminal.connect"><input class="ti" data-f="host_id" placeholder="host id — an SSH host of the Exec panel" value="${esc(shown)}" spellcheck="false"><input class="ti" data-f="container" placeholder="container (docker) — optional" value="${esc(container)}" spellcheck="false"><input class="ti sm" data-f="shell" placeholder="shell" value="${esc(shell)}" spellcheck="false"><button class="ib${hostsOpen ? ' on' : ''}" data-act="thosts" title="The estate's known hosts — the Exec panel's SSH hosts, the containers on every docker host, your saved connections">hosts ▾</button><button class="ib on" data-act="tconnect">Connect</button></div>` + hosts;
@@ -1531,7 +1546,7 @@
       const steps = Array.isArray(c.steps) ? c.steps : []; const done = steps.filter(s => s && s.status === 'ok').length;
       const st = String(c.status || 'running');
       return `<div class="vc-loop"><div class="vc-loop-h"><span class="vc-badge st-${esc(st)}">${esc(st)}</span><b>${esc(c.goal || c.title || 'agentic loop')}</b><span class="vc-dim">${done}/${steps.length} steps</span></div>
-        <ol class="vc-steps">${steps.map(s => `<li class="${esc((s && s.status) || '')}"><i></i><span>${esc((s && s.n) || '')}</span>${s && s.cap ? `<code>${esc(s.cap)}</code>` : ''}${s && s.ms ? `<em>${esc(s.ms)}</em>` : ''}</li>`).join('')}</ol>
+        <ol class="vc-steps">${steps.map(s => `<li class="${esc((s && s.status) || '')}"><i></i><span title="${esc((s && s.n) || '')}">${esc((s && s.n) || '')}</span>${s && s.cap ? `<code title="${esc(s.cap)}">${esc(s.cap)}</code>` : ''}${s && s.ms ? `<em>${esc(s.ms)}</em>` : ''}</li>`).join('')}</ol>
         ${c.run ? `<div class="vc-dim vc-run">run ${esc(c.run)}</div>` : ''}</div>`;
     },
     /* WHAT A TURN IS DOING (owner, 2026-10-10: "need more useful desk elements for caps to display output or status as they
@@ -3053,8 +3068,11 @@
   .vc-steps li{display:flex;align-items:center;gap:6px;min-width:0}
   .vc-steps li i{width:6px;height:6px;border-radius:50%;background:var(--dim,#6b7480);flex:0 0 auto}
   .vc-steps li.ok i{background:var(--acc2,#5ec9a0)}.vc-steps li.running i{background:var(--acc,#5a9e8f);animation:vcp 1.2s infinite}.vc-steps li.fail i{background:var(--err,#f7768e)}
-  .vc-steps li span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .vc-steps li code{font-size:9.5px;color:var(--dim,#6b7480)}.vc-steps li em{margin-left:auto;font-style:normal;font-size:9.5px;color:var(--dim,#6b7480)}
+  .vc-steps li span{flex:1 1 auto;min-width:3em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* one line per step (D14-F3, the 18 Oct live loop): a step that ran three capabilities wrapped them into three lines and its time
+     into two, and in the run's small card that row pushed the next out and over the head; the label keeps the room, the capabilities
+     give way with an ellipsis (all of them in the tooltip), the time never wraps */
+  .vc-steps li code{flex:0 1 auto;min-width:0;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:9.5px;color:var(--dim,#6b7480)}.vc-steps li em{flex:none;white-space:nowrap;margin-left:auto;font-style:normal;font-size:9.5px;color:var(--dim,#6b7480)}
   .vc-run{font-family:ui-monospace,Consolas,monospace;font-size:9px;margin-top:3px}
   /* the live items (A16): a terminal, a notebook cell, a whole panel — the board's item head, the live slot */
   .body{position:relative}
@@ -3348,6 +3366,7 @@
   .vc-ran{display:flex;flex-direction:column;gap:6px;min-height:0}
   .vc-ran-cmd{display:flex;align-items:baseline;gap:8px;min-width:0;font-family:var(--mono,monospace);font-size:11.5px}
   .vc-ran-cmd .ps{color:var(--acc,#5a9e8f);flex:none}
+  .vc-b64{margin:4px 0;border-left:2px solid var(--acc,#5a9e8f);opacity:.9;max-height:220px;overflow:auto}
   .vc-ran-cmd code{flex:1 1 auto;min-width:0;color:var(--fg,#dce1e8);white-space:pre-wrap;word-break:break-all}
   .vc-ran-cmd .host{flex:none;font-size:10px;color:var(--dim,#8b93a1);padding:0 6px;border:1px solid var(--border,#2a2f37);border-radius:8px}
   .vc-ran .vc-out{margin:0;font-size:11.5px;line-height:1.5;overflow:auto;min-height:0}
